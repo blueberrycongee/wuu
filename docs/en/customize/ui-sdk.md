@@ -175,6 +175,13 @@ provider whose local ID is `ui.application`. Default desktop surfaces require
 this service. The Go graph publishes the selected identity in
 `application_surfaces["ui.application"]`; discovery order never selects it.
 
+The optional `ApplicationSnapshotV1.restartRecovery` lists conversations interrupted
+by the previous unexpected exit. Reading the snapshot does not resume work. Invoke
+`conversation.resolve-recovery` with `threadIds` to continue those candidates and
+dismiss the others; an empty list defers all candidates while preserving history
+and pending results. The default provider uses the existing turn admission and
+replay guards, and retains failed candidates for retry.
+
 `ApplicationProviderDefinition.prepare()` returns an
 `ApplicationProviderInstanceV1`. Preparation may validate and allocate reversible
 resources, but must not start writers or background subscriptions. The instance

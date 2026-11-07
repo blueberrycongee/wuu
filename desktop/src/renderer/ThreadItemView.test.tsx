@@ -9,13 +9,13 @@ import { streamTextKey, streamTextStore } from "./StreamText";
 import { ImagePreviewProvider } from "./ImagePreview";
 import { ArtifactThreadContext } from "./ArtifactPreviewContext";
 import { ThreadItemView } from "./ThreadItemView";
-import { groupProjectEvents } from "./ProjectViews";
 import { clearToasts, ToastViewport } from "./Toast";
 import { ConversationControlsTestProvider, createConversationTestApplication } from "./ConversationControlsTestProvider";
 import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { navigateToResponseSelection } from "./ResponseSelection";
 import { createComposerMessage } from "./ComposerMessages";
+import { composerSkillPrompt } from "./ComposerSlashCommands";
 import type { ResponseSelection } from "../shared/protocol";
 import { PluginHost, type PluginGenerationApi } from "./plugins/PluginHost";
 import { createUIComposition } from "./plugins/ApplicationShell";
@@ -506,6 +506,20 @@ describe("ThreadItemView", () => {
     expect(received).toEqual({ threadId: undefined, turnId: "turn-1", itemId: "final-1", snapshot: expect.objectContaining({ id: "final-1", kind: "assistant-message" }) });
   });
 
+  it("renders an explicit skill invocation as a reference chip and its arguments", () => {
+    const prompt = composerSkillPrompt({
+      name: "change-validation",
+      source: "project",
+      project: { root: "/repo", path: ".agents/skills/change-validation/SKILL.md" },
+    }, "Check this change");
+    render({ item: makeUserMessage(prompt), turnStatus: "completed", streaming: false });
+
+    const bubble = container?.querySelector(".message.user-message");
+    expect(bubble?.querySelector(".composer-reference-name")?.textContent).toBe("/change-validation");
+    expect(bubble?.textContent).toContain("Check this change");
+    expect(bubble?.textContent).not.toContain('"source"');
+  });
+
   it("shows short user messages in full without a collapse control", () => {
     render({
       item: makeUserMessage("Short query."),
@@ -816,15 +830,6 @@ describe("ThreadItemView", () => {
     expect(streamTextStore.has(key)).toBe(true);
   });
 
-  it("groups host events with legacy project history without folding generic host messages", () => {
-    const legacy = { ...makeUserMessage("Old result", "legacy"), origin: "plugin", cause: "project_result" };
-    const current = { ...makeUserMessage("New result", "host"), origin: "host", cause: "project_message" };
-    const generic = { ...makeUserMessage("Host message", "generic"), origin: "host", cause: "unrelated" };
-    expect(groupProjectEvents([legacy, current, generic])).toEqual([[legacy, current], generic]);
-    render({ item: current, turnStatus: "completed", streaming: false });
-    expect(container?.querySelector(".project-event")).not.toBeNull();
-    expect(container?.querySelector(".user-message")).toBeNull();
-  });
 
   it("renders a plugin-generated query as a read-only user message", () => {
     const onEditMessage = vi.fn();
@@ -893,7 +898,7 @@ describe("ThreadItemView", () => {
     await act(async () => actions[0].click());
     expect(copy).toHaveBeenCalledWith(body);
     act(() => container!.querySelector<HTMLButtonElement>(".session-message-source")!.click());
-    expect(invoke).toHaveBeenCalledExactlyOnceWith("conversation.open-split", { threadId: "source-session" });
+    expect(invoke).toHaveBeenCalledExactlyOnceWith("thread.activate", { threadId: "source-session" });
     expect(onEditMessage).not.toHaveBeenCalled();
     act(() => toggle.click());
     expect(container?.textContent).not.toContain("End of update.");

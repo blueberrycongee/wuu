@@ -202,10 +202,49 @@ async function sendDraft(win) {
   // The controlled draft can lag behind the input event; clicking its disabled
   // send button is a no-op. Wait for rendering and confirm submission consumed it.
   await settle(win);
-  await waitFor(win, () => document.querySelector('.composer textarea')?.value.trim()
-    && document.querySelector('.composer-send-button[data-wuu-state="send"]:not(:disabled)'));
+  await waitFor(win, () => {
+    const textarea = document.querySelector('.composer textarea');
+    const rich = document.querySelector('.composer .composer-rich-input');
+    return Boolean(textarea ? textarea.value.trim() : rich?.textContent.trim())
+      && Boolean(document.querySelector('.composer-send-button[data-wuu-state="send"]:not(:disabled)'));
+  });
   await click(win, '.composer-send-button');
-  await waitFor(win, () => document.querySelector('.composer textarea')?.value === '');
+  await waitFor(win, () => {
+    const textarea = document.querySelector('.composer textarea');
+    return textarea ? textarea.value === '' : !document.querySelector('.composer .composer-rich-input')?.textContent.trim();
+  });
+}
+
+// Skill references are rendered as atomic chips. Read their durable identity
+// back out of the editor so API assertions keep checking the submitted draft.
+const rawComposerValue = win => evaluate(win, () => {
+  const editor = document.querySelector('.composer .composer-rich-input');
+  if (!editor) return document.querySelector('.composer textarea')?.value ?? '';
+  return [...editor.childNodes].map(node => {
+    if (node instanceof HTMLElement) {
+      const token = node.dataset.skillToken ?? node.dataset.pluginToken;
+      if (token) return token;
+    }
+    return node.nodeName === 'BR' ? '\n' : node.textContent ?? '';
+  }).join('');
+});
+
+async function setComposerValue(win, value) {
+  await evaluate(win, draft => {
+    const textarea = document.querySelector('.composer textarea');
+    if (textarea) {
+      textarea.focus();
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(textarea, draft);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      return;
+    }
+    const editor = document.querySelector('.composer .composer-rich-input');
+    if (!editor) throw new Error('composer input is unavailable');
+    editor.focus();
+    editor.replaceChildren(document.createTextNode(draft));
+    editor.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: draft }));
+  }, value);
+  await settle(win);
 }
 async function waitForSkillRow(win) {
   await waitFor(win, () => {
@@ -288,8 +327,8 @@ async function run() {
   await waitForSkillRow(main);
   await capture(main, '03a-initial-skill-menu.png');
   await evaluate(main, () => document.querySelector('.slash-command-item[id$="-skill:compact"]').click());
-  await waitFor(main, () => document.querySelector('.composer textarea').value.startsWith('/skill '));
-  const initialSkillDraft = await evaluate(main, () => document.querySelector('.composer textarea').value);
+  await waitFor(main, () => document.querySelector('.composer .composer-skill-reference'));
+  const initialSkillDraft = await rawComposerValue(main);
   const projectIdentity = { root: fs.realpathSync(project), path: skillPath.split(path.sep).join('/') };
   assert.deepEqual(JSON.parse(initialSkillDraft.split('\n')[0].slice('/skill '.length)), { name: 'compact', source: 'project', project: projectIdentity });
   assert.equal(worktreeCount(), 1, 'Choosing a skill must not materialize the selected checkout.');
@@ -326,11 +365,7 @@ async function run() {
     'Current workspace metadata must not be inserted ahead of historical messages.');
   await capture(main, '04-conversation-without-worktree-banner.png');
   await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
-  await evaluate(main, () => {
-    const input = document.querySelector('.composer textarea');
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Check manual skill admission fixture');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  await setComposerValue(main, 'Check manual skill admission fixture');
   await sendDraft(main);
   await waitFor(main, () => document.querySelector('.cached-conversation-pane[data-active="true"]')?.textContent.includes('Manual-only skill admission verified.'));
   assert.equal(typeof skillAdmissionResult, 'string', 'The synthetic-provider tool round trip must return a tool result.');
@@ -342,17 +377,12 @@ async function run() {
   // Explicit selection must beat the built-in control command and use this checkout.
   await waitFor(main, () => document.querySelector('.composer-send-button[data-wuu-state="send"]'));
   main.focus();
-  await evaluate(main, () => {
-    const input = document.querySelector('.composer textarea');
-    input.focus();
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, '/compact');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  });
+  await setComposerValue(main, '/compact');
   await waitForSkillRow(main);
   await capture(main, '07-explicit-skill-menu.png');
   await evaluate(main, () => document.querySelector('.slash-command-item[id$="-skill:compact"]').click());
-  await waitFor(main, () => document.querySelector('.composer textarea').value.startsWith('/skill '));
-  const selectedDraft = await evaluate(main, () => document.querySelector('.composer textarea').value);
+  await waitFor(main, () => document.querySelector('.composer .composer-skill-reference'));
+  const selectedDraft = await rawComposerValue(main);
   assert.deepEqual(JSON.parse(selectedDraft.split('\n')[0].slice('/skill '.length)), {
     name: 'compact', source: 'project', project: projectIdentity,
   });
@@ -365,15 +395,11 @@ async function run() {
   });
   await settle(main);
   assert(await evaluate(main, () => {
-    const input = document.querySelector('.composer textarea');
+    const input = document.querySelector('.composer :is(textarea, .composer-rich-input)');
     return input.scrollWidth <= input.clientWidth + 1 && input.getBoundingClientRect().right <= innerWidth;
   }), 'The explicit identity draft must wrap inside the narrow composer.');
   await capture(main, '09-explicit-skill-draft-dark-narrow.png');
-  await evaluate(main, text => {
-    const input = document.querySelector('.composer textarea');
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, text + 'verify selected workflow');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-  }, selectedDraft);
+  await setComposerValue(main, selectedDraft + 'verify selected workflow');
   await sendDraft(main);
   const receivedSelectedSkill = () => requests.some(request => (request.body.messages || []).some(message =>
     message.role === 'user' && typeof message.content === 'string'
@@ -455,13 +481,13 @@ async function run() {
 
   // A mid-conversation rebind stays at its actual tool position, even after
   // returning to the project (when the thread no longer has worktree metadata).
-  await evaluate(main, () => {
-    const input = document.querySelector('.composer textarea');
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Rebind workspace fixture');
-    input.dispatchEvent(new Event('input', { bubbles: true }));
+  await setComposerValue(main, 'Rebind workspace fixture');
+  await waitFor(main, () => {
+    const rich = document.querySelector('.composer .composer-rich-input');
+    const textarea = document.querySelector('.composer textarea');
+    return (rich?.textContent.includes('Rebind workspace fixture') || textarea?.value === 'Rebind workspace fixture')
+      && document.querySelector('.composer-send-button[data-wuu-state="send"]:not(:disabled)');
   });
-  await waitFor(main, () => document.querySelector('.composer textarea')?.value === 'Rebind workspace fixture'
-    && document.querySelector('.composer-send-button[data-wuu-state="send"]:not(:disabled)'));
   await sendDraft(main);
   await waitFor(main, () => [...document.querySelectorAll('.user-message-motion')].some(node => node.textContent.includes('Rebind workspace fixture'))
     && document.querySelector('.composer-send-button[data-wuu-state="send"]'));
@@ -660,11 +686,14 @@ run().then(() => {
   if (main && !main.isDestroyed()) {
     try {
       await capture(main, 'failure.png');
-      const state = await evaluate(main, () => ({
-        draft: document.querySelector('.composer textarea')?.value,
-        flow: document.querySelector('.cached-conversation-pane[data-active="true"]')?.innerHTML,
-        commands: [...document.querySelectorAll('.slash-command-item')].map(node => ({ id: node.id, text: node.textContent, disabled: node.disabled })),
-      }));
+      const state = await evaluate(main, () => {
+        const editor = document.querySelector('.composer .composer-rich-input');
+        return {
+          draft: editor ? editor.textContent : document.querySelector('.composer textarea')?.value,
+          flow: document.querySelector('.cached-conversation-pane[data-active="true"]')?.innerHTML,
+          commands: [...document.querySelectorAll('.slash-command-item')].map(node => ({ id: node.id, text: node.textContent, disabled: node.disabled })),
+        };
+      });
       fs.writeFileSync(path.join(output, 'failure.json'), JSON.stringify(state, null, 2));
     } catch (captureError) { console.error('Could not capture failure state', captureError); }
   }

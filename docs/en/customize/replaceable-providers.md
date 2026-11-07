@@ -22,7 +22,6 @@ Use [product composition](plugin-system.md#services-and-executions) to select mo
 | `state.artifacts@1` | `wuu.artifacts.local` | `artifactStore`, `ARTIFACT_STORE_DESCRIPTOR` |
 | `host.data.query@2` | `wuu.index.trace` | `dataIndex`, `queryData`, `DATA_QUERY_DESCRIPTOR` |
 | `security.authorize@1` | `wuu.permissions.default` | `authorize`, `AUTHORIZATION_SERVICE_DESCRIPTOR` |
-| `project.coordination@1` | `wuu.project-coordination` | `projectCoordination`, `PROJECT_COORDINATION_DESCRIPTOR` |
 | `host.managed-session@1` | `wuu.managed-sessions` | `managedSessions`, `MANAGED_SESSION_DESCRIPTOR` |
 | `ui.shell@1` | `wuu.default-shell` or a renderer plugin | `APPLICATION_SHELL_SERVICE`, `ApplicationGenerationAPI` |
 
@@ -117,16 +116,6 @@ post-pause permission denial, and replacement
 while paused before continuation. Reports and logs are written to
 `.tmp/e2e/service-continuation/`.
 
-In a `project_agent` development build, the [project decorator](../../../examples/plugins/project-decorator.ts)
-changes only instructions and enables `concurrentServices` because managed-session
-creation can reenter coordination before returning. Select it for `project.coordination@1` and bind its
-same-service dependency to `wuu.project-coordination` (or another delegate).
-The native coordinator retains its own scheduler when it is in that selected
-coordination chain, including through multiple decorators. Unrelated service
-dependencies do not start coordination scheduling. Removing or disabling a
-selected decorator does not activate the native coordinator as a fallback;
-accepted turns retain their original graph while autonomous dispatch stops.
-
 `state.documents@1` has one logical dataset and authority boundary per
 composition. Its scoped routes may connect the selected provider's adapter chain;
 an ordinary consumer cannot select a base around that authority. Use an isolated
@@ -135,7 +124,7 @@ provider replacement and verified state-migration requirements are unchanged.
 
 Run `node scripts/provider-delegation-e2e.mjs` after installing repository
 dependencies. It compiles the adapter against a packed public SDK and exercises
-native/external chains, durable settings, delegated project scheduling, retained
+native/external chains, durable settings, retained
 turn completion, rejection and cleanup paths, recording
 `report.json` and `verification.log` under `.tmp/e2e/provider-delegation/`.
 
@@ -723,28 +712,11 @@ The latest-context result has a 16 MiB budget. Oversized required metadata fails
 
 Both query results and append receipts may include `diagnostic_path`. It is export metadata, not permission or a fallback data source. The selected native provider owns any legacy JSONL import and diagnostic export; an external index never triggers native-file reads or writes. Export failure cannot undo a confirmed append. Disabling the selected index stops its behavior rather than activating native storage. Keep late turn completion bound to its admitted generation until append settles.
 
-## Project coordination protocol
+## Managed-session protocol
 
-`project.coordination@1` is business policy; `host.managed-session@1` is execution machinery. The native coordinator is selected only in builds with the Project Agent feature. Managed-session mechanisms support ordinary managed sessions independently of that policy. The default coordinator declares `state.documents@1`, `host.managed-session@1` and `host.background@1`; each consumer uses its own captured graph identity.
+`host.managed-session@1` provides session execution mechanisms to declared consumers through their captured graph identity.
 
-`projectCoordination(host)` provides typed `session`, `work`, `membership`, `enqueue` and `admission` calls. `ProjectSessionRequest` and `ProjectWorkRequest` retain the existing action vocabulary. Session/work/membership results vary by action and are deliberately `unknown` until the caller validates them. The service's complete descriptor also includes these provider callbacks:
-
-| Methods | Input and result |
-| --- | --- |
-| `session`, `work` | Command envelope with `actor_id`, optional `call_id`, and `session` or `work`. Result depends on the requested action. |
-| `membership` | `project_id`, `session_id`, `action: "adopt" \| "release"`. |
-| `admission` | Empty request; returns `{ max_parallel }`. Capacity enforcement stays in the host's membership/lease transaction. |
-| `enqueue` | Project/session/client IDs, cause, content, wake flag. Recording input is separate from delivery. |
-| `work-list`, `member-work`, `coordinator` | Project lookup envelope; member lookup also has `session_id`. Results are a work list, `{ work, found }`, or `{ project, found }`. |
-| `inbox`, `schedule`, `recover`, `capacity` | Session/project envelope; capacity also takes `action` and returns a boolean. Recovery without a project scans the coordinator's inbox. |
-| `create`, `turn`, `user-input` | Native thread-start selection, turn completion or chat-message payload inside the command envelope. These are not ordinary `host.session.*` request shapes. |
-| `instructions`, `tool-config` | A serialized `session.Session` directly, **without** a command envelope; returns instruction text or `{ allow?, deny? }`. |
-| `tool-policy`, `tool-validate` | `{ member, call, read_only, policy }` using native session and tool-call payloads. `ProjectToolPolicy` identifies the write lease and work revision; validation follows OS lease acquisition. |
-| `scheduler` | Owner-only, long-lived background callback. The registry authenticates its caller; setting a domain ID cannot start it. |
-
-The [coordination dispatcher](../../../internal/appserver/project_provider.go) and [tool-policy contract](../../../internal/appserver/project_work_tools.go) define the native callback payloads. The SDK's convenience client covers common business commands, not every native session/turn record. A replacement provider must handle the methods its consumers call, preserve cancellation and structured errors, and retain its dependencies until cleanup finishes. Stopping scheduling cancels timers and waits; it does not reroute admitted foreground work to another provider.
-
-`managedSessions(host).create(input)` reuses the public session-creation fields and adds `owner`, `source`, optional role, explicit session ID, shared-workspace session ID and initial inbox input. Explicit identity and initial input commit together. `submit` returns `{ admitted, capacity_full }`: capacity exhaustion is a result to handle, not evidence that the message ran. `allow_start: false` only attempts steering. `interrupt` targets an existing owned-workspace session.
+`managedSessions(host).create(input)` reuses the public session-creation fields and adds `owner`, `source`, optional role, explicit session ID, shared-workspace session ID and initial inbox input. Explicit identity and initial input commit together. `submit` returns `{ admitted, capacity_full }` to report whether input was admitted. The native provider retains `capacity_full: false` for wire compatibility; it no longer applies Project Agent worker limits. `allow_start: false` only attempts steering. `interrupt` targets an existing owned-workspace session.
 
 The SDK supports text submission through `ManagedSessionTextMessage`. Its `Role`, `Content`, `ClientID`, and provenance keys preserve the current Go wire casing; `display_content` has an explicit JSON tag. `ManagedSessionInbox` likewise uses `ClientID`, `SessionID`, `Content`, `Wake`, and `Controls`. Do not substitute model-request snake_case message types. Control revisions fence takeover and release, while execution IDs come from the host-authenticated callback.
 

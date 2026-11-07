@@ -1053,6 +1053,7 @@ function RichImage({
   const preview = useOptionalPreviewContent();
   const resolvedSource = preview ? preview.service.resolveResourceURL({ source, cwd }) : resolvePreviewResourceURL(source, cwd);
   const [failedSource, setFailedSource] = useState<string | null>(null);
+  const [loadedSource, setLoadedSource] = useState<string | null>(null);
   const { openPreview } = useImagePreview();
   const titleText = imageTarget(source);
   const register = useImagePreviewRegistration(!resolvedSource || failedSource === resolvedSource ? null : { src: resolvedSource, alt, title: titleText });
@@ -1066,29 +1067,29 @@ function RichImage({
       handleActivate(event.currentTarget);
     }
   };
-  const image = !resolvedSource || failedSource === resolvedSource ? (
-    <span className="rich-image rich-image-unavailable" role="img" aria-label={t("imagePreview.loadFailed")}>
-      {t("imagePreview.loadFailed")}
-    </span>
-  ) : (
-    <Tooltip content={titleText}>
-      <img
-        className="rich-image"
-        ref={register}
-        src={resolvedSource}
-        alt={alt}
-        loading="lazy"
-        role="button"
-        tabIndex={0}
-        aria-label={
-          alt ? t("rich.enlargeNamed", { alt }) : t("rich.enlargeImage")
-        }
-        onClick={event => handleActivate(event.currentTarget)}
-        onKeyDown={handleKeyDown}
-        onError={() => setFailedSource(resolvedSource ?? null)}
-      />
-    </Tooltip>
-  );
+  const unavailable = !resolvedSource || failedSource === resolvedSource;
+  const pending = !unavailable && loadedSource !== resolvedSource;
+  const image = <>
+    {unavailable || pending ? <span className="rich-image rich-image-unavailable"
+      role={unavailable ? "img" : undefined} aria-label={unavailable ? t("imagePreview.loadFailed") : undefined}
+      aria-hidden={pending || undefined} /> : null}
+    {!unavailable ? <img
+      className="rich-image"
+      ref={register}
+      src={resolvedSource}
+      alt={alt}
+      loading="lazy"
+      role="button"
+      tabIndex={0}
+      aria-label={
+        alt ? t("rich.enlargeNamed", { alt }) : t("rich.enlargeImage")
+      }
+      onClick={event => handleActivate(event.currentTarget)}
+      onKeyDown={handleKeyDown}
+      onLoad={() => setLoadedSource(resolvedSource)}
+      onError={() => setFailedSource(resolvedSource)}
+    /> : null}
+  </>;
   if (inline) {
     return <span className="rich-image-block inline">{image}</span>;
   }
@@ -1237,7 +1238,7 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
   return (
     <div className="rich-mermaid" data-mermaid-state={state.status} aria-busy={state.status === "rendering"}>
       {state.status === "rendered" ? (
-        <Tooltip asChild content={t("rich.enlargeDiagram")}><button
+        <button
           type="button"
           className="rich-mermaid-diagram"
           aria-label={t("rich.enlargeDiagram")}
@@ -1260,7 +1261,7 @@ function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
             });
           }}
           dangerouslySetInnerHTML={{ __html: state.svg }}
-        /></Tooltip>
+        />
       ) : state.status === "error" ? (
         <div className="rich-mermaid-error">
           <span>{state.message}</span>

@@ -796,6 +796,10 @@ func TestACPHelper(t *testing.T) {
 				result = grokACPSessionResult()
 				break
 			}
+			if scenario == "catalog-probe-stall" {
+				result = probeStallSessionResult("model-a")
+				break
+			}
 			if scenario == "unattended-mode" {
 				result = map[string]any{
 					"sessionId": "native-session",
@@ -846,6 +850,22 @@ func TestACPHelper(t *testing.T) {
 			selectedModel = params.ModelID
 			result = map[string]any{}
 		case "session/set_config_option":
+			if scenario == "catalog-probe-stall" {
+				var params struct {
+					ConfigID string `json:"configId"`
+					Value    string `json:"value"`
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				if params.ConfigID == "model" && params.Value == "model-b" {
+					// A wedged selection never replies; the probe must give up
+					// on its own slice instead of the whole catalog.
+					continue
+				}
+				if params.ConfigID == "model" {
+					result = probeStallSessionResult(params.Value)
+					break
+				}
+			}
 			if scenario == "boolean-options" {
 				var params struct {
 					ConfigID string `json:"configId"`
@@ -1130,6 +1150,30 @@ func grokACPSessionResult() map[string]any {
 	}
 }
 
+func probeStallSessionResult(current string) map[string]any {
+	efforts := map[string][]any{
+		"model-a": {map[string]string{"value": "low"}, map[string]string{"value": "high"}},
+		"model-c": {map[string]string{"value": "turbo"}},
+	}
+	return map[string]any{
+		"sessionId": "native-session",
+		"configOptions": []any{
+			map[string]any{
+				"id": "model", "category": "model", "type": "select", "currentValue": current,
+				"options": []any{
+					map[string]string{"value": "model-a", "name": "Model A"},
+					map[string]string{"value": "model-b", "name": "Model B"},
+					map[string]string{"value": "model-c", "name": "Model C"},
+				},
+			},
+			map[string]any{
+				"id": "reasoning_effort", "category": "thought_level", "type": "select", "currentValue": efforts[current][0].(map[string]string)["value"],
+				"options": efforts[current],
+			},
+		},
+	}
+}
+
 func TestACPGrokPromptCompleteSettlesHungPrompt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -1305,6 +1349,27 @@ func TestACPCatalogReportsSpeedPerModel(t *testing.T) {
 	}
 	if len(catalog.Models) != 2 || !catalog.Models[0].FastMode || catalog.Models[1].FastMode {
 		t.Fatalf("wrong per-model speed capabilities: %+v", catalog.Models)
+	}
+}
+
+func TestACPCatalogKeepsProbingPastAStalledModel(t *testing.T) {
+	previous := acpModelProbeTimeout
+	acpModelProbeTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { acpModelProbeTimeout = previous })
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	catalog, err := testEngine(t, "catalog-probe-stall").DiscoverCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 3 {
+		t.Fatalf("stalled probe changed catalog membership: %+v", catalog.Models)
+	}
+	if catalog.Models[1].ID != "model-b" || len(catalog.Models[1].SupportedEfforts) != 0 {
+		t.Fatalf("stalled model lost its listing or was enriched: %+v", catalog.Models[1])
+	}
+	if catalog.Models[2].ID != "model-c" || len(catalog.Models[2].SupportedEfforts) != 1 || catalog.Models[2].SupportedEfforts[0] != "turbo" {
+		t.Fatalf("probe after the stall did not run: %+v", catalog.Models[2])
 	}
 }
 

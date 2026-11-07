@@ -1,7 +1,6 @@
 package appserver
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,25 +44,12 @@ func (s *Server) requireUserHostSessionOwnerLocked(th *threadState) error {
 	return nil
 }
 
-// Resolve provider policy before acquiring thread or execution lease locks.
-func (s *Server) threadProjectAdmission(ctx context.Context, th *threadState) (int, error) {
-	metadata, found, err := th.state.Sessions.Find(th.ID)
-	if err != nil {
-		return 0, err
-	}
-	if !found || (metadata.Source != projectSource && metadata.Source != projectSessionSource) {
-		return 0, nil
-	}
-	policy, err := ProjectAdmission(s.projectServiceContext(ctx, th.state), th.state.Host, th.ID)
-	return policy.MaxParallel, err
-}
-
-func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState, maxParallel int) (bool, error) {
+func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState) (bool, error) {
 	if th == nil {
 		return false, errors.New("thread is required")
 	}
-	if projectExecutionDisabled(th.Source) {
-		return false, errProjectAgentDisabled
+	if retiredSessionSource(th.Source) {
+		return false, errRetiredSession
 	}
 	if err := s.requireUserHostSessionOwnerLocked(th); err != nil {
 		return false, err
@@ -139,14 +125,11 @@ func (s *Server) tryAcquireThreadExecutionLeaseLocked(th *threadState, maxParall
 		}
 		return false, errors.New("session directory is required for durable thread execution")
 	}
-	lease, acquired, err := th.state.Sessions.TryAcquireThreadExecutionLeaseWithProjectLimit(s.rt.SessionDir, th.ID, maxParallel)
+	lease, acquired, err := th.state.Sessions.TryAcquireThreadExecutionLease(s.rt.SessionDir, th.ID)
 	if err != nil {
 		th.admissionReserved = false
 		if newPluginLease {
 			th.releasePluginGenerationExecutionLeaseLocked()
-		}
-		if errors.Is(err, session.ErrProjectWorkerCapacity) {
-			return false, errors.Join(errRetryableTurnAdmission, err)
 		}
 		return false, fmt.Errorf("acquire execution lease for thread %q: %w", th.ID, err)
 	}
@@ -169,8 +152,8 @@ func (s *Server) refreshDurableThreadHistoryLocked(th *threadState) error {
 	if err != nil {
 		return fmt.Errorf("refresh durable state for thread %q: %w", th.ID, err)
 	}
-	if projectExecutionDisabled(loaded.metadata.Source) {
-		return errProjectAgentDisabled
+	if retiredSessionSource(loaded.metadata.Source) {
+		return errRetiredSession
 	}
 	if loaded.repairNeeded {
 		if err := s.rewriteChatHistoryUnderExecutionLease(th.state, s.rt.SessionDir, th.ID, loaded.repairedHistory, loaded.baselineSeq); err != nil {
@@ -413,7 +396,7 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		// intentionally folds their output into the current visible turn, so their
 		// failure marker must target that same aggregate instead of an ephemeral ID.
 		if status == TurnStatusCompleted {
-			return nil
+			return s.recordRecoveryTurn(th, turnID, "idle")
 		}
 		clientID = ""
 	}
@@ -472,6 +455,13 @@ func (s *Server) persistTurnTerminal(th *threadState, turnID string, kind TurnKi
 		StartedAt:           startedAt,
 		AnswerReadyAt:       answerReadyAt,
 	}); err != nil {
+		return err
+	}
+	recoveryState := "idle"
+	if status == TurnStatusInterrupted && s.closed.Load() && !s.shutdownRequested.Load() {
+		recoveryState = "pending"
+	}
+	if err := s.recordRecoveryTurn(th, turnID, recoveryState); err != nil {
 		return err
 	}
 	if reconnect == nil || status == TurnStatusCompleted {

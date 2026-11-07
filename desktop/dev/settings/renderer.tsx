@@ -213,7 +213,10 @@ function isoDay(back: number): string {
 function sampleUsage(): SettingsUsageResponse {
   const days: SettingsUsageDay[] = Array.from({ length: 300 }, (_, back) => {
     const tokens = back % 7 === 5 || back % 11 === 3 ? 0 : ((back * 37) % 23 + 1) * 9_000;
-    return { date: isoDay(back), input_tokens: tokens, output_tokens: tokens / 4, cache_creation_tokens: 0, cache_read_tokens: tokens * 3, cache_hit_rate: 0.75, turns: tokens ? 4 : 0, agents: 0 };
+    const outside = back % 5 === 4 && tokens > 0
+      ? { input_tokens: Math.round(tokens * 1.8), output_tokens: Math.round(tokens * 0.45), cache_creation_tokens: 0, cache_read_tokens: Math.round(tokens * 5.4), sessions: 2 }
+      : undefined;
+    return { date: isoDay(back), input_tokens: tokens, output_tokens: tokens / 4, cache_creation_tokens: 0, cache_read_tokens: tokens * 3, cache_hit_rate: 0.75, turns: tokens ? 4 : 0, agents: 0, outside };
   }).filter((day) => day.turns > 0).reverse();
   const sum = (key: "input_tokens" | "output_tokens" | "cache_read_tokens") => days.reduce((total, day) => total + day[key], 0);
   const input = sum("input_tokens"), output = sum("output_tokens"), cacheRead = sum("cache_read_tokens");
@@ -676,10 +679,12 @@ function Fixture(): JSX.Element {
       };
     });
   };
-  return (
-    <div style={{ height: "100vh", width: params.has("width") ? Number(params.get("width")) : undefined, maxWidth: "100%" }}>
+  const floating = params.has("overlay");
+  const [overlayOpen, setOverlayOpen] = useState(true);
+  const settingsView = (
       <SettingsView
         application={application}
+        floating={floating}
         initialized={state}
         initialPage={(params.get("page") as SettingsPage | null) ?? undefined}
         running={false}
@@ -693,7 +698,7 @@ function Fixture(): JSX.Element {
         sidebarMaxWidth={420}
         resizingSidebar={false}
         shellRef={shellRef}
-        onBack={() => undefined}
+        onBack={() => { if (floating) setOverlayOpen(false); }}
         onSave={save}
         onRemoveProvider={async (name) => setState((current) => ({ ...current, providers: current.providers?.filter((item) => item.name !== name) }))}
         onProvidersChanged={updated => setState(current => ({ ...current,
@@ -717,6 +722,13 @@ function Fixture(): JSX.Element {
         sidebarAnimating={false}
         onToggleSidebar={() => setCollapsed((value) => !value)}
       />
+  );
+  return (
+    <div style={{ height: "100vh", width: params.has("width") ? Number(params.get("width")) : undefined, maxWidth: "100%" }}>
+      {floating ? overlayOpen ? <div
+        className="settings-overlay-layer"
+        onPointerDown={event => { if (event.target === event.currentTarget) setOverlayOpen(false); }}
+      >{settingsView}</div> : null : settingsView}
     </div>
   );
 }

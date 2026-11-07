@@ -14,9 +14,9 @@ function WorkspaceReviewPanel({ gitStatus, workspaceRoot, onOpenFile }: { gitSta
   return <PublicWorkspaceReviewPanel environment={environment} onOpenFile={onOpenFile} />;
 }
 
-vi.mock("./WorkspaceMonacoDiffEditor", () => ({
-  WorkspaceMonacoDiffEditor: ({ path }: { path: string }) => (
-    <div className="workspace-monaco-diff-editor" data-path={path} />
+vi.mock("./WorkspaceDiff", () => ({
+  WorkspaceDiff: ({ diff }: { diff: { path: string } }) => (
+    <div className="workspace-diff" data-path={diff.path} />
   ),
 }));
 
@@ -115,7 +115,7 @@ function rowOrder(): string[] {
 }
 
 function shownDiffPath(): string | undefined {
-  return container!.querySelector<HTMLElement>(".workspace-monaco-diff-editor")?.dataset.path;
+  return container!.querySelector<HTMLElement>(".workspace-diff")?.dataset.path;
 }
 
 function mockPanelWidth(width: number): () => void {

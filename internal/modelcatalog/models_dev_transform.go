@@ -97,8 +97,14 @@ func buildModelsDevCatalog(raw modelsDevCatalog) catalogData {
 
 func buildModelsDevModels(provider modelsDevProvider) []Model {
 	modelIDs := make([]string, 0, len(provider.Models))
-	for id := range provider.Models {
-		modelIDs = append(modelIDs, id)
+	explicitIDs := make(map[string]bool, len(provider.Models))
+	for key, model := range provider.Models {
+		modelIDs = append(modelIDs, key)
+		id := model.ID
+		if id == "" {
+			id = key
+		}
+		explicitIDs[id] = true
 	}
 	sort.Strings(modelIDs)
 	models := make([]Model, 0, len(modelIDs))
@@ -114,7 +120,9 @@ func buildModelsDevModels(provider modelsDevProvider) []Model {
 		models = append(models, base)
 		for _, mode := range sortedModelsDevModes(model.Experimental) {
 			candidate := modelsDevModeModel(base, mode, model.Experimental.Modes[mode])
-			if !filteredModelsDevModel(provider.ID, candidate.ID, candidate.Status) {
+			// An explicit upstream entry owns its ID, including retirement status.
+			// Experimental modes must not duplicate or resurrect that entry.
+			if !explicitIDs[candidate.ID] && !filteredModelsDevModel(provider.ID, candidate.ID, candidate.Status) {
 				models = append(models, candidate)
 			}
 		}

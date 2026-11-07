@@ -267,7 +267,7 @@ app.whenReady().then(async () => {
   await check("slash-like follow-up preserves folded content without providers", async () => {
     await draft("");
     const pasted = Array.from({ length: 20 }, (_, index) => `Pasted evidence line ${index + 1}.`).join("\n");
-    clipboard.writeText(pasted);
+    await clipboard.writeText(pasted);
     win.webContents.paste();
     await until(() => Boolean(document.querySelector('[data-main-conversation-composer] .composer-collapsed-prompt-card')));
     await draft("/rev");

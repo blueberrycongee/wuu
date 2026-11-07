@@ -283,7 +283,7 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	// Provider call IDs belong to one assistant declaration. A later model
 	// operation may reuse a provider's ID; batch IDs still fence every effect.
 	g.toolCalls = make(map[string]bool)
-	step := &streamStep{toolGate: g.toolGate, policy: g.runner.SelectedPolicy, client: g.client, onEvent: g.onEvent, tools: g.runner.Tools}
+	step := &streamStep{toolGate: g.toolGate, policy: g.runner.SelectedPolicy, client: g.client, onEvent: g.onEvent, tools: g.runner.Tools, modelInterrupt: g.runner.ModelInterrupt}
 	observed := make(map[string]providers.ToolCall)
 	streamArgumentBytes := 0
 	var runtimes []*TurnToolRuntime
@@ -424,11 +424,16 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 			g.appendMessages(assistant)
 		}
 	}
+	preempted := errors.Is(err, ErrModelPreempted)
 	if err != nil {
 		if resumableStreamCheckpoint(result, err) != nil {
 			g.nextModelParentID = request.Operation.ID
 		}
 		fragment := result.Content
+		fragmentCause := providers.IncompleteStreamFragment
+		if preempted {
+			fragmentCause = providers.SteeredStreamFragment
+		}
 		for _, completed := range result.CompletedMessages {
 			g.appendMessages(providers.CloneChatMessage(completed))
 			if completed.Content != "" {
@@ -436,8 +441,15 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 			}
 		}
 		if strings.TrimSpace(fragment) != "" || len(result.Images) > 0 {
-			g.appendMessages(providers.ChatMessage{Role: "assistant", Cause: providers.IncompleteStreamFragment, Content: fragment, Images: result.Images, Phase: result.Phase})
+			g.appendMessages(providers.ChatMessage{Role: "assistant", Cause: fragmentCause, Content: fragment, Images: result.Images, Phase: result.Phase})
 		}
+	}
+	if preempted {
+		round.Preempted = true
+		// The successor is a new model round: allow next-step model selection
+		// to take effect before its request is assembled.
+		g.modelBoundaryPending = true
+		return round, nil
 	}
 	return round, err
 }

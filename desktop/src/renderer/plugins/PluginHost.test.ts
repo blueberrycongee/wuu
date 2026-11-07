@@ -625,17 +625,57 @@ describe("PluginHost", () => {
     await install("one");
     await host.activateGeneration({ pluginId: "coding", generation: "one", contributions: { navigation: [{ id: "code", view: "code", title: "Coding" }] }, register(value) { value.registerViewType({ id: "code", title: "Coding", render: () => null }); } });
     api.setNavigationTitle("home", "  <MushrooM>  ");
+    api.setViewTitle("home", "  <ViewTitle>  ");
     expect(host.getNavigationEntries().find(entry => entry.pluginId === "named")?.title).toBe("<MushrooM>");
     expect(host.getNavigationEntries().find(entry => entry.pluginId === "coding")?.title).toBe("Coding");
+    expect(host.getViewTypes().find(view => view.pluginId === "named" && view.id === "home")?.title).toBe("<ViewTitle>");
     expect(host.getSettingsPages()[0].title).toBe("twin");
     expect(api.setNavigationTitle("code", "Other")).toBe(false);
+    expect(api.setViewTitle("missing", "Other")).toBe(false);
     expect(() => api.setNavigationTitle("home", "  ")).toThrow();
     expect(() => api.setNavigationTitle("home", "🙂".repeat(65))).toThrow();
+    expect(() => api.setViewTitle("home", "  ")).toThrow();
+    expect(() => api.setViewTitle("home", "🙂".repeat(65))).toThrow();
     const old = api; await install("two");
     expect(host.getNavigationEntries().find(entry => entry.pluginId === "named")?.title).toBe("twin");
+    expect(host.getViewTypes().find(view => view.pluginId === "named" && view.id === "home")?.title).toBe("twin");
     expect(() => old.setNavigationTitle("home", "stale")).toThrow();
+    expect(() => old.setViewTitle("home", "stale")).toThrow();
     host.unload("named");
     expect(host.getNavigationEntries().some(entry => entry.pluginId === "named")).toBe(false);
+  });
+
+  it("scopes navigation avatars to their declared entry and active generation", async () => {
+    const host = new PluginHost({ react: React });
+    let api!: PluginGenerationApi;
+    const install = (generation: string) => host.activateGeneration({ pluginId: "avatar-owner", generation,
+      contributions: { navigation: [{ id: "home", view: "home", title: "Agent", icon: { name: "mascot" } }], settings_pages: [{ id: "settings", view: "home", title: "Settings" }] },
+      register(value) { api = value; value.registerViewType({ id: "home", title: "Agent", render: () => null }); },
+    });
+    await install("one");
+    const original = host.getNavigationEntries();
+    expect(api.setNavigationAvatar("other", "mascot-v1:diamond:leaf:150")).toBe(false);
+    expect(host.getNavigationEntries()).toBe(original);
+    expect(() => api.setNavigationAvatar("home", "invalid")).toThrow();
+    api.setNavigationAvatar("home", "mascot-v1:diamond:leaf:150");
+    const changed = host.getNavigationEntries();
+    expect(changed[0].avatarKey).toBe("mascot-v1:diamond:leaf:150");
+    expect(changed).not.toBe(original);
+    api.setNavigationTitle("home", "Renamed");
+    expect(host.getNavigationEntries()[0].avatarKey).toBe(changed[0].avatarKey);
+    expect(host.getSettingsPages()[0].avatarKey).toBeUndefined();
+    const stable = host.getNavigationEntries();
+    api.setNavigationAvatar("home", "mascot-v1:diamond:leaf:150");
+    expect(host.getNavigationEntries()).toBe(stable);
+    api.setNavigationAvatar("home", undefined);
+    expect(host.getNavigationEntries()[0].avatarKey).toBeUndefined();
+    api.setNavigationAvatar("home", "mascot-v1:round:headset:222");
+    const old = api;
+    await install("two");
+    expect(host.getNavigationEntries()[0].avatarKey).toBeUndefined();
+    expect(() => old.setNavigationAvatar("home", "mascot-v1:diamond:leaf:150")).toThrow();
+    host.unload("avatar-owner");
+    expect(host.getNavigationEntries()).toHaveLength(0);
   });
 
   it("publishes manifest View entries only after their View is registered", async () => {

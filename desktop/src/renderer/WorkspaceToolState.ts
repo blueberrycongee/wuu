@@ -35,8 +35,6 @@ export function useWorkspaceToolState({
   openWorkspaceDiffTab: (input: { threadID: string; path: string; selection: TurnFileDiffSelection }) => void;
   openWorkspaceFileTab: (input: { context: Exclude<RuntimeContext, { kind: "user" }>; path: string }) => void;
   openWorkspaceArtifactTab: (input: ArtifactPreviewRequest) => void;
-  openWorkspaceProjectTab: (projectID: string, title: string) => void;
-  syncWorkspaceProjectTab: (project: { id: string; title: string } | undefined) => void;
   showWorkspaceToolPicker: () => void;
   focusWorkspaceViewTab: (id: string | undefined) => void;
   closeWorkspaceViewTab: (id: string) => void;
@@ -108,13 +106,6 @@ export function useWorkspaceToolState({
       sha256: input.artifact.sha256, page: input.page }).catch(error => { origins.current.delete(id); showErrorToast(error); });
     setRightPanelOpenWithMotion(true);
   }
-  function openWorkspaceProjectTab(projectId: string, title: string): void {
-    void application.invoke("preview.open-project", { projectId, title }).catch(showErrorToast);
-    setRightPanelOpenWithMotion(true);
-  }
-  const syncProjectTab = useCallback((project: { id: string; title: string } | undefined) => {
-    void application.invoke("preview.follow-project", { project }).catch(showErrorToast);
-  }, [application]);
   function showWorkspaceToolPicker(): void {
     void application.invoke("preview.new-tab", {}).catch(showErrorToast);
     setRightPanelOpenWithMotion(true);
@@ -172,8 +163,6 @@ export function useWorkspaceToolState({
     openWorkspaceDiffTab,
     openWorkspaceFileTab,
     openWorkspaceArtifactTab,
-    openWorkspaceProjectTab,
-    syncWorkspaceProjectTab: syncProjectTab,
     showWorkspaceToolPicker,
     focusWorkspaceViewTab: focusTab,
     closeWorkspaceViewTab,

@@ -3,6 +3,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1305,11 +1306,9 @@ func withRGTestHooks(t *testing.T, lookup func(string) (string, error), cmd exec
 	if cmd != nil {
 		rgCommand = cmd
 	}
-	resetRGForTests()
 	t.Cleanup(func() {
 		rgLookupPath = origLookup
 		rgCommand = origCmd
-		resetRGForTests()
 	})
 }
 
@@ -1652,57 +1651,30 @@ func TestToolkit_GlobRipgrepFirst(t *testing.T) {
 	}
 }
 
-func TestToolkit_GlobFallbackWithoutRG(t *testing.T) {
+func TestToolkit_GlobRequiresRG(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)
 	if err != nil {
-		t.Fatalf("New: %v", err)
+		t.Fatal(err)
 	}
 	withRGTestHooks(t, func(string) (string, error) { return "", exec.ErrNotFound }, nil)
-
-	for path, content := range map[string]string{
-		"src/app/main.ts": "main\n",
-		"src/app/main.js": "main\n",
-	} {
-		fullPath := filepath.Join(root, path)
-		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", path, err)
-		}
-		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
-	}
-
-	resp, err := kit.Execute(context.Background(), providers.ToolCall{
-		Name:      "glob",
-		Arguments: `{"pattern":"src/**/*.ts"}`,
-	})
-	if err != nil {
-		t.Fatalf("glob fallback: %v", err)
-	}
-	var parsed struct {
-		Files []string `json:"files"`
-	}
-	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
-		t.Fatalf("parse glob response: %v", err)
-	}
-	if !reflect.DeepEqual(parsed.Files, []string{"src/app/main.ts"}) {
-		t.Fatalf("unexpected fallback matches: %+v", parsed.Files)
+	_, err = kit.Execute(context.Background(), providers.ToolCall{Name: "glob", Arguments: `{"pattern":"*.ts"}`})
+	if !errors.Is(err, errRipgrepUnavailable) {
+		t.Fatalf("expected missing ripgrep error, got %v", err)
 	}
 }
 
-func TestToolkit_GlobFallbackIncludesHiddenDirectories(t *testing.T) {
+func TestToolkit_GlobIncludesHiddenDirectories(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	withRGTestHooks(t, func(string) (string, error) { return "", exec.ErrNotFound }, nil)
-
 	for path, content := range map[string]string{
 		".hidden/config/app.yaml": "name: hidden\n",
 		"visible/config/app.yaml": "name: visible\n",
 		".git/config/app.yaml":    "name: skipped\n",
+		".ignore":                 ".git/\n",
 	} {
 		fullPath := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
@@ -1732,18 +1704,17 @@ func TestToolkit_GlobFallbackIncludesHiddenDirectories(t *testing.T) {
 	}
 }
 
-func TestToolkit_GrepFallbackIncludesHiddenDirectories(t *testing.T) {
+func TestToolkit_GrepIncludesHiddenDirectories(t *testing.T) {
 	root := t.TempDir()
 	kit, err := New(root)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	withRGTestHooks(t, func(string) (string, error) { return "", exec.ErrNotFound }, nil)
-
 	for path, content := range map[string]string{
 		".hidden/app.env":    "API_KEY=hidden\n",
 		"visible/app.env":    "API_KEY=visible\n",
 		"node_modules/x.env": "API_KEY=skipped\n",
+		".ignore":            "node_modules/\n",
 	} {
 		fullPath := filepath.Join(root, path)
 		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {

@@ -44,8 +44,8 @@
   --reasoning-stream-cursor-color: var(--theme-override-color-text-muted, var(--gray-500));
   --turn-process-entry-color: var(--ink-tertiary);
   --process-control-color-fallback: var(--ink-tertiary);
-  /* Tool activity and standalone reasoning summaries share the quiet ink
-     used by the composer placeholder, in every running/settled state. */
+  /* Turn headers, tool activity and standalone reasoning summaries share the
+     composer's placeholder ink in every running/settled state. */
   --process-summary-color: var(--ink-quiet);
   --process-active-highlight: var(--ink-muted);
   --activity-toggle-hover-color: var(--theme-override-color-text-muted, var(--gray-650));
@@ -542,6 +542,19 @@
 }
 
 .user-message-text-part {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.user-message-skill-invocation {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 6px;
+}
+
+.user-message-skill-arguments {
+  width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -1085,7 +1098,9 @@
  * The wrapper itself has no border or padding — it's a positioning
  * context for the X button. That way the static bubble keeps its
  * current pixel-perfect layout while the editor gains a delete
- * affordance without any layout shift.
+ * affordance without any layout shift. The image X sits inside the
+ * frame: the grid gap is narrower than its overhang, so an outside
+ * badge would cross into the neighbouring preview.
  */
 .message-image-frame,
 .message-file-frame {
@@ -1100,12 +1115,13 @@
 .message-image-remove,
 .message-file-remove {
   position: absolute;
-  top: -7px;
-  right: -7px;
   display: grid;
   width: 22px;
   height: 22px;
   place-items: center;
+  /* The shared button icon sizing can exceed the UA-padded content box, which
+   * leaves the glyph off-center. The circle owns the inset. */
+  padding: 0;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--radius-pill);
   background: var(--paper);
@@ -1113,6 +1129,17 @@
   box-shadow: var(--shadow-card);
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+
+.message-image-remove {
+  top: var(--space-1);
+  right: var(--space-1);
+  z-index: 1;
+}
+
+.message-file-remove {
+  top: -7px;
+  right: -7px;
 }
 
 .message-image-remove:hover,
@@ -1944,7 +1971,7 @@
  * collapsed turn says it holds more than its duration. */
 .turn-process-header > .turn-process-chevron {
   align-self: center;
-  color: var(--ink-tertiary);
+  color: var(--process-summary-color);
   transform: rotate(0deg);
   transition:
     color var(--motion-fast) var(--ease-out),
@@ -1973,7 +2000,7 @@
   flex: 0 0 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--ink-tertiary);
+  color: var(--process-summary-color);
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--conversation-process-font-size);
@@ -2003,7 +2030,7 @@
 
 .turn-process-meta {
   flex: 0 0 auto;
-  color: var(--ink-tertiary);
+  color: var(--process-summary-color);
   font-size: var(--conversation-process-font-size);
   font-variant-numeric: tabular-nums;
   font-weight: var(--conversation-process-font-weight);
@@ -2724,7 +2751,7 @@
 }
 
 .context-compaction-indicator .context-usage-ring {
-  color: var(--token-gauge-mid);
+  color: var(--context-meter-mid);
 }
 
 .context-compaction-indicator.is-failed {
@@ -2798,6 +2825,39 @@
   border: 0;
   background: transparent;
   color: var(--conversation-process-control-color, var(--process-control-color-fallback));
+}
+
+/* Continuing starts a new turn while the failed turn stays in history. The
+ * presence wrapper lets the old card collapse out instead of leaving a red
+ * row above the live turn. It shares the grid-row exit used by turn output
+ * summaries: the card keeps its internal layout, and the negative margin
+ * releases the parent's flex gap so unmounting cannot jump the turn below. */
+.turn-failure-presence {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-width: 0;
+  opacity: 1;
+  margin-bottom: 0;
+  transition:
+    grid-template-rows var(--motion-slow) var(--ease-out),
+    margin-top var(--motion-slow) var(--ease-out),
+    margin-bottom var(--motion-slow) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out);
+}
+
+.turn-failure-presence-body {
+  min-height: 0;
+}
+
+.turn-failure-presence.is-leaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+  margin-bottom: calc(-1 * var(--conversation-turn-item-gap));
+}
+
+.turn-failure-presence.is-leaving .turn-failure-presence-body {
+  overflow: hidden;
 }
 
 /* The turn's answer did not arrive. One row, read left to right: the symbol,
@@ -3045,7 +3105,7 @@
  * gets after prose. Add the remainder; the parent gap already supplies the
  * rest.
  */
-.turn > .turn-failure {
+.turn > .turn-failure-presence {
   margin-top: calc(
     var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap)
   );
@@ -3054,11 +3114,16 @@
 /* A failure with no reply before it stands where the reply would: it keeps
  * the query → reply gap, which already clears the query's hover actions
  * hanging below the bubble. */
-.turn > .user-message-block + .turn-failure {
+.turn > .user-message-block + .turn-failure-presence {
   margin-top: calc(
     var(--conversation-user-rule-gap) - var(--conversation-turn-item-gap) -
       var(--conversation-user-message-trailing-gap)
   );
+}
+
+.turn > .turn-failure-presence.is-leaving,
+.turn > .user-message-block + .turn-failure-presence.is-leaving {
+  margin-top: 0;
 }
 
 /* A failure that happens in front of the reader resolves out of the pending
@@ -5538,6 +5603,25 @@ html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible 
 .turn-artifact-unavailable {
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
+}
+
+.turn-artifact-image-preview > .image-placeholder {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--conversation-image-radius);
+  background: var(--surface-2);
+}
+
+.turn-artifact-image-preview .image-placeholder .turn-artifact-unavailable {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .turn-edit-summary-card[data-wuu-component="artifact"] {

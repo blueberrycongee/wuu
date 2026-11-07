@@ -257,7 +257,7 @@ func TestPluginRefreshFailureBackoffKeepsRealRuntimeAndManualRetry(t *testing.T)
 		_ = srv.refreshPluginGenerationIfChanged()
 		thread := &threadState{ID: "waiting-for-recovery", state: testRuntimeState(t, rt)}
 		thread.mu.Lock()
-		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread, 0)
+		acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(thread)
 		thread.mu.Unlock()
 		if err != nil || acquired {
 			t.Fatalf("turn admission did not wait for recovery: acquired=%t err=%v", acquired, err)
@@ -550,7 +550,7 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 				t.Fatal("worker did not start")
 			}
 			th.mu.Lock()
-			acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+			acquired, admissionErr := srv.tryAcquireThreadExecutionLeaseLocked(th)
 			if admissionErr == nil && acquired {
 				th.releaseThreadExecutionLeaseLocked()
 			}
@@ -904,7 +904,7 @@ func TestPluginRefreshActivationCanQueueSessionSend(t *testing.T) {
 					t.Fatal(err)
 				}
 				th.mu.Lock()
-				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th, 0)
+				acquired, err := srv.tryAcquireThreadExecutionLeaseLocked(th)
 				if acquired {
 					th.releaseThreadExecutionLeaseLocked()
 				}
@@ -1065,6 +1065,64 @@ func TestPluginReloadAcceptsInputForRunningTurn(t *testing.T) {
 			})
 		}
 	}
+}
+
+func TestPluginReloadRetainsRunningTurnDuringAdmission(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	unblock := func() { once.Do(func() { close(release) }) }
+	t.Cleanup(unblock)
+	client := &fakeClient{response: providers.ChatResponse{Content: "answer"}, onChat: func(call int, _ providers.ChatRequest) {
+		if call == 1 {
+			close(entered)
+			<-release
+		}
+	}}
+	rt := newReloadBehaviorRuntime(t, newTestRuntime(t, client), client)
+	publishReloadBehaviorGeneration(t, rt, "old implementation", "Read fixture")
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	defer func() { unblock(); srv.Close(); _, _ = rt.Cleanup() }()
+	dispatchPayload(t, srv, "create", MethodThreadStart, ThreadStartParams{})
+	threadID := remarshal[ThreadStartResult](t, responseByID(t, parseOutput(t, out.String()), "create")["result"]).Thread.ID
+	dispatchPayload(t, srv, "start", MethodTurnStart, TurnStartParams{ThreadID: threadID, Prompt: "first question"})
+	if response := responseByID(t, parseOutput(t, out.String()), "start"); response["error"] != nil {
+		t.Fatalf("start: %+v", response)
+	}
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first model call did not start")
+	}
+
+	running := srv.thread(threadID)
+	running.mu.Lock()
+	originalState := running.state
+	hasLease := running.executionLease != nil
+	running.mu.Unlock()
+	if !threadIsRunning(running) || !hasLease {
+		t.Fatal("fixture did not retain the running turn")
+	}
+
+	publishReloadBehaviorGeneration(t, rt, "new implementation", "Read updated fixture")
+	if originalState.Sessions == rt.Sessions {
+		t.Fatal("fixture did not replace the session authority")
+	}
+
+	retained, admitted, err := srv.retainThreadAdmissionState(threadID)
+	if err != nil {
+		t.Fatalf("running local turn was rejected as an external owner: %v", err)
+	}
+	defer retained.Close()
+	if admitted != running || retained.Sessions != originalState.Sessions {
+		t.Fatal("admission replaced the running turn's state graph")
+	}
+	if current := srv.thread(threadID); current != running {
+		t.Fatal("admission replaced the running turn's projection")
+	}
+
+	unblock()
+	waitForReloadTurnCompletions(t, out, threadID, 1)
 }
 
 func TestPluginReloadAdmitsQueuedTurnOnCurrentGeneration(t *testing.T) {

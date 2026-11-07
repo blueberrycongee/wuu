@@ -902,6 +902,7 @@ func (s *Session) ActivatePluginGeneration(candidate *PluginGeneration, commit f
 		}
 	}
 	s.pluginGenerationMu.Unlock()
+	s.RetireRemovedMCPServers(candidate.settings)
 	// Local control cannot outlive provider replacement. Revoke leases before
 	// the replacement activates, so a pinned foreground turn cannot keep sending
 	// input or silently switch control surfaces after publication.
@@ -1690,4 +1691,40 @@ func snapshotMutableExecutionPackages(active []pluginpkg.Plugin) ([]pluginpkg.Pl
 		result[i] = copied
 	}
 	return result, roots, nil
+}
+
+// RetireRemovedMCPServers applies committed effective configuration to every
+// pinned generation. A project overlay that still defines a name preserves it.
+// Callers serialize this with generation/configuration publication.
+func (s *Session) RetireRemovedMCPServers(cfg config.Config) {
+	s.pluginGenerationMu.Lock()
+	generations := make([]*PluginGeneration, 0, len(s.retiredPluginGenerations)+1)
+	if s.pluginGeneration != nil {
+		s.pluginGeneration.retain()
+		generations = append(generations, s.pluginGeneration)
+	}
+	for g := range s.retiredPluginGenerations {
+		for refs := g.refs.Load(); refs > 0; refs = g.refs.Load() {
+			if g.refs.CompareAndSwap(refs, refs+1) {
+				generations = append(generations, g)
+				break
+			}
+		}
+	}
+	s.pluginGenerationMu.Unlock()
+	for _, g := range generations {
+		if g.mcp != nil {
+			for name := range g.settings.MCPServers {
+				if IsPluginMCPServerName(name) {
+					continue
+				}
+				if _, exists := cfg.MCPServers[name]; !exists {
+					if err := g.mcp.Retire(name); err != nil {
+						providers.DebugLogf("retire removed MCP server %q: %v", name, err)
+					}
+				}
+			}
+		}
+		s.releasePluginGeneration(g)
+	}
 }

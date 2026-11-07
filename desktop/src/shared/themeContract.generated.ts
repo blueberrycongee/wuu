@@ -109,6 +109,13 @@ export const PUBLIC_SYNTAX_TOKEN_NAMES = [
 export type PublicSyntaxTokenName = (typeof PUBLIC_SYNTAX_TOKEN_NAMES)[number];
 
 export const PUBLIC_ICON_NAMES = [
+  "app-application",
+  "app-composer",
+  "app-conversations",
+  "app-layout",
+  "app-navigation",
+  "app-preview",
+  "app-settings",
   "archive",
   "bot",
   "brain",

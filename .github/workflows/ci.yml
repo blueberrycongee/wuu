@@ -193,6 +193,12 @@ jobs:
         with:
           node-version-file: .node-version
 
+      - name: Install ripgrep for search tests
+        if: matrix.suite == 'packages'
+        run: |
+          node desktop/scripts/fetch-ripgrep.cjs
+          echo "$GITHUB_WORKSPACE/desktop/build/tools" >> "$GITHUB_PATH"
+
       - name: Install plugin and SDK dependencies
         run: |
           npm ci --prefix packages/plugin-sdk
@@ -702,58 +708,10 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  project-agent-check:
-    name: Project Agent check / ${{ matrix.shard }}
-    needs: changes
-    if: needs.changes.outputs.go == 'true'
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [0, 1, 2]
-    env:
-      WUU_TEST_DATABASE_URL: postgres://wuu:wuu_test@127.0.0.1:5432/wuu_test?sslmode=disable
-    services:
-      postgres:
-        image: postgres:18-bookworm
-        env:
-          POSTGRES_USER: wuu
-          POSTGRES_PASSWORD: wuu_test
-          POSTGRES_DB: wuu_test
-        ports: ["5432:5432"]
-        options: >-
-          --health-cmd "pg_isready -U wuu -d wuu_test"
-          --health-interval 5s --health-timeout 5s --health-retries 12
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache-dependency-path: go.sum
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-
-      - name: Test experimental Project Agent
-        # Keep the entire suite: this tag changes shared recovery and lifecycle paths.
-        env:
-          WUU_GO_SHARD_EVIDENCE: ${{ runner.temp }}/go-shard/manifest.json
-        run: node .github/scripts/go-test-shard.mjs ./internal/appserver ${{ matrix.shard }} 3 project_agent
-
-      - name: Upload Project Agent test inventory
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: project-agent-${{ matrix.shard }}-inventory
-          path: ${{ runner.temp }}/go-shard/manifest.json
-          if-no-files-found: warn
-
   go-check:
     name: Go check
     runs-on: ubuntu-latest
-    needs: [changes, go-validation, go-race, project-agent-check, architecture-conformance]
+    needs: [changes, go-validation, go-race, architecture-conformance]
     # Evaluate failed dependencies, but let superseded workflow runs cancel.
     if: ${{ !cancelled() }}
     steps:
@@ -765,17 +723,14 @@ jobs:
           ARCHITECTURE_RESULT: ${{ needs.architecture-conformance.result }}
           GO_VALIDATION_RESULT: ${{ needs.go-validation.result }}
           GO_RACE_RESULT: ${{ needs.go-race.result }}
-          PROJECT_AGENT_RESULT: ${{ needs.project-agent-check.result }}
         run: |
           test "$SELECTION_RESULT" = success
           if [ "$GO_REQUIRED" = true ]; then
             test "$GO_VALIDATION_RESULT" = success
             test "$GO_RACE_RESULT" = success
-            test "$PROJECT_AGENT_RESULT" = success
           else
             test "$GO_VALIDATION_RESULT" = skipped
             test "$GO_RACE_RESULT" = skipped
-            test "$PROJECT_AGENT_RESULT" = skipped
           fi
           if [ "$ARCHITECTURE_REQUIRED" = true ]; then
             test "$ARCHITECTURE_RESULT" = success
@@ -1112,14 +1067,6 @@ jobs:
           set -o pipefail
           xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/subscription-quota-e2e.cjs 2>&1 | tee "$WUU_QUOTA_OUTPUT/run.log"
           WUU_JOURNEY_1_2
-            run_journey 'Verify programmatic tool settings' 0  <<'WUU_JOURNEY_2_2'
-          mkdir -p desktop/out/e2e/ptc
-          cp "${{ runner.temp }}/wuu-initial-renderer.sha256" desktop/out/e2e/ptc/renderer-before.sha256
-          sha256sum --quiet --check desktop/out/e2e/ptc/renderer-before.sha256
-          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/ptc-settings-e2e.cjs 2>&1 | tee desktop/out/e2e/ptc/run.log
-          find desktop/out/renderer -type f -print0 | sort -z | xargs -0 sha256sum > desktop/out/e2e/ptc/renderer-after.sha256
-          cmp desktop/out/e2e/ptc/renderer-before.sha256 desktop/out/e2e/ptc/renderer-after.sha256
-          WUU_JOURNEY_2_2
             run_journey 'Guard sidebar and streaming scroll-edge fades' 3m 'WUU_SCROLL_FADE_OUTPUT=${{ runner.temp }}/wuu-sidebar-scroll-fade-evidence' <<'WUU_JOURNEY_2_5'
           mkdir -p "$WUU_SCROLL_FADE_OUTPUT"
           set -o pipefail
@@ -1341,6 +1288,27 @@ jobs:
         run: |
           cp .tmp/desktop-ci-build/wuu-session-switch-core "$RUNNER_TEMP/wuu-session-switch-core"
           chmod +x "$RUNNER_TEMP/wuu-session-switch-core"
+
+      - name: Verify General settings persistence and appearance
+        if: ${{ matrix.suite == 'session' && (!cancelled() && steps.build-fixture-core.outcome == 'success' && steps.build-renderer.outcome == 'success') }}
+        timeout-minutes: 4
+        env:
+          WUU_DESKTOP_CORE: ${{ runner.temp }}/wuu-session-switch-core
+          WUU_SETTINGS_GENERAL_OUTPUT: ${{ runner.temp }}/wuu-settings-general
+          WUU_E2E_SOURCE_COMMIT: ${{ github.sha }}
+        run: |
+          mkdir -p "$WUU_SETTINGS_GENERAL_OUTPUT"
+          set -o pipefail
+          xvfb-run --auto-servernum --server-args="-screen 0 1440x1000x24" desktop/node_modules/.bin/electron --no-sandbox desktop/scripts/settings-general-e2e.cjs 2>&1 | tee "$WUU_SETTINGS_GENERAL_OUTPUT/run.log"
+
+      - name: Upload General settings evidence
+        if: ${{ matrix.suite == 'session' && always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: settings-general-evidence
+          path: ${{ runner.temp }}/wuu-settings-general/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Validate shareable conversation corpus
         if: ${{ matrix.suite == 'corpus' }}
@@ -1765,18 +1733,6 @@ jobs:
           retention-days: 14
 
 
-      - name: Upload programmatic tool settings evidence
-        if: ${{ matrix.suite == 'shell' && (always()) }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: ptc-settings-evidence
-          path: |
-            desktop/out/e2e/ptc/*.png
-            desktop/out/e2e/ptc/*.json
-            desktop/out/e2e/ptc/*.log
-            desktop/out/e2e/ptc/*.sha256
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Upload live resize evidence
         if: ${{ matrix.suite == 'layout' && (always()) }}
@@ -1952,6 +1908,15 @@ jobs:
             result=$?
             echo "personal-settings: $result" | tee -a desktop/out/personal-desktop-acceptance/native-results.log
             if [ "$result" -ne 0 ]; then status=1; fi
+            (
+              set -e
+              set -o pipefail
+              WUU_MESSAGE_FLOW_OUTPUT=desktop/out/personal-desktop-acceptance/message-flow \
+                desktop/node_modules/.bin/electron desktop/scripts/personal-message-flow-e2e.cjs 2>&1 | tee desktop/out/personal-desktop-acceptance/message-flow.log
+            )
+            result=$?
+            echo "personal-message-flow: $result" | tee -a desktop/out/personal-desktop-acceptance/native-results.log
+            if [ "$result" -ne 0 ]; then status=1; fi
             exit "$status"
           ) &
           native_pid=$!
@@ -1999,6 +1964,8 @@ jobs:
             desktop/out/personal-desktop-acceptance/settings/*.txt
             desktop/out/personal-desktop-acceptance/approval/*.json
             desktop/out/personal-desktop-acceptance/approval/*.png
+            desktop/out/personal-desktop-acceptance/message-flow/*.json
+            desktop/out/personal-desktop-acceptance/message-flow/*.png
           if-no-files-found: warn
           retention-days: 14
       - name: Upload hosted macOS error feedback evidence

@@ -65,17 +65,18 @@ function main() {
 
   run(process.execPath, [join(repoRoot, "scripts", "build-bundled-plugins.mjs")], { cwd: repoRoot });
 
+  const personalProductBuild = process.env.WUU_RELEASE === "1" ? "0" : "1";
   const ldflags = [
     "-s",
     "-w",
     `-X github.com/blueberrycongee/wuu/internal/version.Version=v${version}`,
     `-X github.com/blueberrycongee/wuu/internal/version.Commit=${commit}`,
     `-X github.com/blueberrycongee/wuu/internal/version.Date=${date}`,
+    `-X github.com/blueberrycongee/wuu/internal/plugin.personalProductBuild=${personalProductBuild}`,
   ].join(" ");
 
   if (!pluginsOnly) {
-    const tags = process.argv.includes("--project-agent") ? ["-tags", "project_agent"] : [];
-    run("go", ["build", ...tags, "-ldflags", ldflags, "-o", outPath, "./cmd/wuu"], {
+    run("go", ["build", "-ldflags", ldflags, "-o", outPath, "./cmd/wuu"], {
       cwd: repoRoot,
       env: {
         ...process.env,

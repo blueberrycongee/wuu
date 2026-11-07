@@ -2823,6 +2823,46 @@ func TestRunToolLoop_ReturnsInvalidToolArgumentsToModel(t *testing.T) {
 	}
 }
 
+func TestModelPreemptionContinuesWithPendingInput(t *testing.T) {
+	step := &fakeStep{results: []StepResult{
+		{Content: "visible prefix"},
+		{Content: "successor answer"},
+	}, errs: []error{ErrModelPreempted}}
+	beforeStepCalls := 0
+	result, err := RunToolLoop(context.Background(), []providers.ChatMessage{{Role: "user", Content: "task"}}, LoopConfig{
+		Model: "test",
+		BeforeStep: func() []providers.ChatMessage {
+			beforeStepCalls++
+			if beforeStepCalls == 2 {
+				return []providers.ChatMessage{{Role: "user", Content: "new direction", ClientID: "steer-1", Steered: true}}
+			}
+			return nil
+		},
+	}, step)
+	if err != nil {
+		t.Fatalf("preempted round failed the turn: %v", err)
+	}
+	if len(step.calls) != 2 {
+		t.Fatalf("model calls = %d, want 2", len(step.calls))
+	}
+	if len(result.NewMessages) != 3 {
+		t.Fatalf("messages = %+v, want partial assistant, user steer, final assistant", result.NewMessages)
+	}
+	if result.NewMessages[0].Role != "assistant" || result.NewMessages[0].Content != "visible prefix" || result.NewMessages[0].Cause != providers.SteeredStreamFragment {
+		t.Fatalf("partial assistant not preserved: %+v", result.NewMessages[0])
+	}
+	if result.NewMessages[1].Role != "user" || result.NewMessages[1].Content != "new direction" || !result.NewMessages[1].Steered {
+		t.Fatalf("new input not admitted after the partial assistant: %+v", result.NewMessages[1])
+	}
+	if result.NewMessages[2].Role != "assistant" || result.NewMessages[2].Content != "successor answer" {
+		t.Fatalf("successor answer missing: %+v", result.NewMessages[2])
+	}
+	secondRequest := step.calls[1].Messages
+	if len(secondRequest) != 3 || secondRequest[1].Cause != providers.SteeredStreamFragment || secondRequest[2].Content != "new direction" {
+		t.Fatalf("successor request did not include the visible prefix and new input: %+v", secondRequest)
+	}
+}
+
 func TestFailedStepKeepsCompletedItemsAndIsolatesFragment(t *testing.T) {
 	step := &fakeStep{results: []StepResult{{
 		CompletedMessages: []providers.ChatMessage{{Role: "assistant", ReasoningBlocks: []providers.ReasoningBlock{{Type: "thinking", Thinking: "done reasoning", Signature: "signed"}}}, {Role: "assistant", Content: "completed item", ProviderItemID: "msg_done", ProviderItemProvider: "test", ProviderItemModel: "test"}},

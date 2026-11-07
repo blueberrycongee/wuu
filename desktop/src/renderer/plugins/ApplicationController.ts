@@ -22,7 +22,6 @@ import { activitiesForThread, emptyActivitySessions, mergeActivityList, reduceAc
 import type { ApplicationSideConversationActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-side-conversation";
 import { ApplicationSideConversation, isApplicationSideConversationAction } from "./ApplicationSideConversation";
 import { ApplicationFileSelection } from "./ApplicationFileSelection";
-import { ApplicationProjects } from "./ApplicationProjects";
 import { ApplicationTerminals } from "./ApplicationTerminals";
 import type { ApplicationSearchActionMapV1 } from "../../../../packages/plugin-sdk/src/ui-search";
 import { ApplicationSearch, isApplicationSearchAction } from "./ApplicationSearch";
@@ -36,7 +35,7 @@ import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-
 import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
-import type { InitializeResult, PopOutInitResult, ServerEvent, Thread } from "../../shared/protocol";
+import type { InitializeResult, PopOutInitResult, RestartRecoveryItem, ServerEvent, Thread } from "../../shared/protocol";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, threadBelongsToWorkspace, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
@@ -249,17 +248,6 @@ export class ApplicationController implements HostApplicationService {
       // Live activity events still populate the view when initial listing races core startup.
     });
   }
-  private projectsOwner?: ApplicationProjects;
-  get projects(): ApplicationProjects {
-    return this.projectsOwner ??= new ApplicationProjects({
-      getSource: () => ({ contextKey: JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0]),
-        enabled: Boolean(this.state.activeContext && this.state.initialized?.features?.project_agent) }),
-      updateThread: thread => {
-        this.updateState(state => updateThreadByID(state, thread.id, current => mergeSidebarThread(current, thread)));
-        this.sidebarCache.updateCachedSidebarThread(thread);
-      },
-    });
-  }
   private terminalOwner?: ApplicationTerminals;
   get terminals(): ApplicationTerminals { return this.terminalOwner ??= new ApplicationTerminals(window.wuu); }
   private previewContentOwner?: ApplicationPreviewContent;
@@ -331,6 +319,9 @@ export class ApplicationController implements HostApplicationService {
   private readonly listeners = new Set<() => void>();
   private revision = 0;
   private snapshot: ApplicationSnapshotV1;
+  private restartRecovery: RestartRecoveryItem[] = [];
+  private recoveryLoading = false;
+  private recoveryResolving = false;
   private draft = "";
   private readonly draftRevisions = new Map<string, number>();
   private readonly draftResources = new ApplicationDraftResources(() => {
@@ -564,7 +555,13 @@ export class ApplicationController implements HostApplicationService {
     signal?.throwIfAborted();
     this.restoringNavigationIntentId = intent.id;
     try {
-      await this.navigationActions(signal).threads.selectContextThread(intent.context, intent.threadId);
+      const threads = this.navigationActions(signal).threads;
+      // Initialization has already selected and validated this writer's runtime.
+      // Reuse it for the destination read instead of selecting and initializing
+      // the same project again during every application graph handoff.
+      const selected = this.loaded?.initialized && sameRuntimeContext(this.loaded.activeContext, intent.context)
+        ? this.loaded : undefined;
+      await threads.selectContextThread(intent.context, intent.threadId, selected);
       signal?.throwIfAborted();
     } catch (error) {
       signal?.throwIfAborted();
@@ -634,7 +631,6 @@ export class ApplicationController implements HostApplicationService {
     for (const id of this.draftRevisions.keys()) if (!next.sessionTabs.some(tab => tab.id === id)) this.draftRevisions.delete(id);
     this.state = next;
     this.connectorLoginOwner?.reconcile();
-    this.projectsOwner?.notifyChanged();
     this.onboardingOwner?.notifyChanged();
     this.environmentOwner?.notifyChanged();
     this.syncActivities();
@@ -715,8 +711,6 @@ export class ApplicationController implements HostApplicationService {
       this.webWorkspaceOwner = undefined;
       this.onboardingOwner?.dispose(); this.onboardingOwner = undefined;
       this.fileSelectionOwner = undefined;
-      this.projectsOwner?.dispose();
-      this.projectsOwner = undefined;
       const terminalCleanup = this.terminalOwner?.dispose();
       this.terminalOwner = undefined;
       // Web destinations may reuse native IDs across application generations.
@@ -798,12 +792,27 @@ export class ApplicationController implements HostApplicationService {
         return !next.thread && active?.kind === "draft" ? { ...next, activeSessionTabID: active.id } : next;
       });
       if (loaded.thread && loaded.heldComposerMessages) this.pendingComposer.seedHeldComposerMessages(loaded.thread.id, loaded.heldComposerMessages);
+      void this.refreshRestartRecovery();
       return loaded;
     })();
     return this.load;
   }
 
+  private async refreshRestartRecovery(): Promise<void> {
+    if (!window.wuu.listRestartRecovery || this.recoveryLoading || this.recoveryResolving) return;
+    this.recoveryLoading = true;
+    try {
+      const result = await window.wuu.listRestartRecovery();
+      if (this.lifetime?.signal.aborted) return;
+      this.restartRecovery = result.items;
+      this.publish();
+    } catch {
+      if (!this.lifetime?.signal.aborted) showErrorToast(translateCurrent("restartRecovery.loadFailed"));
+    } finally { this.recoveryLoading = false; }
+  }
+
   private receive(event: ServerEvent): void {
+    if (event.kind === "notification" && event.message.method === "thread/recoveryChanged") void this.refreshRestartRecovery();
     this.environmentOwner?.receive(event);
     this.eventEffects?.receive(event);
     const activities = reduceActivitySessionEvent(this.activitySessions, event);
@@ -1258,6 +1267,39 @@ export class ApplicationController implements HostApplicationService {
         await window.wuu.loadEarlierThreadHistory(threadId, cursor);
         return;
       }
+      case "conversation.resolve-recovery": {
+        if (this.recoveryResolving) return;
+        const { threadIds } = input as ApplicationActionMapV1["conversation.resolve-recovery"]["input"];
+        const candidates = [...this.restartRecovery];
+        this.recoveryResolving = true;
+        try {
+          const deferred = candidates.filter(item => !threadIds.includes(item.thread.id));
+          if (deferred.length) {
+            if (!window.wuu.dismissRestartRecovery) throw new Error("Restart recovery is unavailable");
+            await window.wuu.dismissRestartRecovery(deferred.map(item => item.thread.id));
+            this.restartRecovery = this.restartRecovery.filter(item => !deferred.includes(item));
+            this.publish();
+          }
+          const failures: unknown[] = [];
+          for (const item of candidates.filter(item => threadIds.includes(item.thread.id))) {
+            signal?.throwIfAborted();
+            if (this.lifetime?.signal.aborted) return;
+            const thread = item.thread;
+            const native = !thread.engine_id || thread.engine_id === "wuu";
+            try {
+              const result = await window.wuu.startTurn(thread.id, native ? "" : translateCurrent("turnFailure.continuePrompt"),
+                undefined, undefined, thread.permission_mode, undefined, undefined,
+                resolveThreadRuntimeContext(thread, this.state.projects), undefined, native ? item.turn_id : undefined);
+              this.restartRecovery = this.restartRecovery.filter(candidate => candidate !== item);
+              if (this.lifetime?.signal.aborted) return;
+              this.updateState(state => updateThreadByID(state, thread.id, current => upsertTurn(current, result.turn)));
+              this.publish();
+            } catch (error) { failures.push(error); }
+          }
+          if (failures.length) throw new AggregateError(failures, "Some conversations could not be resumed");
+        } finally { this.recoveryResolving = false; }
+        return;
+      }
       case "conversation.continue": {
         const { threadId, turnId, text } = input as ApplicationActionMapV1["conversation.continue"]["input"];
         const thread = this.knownThread(threadId);
@@ -1532,17 +1574,15 @@ export class ApplicationController implements HostApplicationService {
         }); return;
       }
       case "tab.new": {
-        const { workspaceId, project } = input as ApplicationActionMapV1["tab.new"]["input"];
+        const { workspaceId } = input as ApplicationActionMapV1["tab.new"]["input"];
         const workspace = workspaceId ? this.state.projects.find(item => item.id === workspaceId) : undefined;
         if (workspaceId && (!workspace || workspace.missing)) throw new Error(`Workspace unavailable: ${workspaceId}`);
         const context = workspace ? { kind: "project" as const, project_id: workspace.id, cwd: workspace.path } : this.state.activeContext;
         if (!context) throw new Error("No workspace is selected");
-        if (project && context.kind !== "project") throw new Error("Project drafts require a workspace");
         const existing = this.state.sessionTabs.find(item => item.kind === "draft" && !this.submissionOwner?.getPendingDraftTabIds().includes(item.id) && sameRuntimeContext(item.context, context));
         const tab = existing ?? createDraftSessionTab(`draft:${crypto.randomUUID()}`, context);
         await this.selectTab(tab, signal);
         if (this.state.activeSessionTabID !== tab.id) throw new Error("Draft navigation was superseded");
-        if (project !== undefined) await this.invoke("draft.set-project-mode", { project }, { signal });
         await this.applicationNavigation.invoke("navigation.reveal-region", { region: "primary" }, signal);
         return { tabId: tab.id };
       }
@@ -1550,15 +1590,6 @@ export class ApplicationController implements HostApplicationService {
         const { tabId, title } = input as ApplicationActionMapV1["draft.rename"]["input"];
         if (!title.trim() || !this.state.sessionTabs.some(item => item.id === tabId && item.kind === "draft")) return;
         this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tabId ? { ...item, title: title.trim() } : item) })); return;
-      }
-      case "draft.set-project-mode": {
-        const { project } = input as ApplicationActionMapV1["draft.set-project-mode"]["input"];
-        const tabId = this.state.activeSessionTabID;
-        const tab = this.state.sessionTabs.find(item => item.id === tabId);
-        if (tab?.kind !== "draft" || Boolean(tab.project) === project) return;
-        if (project && tab.context.kind !== "project") throw new Error("Project drafts require a workspace");
-        this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.map(item => item.id === tabId ? { ...item, project: project ? true as const : undefined, title: project ? translateCurrent("projects.newProject")
-          : item.title === translateCurrent("projects.newProject") ? translateCurrent("tabs.newConversation") : item.title } : item) })); return;
       }
       case "navigation.show-section": {
         const { section } = input as ApplicationActionMapV1["navigation.show-section"]["input"];
@@ -1746,9 +1777,13 @@ export class ApplicationController implements HostApplicationService {
         items: Object.freeze(state.sessionTabs.map(tab => Object.freeze({ id: tab.id, kind: tab.kind,
           title: sessionTabLabel(tab, state), workspaceId: tab.context.kind === "project" ? tab.context.project_id : undefined,
           workspaceRoot: tab.context.cwd, threadId: tab.kind === "thread" ? tab.threadID : undefined,
-          project: tab.kind === "draft" && tab.project === true,
           draftText: tab.kind === "skills" ? "" : tab.id === state.activeSessionTabID ? this.draft : tab.prompt,
           hasAttachments: tab.kind !== "skills" && (tab.images.length > 0 || tab.files.length > 0) }))) }),
+      restartRecovery: Object.freeze(this.restartRecovery.map(item => Object.freeze({
+        threadId: item.thread.id, title: item.thread.title || item.thread.preview || translateCurrent("thread.untitled"),
+        workspace: workspaceNameForContext(resolveThreadRuntimeContext(item.thread, state.projects), state.projects),
+        updatedAt: item.thread.updated_at, reason: item.reason,
+      }))),
       activities: Object.freeze(Object.values(this.activitySessions.byKey).map(activity => Object.freeze({ ...activity,
         interaction: activity.interaction && Object.freeze({ ...activity.interaction }) }))),
       browserDockTarget: this.browserDockTarget,

@@ -32,7 +32,7 @@ without blame, filler or internal vocabulary.
 - **Empty states.** Say what is empty and, only when the same screen has the
   control, how to fill it.
 - **One noun per object.** A user's own chat is a conversation (对话). Session
-  (会话) is reserved for the Project Agent, peer messaging, engine approvals and
+  (会话) is reserved for peer messaging, engine approvals and
   tool history. Do not use both words for one object on one surface.
 - **Names, not acronyms.** Write `Programmatic tool calling`, not `PTC`, wherever
   a user reads it or assistive technology announces it.

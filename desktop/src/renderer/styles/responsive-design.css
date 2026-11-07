@@ -80,13 +80,11 @@
 }
 
 @container composer-toolbar (max-width: 680px) {
-  .composer-context-meter-label,
-  .composer-token-gauge-label {
+  .composer-context-meter-label {
     display: none;
   }
 
-  .composer-context-meter,
-  .composer-token-gauge {
+  .composer-context-meter {
     gap: 0;
   }
 }
@@ -119,8 +117,7 @@
 }
 
 @container composer-toolbar (max-width: 560px) {
-  .composer-context-meter,
-  .composer-token-gauge {
+  .composer-context-meter {
     display: none;
   }
 }

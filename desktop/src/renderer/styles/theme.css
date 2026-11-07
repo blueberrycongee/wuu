@@ -17,7 +17,8 @@
 :root[data-theme="dark"] {
   --workbench-canvas-bg: var(--paper);
   --settings-canvas: var(--paper);
-  --settings-card: var(--surface-1);
+  /* Dark cards lift one half-step so the hairline is not the only edge. */
+  --settings-card-bg: color-mix(in srgb, var(--surface-1) 50%, var(--paper));
   /* --- Neutral gray ramp, dark declaration. Same slots as the light
    *     ramp in base.css: 0-350 surfaces/hairlines (deeper = further
    *     from the reader), 400-650 text grays, 800-900 strong text. --- */
@@ -158,9 +159,6 @@
   --context-meter-tooltip-bg: var(--theme-override-color-surface-elevated, var(--surface-3));
   --context-meter-tooltip-border: var(--theme-override-color-border-strong, var(--hairline-strong));
   --context-meter-tooltip-shadow: var(--shadow-card);
-  --token-gauge-tooltip-bg: var(--theme-override-color-surface-elevated, var(--surface-3));
-  --token-gauge-tooltip-border: var(--theme-override-color-border-strong, var(--hairline-strong));
-  --token-gauge-tooltip-shadow: var(--shadow-card);
 
   /* environment.css */
   /* Dialog text follows the shared ink ladder. */
@@ -277,40 +275,53 @@
   color-scheme: light;
 }
 
-/* --- 外观 segmented control (settings page) --- */
+/* --- Segmented control ----------------------------------------------------
+ * One choice among a few short options. The track is a soft fill at the
+ * field height and corner; the chosen option is a raised thumb inset by the
+ * track's padding, so its corner stays concentric with the track. */
+:root {
+  --segmented-inset: 2px;
+  --segmented-thumb: var(--theme-override-color-surface-elevated, var(--paper));
+}
+
+:root[data-theme="dark"] {
+  --segmented-thumb: var(--theme-override-color-surface-elevated, color-mix(in srgb, var(--ink) 18%, var(--paper)));
+}
+
 .theme-segmented {
   display: inline-flex;
-  align-items: center;
+  align-items: stretch;
   min-height: var(--control-field-height);
-  gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--hairline);
-  background: var(--surface-1);
-  border-radius: 6px;
+  gap: var(--segmented-inset);
+  padding: var(--segmented-inset);
+  border: 0;
+  background: var(--ink-overlay-6);
+  border-radius: var(--radius-sm);
 }
 
 .theme-segmented button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: calc(var(--control-field-height) - 6px);
+  min-height: calc(var(--control-field-height) - var(--segmented-inset) * 2);
   border: 0;
   background: transparent;
   color: var(--ink-soft);
   font: inherit;
-  font-size: var(--font-sm);
-  padding: 0 12px;
-  border-radius: 4px;
+  font-size: var(--font-ui);
+  padding: 0 var(--control-padding-inline);
+  border-radius: calc(var(--radius-sm) - var(--segmented-inset));
   cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
 
 .theme-segmented button:hover {
-  color: var(--ink);
+  color: var(--ink-strong);
 }
 
-.theme-segmented button:is([aria-pressed="true"], [aria-selected="true"]) {
-  background: var(--paper);
+.theme-segmented button:is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"]) {
+  background: var(--segmented-thumb);
   color: var(--ink-strong);
   font-weight: var(--weight-medium);
-  box-shadow: 0 1px 2px var(--shadow-color-subtle);
+  box-shadow: var(--shadow-soft);
 }

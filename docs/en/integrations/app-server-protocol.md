@@ -190,6 +190,11 @@ reconstructs an automatic runnable queue. Live input appears only in
 User-history admission atomically settles the recovery record. Human steering
 checkpoints the unpersisted transcript before the next model request, preserving
 message order and preventing a crash from making dispatched input replayable.
+On the built-in host loop, steering during an active model response closes the
+visible assistant item at that point, persists the prefix as a non-terminal
+steered fragment, admits the user item after it, and continues the same turn
+with the next model request. Steering while tools run is admitted at the next
+model step; tools that already started are not cancelled.
 A concurrent edit or cancellation fences stale admission. Permission selection
 is re-resolved at execution; saved input does not restore old permissions.
 These are local process-crash guarantees, not automatic recovery of uncertain
@@ -379,8 +384,7 @@ model. `remove_model` removes a model choice so catalog refreshes cannot restore
 it; the request must retain or supply a different selected `model`. Existing
 conversation, role, and alias selections retain their model metadata.
 `add_model` restores a removed choice or adds a model ID the catalog does not
-list. Model update and provider removal responses include `model_aliases` and
-`project_models`, including empty values, so clients can clear removed references.
+list. Model update and provider removal responses include `model_aliases`, including empty values, so clients can clear removed references.
 Provider summaries report removed choices as `hidden_models`, and
 `catalog_id` / `catalog_name` when the endpoint belongs to a model catalog
 service.
@@ -601,7 +605,10 @@ side per engine — token totals read from the engine's own local ledger
 (`~/.claude` transcripts, `~/.codex` rollouts, the OpenCode database) minus
 native sessions Wuu already claims, so the two columns never count the same
 work twice. `outside` is absent for engines without a readable local ledger or
-whose ledger failed to scan.
+whose ledger failed to scan. The same outside totals also land on
+`days[].outside`, so the trend and heatmap color every day the page counts;
+the in-Wuu token fields, hit rate, turns, and agents on each day stay
+untouched.
 
 ## Notifications
 

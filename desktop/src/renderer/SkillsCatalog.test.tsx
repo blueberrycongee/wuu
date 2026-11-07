@@ -99,7 +99,8 @@ describe("SkillsCatalog", () => {
       );
     });
 
-    expect(container.textContent).toContain("安装本地插件");
+    await act(async () => { buttonByText("添加")!.click(); });
+    expect(buttonByText("安装本地插件")).toBeTruthy();
     await act(async () => {
       buttonByText("安装本地插件")?.click();
     });
@@ -121,6 +122,7 @@ describe("SkillsCatalog", () => {
         <SkillsCatalog onInstallPluginPackage={onInstallPluginPackage} />,
       );
     });
+    await act(async () => { buttonByText("添加")!.click(); });
     await act(async () => {
       buttonByText("安装本地插件")?.click();
     });
@@ -299,9 +301,9 @@ describe("SkillsCatalog", () => {
         />,
       );
     });
-    const sectionRows = () => Array.from(container.querySelectorAll("section section:not([data-testid=mcp-services])")).map(
+    const sectionRows = () => Array.from(container.querySelectorAll(".plugin-catalog-grid, section section:not([data-testid=mcp-services])")).map(
       (section) => Array.from(section.querySelectorAll(".catalog-row")).map((row) => row.textContent ?? ""),
-    );
+    ).filter(rows => rows.length);
     const search = async (query: string) => {
       const input = container.querySelector<HTMLInputElement>(".catalog-search input")!;
       await act(async () => {
@@ -468,10 +470,10 @@ describe("SkillsCatalog", () => {
       );
     });
 
-    expect(attentionLabels()).toEqual(["需要你授权后才能运行"]);
-    // A plugin waiting for approval opens on the permissions it asks for.
+    expect(pluginAction("docs")?.getAttribute("aria-label")).toBe("启用 docs");
+    // The plus action still reviews requested permissions before first use.
     await act(async () => {
-      skillButton("docs")!.click();
+      pluginAction("docs")!.click();
     });
     expect(onUpdateExtensionPackage).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain("file.read");
@@ -666,7 +668,7 @@ describe("SkillsCatalog", () => {
       );
     });
 
-    expect(attentionLabels()).toEqual(["更新待授权"]);
+    expect(pluginAction("update-demo")?.getAttribute("aria-haspopup")).toBe("menu");
     await act(async () => {
       skillButton("update-demo")?.click();
     });
@@ -724,11 +726,15 @@ describe("SkillsCatalog", () => {
       root.render(<SkillsCatalog extensionInventory={extensionInventory} />);
     });
 
-    expect(attentionLabels()).toEqual(["启动失败", "内容已更改，需要重新授权"]);
+    expect(pluginAction("broken")?.getAttribute("aria-haspopup")).toBe("menu");
+    expect(pluginAction("changed")?.getAttribute("aria-label")).toBe("启用 changed");
+    expect(toastMocks.showToast).toHaveBeenCalledWith(expect.objectContaining({
+      tone: "error", message: "broken: Plugin process exited before initialize",
+    }));
     await act(async () => {
       skillButton("broken")?.click();
     });
-    expect(document.body.textContent).toContain("Plugin process exited before initialize");
+    expect(buttonByText(translate("zh-CN", "skills.pluginRetryStart"))).toBeDefined();
   });
 
   // Regression: the Host's dependency diagnostics must not become conflict
@@ -752,21 +758,19 @@ describe("SkillsCatalog", () => {
     for (const kind of ["optional_missing", "optional_version_mismatch", "optional_cycle", "version_mismatch", "missing_requirement", "conflict"] as const) {
       const blocking = kind === "version_mismatch" || kind === "missing_requirement";
       await render({ ...plugin, runtime_state: blocking ? "inactive" : "active", activation_issues: [{ kind, related_plugin_id: "provider" }] });
-      expect(attentionLabels()).toHaveLength(kind.startsWith("optional_") ? 0 : 1);
+      const notice = toastMocks.showToast.mock.calls.at(-1)![0];
+      expect(notice.tone).toBe(blocking ? "error" : "info");
+      expect(notice.message).toContain("provider");
       await act(async () => skillButton("Consumer")!.click());
-      const notice = container.querySelector(".plugin-detail-notice")!;
-      expect(notice.getAttribute("role")).toBe(blocking ? "alert" : "status");
-      expect(notice.textContent).toContain("provider");
       if (kind !== "conflict") {
-        expect(notice.textContent).not.toBe(translate(locale, "skills.pluginConflictWarning", { plugin: "provider" }));
+        expect(notice.message).not.toBe(`Consumer: ${translate(locale, "skills.pluginConflictWarning", { plugin: "provider" })}`);
       }
-      messages.add(notice.textContent!);
-      expect(notice.querySelector("button")).toBeNull();
+      messages.add(notice.message);
       const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
       expect(toggle.getAttribute("aria-checked")).toBe("true");
       expect(toggle.disabled).toBe(false);
       await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')!.click());
-      expect(attentionLabels()).toEqual(kind.startsWith("optional_") ? [] : [notice.textContent]);
+      expect(toastMocks.showToast.mock.calls.at(-1)![0]).toBe(notice);
     }
     expect(messages.size).toBe(6);
     // Replacing the inventory after remediation removes stale diagnostics,
@@ -775,12 +779,11 @@ describe("SkillsCatalog", () => {
     await render(plugin);
     expect(container.querySelector(".plugin-detail-notice")).toBeNull();
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')!.click());
-    expect(attentionLabels()).toEqual([]);
     expect(update).not.toHaveBeenCalled();
-    expect(toastMocks.showToast).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).toHaveBeenCalledTimes(6);
   });
 
-  it("keeps a failed plugin diagnosable without a global toast and clears its retry state after remediation", async () => {
+  it("reports a failed plugin once through toast and clears its retry action after remediation", async () => {
     installSkillList([]);
     const broken: ExtensionInventoryRecord = {
       id: "plugin:user:broken", name: "broken", kind: "plugin",
@@ -796,22 +799,22 @@ describe("SkillsCatalog", () => {
       root.render(<SkillsCatalog extensionInventory={[broken]} onRefreshCatalog={refresh} onUpdateExtensionPackage={update} />);
     });
     await act(async () => skillButton("broken")!.click());
-    const failure = container.querySelector('[role="alert"]')!;
-    expect(failure.textContent).toContain(broken.last_error);
-    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
-    expect(toastMocks.showToast).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      tone: "error", message: `broken: ${broken.last_error}`, dedupeKey: `error:${broken.last_error}`,
+    }));
     expect(container.querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(false);
-    const retry = failure.querySelector<HTMLButtonElement>("button")!;
+    const retry = buttonByText(translate("zh-CN", "skills.pluginRetryStart"))!;
     await act(async () => retry.click());
     expect(refresh).toHaveBeenCalledOnce();
     expect(retry.disabled).toBe(true);
     await act(async () => finish([]));
     expect(retry.disabled).toBe(false);
-    expect(container.querySelector('[role="alert"]')).toBe(failure);
+    expect(toastMocks.showToast).toHaveBeenCalledTimes(1);
     await act(async () => root!.render(<SkillsCatalog extensionInventory={[{ ...broken, state: "active", runtime_state: "active", last_error: undefined }]}
       onRefreshCatalog={refresh} onUpdateExtensionPackage={update} />));
-    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(retry.isConnected).toBe(false);
     expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(toastMocks.showToast).toHaveBeenCalledTimes(1);
   });
 
   it.each([
@@ -831,13 +834,14 @@ describe("SkillsCatalog", () => {
       root = createRoot(container);
       root.render(<SkillsCatalog extensionInventory={[plugin]} onUpdateExtensionPackage={update} />);
     });
-    await act(async () => { pluginSwitch("widget")!.click(); });
+    await act(async () => { pluginAction("widget")!.click(); });
+    await act(async () => { buttonByText("停用 widget")!.click(); });
     // The committed inventory may reach the replacement shell before the old
     // scoped action settles. Its typed retirement is not a provider failure.
     await act(async () => root!.render(<SkillsCatalog extensionInventory={[{ ...plugin, enabled: false, runtime_state: "stopped" }]} onUpdateExtensionPackage={update} />));
     await act(async () => reject(error));
-    expect(pluginSwitch("widget")!.getAttribute("aria-checked")).toBe("false");
-    expect(pluginSwitch("widget")!.disabled).toBe(false);
+    expect(pluginAction("widget")!.getAttribute("aria-label")).toBe("启用 widget");
+    expect(pluginAction("widget")!.disabled).toBe(false);
     expect(update).toHaveBeenCalledOnce();
     expect(toastMocks.showToast).not.toHaveBeenCalled();
     expect(toastMocks.showErrorToast).toHaveBeenCalledWith(error, expect.any(String));
@@ -868,22 +872,23 @@ describe("SkillsCatalog", () => {
       );
     });
 
-    expect(pluginSwitch("dream")?.getAttribute("aria-checked")).toBe("false");
-    expect(pluginSwitch("todo")?.getAttribute("aria-checked")).toBe("true");
-    expect(attentionLabels()).toEqual([]);
+    expect(pluginAction("dream")?.getAttribute("aria-label")).toBe("启用 dream");
+    expect(pluginAction("todo")?.getAttribute("aria-haspopup")).toBe("menu");
+    const todoRow = pluginAction("todo")!.closest(".plugin-row");
+    await act(async () => { pluginAction("todo")!.click(); });
     await act(async () => {
-      pluginSwitch("todo")!.click();
-      pluginSwitch("dream")!.click();
+      buttonByText("停用 todo")!.click();
+      pluginAction("dream")!.click();
     });
     expect(onUpdateExtensionPackage).toHaveBeenCalledExactlyOnceWith({
       id: "plugin:bundled:todo",
       fingerprint: "sha256:todo",
       action: "disable",
     });
-    expect(pluginSwitch("dream")?.disabled).toBe(true);
+    expect(pluginAction("dream")?.disabled).toBe(true);
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     await act(async () => finish());
-    // The switch changes the plugin, not the row's place under the pointer.
+    // Changing enablement preserves the row and its place under the pointer.
     await act(async () => {
       root!.render(
         <SkillsCatalog
@@ -892,17 +897,17 @@ describe("SkillsCatalog", () => {
         />,
       );
     });
-    expect(pluginSwitch("todo")?.getAttribute("aria-checked")).toBe("false");
-    expect(pluginGroup("todo")).toBe("已启用");
+    expect(pluginAction("todo")?.getAttribute("aria-label")).toBe("启用 todo");
+    expect(pluginAction("todo")!.closest(".plugin-row")).toBe(todoRow);
     await act(async () => {
-      pluginSwitch("dream")!.click();
+      pluginAction("dream")!.click();
     });
     expect(onUpdateExtensionPackage).toHaveBeenLastCalledWith({
       id: "plugin:bundled:dream",
       fingerprint: "sha256:dream",
       action: "enable",
     });
-    // Entering the catalog again groups plugins by their current state.
+    // Re-entering the catalog presents the current enablement.
     await act(async () => {
       root!.unmount();
       root = createRoot(container);
@@ -913,8 +918,8 @@ describe("SkillsCatalog", () => {
         />,
       );
     });
-    expect(pluginGroup("todo")).toBe("未启用");
-    expect(pluginGroup("dream")).toBe("已启用");
+    expect(pluginAction("todo")?.getAttribute("aria-label")).toBe("启用 todo");
+    expect(pluginAction("dream")?.getAttribute("aria-haspopup")).toBe("menu");
   });
 
   it("grants a pending plugin that asks for no permissions from its page", async () => {
@@ -940,7 +945,7 @@ describe("SkillsCatalog", () => {
       );
     });
 
-    expect(attentionLabels()).toEqual(["需要你授权后才能运行"]);
+    expect(pluginAction("paper")?.getAttribute("aria-label")).toBe("启用 paper");
     await act(async () => {
       skillButton("paper")!.click();
     });
@@ -1103,19 +1108,9 @@ function skillButton(name: string): HTMLButtonElement | undefined {
   );
 }
 
-function pluginSwitch(name: string): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLButtonElement>('.plugin-row [role="switch"]')).find(
+function pluginAction(name: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLButtonElement>('.plugin-row .catalog-row-action')).find(
     (button) => button.closest(".plugin-row")?.querySelector(".catalog-row-title")?.textContent === name,
-  );
-}
-
-function pluginGroup(name: string): string | undefined {
-  return pluginSwitch(name)?.closest("section")?.querySelector(".settings-section-title")?.textContent ?? undefined;
-}
-
-function attentionLabels(): string[] {
-  return Array.from(container.querySelectorAll(".plugin-row .plugin-attention-reason")).map(
-    (reason) => reason.textContent ?? "",
   );
 }
 

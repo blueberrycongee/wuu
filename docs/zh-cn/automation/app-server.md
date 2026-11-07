@@ -56,6 +56,13 @@ stdio 中同一会话的后续请求仍按顺序等待；其他会话和服务�
 错误若明确说明归档元数据已提交、但刷新视图不可用，不代表归档写入失败。已经提交的
 变更不会因后续取消而回滚。
 
+## 读取会话目录
+
+通过 stdio 调用 `thread/list`、`thread/listAll` 和 `thread/listArchived` 时，目录读取在
+后台执行，避免大型目录阻塞会话读取和停止请求。响应可能乱序返回，请通过请求 ID 关联。
+每次目录读取都保留请求受理时选中的状态提供方。目录是可刷新的视图，不保证它完成后才
+执行后续会话修改。
+
 ## 分页读取会话历史
 
 需要紧凑会话视图时，在 `thread/resume` 中传入 `conversation_history: true`。
@@ -102,6 +109,9 @@ Responses 和 Chat Completions 使用经过规范化的客户端历史，保留�
 仍由当前进程管理的输入只出现在 `pending_user_messages` 中。用户可以用 `turn/steer` 明确发送待处理项。
 输入进入历史和清理恢复记录在同一事务中完成；即时引导在下一次模型请求前提交尚未归档的完整历史后缀，
 避免把已经派发的输入当作未执行消息重放。并发编辑和取消会阻止过时输入进入历史。
+内置引擎在模型回复过程中收到 `turn/steer` 时，会在当前可见文字处结束助手条目，
+将该片段作为未完结的已引导片段保存，并在它后面接收用户消息，然后继续同一轮的下一次模型请求。
+工具执行期间收到的引导会在下一次模型步骤前接收，不取消已经启动的工具。
 
 持久 Codex 对话支持向当前轮次补充明确的人类输入。Wuu 用 `expected_turn_id`
 绑定当前轮次，适配器再用原生轮次 ID 约束发送目标；附件和稳定的 `client_id`
@@ -169,59 +179,6 @@ Responses 和 Chat Completions 使用经过规范化的客户端历史，保留�
 如果对话在删除事务开始前已恢复，服务会拒绝删除，保留聊天记录和侧聊内容。
 正在运行的对话、活跃子 Agent 或正在运行的侧聊也会阻止删除。
 省略 `only_if_archived` 时，仍可删除普通空闲对话。
-
-## 运行项目
-
-`thread/start` 带 `project: {"name": "..."}` 时，在工作区创建项目主 Agent。返回的会话带
-`source: "project"`，遵循普通会话的模型和权限设置。主 Agent 可以直接动手，通过
-`session` 工具管理其他会话。每个托管会话都是普通会话，带
-`source: "project-session"`，`project_id` 指向其协调者；它的 `session_control` 以
-`manager_name` 给出项目名。worktree 会话的改动留在它的 worktree 里，由团队用普通的 Git
-命令交付。提交、合并、推送和 PR 修改均需用户授权或该操作已有的工作流程；委派不能扩大权限。
-
-托管会话提供 `project_role: "side" | "worker"`，旧成员默认视为 Worker。
-`session create` 接受 `role`（默认 worker）和可选的 `model_alias`。只有主 Agent
-能创建 Side；重复创建会返回已有的活跃 Side，不会发送新任务。主 Agent 和 Side
-都能创建 Worker。活跃成员均可 `list`、`inspect` 和 `message`，只有主 Agent 能
-`send` 和 `stop`。消息仅限项目内，包含 `prompt`、`session_id` 和可选的 `wake`
-（默认 false）。停止成员或直接给它发消息不会改变项目成员关系。停止会使之前排队的
-自动输入失效；之后仍可明确派发新任务，无需归还控制权。
-
-`session side` 创建或继续持久 Side 并发送新的任务简报，运行中会引导当前回合。Side
-默认共享工作区，Worker 在 Git 工作区中默认使用隔离 worktree。派发持久化并防止重放
-重复，首个简报与会话创建一起提交；忙时返回 `state: "queued"`，恢复后重试。
-
-`side` 默认等待，`create` 和 `send` 默认立即返回，除非设置 `block: true`。
-`wait` 接受 `session_id` 和可选的精确 `turn_id`；主 Agent 可等待成员，Side 可等待
-Worker。结果包含 `turn_id`、`turn_status` 和终态 `final_output`。`timeout_ms` 默认
-60000，上限为 300000；超时返回 `timed_out: true`。超时或调用方取消都不会停止子会话。
-
-主 Agent 使用会话模型。`agent.project_models.side` 和 `.worker` 为新成员指定服务
-和模型，空选择继承主 Agent。创建时明确传入的 `model_alias` 优先于角色默认值，已有
-会话保留保存的模型。`config/advanced/update` 接受同结构的 `project_models`；初始化、
-配置读取、更新和配置变更事件返回当前默认值。在 `features.project_agent` 为 true
-的构建中，桌面运行设置提供这两项选择。
-
-协调者以用户条目接收宿主事件，条目带 `origin: "host"`，`related_session_id` 指向相关会话，
-`cause` 给出事件：
-
-| Cause | 事件 | 协调者空闲时是否开始新回合 |
-|---|---|---|
-| `project_message` | 成员发来的消息，主 Agent 或其他成员均可接收 | 仅当 `wake` 为 true |
-| `project_result` | 托管会话的一个回合结束，附带用户在其中写的内容 | 是，中断的回合除外 |
-| `project_stopped` | 用户停止了成员的当前回合 | 否，随下一个回合送达 |
-| `project_user_message` | 用户直接给成员发了消息 | 否，随下一个回合送达 |
-| `project_adopted` | 用户把对话加入了项目 | 是 |
-| `project_released` | 用户把会话移出了项目 | 否，随下一个回合送达 |
-
-在项目成员中开始、引导、排队或中断回合，成员关系仍保持活跃。用户直接发消息会通知协调者，
-但不会唤醒空闲的协调者。中断结果也会送达而不唤醒空闲的协调者；正常结果会唤醒它。
-恢复后补发的中断结果，以及发给派遣该成员的 Side Agent 的报告，也遵循相同的不唤醒规则。
-worktree 改动留在成员的 worktree 里。`thread/control/take` 和 `thread/control/return` 的控制权生命周期
-用于插件托管会话，不用于项目成员。
-
-`project/session` 修改项目成员：`adopt` 传入 `project_id` 和 `session_id`，把项目所在工作区
-的普通对话交给项目管理；`release` 让托管会话重新成为普通对话。两者都返回更新后的 `thread`。
 
 ## 输入内容分段
 
@@ -304,7 +261,7 @@ PDF 选区增加可选的 `source.pdf` 元数据，其中 `start_page` 和 `end_
 
 ## 查询用量概览
 
-`usage/overview` 汇总本地保留历史中已记录的 token 用量：`total_sessions`（至少有一条用量记录的会话数）、`metrics`（与 `settings/usage` 相同的汇总对象，含 `active_days`）和 `days`（每个活跃日一条，按日期升序）。它只读取用量记录，不读取对话内容。可选参数 `{ "timezone": "America/Los_Angeles" }` 按 IANA 时区划分日期；省略时使用 UTC，未知时区返回请求错误。没有记录时返回零值和空的 `days`。与 `local_usage` 一样，这些值不含未上报或 Wuu 外的用量，也不是账单。桌面「用量」页使用的完整快照 `settings/usage` 接受同样的可选 `timezone`；桌面端会带上自己的时区，让每天的柱子落在日历对应的那一天。其中的 `engine_breakdowns` 把同一份 Wuu 内用量按会话绑定的 Agent 引擎归桶，并为每个引擎增加 `outside` 一侧——从引擎自己的本地账本（`~/.claude` 转录、`~/.codex` rollout、OpenCode 数据库）读出的 token 合计，减去 Wuu 已认领的原生会话，两列不会重复计数。没有可读本地账本或扫描失败的引擎不返回 `outside`。
+`usage/overview` 汇总本地保留历史中已记录的 token 用量：`total_sessions`（至少有一条用量记录的会话数）、`metrics`（与 `settings/usage` 相同的汇总对象，含 `active_days`）和 `days`（每个活跃日一条，按日期升序）。它只读取用量记录，不读取对话内容。可选参数 `{ "timezone": "America/Los_Angeles" }` 按 IANA 时区划分日期；省略时使用 UTC，未知时区返回请求错误。没有记录时返回零值和空的 `days`。与 `local_usage` 一样，这些值不含未上报或 Wuu 外的用量，也不是账单。桌面「用量」页使用的完整快照 `settings/usage` 接受同样的可选 `timezone`；桌面端会带上自己的时区，让每天的柱子落在日历对应的那一天。其中的 `engine_breakdowns` 把同一份 Wuu 内用量按会话绑定的 Agent 引擎归桶，并为每个引擎增加 `outside` 一侧——从引擎自己的本地账本（`~/.claude` 转录、`~/.codex` rollout、OpenCode 数据库）读出的 token 合计，减去 Wuu 已认领的原生会话，两列不会重复计数。没有可读本地账本或扫描失败的引擎不返回 `outside`。同样的外部合计也会落到 `days[].outside`，趋势图和热力图因此能给页面统计到的每一天着色；每天的 Wuu 内 token 字段、命中率、轮次和 agents 保持不变。
 
 ## 探查协议
 

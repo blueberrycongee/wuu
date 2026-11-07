@@ -177,6 +177,22 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   assert.equal(resumed.resume_receipt_id,"receipt-one");assert.equal(resumed.user_input_request_id,"receipt-client");assert.equal(resumed.input.prompt,"");
   assert.equal((await receiptClient("agents.messages.cancel",{request_id:"receipt-client",receipt_id:"receipt-one"})).queue_id,"queue");
 
+  // Identity failure cases: invalid artwork, stale competing rename, omitted
+  // appearance on legacy records, and process replacement losing customization.
+  assert.equal(binding.avatar_key, undefined);
+  const avatarKey = "mascot-v1:diamond:leaf:150";
+  const styled = (await receiptClient("agents.update", { expected_revision: binding.revision, avatar_key: avatarKey })).agent;
+  assert.equal(styled.avatar_key, avatarKey);
+  assert.equal(styled.agent_id, binding.agent_id);
+  assert.equal(styled.main_session_id, binding.main_session_id);
+  await assert.rejects(receiptClient("agents.update", { expected_revision: binding.revision, name: "Stale name" }), /revision/);
+  for (const invalid of [null, 3, "https://example.invalid/avatar.png", "mascot-v1:round:headset:360", "mascot-v1:round:headset:NaN", "mascot-v1:other:headset:222"]) {
+    await assert.rejects(receiptClient("agents.update", { expected_revision: styled.revision, avatar_key: invalid }), /avatar/);
+  }
+  const renamed = (await receiptClient("agents.update", { expected_revision: styled.revision, name: "Synthetic twin" })).agent;
+  assert.equal(renamed.avatar_key, avatarKey);
+  assert.equal(renamed.name, "Synthetic twin");
+
   const source = (ref, seconds) => [{ kind: "message", ref, occurred_at: new Date(Date.now() - 60_000 + seconds * 1000).toISOString() }];
   const record = (await runtime.tool("personal_memory_create", { key: "address.home", expected_revision: 0, content: "Synthetic Old Street", evidence: "explicit", sources: source("synthetic-message:1", 0) })).record;
   assert.equal((await runtime.service("query", { query: "address" })).records[0].id, record.id);
@@ -185,6 +201,10 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   await assert.rejects(runtime.service("correct", correction), /reply lost/);
   const committed = memory.records.get(record.id);
   await runtime.close(); runtime = await start();
+  const restoredIdentity = (await receiptClient("agents.ensure_default")).agent;
+  assert.equal(restoredIdentity.avatar_key, avatarKey);
+  assert.equal(restoredIdentity.name, "Synthetic twin");
+  assert.equal(restoredIdentity.main_session_id, binding.main_session_id);
   const corrected = (await runtime.service("correct", correction)).record;
   assert.equal(memory.records.get(record.id), committed, "process replacement replays the durable receipt without generating another write");
   assert.equal(corrected.updated_by_agent_id, mainAgent);

@@ -136,11 +136,6 @@ import type {
   ThreadForkTarget,
   ThreadResumeResult,
   ThreadStartParams,
-  ProjectWorkParams,
-  ProjectWorkList,
-  ProjectWork,
-  ProjectSessionParams,
-  ProjectSessionResult,
   Turn,
   UserQuestionAnswer,
   UserQuestionListResult,
@@ -241,6 +236,7 @@ import {
 } from "./pluginModuleProtocol";
 import { TerminalSessionManager } from "./terminalSessions";
 import { WorkspaceFileService } from "./workspaceFiles";
+import { registerWorkspaceFileWatches } from "./workspaceFileWatches";
 import { WorkspaceDirectoryReader } from "./workspaceDirectoryReader";
 import createWorkspaceDirectoryWorker from "./workspaceDirectoryWorker?nodeWorker";
 import {
@@ -1565,6 +1561,7 @@ function createWindow(options: { inactive?: boolean } = {}): void {
     }
     windowResizeState = false;
     observationCoordinator.setActiveThread(undefined);
+    observationCoordinator.closeDesktopDocked();
     unregisterWindow(windowID);
     mainWindow = null;
   });
@@ -1898,6 +1895,7 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:git-create-pr", (event, params: GitPullRequestParams, root?: string) =>
     gitServiceForEvent(event).createPullRequest(params ?? {}, root),
   );
+  registerWorkspaceFileWatches(workspaceFilesForEvent);
   ipcMain.handle("wuu:file-tree-list", (event, root?: string) =>
     workspaceFilesForEvent(event).fileTreeList(root),
   );
@@ -2502,22 +2500,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
     return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
   });
-  ipcMain.handle("wuu:session-control-return", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/return", params));
-  ipcMain.handle("wuu:session-control-take", (event, params: { thread_id: string; revision: number }) => appServerRequest(event, "thread/control/take", params));
-  // A project and its managed sessions live in one workspace; route to the
-  // app-server that owns the named project or session.
-  ipcMain.handle("wuu:project-work", (event, params: ProjectWorkParams) => {
-    const context = windowRegistry.runtimeContextForWindow(event.sender.id);
-    return context
-      ? appServerClientPool.requestForSession<ProjectWorkList | ProjectWork>(context, params.project_id, "project/work", params)
-      : appServerRequest<ProjectWorkList | ProjectWork>(event, "project/work", params);
-  });
-  ipcMain.handle("wuu:project-session", (event, params: ProjectSessionParams) => {
-    const context = windowRegistry.runtimeContextForWindow(event.sender.id);
-    return context
-      ? appServerClientPool.requestForSession<ProjectSessionResult>(context, params.project_id, "project/session", params)
-      : appServerRequest<ProjectSessionResult>(event, "project/session", params);
-  });
   ipcMain.handle("wuu:codex-pets-list", () => {
     const snapshot = codexPetsSnapshot();
     // Sync the pet window from the renderer-side list call so a failed
@@ -2931,6 +2913,12 @@ app.whenReady().then(async () => {
   );
   ipcMain.handle("wuu:thread-list-all", (event) =>
     appServerRequest<{ threads: Thread[] }>(event, "thread/listAll", { summary_only: true }),
+  );
+  ipcMain.handle("wuu:thread-recovery-list", (event) =>
+    appServerRequest(event, "thread/recovery/list"),
+  );
+  ipcMain.handle("wuu:thread-recovery-dismiss", (event, threadIDs: string[]) =>
+    appServerRequest(event, "thread/recovery/dismiss", { thread_ids: threadIDs }),
   );
   ipcMain.handle("wuu:thread-search", (event, query: string, limit?: number) =>
     appServerRequest(event, "thread/search", {

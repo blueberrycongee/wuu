@@ -6,6 +6,7 @@ import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
+import { Switch } from "./ui/Switch";
 
 export function AppContextSettingsSection(): JSX.Element | null {
   const settingsControls = useSettingsControls();
@@ -78,11 +79,9 @@ export function AppContextSettingsSection(): JSX.Element | null {
     <SettingsSection title={t("composer.appContext.title")} testID="settings-app-context">
       <SettingsGroup>
         <SettingsRow title={t("composer.appContext.enable")}>
-          <button className="settings-switch" type="button" role="switch" aria-checked={settings?.enabled ?? false}
+          <Switch checked={settings?.enabled ?? false}
             aria-label={t("composer.appContext.enable")} disabled={disabled || !settings}
-            onClick={() => settings && void perform(() => settingsControls.updateAppContextSettings!({ ...settings, enabled: !settings.enabled }), true)}>
-            <span className="settings-switch-thumb" aria-hidden="true" />
-          </button>
+            onClick={() => settings && void perform(() => settingsControls.updateAppContextSettings!({ ...settings, enabled: !settings.enabled }), true)} />
         </SettingsRow>
         <SettingsRow title={t("composer.appContext.shortcut")}>
           <button className="settings-button" type="button" data-app-context-shortcut
@@ -126,11 +125,9 @@ export function AppContextSettingsSection(): JSX.Element | null {
           </button>
         </SettingsRow>
         <SettingsRow title={t("composer.appContext.includeText")}>
-          <button className="settings-switch" type="button" role="switch" aria-checked={settings?.include_text ?? false}
+          <Switch checked={settings?.include_text ?? false}
             aria-label={t("composer.appContext.includeText")} disabled={disabled || !settings}
-            onClick={() => settings && void perform(() => settingsControls.updateAppContextSettings!({ ...settings, include_text: !settings.include_text }), true)}>
-            <span className="settings-switch-thumb" aria-hidden="true" />
-          </button>
+            onClick={() => settings && void perform(() => settingsControls.updateAppContextSettings!({ ...settings, include_text: !settings.include_text }), true)} />
         </SettingsRow>
       </SettingsGroup>
       {error || state?.error ? <p className="settings-error" role="alert">{error || state?.error}</p> : null}

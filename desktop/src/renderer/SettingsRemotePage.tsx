@@ -13,6 +13,7 @@ import { showActionErrorToast } from "./Toast";
 import { SettingsFailure } from "./SettingsFailure";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
+import { Switch } from "./ui/Switch";
 
 export type RemoteDeviceView = {
   pub: string;
@@ -68,11 +69,8 @@ export function SettingsRemotePage({
       <SettingsSection>
         <SettingsGroup>
           <SettingsRow title={t("remote.allowAccess")} description={t(status?.account_server ? "remote.accountDescription" : "remote.lanDescription")}>
-            <button className="settings-switch" type="button" role="switch" aria-checked={hostEnabled}
-              disabled={busy} onClick={() => onToggleHost(!hostEnabled)}>
-              <span className="settings-switch-thumb" aria-hidden="true" />
-              <span className="sr-only">{hostEnabled ? t("remote.disableAccess") : t("remote.enableAccess")}</span>
-            </button>
+            <Switch checked={hostEnabled}
+              disabled={busy} onClick={() => onToggleHost(!hostEnabled)} label={hostEnabled ? t("remote.disableAccess") : t("remote.enableAccess")} />
           </SettingsRow>
           {hostRunning && webUrl && !status?.account_server ? <SettingsRow title={t("remote.webAddress")}>
             <code>{webUrl}</code>

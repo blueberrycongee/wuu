@@ -11,6 +11,7 @@ import { ChevronDown, Folder, Loader2, RefreshCw, Settings, Trash2 } from "./Wuu
 import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
+import { Switch } from "./ui/Switch";
 
 export function BrowserSettingsSection(): JSX.Element | null {
   const scope = useSettingsOperationScope();
@@ -284,19 +285,14 @@ export function BrowserSettingsSection(): JSX.Element | null {
                     >
                       <RefreshCw size={16} className={busy === `reload:${extension.id}` ? "settings-spin" : undefined} aria-hidden="true" />
                     </button></Tooltip> : null}
-                    <button
-                      className="settings-switch"
-                      type="button"
-                      role="switch"
+                    <Switch
                       aria-label={extension.enabled
                         ? t("settings.browserExtensionsDisable", { name: extension.name })
                         : t("settings.browserExtensionsEnable", { name: extension.name })}
-                      aria-checked={extension.enabled}
+                      checked={extension.enabled}
                       disabled={unavailable || Boolean(busy)}
                       onClick={() => void toggleExtension(extension)}
-                    >
-                      <span className="settings-switch-thumb" aria-hidden="true" />
-                    </button>
+                    />
                     <button
                       className="settings-button settings-button-ghost settings-icon-button"
                       type="button"

@@ -265,6 +265,13 @@ func (s *Server) enqueueProcessCompletionTurn(binding *runtime.State, threadID, 
 		return
 	}
 
+	th.mu.Lock()
+	answered := processCompletionMarkerAnswered(th.History, processID)
+	th.mu.Unlock()
+	if !answered && s.completionDeliveryPaused(th, nil, []string{processID}) {
+		return
+	}
+
 	s.agentCompletionMu.Lock()
 	if s.closed.Load() {
 		s.agentCompletionMu.Unlock()

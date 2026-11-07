@@ -152,6 +152,7 @@ export interface SettingsAvailableModelV1 {
   readonly model: string;
   readonly label: string;
   readonly variants: readonly string[];
+  readonly supportsTools?: boolean;
 }
 
 export interface SettingsValueMapV1 {
@@ -376,8 +377,10 @@ export interface PluginUIConversationComposerProps {
   onStop(): void;
 }
 
-/** Decorative host identity. Static is the default; ambient keeps the same sphere and face. */
+/** Decorative host identity. Static is the default; ambient preserves its configured appearance. */
 export interface PluginUIAvatarProps {
+  /** Optional mascot-v1:shape:accessory:hue style. Omit for the host brand identity. */
+  readonly avatarKey?: string;
   readonly size?: number;
   readonly status?: "idle" | "thinking" | "sending" | "responding" | "queued" | "waiting" | "failed" | "interrupted";
   readonly motion?: "static" | "ambient";
@@ -655,6 +658,10 @@ export interface PluginGenerationApi extends ApplicationGenerationAPI {
   registerViewType(definition: ViewTypeDefinition): Disposable;
   /** Set a declared navigation entry title for this generation only (1–64 characters). */
   setNavigationTitle(id: string, title: string): boolean;
+  /** Set an owned navigation Avatar style. null keeps prior artwork (or an empty slot) while loading; undefined restores its declared icon. Generation-scoped. */
+  setNavigationAvatar(id: string, avatarKey: string | null | undefined): boolean;
+  /** Set the visible title of one registered View type for this generation only (1–64 characters). */
+  setViewTitle(id: string, title: string): boolean;
   registerViewPlacement(contribution: ViewPlacementContribution): Disposable;
   registerRenderer(definition: RendererDefinition): Disposable;
   registerThemeTokens(tokens: ThemeTokens): Disposable;
@@ -803,6 +810,7 @@ export const HOST_SERVICE_METHODS = [
   "host.session.inspect",
   "host.session.context",
   "host.session.control",
+  "host.session.model",
   "host.session.attachment.read",
   "host.session.history.read",
   "host.session.history.search",
@@ -846,6 +854,7 @@ export const KERNEL_SERVICE_NAMES = {
   "host.session.inspect": "host.session.inspect",
   "host.session.context": "host.session.context",
   "host.session.control": "host.session.control",
+  "host.session.model": "host.session.model",
   "host.session.attachment.read": "host.session.attachment.read",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
@@ -1641,6 +1650,10 @@ export interface HostServiceContracts {
   "host.session.control": {
     params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string; state?: "active" | "paused" | "released"; revision?: number };
     result: { session_id: string; manager_id?: string; state?: string; revision: number };
+  };
+  "host.session.model": {
+    params: { session_id: string; provider?: string; model?: string };
+    result: { provider: string; model: string };
   };
   "host.session.context": { params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string }; result: { session_id: string; user_space_id: string; product_domain: "personal" | "coding"; agent_id: string; parent_session_id: string } };
   "host.session.inspect": {
@@ -3144,7 +3157,6 @@ export * from "./ui-search.js";
 export * from "./ui-terminals.js";
 export * from "./ui-browser.js";
 export * from "./ui-desktop.js";
-export * from "./ui-projects.js";
 export * from "./ui-file-selection.js";
 export * from "./ui-side-conversation.js";
 export * from "./ui-onboarding.js";

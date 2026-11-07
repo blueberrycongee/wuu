@@ -13,6 +13,7 @@ import {
   type BrowserPiPWindowHandle,
 } from "./browserPiPWindow";
 import type { ObservationPiPEventSink } from "./cuaActivityWindows";
+import { ActivityPiPSurface } from "./activityPiPWindow";
 
 const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 // Cards animate in and out on timers; assertions about resting state run once
@@ -64,8 +65,14 @@ class FakePipWindow {
 
   opacity = 1;
   ignoringMouse = false;
-  setAlwaysOnTop(): void {}
-  setParentWindow(): void {}
+  parent: unknown = null;
+  alwaysOnTop: { flag: boolean; level?: string } = { flag: false };
+  setAlwaysOnTop(flag: boolean, level?: string): void {
+    this.alwaysOnTop = { flag, level };
+  }
+  setParentWindow(parent: unknown): void {
+    this.parent = parent;
+  }
   moveAbove(): void {}
   setVisibleOnAllWorkspaces(): void {}
   setOpacity(opacity: number): void {
@@ -260,6 +267,48 @@ function makeSink(): ObservationPiPEventSink & {
   };
 }
 
+function makeCuaSurface(opts?: {
+  bounds?: Rectangle;
+  desktopFrame?: Rectangle | ((bounds: Rectangle) => Rectangle);
+}): {
+  surface: ActivityPiPSurface;
+  win: FakePipWindow;
+  overlay: FakeOverlay;
+  sink: ReturnType<typeof makeSink>;
+} {
+  const sink = makeSink();
+  const bounds = opts?.bounds ?? { x: 100, y: 100, width: 260, height: 170 };
+  const win = new FakePipWindow(bounds);
+  const overlay = new FakeOverlay();
+  const surface = new ActivityPiPSurface({
+    activity: {
+      ...makeActivity(), kind: "cua", plugin_id: "cua-mac", target: "com.apple.TextEdit",
+      process_id: 42, window_id: 99,
+    },
+    bounds,
+    sink,
+    isPackaged: false,
+    createWindow: () => win.asHandle(),
+    createOverlay: () => overlay.asHandle(),
+    reducedMotion: () => true,
+    cursorPosition: () => ({ x: -1000, y: -1000 }),
+    desktopFrame: (bounds) => typeof opts?.desktopFrame === "function"
+      ? opts.desktopFrame(bounds)
+      : opts?.desktopFrame ?? { x: 0, y: 0, width: 1440, height: 900 },
+    createContent: (_activity, context) => {
+      context.setViewport({ width: 800, height: 600 });
+      context.setMounted(true);
+      return {
+        start: () => undefined,
+        setVisible: () => undefined,
+        layout: () => undefined,
+        stop: (onStopped: () => void) => onStopped(),
+      };
+    },
+  });
+  return { surface, win, overlay, sink };
+}
+
 function makeSurface(opts?: {
   host?: FakeHost; bounds?: Rectangle; cursorPosition?: () => { x: number; y: number }; reducedMotion?: boolean;
 }): {
@@ -289,6 +338,110 @@ function makeSurface(opts?: {
   });
   return { surface, win, overlay, host, sink };
 }
+
+describe("ActivityPiPSurface desktop docking", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("floats a native preview at a display corner and docks it back into the column", async () => {
+    const { surface, win, overlay, sink } = makeCuaSurface();
+    let visible = true;
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      isVisible: () => visible,
+      isMinimized: () => false,
+      isFocused: () => false,
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+      getMediaSourceId: () => "window:123:0",
+      webContents: { getZoomFactor: () => 1 },
+    });
+    surface.start();
+    surface.setHostParent(parent);
+    surface.setHostLayout({
+      host: { x: 200, y: 100, width: 800, height: 700 },
+      obstacles: [],
+      visibleFrame: { x: 0, y: 0, width: 1440, height: 900 },
+    });
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    expect(win.isVisible()).toBe(true);
+    expect(win.getBounds()).toEqual({ x: 656, y: 536, width: 320, height: 240 });
+
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    expect(win.parent).toBeNull();
+    expect(win.alwaysOnTop).toEqual({ flag: true, level: "floating" });
+    expect(win.getBounds()).toEqual({ x: 1096, y: 636, width: 320, height: 240 });
+    expect(sink.events).toContainEqual({ event: "desktop_dock", desktop: true });
+
+    // The detached card no longer follows the Wuu window's visibility.
+    visible = false;
+    parent.emit("hide");
+    expect(win.isVisible()).toBe(true);
+    visible = true;
+    parent.emit("show");
+
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    expect(win.parent).toBe(parent);
+    expect(win.alwaysOnTop.flag).toBe(false);
+    expect(win.getBounds()).toEqual({ x: 656, y: 536, width: 320, height: 240 });
+    expect(sink.events).toContainEqual({ event: "desktop_dock", desktop: false });
+
+    visible = false;
+    parent.emit("hide");
+    expect(win.isVisible()).toBe(false);
+    surface.stop();
+    expect(parent.eventNames()).toEqual([]);
+  });
+
+  it("does not detach a browser preview", async () => {
+    const { surface, win, overlay, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    expect(win.alwaysOnTop.flag).toBe(false);
+    expect(sink.events).not.toContainEqual({ event: "desktop_dock", desktop: true });
+    surface.stop();
+  });
+
+  it("fits an oversized card when it is moved to a smaller display", async () => {
+    const large = { x: 0, y: 0, width: 2000, height: 1200 };
+    const small = { x: -1366, y: 0, width: 1366, height: 768 };
+    const { surface, win, overlay } = makeCuaSurface({
+      desktopFrame: (bounds) => bounds.x < 0 ? small : large,
+    });
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    expect(win.getBounds()).toEqual({ x: 1656, y: 936, width: 320, height: 240 });
+
+    overlay.navigate("wuu-pip://resize?phase=start&edge=se&x=1976&y=1176");
+    overlay.navigate("wuu-pip://resize?phase=end&edge=se&x=3256&y=1936");
+    finishMotion();
+    expect(win.getBounds().width).toBe(1600);
+    expect(win.getBounds().height).toBe(1000);
+
+    overlay.navigate("wuu-pip://drag?phase=start&x=500&y=500&vx=0&vy=0");
+    overlay.navigate("wuu-pip://drag?phase=move&x=-500&y=300&vx=0&vy=0");
+    overlay.navigate("wuu-pip://drag?phase=end&x=-500&y=300&vx=0&vy=0");
+    finishMotion();
+    const bounds = win.getBounds();
+    expect(bounds).toMatchObject({ width: 1318, height: 720 });
+    expect(bounds.x).toBeGreaterThanOrEqual(small.x);
+    expect(bounds.y).toBeGreaterThanOrEqual(small.y);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(small.x + small.width);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(small.y + small.height);
+    surface.stop();
+  });
+});
 
 describe("BrowserPiPSurface", () => {
   beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }); });

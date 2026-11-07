@@ -3,6 +3,7 @@ package appserver
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -516,7 +517,7 @@ func TestServerAutoResumesAndAcknowledgesNaturalProcessCompletion(t *testing.T) 
 	t.Fatalf("process %q disappeared from the registry", started.ID)
 }
 
-func TestThreadResumeReplaysProcessCompletionAcrossManagerRestart(t *testing.T) {
+func TestThreadResumeHoldsProcessCompletionAcrossManagerRestartUntilUserContinues(t *testing.T) {
 	mainClient := &fakeClient{response: providers.ChatResponse{Content: "continued after restart"}}
 	rt := newTestRuntime(t, mainClient)
 	threadID := "thread-process-restart"
@@ -577,6 +578,31 @@ terminal:
 	}
 	if err := server.handleLine(context.Background(), raw); err != nil {
 		t.Fatalf("thread/resume: %v", err)
+	}
+	if err := server.handleLine(context.Background(), []byte(`{"id":"recovery","method":"thread/recovery/list"}`)); err != nil {
+		t.Fatal(err)
+	}
+	recovery := remarshal[struct {
+		Items []RestartRecoveryItem `json:"items"`
+	}](t, waitForResponseByID(t, out, "recovery")["result"])
+	if len(recovery.Items) != 0 {
+		t.Fatalf("an old background result was offered as an interrupted turn: %+v", recovery.Items)
+	}
+	if !server.completionDeliveryPaused(server.thread(threadID), nil, []string{started.ID}) {
+		t.Fatal("opening history released automatic delivery")
+	}
+	mainClient.mu.Lock()
+	callsBeforeChoice := len(mainClient.requests)
+	mainClient.mu.Unlock()
+	if callsBeforeChoice != 0 {
+		t.Fatalf("history resume silently called the model %d times", callsBeforeChoice)
+	}
+	resumed := remarshal[ThreadResumeResult](t, responseByID(t, parseOutput(t, out.String()), "resume")["result"])
+	if len(resumed.Thread.Turns) != 1 {
+		t.Fatalf("expected one persisted turn, got %+v", resumed.Thread.Turns)
+	}
+	if err := server.handleLine(context.Background(), []byte(fmt.Sprintf(`{"id":"continue","method":"turn/start","params":{"thread_id":%q,"resume_after_turn_id":%q}}`, threadID, resumed.Thread.Turns[0].ID))); err != nil {
+		t.Fatal(err)
 	}
 	waitForTurnCompletedForThread(t, out, threadID)
 

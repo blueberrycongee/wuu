@@ -541,11 +541,10 @@ app.whenReady().then(async () => {
     linkTurn.turn.items[0].related_session_id = "workspace-b-split";
     linkTurn.turn.items[0].input_text = "Open the synthetic workspace B split conversation.";
     linkTurn.turn.items[0].origin = "host";
-    linkTurn.turn.items[0].presentation_kind = "session_message";
     linkTurn.turn.items[0].name = "Workspace B split";
     await completeTurn(linkTurn);
-    await until(() => Boolean(document.querySelector('.session-message-source')));
-    await evaluate(() => [...document.querySelectorAll('.session-message-source')].at(-1).click());
+    await until(() => Boolean(document.querySelector('.message-action-button[aria-label="Open related session"]')));
+    await evaluate(() => [...document.querySelectorAll('.message-action-button[aria-label="Open related session"]')].at(-1).click());
     const splitSelector = '.conversation-split-pane[data-thread-id="workspace-b-split"] [data-wuu-component="composer-input"]';
     await until(selector => Boolean(document.querySelector(selector)), splitSelector);
     await evaluate(selector => document.querySelector(selector).focus(), splitSelector); await frames();

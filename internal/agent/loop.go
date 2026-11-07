@@ -24,6 +24,11 @@ import (
 // A broken compatible endpoint must not create an unlimited billing loop.
 const maxConsecutiveContinuations = 8
 
+// ErrModelPreempted marks a model stream stopped by newly accepted user input.
+// The turn is not over: the loop keeps the visible partial answer and continues
+// with the pending input on the next model round.
+var ErrModelPreempted = errors.New("model stream preempted by new user input")
+
 // ToolSurfaceFreezer is implemented by tool executors whose provider-facing
 // definitions can change asynchronously (e.g. MCP catalog updates). RunToolLoop
 // freezes the surface for the duration of one run so req.Tools stays
@@ -890,6 +895,44 @@ func RunToolLoop(
 
 		result, err := step.Execute(ctx, req)
 		lastAgentOperationID = req.Operation.ID
+		if result.Preempted || errors.Is(err, ErrModelPreempted) {
+			if result.Usage != nil {
+				totalIn += result.Usage.InputTokens
+				totalOut += result.Usage.OutputTokens
+				totalCacheCreation += result.Usage.CacheCreationTokens
+				totalCacheRead += result.Usage.CacheReadTokens
+				if cfg.OnUsage != nil {
+					cfg.OnUsage(result.Usage.InputTokens, result.Usage.OutputTokens)
+				}
+				if cfg.OnTokenUsage != nil {
+					cfg.OnTokenUsage(*result.Usage)
+				}
+			}
+			fragment := result.Content
+			for _, completed := range result.CompletedMessages {
+				appendMessage(providers.CloneChatMessage(completed))
+				if completed.Content != "" {
+					fragment = strings.TrimPrefix(fragment, completed.Content)
+				}
+			}
+			// Keep the visible prefix as model context, but never replay partial
+			// reasoning or tool declarations from the cancelled transport.
+			if strings.TrimSpace(fragment) != "" || len(result.Images) > 0 {
+				appendMessage(providers.ChatMessage{
+					Role:    "assistant",
+					Cause:   providers.SteeredStreamFragment,
+					Content: fragment,
+					Images:  result.Images,
+					Phase:   result.Phase,
+				})
+			}
+			// The next iteration admits the user input that caused the preemption.
+			policyRetryAttempt = 0
+			policyAttemptLimit = 0
+			checkpointContinuations = 0
+			resumeSampling = false
+			continue
+		}
 		if err != nil {
 			if result.Usage != nil {
 				totalIn += result.Usage.InputTokens

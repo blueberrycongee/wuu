@@ -48,7 +48,6 @@ export function createFixtureApplication(initial: Partial<ApplicationSnapshotV1>
         case "preview.close-tab": update(current.tabs.filter(tab => tab.id !== (input as ApplicationActionMapV1["preview.close-tab"]["input"]).tabId)); break;
         case "preview.new-tab": {const tabId = `new:${crypto.randomUUID()}`; update([...current.tabs, {id:tabId, kind:"new"}],tabId); return {tabId} as ApplicationActionMapV1[A]["result"]; }
         case "preview.open-tool": {const {toolId} = input as ApplicationActionMapV1["preview.open-tool"]["input"]; tab = {id:toolId, kind:toolId}; break;}
-        case "preview.open-project": {const {projectId, title} = input as ApplicationActionMapV1["preview.open-project"]["input"]; tab = {id:`project:${projectId}`, kind:"project", projectID:projectId, title}; break;}
         case "preview.open-file": {const {context, path} = input as ApplicationActionMapV1["preview.open-file"]["input"]; tab = {id:`file:${path}`, kind:"file", context, path, title:path}; break;}
         default: return unavailable();
       }

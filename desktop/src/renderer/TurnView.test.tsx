@@ -311,6 +311,167 @@ describe("TurnView", () => {
     expect(view.querySelectorAll(".user-message-block")).toHaveLength(1);
   });
 
+  it("renders a steered user bubble after the interrupted assistant text", () => {
+    const view = render(
+      makeTurn("completed", [
+        {
+          id: "turn-1-item-1",
+          type: "user_message",
+          status: "completed",
+          role: "user",
+          text: "first",
+        },
+        {
+          id: "turn-1-item-2",
+          type: "agent_message",
+          status: "completed",
+          role: "assistant",
+          terminal: false,
+          cause: "steered_stream_fragment",
+          text: "partial answer",
+        },
+        {
+          id: "turn-1-item-3",
+          type: "user_message",
+          status: "completed",
+          role: "user",
+          source_id: "steer-1",
+          text: "new direction",
+        },
+        {
+          id: "turn-1-item-4",
+          type: "agent_message",
+          status: "completed",
+          role: "assistant",
+          terminal: true,
+          text: "final answer",
+        },
+      ]),
+    );
+
+    const messages = Array.from(
+      view.querySelectorAll<HTMLElement>('[data-wuu-component="message"]'),
+    ).map((element) => `${element.dataset.wuuVariant ?? ""}:${element.textContent ?? ""}`);
+    expect(messages).toHaveLength(4);
+    expect(messages[0]).toContain("user:first");
+    expect(messages[1]).toContain("agent:partial answer");
+    expect(messages[2]).toContain("user:new direction");
+    expect(messages[3]).toContain("agent:final answer");
+    const agentTurnIDs = Array.from(
+      view.querySelectorAll<HTMLElement>('[data-wuu-variant="agent"]'),
+    ).map((element) => element.dataset.responseTurnId);
+    expect(agentTurnIDs).toEqual(["turn-1", "turn-1"]);
+  });
+
+  it("folds an interrupted tool-phase prefix once steering supersedes it", () => {
+    const view = render(
+      makeTurn("in_progress", [
+        {
+          id: "turn-1-item-1",
+          type: "user_message",
+          status: "completed",
+          role: "user",
+          text: "first",
+        },
+        {
+          id: "turn-1-item-2",
+          type: "tool_call",
+          status: "completed",
+          name: "lookup",
+        },
+        {
+          id: "turn-1-item-3",
+          type: "user_message",
+          status: "completed",
+          role: "user",
+          source_id: "steer-1",
+          text: "new direction",
+        },
+        {
+          id: "turn-1-item-4",
+          type: "tool_call",
+          status: "in_progress",
+          name: "search",
+        },
+      ]),
+      true,
+    );
+
+    const toggles = Array.from(
+      view.querySelectorAll<HTMLElement>(".turn-process-toggle"),
+    );
+    expect(toggles).toHaveLength(2);
+    // The superseded prefix folds; the live continuation stays open.
+    expect(toggles[0].getAttribute("aria-expanded")).toBe("false");
+    expect(toggles[1].getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("collapses an interrupted turn's process work when a later turn takes over", () => {
+    const items: ThreadItem[] = [makeCommentary("partial work")];
+    const view = render(makeTurn("interrupted", items), true);
+    const toggle = view.querySelector<HTMLElement>(".turn-process-toggle");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+
+    rerender(makeTurn("interrupted", items), false);
+
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    act(() => toggle?.click());
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("keeps a live comment when a steered turn settles back to one segment", () => {
+    const firstUser: ThreadItem = {
+      id: "turn-1-item-1",
+      type: "user_message",
+      status: "completed",
+      role: "user",
+      text: "first",
+    };
+    const answer: ThreadItem = {
+      id: "turn-1-item-2",
+      type: "agent_message",
+      status: "in_progress",
+      terminal: true,
+      role: "assistant",
+      text: "Live answer tail.",
+    };
+    const steerUser: ThreadItem = {
+      id: "turn-1-item-3",
+      type: "user_message",
+      status: "completed",
+      role: "user",
+      text: "new direction",
+    };
+    const view = render(makeTurn("in_progress", [firstUser, answer, steerUser]), true);
+    view.dataset.threadId = "thread-1";
+    const originalGetClientRects = HTMLElement.prototype.getClientRects;
+    HTMLElement.prototype.getClientRects = () => [{}] as unknown as DOMRectList;
+    const originalRangeRect = Object.getOwnPropertyDescriptor(Range.prototype, "getBoundingClientRect");
+    Object.defineProperty(Range.prototype, "getBoundingClientRect", { configurable: true, value: () => new DOMRect(20, 80, 160, 20) });
+    const source = view.querySelector<HTMLElement>('[data-response-item-id="turn-1-item-2"] .agent-text')!;
+    const range = document.createRange();
+    range.selectNodeContents(source.querySelector("p")!);
+    act(() => {
+      window.getSelection()!.removeAllRanges();
+      window.getSelection()!.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+    });
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-toggle")!.click());
+    const input = document.querySelector<HTMLTextAreaElement>(".response-selection-toolbar .selection-action-comment-input")!;
+    act(() => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "keep me through completion");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    rerender(makeTurn("completed", [firstUser, { ...answer, status: "completed" }]), false);
+
+    expect(document.querySelector(".response-selection-toolbar .selection-action-comment-input")).toBe(input);
+    expect(input.value).toBe("keep me through completion");
+    HTMLElement.prototype.getClientRects = originalGetClientRects;
+    if (originalRangeRect) Object.defineProperty(Range.prototype, "getBoundingClientRect", originalRangeRect);
+    else Reflect.deleteProperty(Range.prototype, "getBoundingClientRect");
+  });
+
   it("renders a plugin-generated query through the existing user-message flow", () => {
     const view = render(
       makeTurn("completed", [
@@ -754,6 +915,7 @@ describe("TurnView", () => {
         makeCommentary("partial progress"),
         makeError("context canceled"),
       ]),
+      true,
     );
 
     expect(view.textContent).toContain("partial progress");
@@ -793,6 +955,7 @@ describe("TurnView", () => {
         [makeCommentary("partial progress"), makeError(error)],
         error,
       ),
+      true,
     );
 
     expect(view.textContent).toContain("partial progress");
@@ -936,6 +1099,30 @@ it("keeps the retrying card's node when automatic recovery gives up", () => {
   expect(container.querySelectorAll("aside.turn-failure")).toHaveLength(1);
   expect(container.querySelector("aside.turn-failure")).toBe(card);
   expect(card!.getAttribute("role")).toBe("alert");
+});
+
+it("retires the latest failure card when a new turn takes over but keeps restored history", () => {
+  vi.useFakeTimers();
+  const turn = makeTurn("failed", [
+    { id: "reconnect-1", type: "stream_reconnect", status: "failed", text: "connection reset by peer", reason: "network" },
+  ], "network down");
+
+  const live = render(turn, true);
+  act(() => { vi.advanceTimersByTime(ASSISTANT_TURN_PRESENTATION_STABILIZE_MS); });
+  expect(live.querySelector(".turn-failure-presence")).not.toBeNull();
+  expect(live.querySelector(".turn-failure-presence.is-leaving")).toBeNull();
+
+  rerender(turn, false);
+  expect(live.querySelector(".turn-failure-presence.is-leaving")?.getAttribute("aria-hidden")).toBe("true");
+  act(() => { vi.advanceTimersByTime(1_000); });
+  expect(live.querySelector(".turn-failure-presence")).toBeNull();
+
+  act(() => { root?.unmount(); });
+  container?.remove();
+  const restored = render(turn, false);
+  act(() => { vi.advanceTimersByTime(ASSISTANT_TURN_PRESENTATION_STABILIZE_MS); });
+  expect(restored.querySelector(".turn-failure-presence")).not.toBeNull();
+  expect(restored.querySelector(".turn-failure-presence.is-leaving")).toBeNull();
 });
 
 // Automatic recovery that gives up settles the turn as interrupted, not

@@ -48,8 +48,6 @@ export interface ApplicationComposerPresentationViewV1 {
   readonly workspaceCapabilities: { readonly create: boolean; readonly open: boolean };
 }
 export interface ApplicationComposerTelemetryV1 {
-  readonly tokensPerSecond: number; readonly source: "real" | "estimated" | "none";
-  readonly sampledAt?: number; readonly inputTokens: number; readonly outputTokens: number;
   readonly contextUsage?: ApplicationComposerContextUsageV1;
 }
 export interface ApplicationComposerStatusItemV1 extends ComposerStatusItem { readonly key: string }

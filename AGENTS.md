@@ -104,6 +104,10 @@ machine-specific setup in user-level configuration.
 
 ## UI design and visual acceptance
 
+- Use the [design system](docs/en/project/design-system.md) for color, type,
+  spacing, radius, and elevation roles. Use
+  [desktop i18n maintenance](desktop/src/renderer/i18n/README.md) for UI copy,
+  locale formatting, and voice.
 - Use shared components and design variables for equivalent controls. Preserve
   consistent typography, icon treatment, spacing, corners, and interaction states.
 - Use one UI font-size baseline for sidebars, prose, menus, settings, and controls.
@@ -118,6 +122,8 @@ machine-specific setup in user-level configuration.
 - As text grows, adapt row heights and necessary spacing. Scale icons according to
   their role rather than enlarging every element mechanically. Never hide layout
   problems by shrinking text, tightening letter spacing, or reducing contrast.
+  Check the longest strings in every shipped locale, not only the one you are
+  editing.
 - Align peer labels, icon columns, and trailing actions. Indentation expresses
   hierarchy and must not depend on whether an item is running or unread.
 - Reserve the actual footprint of status indicators and actions plus a reading
@@ -125,14 +131,31 @@ machine-specific setup in user-level configuration.
   keyboard-focused, disabled, and dragging when those states can coexist.
 - Keep compact controls usable and reading areas comfortable. Adapt mobile layout
   and interaction to the device; do not merely shrink the desktop interface.
+- In product UI, confirm only irreversible or disruptive actions through the
+  shared confirmation dialog, and reserve the danger tone for the destructive
+  choice. Ordinary reversible actions proceed without a second prompt.
 - Use whitespace and alignment before adding containers. Add borders, backgrounds,
   and shadows only to express grouping, interaction boundaries, elevation, or
   deliberate brand identity. Use semantic colors consistently.
 - Include only text that helps users understand, decide, or act. Avoid repeating a
   label in a subtitle or hint. Retain explanations for non-obvious consequences
   and restrictions. Remove redundant copy, wrappers, and decoration before handoff.
+- For UI copy, write the target locale directly instead of translating English
+  word order, and use one verb for the same action across the product. Keep
+  labels neutral rather than promotional.
+- Default to the shared toast system for user-action failures; preserve the current
+  view and user input. Plugins use public `api.showNotice` rather than custom
+  error notifications or private renderer imports. Keep field validation next to
+  the field, page-load failures in place with a retry control, and conversation
+  or task failures in their history with appropriate recovery actions. A temporary
+  toast does not replace a persistent failure state. Avoid duplicate notifications
+  for the same failure. Follow the [error feedback contract](docs/en/customize/ui-sdk.md#error-feedback).
 - Motion explains changes and provides feedback. Keep frequent actions responsive,
   avoid layout jumps and moving click targets, and respect reduced-motion settings.
+- Before declaring a UI change complete, walk the primary task as a first-time
+  user, using only what the interface shows. Fix blockers, unclear next steps,
+  and broken handoffs between screens; add a hint only where the interface
+  cannot make the step clear.
 - Inspect actual rendering after UI changes. Cover affected themes, default and
   large font sizes, wide and narrow windows, long and empty content, scrolling,
   fixed regions, menus, and relevant state combinations. Check alignment,

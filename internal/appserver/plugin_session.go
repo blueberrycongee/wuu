@@ -1079,7 +1079,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	var control *session.Control
 	if processDelivery {
 		// A captured process reports observations to its own conversation,
-		// including one managed by a different plugin or Project Agent. Keep
+		// including one managed by a different plugin. Keep
 		// the current control fence so pause/takeover still revokes delivery.
 		current, managed, err := binding.Sessions.ReadControl(params.SessionID)
 		if err != nil {
@@ -1096,6 +1096,15 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	}
 	if control != nil && control.State != session.ControlActive {
 		return pluginhost.SessionSendResult{}, session.ErrControlChanged
+	}
+	if params.UserInputRequestID == "" && (params.ReplyToTurnID != "" || processDelivery) {
+		paused, err := s.pauseCompletionAfterRestart(th)
+		if err != nil {
+			return pluginhost.SessionSendResult{}, err
+		}
+		if paused {
+			return pluginhost.SessionSendResult{}, errCompletionDeliveryPaused
+		}
 	}
 	var received []TurnStartImage
 	var selectedFiles []TurnStartFile

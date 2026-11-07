@@ -24,8 +24,10 @@ import (
 // not give its native steering RPC ownership of the host loop's pending input.
 func TestSelectedHostLoopSteeringHasOneOwner(t *testing.T) {
 	entered := make(chan struct{})
+	firstCanceled := make(chan struct{})
 	release := make(chan struct{})
 	unblock := sync.OnceFunc(func() { close(release) })
+	var canceledOnce sync.Once
 	var mu sync.Mutex
 	var requests []string
 	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,12 +46,22 @@ func TestSelectedHostLoopSteeringHasOneOwner(t *testing.T) {
 		n := len(requests)
 		mu.Unlock()
 		if n == 1 {
+			// Make visible output real before the steer arrives. The product
+			// contract is that this item closes first and the user bubble lands
+			// after its tail.
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"partial answer\"}}]}\n\n")
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
 			close(entered)
 			select {
 			case <-release:
 			case <-r.Context().Done():
+				canceledOnce.Do(func() { close(firstCanceled) })
 				return
 			}
+			return
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1}}\n\ndata: [DONE]\n\n")
@@ -90,22 +102,50 @@ func TestSelectedHostLoopSteeringHasOneOwner(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("model not entered")
 	}
+	waitForMethod(t, out, NotificationAgentMessageDelta)
 	send("steer", "turn/steer", map[string]any{"thread_id": threadID, "expected_turn_id": started.Turn.ID, "prompt": "followup-exactly-once", "client_id": "ordinary-enter"})
-	// Keep the physical request blocked while the competing RPC dispatcher has
-	// time to wake. The host loop can consume this only at its next safe boundary.
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-firstCanceled:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("host input did not preempt the active model stream: %s", out.String())
+	}
 	if strings.Contains(out.String(), "does not support active-turn steering") {
 		t.Fatalf("host input incorrectly dispatched to native RPC: %s", out.String())
 	}
-	unblock()
 	deadline := time.Now().Add(20 * time.Second)
-	for turnCompletedCountForThread(t, out, threadID) < 2 && time.Now().Before(deadline) {
+	for turnCompletedCountForThread(t, out, threadID) < 1 && time.Now().Before(deadline) {
 		time.Sleep(10 * time.Millisecond)
 	}
-	if turnCompletedCountForThread(t, out, threadID) != 2 {
-		t.Fatalf("host steering did not complete exactly two turns: %s", out.String())
+	if turnCompletedCountForThread(t, out, threadID) != 1 {
+		t.Fatalf("host steering must finish inside the original turn: %s", out.String())
+	}
+	if strings.Contains(out.String(), `"type":"model_preempted"`) || strings.Contains(out.String(), `"method":"turn/error"`) {
+		t.Fatalf("preemption leaked a transport event or error card: %s", out.String())
 	}
 	th := srv.thread(threadID)
+	th.mu.Lock()
+	var items []ThreadItem
+	for _, turn := range th.Turns {
+		if turn.ID == started.Turn.ID {
+			items = append(items, turn.Items...)
+		}
+	}
+	th.mu.Unlock()
+	if len(items) != 4 {
+		t.Fatalf("turn items = %+v, want first user, interrupted assistant, steer user, final assistant", items)
+	}
+	if items[0].Type != ThreadItemUserMessage || items[0].Text != "first" {
+		t.Fatalf("first user item changed: %+v", items[0])
+	}
+	if items[1].Type != ThreadItemAgentMessage || items[1].Text != "partial answer" || items[1].Cause != providers.SteeredStreamFragment || items[1].Terminal {
+		t.Fatalf("interrupted assistant must stay before the steer: %+v", items[1])
+	}
+	if items[2].Type != ThreadItemUserMessage || items[2].Text != "followup-exactly-once" || items[2].SourceID != "ordinary-enter" {
+		t.Fatalf("steer bubble was not materialized after the interrupted assistant: %+v", items[2])
+	}
+	if items[3].Type != ThreadItemAgentMessage || items[3].Text != "done" || !items[3].Terminal {
+		t.Fatalf("successor answer missing: %+v", items[3])
+	}
 	th.mu.Lock()
 	count := 0
 	for _, msg := range th.History {

@@ -1,10 +1,12 @@
 # 执行环境
 
-在 **设置 → 内置 Agent → 执行环境** 中，可以让工作区工具运行在容器或远程机器上。默认仍在本机执行。环境内应安装与宿主相同版本的 Wuu；协议不匹配时会停止执行。
+在[用户配置](../reference/configuration.md)中设置 `execution_environments`，可以让工作区工具运行在容器或远程机器上。默认仍在本机执行。环境内应安装与宿主相同版本的 Wuu；协议不匹配时会停止执行。
 
-在**设置 → 内置 Agent → 执行环境**中创建配置，并在同一区域将其选为新会话的默认环境。会话创建时会保存环境选择和配置；修改或删除配置不会迁移已有会话。旧会话继续在本机执行。分叉会话继承配置，默认使用独立环境，启用共享时才共用文件系统。原地执行的子代理和只读侧聊使用父会话的环境。
+在 `execution_environments.profiles` 中添加命名配置，再将 `execution_environments.default` 设为该名称；设为 `local` 则使用本机。编辑后先完成正在运行的工作，再完全退出并重新启动 Wuu。会话创建时会保存环境选择和配置；修改或删除配置不会迁移已有会话。旧会话继续在本机执行。分叉会话继承配置，默认使用独立环境，启用共享时才共用文件系统。原地执行的子代理和只读侧聊使用父会话的环境。
 
 文件、搜索、命令、Git、程序化工具调用及后台进程都进入该环境。桌面可以接收进程事件、查看输出和停止进程。展示产物会将不可变的文件快照传回宿主，单个文件上限为 256 MiB。模型连接、插件、浏览器集成、笔记和历史仍在宿主运行。此设置不会隔离扩展。
+
+这些配置用于绑定工作区的内置 Agent 会话；Personal 用户域运行时不使用 `execution_environments`。重启也不会替换已有会话保存的环境。
 
 ## 从 Docker 开始
 
@@ -38,9 +40,9 @@ Linux 命令写入限制需要 Landlock ABI 3 或更新版本。若不可用，�
 
 ## 共享、保留与恢复
 
-默认每个会话具有独立环境标识。**在会话间共享** 会让文件系统共用，但工具状态和进程归属仍按会话区分。显式挂载的本机目录始终共享，不受此开关影响。
+默认每个会话具有独立环境标识。`shared: true` 会让文件系统共用，但工具状态和进程归属仍按会话区分。显式挂载的本机目录始终共享，不受此开关影响。
 
-**保留环境文件** 可以跨正常断开保留 Docker 容器、Singularity 工作目录、SSH 工作目录或云端文件系统。Modal 创建文件系统快照，Daytona 停止环境，Vercel 使用持久化沙箱。共享环境会保留供其他会话使用。保留文件不保证进程能跨云端停止、服务超时或机器重启继续运行。已保留的状态丢失时会报错，不会悄悄换成空文件系统。
+`persistent: true` 可以跨正常断开保留 Docker 容器、Singularity 工作目录、SSH 工作目录或云端文件系统。Modal 创建文件系统快照，Daytona 停止环境，Vercel 使用持久化沙箱。共享环境会保留供其他会话使用。保留文件不保证进程能跨云端停止、服务超时或机器重启继续运行。已保留的状态丢失时会报错，不会悄悄换成空文件系统。
 
 未启用保留时，Docker 容器在运行时关闭时移除；Singularity 状态在连接关闭后删除；SSH 工作目录在工作进程断开并达到空闲超时后删除；云端环境在正常断开时停止或删除。宿主异常退出可能遗留资源。保留、共享的云端环境和快照可能持续计费，不再需要时请通过服务控制台或 CLI 清理。删除配置只删除配置本身。
 
@@ -186,8 +188,6 @@ WUU_EXECUTION_E2E_IMAGE=wuu-execution:local go test ./internal/executionworker -
 Singularity/Apptainer 检查将 `WUU_EXECUTION_E2E_SIF` 指向包含当前执行程序的 SIF 镜像，运行 `go test ./internal/executionworker -run TestSingularity -count=1 -v`。
 
 SSH 检查使用一次性测试服务器：将 JSON 格式的 SSH 配置赋给 `WUU_EXECUTION_E2E_SSH`，运行 `go test ./internal/executionworker -run TestSSHEnvironmentEndToEnd -count=1 -v`。测试会在专属环境目录内创建文件和进程。
-
-桌面验收运行 `npm --prefix desktop run test:e2e:execution-environments`。它使用真实渲染器和模拟设置桥接，将截图及 JSON 记录保存到 `desktop/out/e2e/execution-environments`，不验证云端账号。云端实测需要对应凭据及已发布到该服务的执行镜像。
 
 ## Worker 兼容性
 

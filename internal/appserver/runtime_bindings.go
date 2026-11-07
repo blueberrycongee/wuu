@@ -13,18 +13,18 @@ type ServerOption func(*Server) error
 // host ends the binding. Transport connections may attach/detach independently.
 type RuntimeBindings struct {
 	desktopSessionTransport *desktopSessionTransportBridge
-	project                 *ProjectCoordinatorBridge
+	managedSessions         *managedSessionBridge
 	personalCoordination    *personalCoordinatorBridge
 	personalEffects         *PersonalEffectBridge
 	personalAccounts        PersonalAccountsFactory
 }
 
 func NewRuntimeBindings() *RuntimeBindings {
-	return &RuntimeBindings{desktopSessionTransport: newDesktopSessionTransportBridge(), project: NewProjectCoordinatorBridge(), personalCoordination: newPersonalCoordinatorBridge(), personalEffects: NewPersonalEffectBridge()}
+	return &RuntimeBindings{desktopSessionTransport: newDesktopSessionTransportBridge(), managedSessions: newManagedSessionBridge(), personalCoordination: newPersonalCoordinatorBridge(), personalEffects: NewPersonalEffectBridge()}
 }
 func (b *RuntimeBindings) NativeProviders() []runtime.NativeProviderFactory {
 	factory := b.personalAccounts
-	return []runtime.NativeProviderFactory{b.desktopSessionTransport.factory(), b.personalEffects.ProviderFactory(), b.project.ProviderFactory(), b.project.MechanismFactory(), ProjectCoordinatorConsumerFactory(), PersonalActionsConsumerFactory(), PersonalCoordinationConsumerFactory(),
+	return []runtime.NativeProviderFactory{b.desktopSessionTransport.factory(), b.personalEffects.ProviderFactory(), b.managedSessions.MechanismFactory(), PersonalActionsConsumerFactory(), PersonalCoordinationConsumerFactory(),
 		{ID: PersonalAccountsModule, DefaultEnabled: true, Build: func(input runtime.NativeProviderContext) (pluginhost.Client, error) {
 			return newPersonalAccountsProvider(input, factory), nil
 		}},
@@ -39,7 +39,7 @@ func WithRuntimeBindings(bindings *RuntimeBindings) ServerOption {
 		server.personalEffects = bindings.personalEffects
 		server.personalAccountsRouted = true
 		server.personalCoordination = bindings.personalCoordination
-		_, err := bindings.project.Bind(server)
+		_, err := bindings.managedSessions.Bind(server)
 		return err
 	}
 }

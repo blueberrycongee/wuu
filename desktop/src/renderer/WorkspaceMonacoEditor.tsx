@@ -397,27 +397,17 @@ export function monacoLanguageForPath(path: string): MonacoLanguage {
   return "plaintext";
 }
 
-// Diff washes are quiet tints of the status colors; the characters that
-// changed read one step stronger. Dark paper needs a little more of the hue
-// for the same weight. Both steps keep the syntax colours readable on them.
-const DIFF_TINTS: Record<AppliedTheme, { line: number; text: number }> = {
-  light: { line: 8, text: 14 },
-  dark: { line: 12, text: 18 },
-};
-
 /**
  * Defines the workspace editor theme from the current CSS tokens and returns
  * its name. Editors paint what the rest of the product paints: ink on paper,
- * the product text selection, the syntax palette of rendered code blocks, and
- * status tints for diffs. Callers re-define on every theme change, so
+ * the product text selection, and the syntax palette of rendered code blocks.
+ * Callers re-define on every theme change, so
  * extension themes reach the editor as well.
  */
 export function defineWorkspaceMonacoTheme(theme: AppliedTheme): string {
   const name = theme === "dark" ? "wuu-workspace-dark" : "wuu-workspace";
-  const tint = DIFF_TINTS[theme];
   const color = resolveCssColors({
     ink: "var(--ink)",
-    inkSoft: "var(--ink-soft)",
     inkTertiary: "var(--ink-tertiary)",
     inkFaint: "var(--ink-faint)",
     danger: "var(--danger)",
@@ -425,9 +415,7 @@ export function defineWorkspaceMonacoTheme(theme: AppliedTheme): string {
     selectionSoft: "color-mix(in srgb, var(--selection-bg) 50%, transparent)",
     lineHighlight: "var(--ink-overlay-4)",
     hairlineSoft: "var(--hairline-soft)",
-    hairline: "var(--hairline)",
     hairlineStrong: "var(--hairline-strong)",
-    surface: "var(--surface-2)",
     menu: "var(--menu-bg)",
     menuBorder: "var(--menu-border)",
     field: "var(--field-bg)",
@@ -436,10 +424,6 @@ export function defineWorkspaceMonacoTheme(theme: AppliedTheme): string {
     thumb: "var(--scrollbar-thumb)",
     thumbHover: "var(--scrollbar-thumb-hover)",
     thumbActive: "var(--scrollbar-thumb-active)",
-    insertedLine: `color-mix(in srgb, var(--success) ${tint.line}%, transparent)`,
-    insertedText: `color-mix(in srgb, var(--success) ${tint.text}%, transparent)`,
-    removedLine: `color-mix(in srgb, var(--danger) ${tint.line}%, transparent)`,
-    removedText: `color-mix(in srgb, var(--danger) ${tint.text}%, transparent)`,
     keyword: "var(--hljs-keyword)",
     function: "var(--hljs-function)",
     string: "var(--hljs-string)",
@@ -522,26 +506,12 @@ export function defineWorkspaceMonacoTheme(theme: AppliedTheme): string {
       "scrollbarSlider.background": color.thumb,
       "scrollbarSlider.hoverBackground": color.thumbHover,
       "scrollbarSlider.activeBackground": color.thumbActive,
-      "diffEditor.insertedLineBackground": color.insertedLine,
-      "diffEditor.insertedTextBackground": color.insertedText,
-      "diffEditor.removedLineBackground": color.removedLine,
-      "diffEditor.removedTextBackground": color.removedText,
-      "diffEditorGutter.insertedLineBackground": color.insertedLine,
-      "diffEditorGutter.removedLineBackground": color.removedLine,
-      "diffEditor.border": color.hairlineSoft,
-      "diffEditor.diagonalFill": color.hairline,
-      "diffEditor.unchangedRegionBackground": color.surface,
-      "diffEditor.unchangedRegionForeground": color.inkSoft,
-      "diffEditor.unchangedRegionShadow": transparent,
-      "diffEditor.unchangedCodeBackground": transparent,
-      "diffEditor.move.border": color.hairlineStrong,
-      "diffEditor.moveActive.border": color.inkSoft,
     },
   });
   return name;
 }
 
-/** Options shared by the file viewer and the review diff: calm reading chrome. */
+/** Reading options for the workspace file editor. */
 export function workspaceMonacoReadingOptions(host: HTMLElement): monaco.editor.IEditorOptions {
   const scrollbarSize = workspaceScrollbarSize(host);
   return {

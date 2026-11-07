@@ -1,9 +1,8 @@
 import { ComposerInput, type ComposerInputHandle } from "./ComposerInput";
 import { pluginReferenceDraft, pluginReferenceParts } from "./ComposerPluginReferences";
+import { draftSkillReference, skillReferenceArguments, skillReferenceTitle } from "./ComposerSkillReferences";
 import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
-import { ConversationTriggers } from "./ConversationTriggers";
-import { ENABLE_CONVERSATION_TRIGGERS } from "./FeatureFlags";
 import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
 import {
   memo,
@@ -63,7 +62,6 @@ import {
 } from "./TurnNotice";
 import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, messageAnchorID, userMessageAnchorID } from "./TurnViewHelpers";
 import { showErrorToast } from "./Toast";
-import { isProjectEvent, ProjectEventRow } from "./ProjectViews";
 import {
   userFacingErrorForMessage,
 } from "./UserFacingErrors";
@@ -206,9 +204,6 @@ function BuiltInThreadItemView({
       if (isInternalUserNotificationItem(item)) {
         return null;
       }
-      if (isProjectEvent(item)) {
-        return <ProjectEventRow item={item} />;
-      }
       const copyable = messageActions !== "none" && displayText.trim() !== "";
       const editable = Boolean(
         !item.read_only &&
@@ -230,7 +225,7 @@ function BuiltInThreadItemView({
         && (sessionMessage || (deliveryText !== "" && deliveryText !== displayText.trim()));
       const openRelatedSession = (): void => {
         if (relatedSessionID !== undefined && relatedSessionAvailable) {
-          void application.invoke("conversation.open-split", { threadId: relatedSessionID }).catch(showErrorToast);
+          void application.invoke(sessionMessage ? "thread.activate" : "conversation.open-split", { threadId: relatedSessionID }).catch(showErrorToast);
         }
       };
       return (
@@ -381,8 +376,6 @@ function BuiltInThreadItemView({
               getText={() => owningThreadId ? application.conversationText.getSnapshot({ threadId: owningThreadId, turnId: turnID, itemId: item.id, field: "text" }) ?? item.text ?? "" : item.text ?? ""}
               placement={actionsPersistent ? "persistent" : "overlay"}
               timestamp={actionsVisible ? turnAnswerReadyAt : undefined}
-              trailingAction={ENABLE_CONVERSATION_TRIGGERS && item.id === latestAgentMessageID && owningThreadId
-                ? <ConversationTriggers key={owningThreadId} threadID={owningThreadId} /> : undefined}
               showCopy={actionsVisible && copyable}
               showFork={forkVisible && messageActions !== "copy-only"}
               onFork={
@@ -459,16 +452,18 @@ function UserMessageContent({
   const selectionParts = (contentParts ?? []).filter(part => part.type === "response_selection");
   const textParts = (contentParts ?? []).filter((part) => part.type === "text" || part.type === "plugin_reference");
   const fileParts = (contentParts ?? []).filter((part) => part.type === "file_selection");
+  const skillReference = draftSkillReference(text);
+  const skillArguments = skillReference ? skillReferenceArguments(text, skillReference) : "";
   const hasAttachments = images.length > 0 || files.length > 0 || pastedParts.length > 0 || fileParts.length > 0;
-  const hasTextBubble = structured
+  const hasTextBubble = Boolean(skillReference) || (structured
     ? textParts.some((part) => part.text.length > 0)
-    : text.length > 0;
+    : text.length > 0);
   // Threshold + preview logic + state keying all live in
   // `./LongTextCollapse` so the chat bubble can reuse the exact same
   // numbers. The hook's `{text, expanded}` state shape is what makes
   // the toggle survive a parent re-render with a new message body
   // without flashing the previous expansion — see the module doc.
-  const bubbleText = userMessageBodyText(text, contentParts);
+  const bubbleText = skillReference ? skillArguments : userMessageBodyText(text, contentParts);
   const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(bubbleText);
   const collapsed = collapsible && !expanded;
   const displayedText = collapsed ? collapsedLongTextPreview(bubbleText) : bubbleText;
@@ -509,7 +504,23 @@ function UserMessageContent({
           data-wuu-component="message-bubble"
           data-wuu-variant="user"
         >
-          {collapsed ? (
+          {skillReference ? (
+            <div className="user-message-skill-invocation">
+              <span className="composer-skill-reference" title={skillReferenceTitle(skillReference)}>
+                <span className="composer-reference-mark" aria-hidden="true">✦</span>
+                <span className="composer-reference-name">/{skillReference.name}</span>
+              </span>
+              {skillArguments ? (
+                collapsed ? (
+                  <div className="user-message-raw-query">{displayedText}</div>
+                ) : (
+                  <div className="user-message-skill-arguments">
+                    <RichContent linkPolicy={linkPolicy} text={skillArguments} cwd={cwd} onOpenFile={onOpenFile} />
+                  </div>
+                )
+              ) : null}
+            </div>
+          ) : collapsed ? (
             <div className="user-message-raw-query">{displayedText}</div>
           ) : textParts.some(part => part.type === "plugin_reference") ? (
             <div className="user-message-raw-query">{textParts.map((part, index) => part.type === "plugin_reference"

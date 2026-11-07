@@ -33,6 +33,8 @@ import { PluginIcon } from "./PublicIcon";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { applyThemePreference } from "./Theme";
 import { toastErrorMessage } from "./Toast";
+import { Switch } from "./ui/Switch";
+import { SegmentedControl } from "./ui/SegmentedControl";
 
 type OnboardingStep = "welcome" | "plugins" | "runtime" | "provider" | "permissions" | "browser" | "ready";
 type PluginPreset = "minimal" | "recommended" | "all" | "custom";
@@ -573,19 +575,9 @@ export function FirstRunOnboarding({
 
           {step === "plugins" ? (
             <SettingsGroup className="onboarding-choice-card">
-              <div className="theme-segmented onboarding-presets" role="group" aria-label={t("onboarding.presets")}>
-                {(["minimal", "recommended", "all"] as const).map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    aria-pressed={preset === item}
-                    disabled={applyingPlugins}
-                    onClick={() => choosePreset(item)}
-                  >
-                    {t(`onboarding.preset.${item}`)}
-                  </button>
-                ))}
-              </div>
+              <SegmentedControl className="onboarding-presets" label={t("onboarding.presets")} value={preset === "custom" ? undefined : preset}
+                options={(["minimal", "recommended", "all"] as const).map((item) => ({ value: item, label: t(`onboarding.preset.${item}`) }))}
+                disabled={applyingPlugins} onChange={choosePreset} />
               <div className="onboarding-body" ref={pluginBodyRef} data-scroll-fade="compact">
                 {inventory === undefined ? (
                   <p className="onboarding-status" role="status">
@@ -797,18 +789,13 @@ function OnboardingPluginChoice({
       <span className="catalog-row-description" id={`${id}-description`}>
         {descriptionKey ? t(descriptionKey) : manifest?.description ?? plugin.description}
       </span>
-      <button
-        className="settings-switch"
-        type="button"
-        role="switch"
-        aria-checked={selected}
+      <Switch
+        checked={selected}
         aria-labelledby={`${id}-name`}
         aria-describedby={`${id}-description`}
         disabled={disabled}
         onClick={onToggle}
-      >
-        <span className="settings-switch-thumb" aria-hidden="true" />
-      </button>
+      />
     </label>
   );
 }

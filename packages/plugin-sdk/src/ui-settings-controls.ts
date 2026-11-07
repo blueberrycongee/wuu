@@ -316,6 +316,8 @@ export type MCPConnectorDescriptor = {
   /** Package setup required before a plugin-owned connector can be enabled. */
   setup_required?: string;
   identity_probe?: MCPIdentityProbe;
+  /** Package-relative brand image, served only for the owning plugin generation. */
+  icon?: { path: string; light?: never; dark?: never } | { path?: never; light: string; dark: string };
 };
 export type MCPServerConfig = {
   connector?: MCPConnectorDescriptor;
@@ -333,7 +335,13 @@ export type MCPServerConfig = {
 export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
 export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
 export type MCPLoginStartResult = { login_id: string };
-export type MCPLoginPollResult = { status: "pending" | "success" | "error"; phase?: "starting" | "waiting"; error?: string };
+export type MCPLoginPollResult = {
+  status: "pending" | "success" | "error";
+  phase?: "starting" | "waiting";
+  error?: string;
+  /** OAuth completed before a subsequent connection failure. */
+  authorized?: boolean;
+};
 
 export type MCPServerStatus = {
   authorization_id?: string;

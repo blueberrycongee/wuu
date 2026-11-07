@@ -16,12 +16,15 @@ export type ToastInput = {
   dedupeKey?: string;
   /** Optional action button rendered inside the toast (e.g. "go configure"). */
   action?: TopNoticeAction;
+  /** Called on user dismissal or expiry, not programmatic removal. */
+  onDismiss?: () => void;
 };
 
 type ToastRecord = Required<Pick<ToastInput, "message" | "tone">> & {
   id: number;
   dedupeKey: string;
   action?: TopNoticeAction;
+  onDismiss?: () => void;
 };
 
 let nextToastID = 1;
@@ -63,6 +66,7 @@ export function showToast({
   tone = "info",
   dedupeKey,
   action,
+  onDismiss,
 }: ToastInput): number | undefined {
   const trimmedMessage = message.trim();
   if (!trimmedMessage) return undefined;
@@ -89,6 +93,7 @@ export function showToast({
     tone,
     dedupeKey: key,
     action,
+    onDismiss,
   };
   if (activeToast === null) {
     activeToast = toast;
@@ -130,8 +135,15 @@ export function showErrorToast(error: unknown, fallback = "", dedupeKey?: string
 }
 
 /** Each explicit action gets feedback even when a prior identical error was dismissed. */
-export function showActionErrorToast(error: unknown, fallback = ""): number | undefined {
-  return showErrorToast(error, fallback, `action-error:${nextToastID}`);
+export function showActionErrorToast(error: unknown, fallback = "", action?: TopNoticeAction, onDismiss?: () => void): number | undefined {
+  if (isPluginLifecycleCancellation(error)) return undefined;
+  return showToast({
+    message: toastErrorMessage(error, fallback) || translateCurrent("error.requestFailedTitle"),
+    tone: "error",
+    dedupeKey: `action-error:${nextToastID}`,
+    action,
+    onDismiss,
+  });
 }
 
 export function clearToasts(): void {
@@ -155,7 +167,7 @@ export function ToastViewport(): JSX.Element | null {
         isError={toast.tone === "error"}
         action={toast.action}
         dismissAriaLabel={t("common.closeNotice")}
-        onDismiss={() => dismissToast(toast.id)}
+        onDismiss={() => { dismissToast(toast.id); toast.onDismiss?.(); }}
       />
     </UILayerPortal>
   );

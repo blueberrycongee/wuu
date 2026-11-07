@@ -138,19 +138,12 @@ pre, code, .rich-content pre.rich-code, .rich-content pre.rich-code code,
 .settings-row-control:has(.appearance-font-picker) {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  gap: 6px;
+  gap: var(--space-2);
   width: var(--settings-control-width);
   max-width: 100%;
 }
 .settings-row-control:has(.appearance-font-picker):has(.settings-input-num) {
-  grid-template-columns: minmax(0, 1fr) 56px;
-}
-.settings-row-control:has(.appearance-font-picker) > .settings-input-num {
-  width: 56px;
-  min-height: var(--control-field-height);
-  padding: 0 6px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
+  grid-template-columns: minmax(0, 1fr) auto;
 }
 .appearance-font-picker { flex: 1; min-width: 0; }
 @container settings-page (max-width: 32em) {

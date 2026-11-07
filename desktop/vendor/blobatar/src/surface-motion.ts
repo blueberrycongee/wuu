@@ -32,7 +32,7 @@ function subscribe(read: () => (() => void) | undefined) {
 }
 
 /** Installs contour updates without replacing nodes, including accessory portals. */
-export function animateSurface(root: SVGGElement, layout: Layout) {
+export function animateSurface(root: SVGGElement, layout: Layout, paused = false) {
   const eyes = root.querySelector<SVGGElement>(".mo-eyes")!;
   const paths = [...eyes.querySelectorAll<SVGPathElement>(".mo-eye > path")];
   const doc = root.ownerDocument;
@@ -51,7 +51,7 @@ export function animateSurface(root: SVGGElement, layout: Layout) {
     for (const key of ["esx", "esy", "esx2", "esy2", "tilt", "tilt2", "lock", "edx", "edy"] as (keyof Pose)[]) {
       p[key] = value(key, p[key]);
     }
-    const amp = reduced?.matches ? 0 : value("amp", root.classList.contains("mo-always") ? 1 : 0);
+    const amp = paused || reduced?.matches ? 0 : value("amp", root.classList.contains("mo-always") ? 1 : 0);
     const blink = 1 - amp * (1 - value("lid", 1));
     p.esy *= blink;
     p.esy2 *= blink;
@@ -73,8 +73,10 @@ export function animateSurface(root: SVGGElement, layout: Layout) {
   const refresh = () => {
     unsubscribe?.();
     unsubscribe = undefined;
+    const active = visible && !doc.hidden && !reduced?.matches && !paused;
+    root.toggleAttribute("data-mo-paused", !active);
     flush();
-    if (visible && !doc.hidden && !reduced?.matches) unsubscribe = subscribe(read);
+    if (active) unsubscribe = subscribe(read);
   };
   // Offscreen rows keep their current expression but spend no frame budget.
   const observer = win.IntersectionObserver ? new win.IntersectionObserver(([entry]) => {
@@ -87,10 +89,16 @@ export function animateSurface(root: SVGGElement, layout: Layout) {
   refresh();
   return {
     flush,
+    setPaused(next: boolean) {
+      if (paused === next) return;
+      paused = next;
+      refresh();
+    },
     dispose() {
       // Turning surface mode off can keep byte-identical authored markup.
       // Restore its chart before the flat CSS renderer takes ownership again.
       paths.forEach((path, i) => path.setAttribute("d", superellipse(layout.eyes[i]!)));
+      root.removeAttribute("data-mo-paused");
       unsubscribe?.();
       observer?.disconnect();
       reduced?.removeEventListener("change", refresh);

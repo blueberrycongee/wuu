@@ -395,8 +395,7 @@ async function placementCoverage() {
 }
 async function streamingCoverage() {
   const { thread } = await evaluate(() => window.wuu.resumeThread("selection-main"));
-  const turn = thread.turns[0];
-  const answer = turn.items.find(item => item.id === "selection-main-answer");
+  const answer = thread.turns[0].items.find(item => item.id === "selection-main-answer");
   const original = answer.text;
   const appended = original + " More tail text.\n\nAppended stream output.";
   const ids = { thread_id: "selection-main", turn_id: "selection-main-turn", item_id: "selection-main-answer" };
@@ -465,11 +464,17 @@ async function streamingCoverage() {
   await click(".response-selection-toolbar .selection-action-comment-toggle");
   const finalComment = "Keep this through turn completion";
   await win.webContents.insertText(finalComment);
-  const item = { ...answer, status: "completed", text: appended };
+  // Complete from the live turn snapshot: steering appended user items and
+  // settled the in-flight agent message as a fragment after `turn` was read,
+  // and the terminal item list is authoritative — a stale snapshot would drop
+  // the steering messages and the fragment cause it carries.
+  const { thread: settledThread } = await evaluate(id => window.wuu.resumeThread(id), ids.thread_id);
+  const settledTurn = settledThread.turns.find(value => value.id === ids.turn_id);
+  const item = { ...settledTurn.items.find(current => current.id === ids.item_id), status: "completed", text: appended };
   notify("item/completed", { ...ids, item });
   notify("turn/completed", { thread_id: ids.thread_id, turn: {
-    ...turn, status: "completed", terminal: true, completed_at: new Date().toISOString(),
-    items: turn.items.map(current => current.id === item.id ? item : current),
+    ...settledTurn, status: "completed", terminal: true, completed_at: new Date().toISOString(),
+    items: settledTurn.items.map(current => current.id === item.id ? item : current),
   } });
   await until(selector => !!document.querySelector(selector)?.querySelector('[data-stream-state="settled"]'), "turn settled", surface);
   const retained = await evaluate(() => document.querySelector(".response-selection-toolbar .selection-action-comment-input")?.value);
