@@ -345,7 +345,11 @@ export interface PluginUIConversationAttachmentProps {
   onLoad(): void | Promise<string | void>;
 }
 
-export type PluginUIConversationComposerProps = import("../../../packages/plugin-sdk/src/index").PluginUIConversationComposerProps;
+export interface PluginUIConversationComposerProps extends Omit<import("../../../packages/plugin-sdk/src/index").PluginUIConversationComposerProps, "onSend"> {
+  /** Discover connectors in this independent conversation's host. */
+  sessionScope?: PluginUIConversationViewProps["sessionScope"];
+  onSend(prompt: string, contentParts?: import("./protocol").MessageContentPart[]): void;
+}
 
 /** Native conversation controls for independent transports, such as personal or support conversations. */
 export interface PluginConversationComponents {

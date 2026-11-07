@@ -1,4 +1,4 @@
-import { usePluginConversationLifetime, usePluginConversationSource } from "./PluginConversationScope";
+import { usePluginConversationLifetime, usePluginConversationSource, usePluginConversationApplication } from "./PluginConversationScope";
 import { useScopedContentRuntime } from "./ScopedContentRuntime";
 import { useConversationControls } from "../ConversationControlsContext";
 import { toolInputRenderer } from "../ArtifactOutputs";
@@ -11,6 +11,7 @@ import { Component, useContext, useEffect, useId, useLayoutEffect, useMemo, useR
 import type { PluginUIConversationAttachmentProps, PluginUIConversationComposerProps, PluginUIConversationMessageProps, PluginUIConversationViewProps } from "../../shared/workbench";
 import { buildSkillSlashCommands, parseComposerSlashDraft, type ComposerSlashCommand } from "../ComposerSlashCommands";
 import { showErrorToast } from "../Toast";
+import { ComposerPluginServicesProvider, type ComposerPluginServices } from "../ComposerServicesContext";
 import { SplitPaneComposer } from "../ComposerInputSections";
 import { FileSelectionIsolation } from "../FileSelectionContext";
 import { ArtifactThreadContext } from "../ArtifactPreviewContext";
@@ -436,7 +437,28 @@ export function PluginConversationAttachment({ resourceId, onOpen, onRead, name,
 }
 
 
-export function PluginConversationComposer({ commands, commandsLoading, commandsError, onRefreshCommands, replyContext, conversationId, prompt, placeholder, running, submitting, queuedCount, pendingCount, stopState, disabled = false, sendDisabled, attachments, onChangePrompt, onAddAttachments, onRemoveAttachment, onSend, onStop }: PluginUIConversationComposerProps): JSX.Element {
+export function PluginConversationComposer({ commands, commandsLoading, commandsError, onRefreshCommands, replyContext, conversationId, sessionScope, prompt, placeholder, running, submitting, queuedCount, pendingCount, stopState, disabled = false, sendDisabled, attachments, onChangePrompt, onAddAttachments, onRemoveAttachment, onSend, onStop }: PluginUIConversationComposerProps): JSX.Element {
+  const application = usePluginConversationApplication();
+  const lifetime = usePluginConversationLifetime();
+  const pluginServices = useMemo<ComposerPluginServices | undefined>(() => {
+    if (!application || !sessionScope) return undefined;
+    const context: RuntimeContext = { kind: "user", user_space_id: sessionScope.userSpaceId, product_domain: sessionScope.productDomain, composition_profile: sessionScope.compositionProfile, cwd: "" };
+    return {
+      catalog: application.catalog,
+      settingsControls: { async listMCPServers() {
+        lifetime?.throwIfAborted();
+        const result = await window.wuu.listMCPServers(context);
+        lifetime?.throwIfAborted();
+        return result;
+      } },
+      conversationPluginsSupported: true,
+      includePluginTools: false,
+      async openPlugins() {
+        await application.invoke("catalog.select-section", { section: "plugins" });
+        await application.invoke("navigation.show-section", { section: "catalog" });
+      },
+    };
+  }, [application, lifetime, sessionScope?.userSpaceId, sessionScope?.productDomain, sessionScope?.compositionProfile]);
   const slashCommands = useMemo(() => commands?.flatMap((command): ComposerSlashCommand[] => command.kind === "skill"
     ? buildSkillSlashCommands([command.skill]).map(item => ({ ...item, id: command.id }))
     : [{ id: command.id, name: command.name, title: command.description, description: command.description, tag: "", kind: "action" }]), [commands]);
@@ -452,13 +474,14 @@ export function PluginConversationComposer({ commands, commandsLoading, commands
   };
   const images = attachments.filter(file => ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"].includes(file.media_type)).map(file => ({ ...file }));
   const files = attachments.filter(file => !images.some(image => image.id === file.id)).map(file => ({ ...file }));
-  return <FileSelectionIsolation>
+  const composer = <FileSelectionIsolation>
     {replyContext && <div className="plugin-composer-reply-context" data-reply-context="" role="group" aria-label={replyContext.label}><div><span>{replyContext.label}</span><p>{replyContext.preview}</p></div><button type="button" className="settings-button settings-button-ghost" data-action="cancel-reply" aria-label={replyContext.cancelLabel} onClick={replyContext.onCancel}>{replyContext.cancelLabel}</button></div>}
     <SplitPaneComposer key={conversationId} pluginHost={conversationHost} allowWorkspaceReferences={false} framed
       slashCommands={slashCommands} commandsLoading={commandsLoading} commandsError={commandsError} onRefreshCommands={onRefreshCommands} onCommandAction={onCommandAction}
       placeholder={placeholder} prompt={prompt} setPrompt={onChangePrompt} images={images} files={files}
       running={running} submitting={submitting} queuedCount={queuedCount} pendingCount={pendingCount} stopState={stopState} readOnly={disabled} sendDisabled={sendDisabled} queryHistorySessionID={`plugin:${conversationId}`}
       onPasteAttachmentFiles={onAddAttachments} onRemoveFile={onRemoveAttachment} onRemoveImage={onRemoveAttachment}
-      onSend={text => { onSend(text ?? prompt); return false; }} onInterrupt={onStop} />
+      onSend={(text, contentParts) => { onSend(text ?? prompt, contentParts); return false; }} onInterrupt={onStop} />
   </FileSelectionIsolation>;
+  return pluginServices ? <ComposerPluginServicesProvider value={pluginServices}>{composer}</ComposerPluginServicesProvider> : composer;
 }

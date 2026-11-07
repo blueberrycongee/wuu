@@ -15,9 +15,10 @@ import (
 
 type ownerKey struct{}
 type owner struct {
-	id       string
-	binding  userspace.Binding
-	lifetime context.Context
+	id        string
+	binding   userspace.Binding
+	lifetime  context.Context
+	sharedMCP bool
 }
 
 // AdmitDesktop consumes the dedicated inherited desktop-parent channel. Callers
@@ -29,9 +30,10 @@ func AdmitDesktop(ctx context.Context, binding userspace.Binding, bootstrap io.R
 		return nil, errors.New("desktop owner admission requires an explicit user binding")
 	}
 	var input struct {
-		Version       int    `json:"version"`
-		UserSpaceID   string `json:"user_space_id"`
-		ProductDomain string `json:"product_domain"`
+		MCPAccountUserSpaceID string `json:"mcp_account_user_space_id,omitempty"`
+		Version               int    `json:"version"`
+		UserSpaceID           string `json:"user_space_id"`
+		ProductDomain         string `json:"product_domain"`
 	}
 	decoder := json.NewDecoder(io.LimitReader(bootstrap, 1025))
 	decoder.DisallowUnknownFields()
@@ -44,7 +46,7 @@ func AdmitDesktop(ctx context.Context, binding userspace.Binding, bootstrap io.R
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	return context.WithValue(ctx, ownerKey{}, &owner{id: newConnectionID(), binding: binding, lifetime: ctx}), nil
+	return context.WithValue(ctx, ownerKey{}, &owner{id: newConnectionID(), binding: binding, lifetime: ctx, sharedMCP: input.MCPAccountUserSpaceID == binding.UserSpaceID}), nil
 }
 
 // BindConnection shortens inherited authority to one admitted transport. A
@@ -57,7 +59,7 @@ func BindConnection(ctx context.Context) context.Context {
 	if RequireOwner(ctx, proof.binding) != nil {
 		return context.WithValue(ctx, ownerKey{}, (*owner)(nil))
 	}
-	return context.WithValue(ctx, ownerKey{}, &owner{id: newConnectionID(), binding: proof.binding, lifetime: ctx})
+	return context.WithValue(ctx, ownerKey{}, &owner{id: newConnectionID(), binding: proof.binding, lifetime: ctx, sharedMCP: proof.sharedMCP})
 }
 
 func RequireOwner(ctx context.Context, binding userspace.Binding) error {
@@ -85,4 +87,13 @@ func newConnectionID() string {
 		panic(err)
 	}
 	return hex.EncodeToString(id[:])
+}
+
+// SharesMCPConnectors reports the desktop parent's explicit account binding.
+// It is consumed at bootstrap, never inferred from a user-space name in JSONL.
+func SharesMCPConnectors(ctx context.Context, binding userspace.Binding) bool {
+	if RequireOwner(ctx, binding) != nil {
+		return false
+	}
+	return ctx.Value(ownerKey{}).(*owner).sharedMCP
 }

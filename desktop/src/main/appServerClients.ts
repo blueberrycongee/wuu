@@ -960,8 +960,6 @@ export class AppServerClient {
     const desktopOwner = this.userBinding !== undefined;
     if (desktopOwner) {
       appServerArgs.push("--desktop-owner-pipe");
-      const calendarClientID = process.env.WUU_PERSONAL_GOOGLE_CALENDAR_CLIENT_ID?.trim();
-      if (calendarClientID) appServerArgs.push("--personal-calendar-client-id", calendarClientID);
     }
     this.shutdownPromise = undefined;
     const child = this.spawnAppServer(command.command, appServerArgs, {
@@ -973,8 +971,9 @@ export class AppServerClient {
       const admission = child.stdio[3] as Writable | null;
       if (!admission) { child.kill(); throw new Error("Desktop owner admission pipe is unavailable"); }
       admission.on("error", () => child.kill());
-      // This private parent pipe is never reachable through renderer JSONL.
-      admission.end(JSON.stringify({ version: 1, user_space_id: this.userBinding!.userSpaceId, product_domain: this.userBinding!.productDomain }));
+      // The desktop owns the local account space. A requested user host cannot
+      // select a different account owner through renderer JSONL.
+      admission.end(JSON.stringify({ version: 1, user_space_id: this.userBinding!.userSpaceId, product_domain: this.userBinding!.productDomain, mcp_account_user_space_id: "local" }));
     }
     this.child = child;
     this.userHostVerified = false;

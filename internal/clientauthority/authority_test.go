@@ -54,3 +54,35 @@ func TestDesktopOwnerProofHasNoProductPrivilege(t *testing.T) {
 		t.Fatal("proof crossed product binding")
 	}
 }
+
+// Sharing is explicitly attested on the inherited parent channel for one owner.
+func TestDesktopMCPSharingBindsOwnerAndLifetime(t *testing.T) {
+	binding := userspace.Binding{UserSpaceID: "owner", ProductDomain: "personal"}
+	for _, tc := range []struct {
+		account string
+		shared  bool
+	}{{"", false}, {"another", false}, {"owner", true}} {
+		ctx, cancel := context.WithCancel(context.Background())
+		admitted, err := AdmitDesktop(ctx, binding, strings.NewReader(`{"version":1,"user_space_id":"owner","product_domain":"personal","mcp_account_user_space_id":"`+tc.account+`"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := SharesMCPConnectors(admitted, binding); got != tc.shared {
+			t.Fatalf("account %q: sharing=%v", tc.account, got)
+		}
+		if SharesMCPConnectors(admitted, userspace.Binding{UserSpaceID: "another", ProductDomain: "personal"}) {
+			t.Fatal("cross-owner sharing")
+		}
+		connection := BindConnection(admitted)
+		if SharesMCPConnectors(connection, binding) != tc.shared {
+			t.Fatal("connection lost sharing binding")
+		}
+		cancel()
+		if SharesMCPConnectors(context.WithoutCancel(connection), binding) {
+			t.Fatal("expired owner retained sharing")
+		}
+	}
+	if SharesMCPConnectors(context.Background(), binding) {
+		t.Fatal("unadmitted host shares accounts")
+	}
+}

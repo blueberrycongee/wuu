@@ -2,12 +2,16 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
+	"github.com/blueberrycongee/wuu/internal/mcp"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/tools"
 	"github.com/blueberrycongee/wuu/internal/userspace"
 	"github.com/blueberrycongee/wuu/internal/workspaces"
+	"maps"
 	"path/filepath"
 )
 
@@ -87,12 +91,23 @@ func VerifyUserHostIsolation(ctx context.Context, binding userspace.Binding, hom
 	return nil
 }
 
-func userHostConfig(cfg config.Config, binding userspace.Binding) config.Config {
+func userHostConfig(cfg config.Config, binding userspace.Binding, shared bool) config.Config {
 	if !binding.IsUser() {
 		return cfg
 	}
 	cfg.Hooks = nil
-	cfg.MCPServers = nil
+
+	if !shared {
+		cfg.MCPServers = nil
+	} else {
+		preferences := make(map[string]config.MCPServerConfig)
+		for name, server := range cfg.MCPServers {
+			if IsPluginMCPServerName(name) {
+				preferences[name] = config.MCPServerConfig{Enabled: server.Enabled, ToolTimeoutMS: server.ToolTimeoutMS}
+			}
+		}
+		cfg.MCPServers = preferences
+	}
 	cfg.MCPJson = nil
 	cfg.ExecutionEnvironments = executionenv.Config{}
 	return cfg
@@ -119,4 +134,107 @@ func configureToolkitWorkspaceScope(kit *tools.Toolkit, home string, binding use
 		catalog, _ = workspaces.Available(home)
 	}
 	kit.SetRegisteredWorkspaces(catalog)
+}
+
+// sharedConnectorInputs limits the shared user-host surface to installed global
+// connector declarations and their saved preferences. Project-owned packages and
+// arbitrary MCP server definitions never cross the user-host boundary.
+func sharedConnectorInputs(cfg config.Config, plugins []pluginpkg.Plugin) (config.Config, []pluginpkg.Plugin) {
+	cfg.MCPServers = maps.Clone(cfg.MCPServers)
+	allowed := make(map[string]bool)
+	filtered := make([]pluginpkg.Plugin, 0, len(plugins))
+	for _, item := range plugins {
+		if item.Source != "user" && item.Source != "bundled" {
+			continue
+		}
+		servers := make(map[string]config.MCPServerConfig)
+		for name, definition := range item.MCPServers {
+			if definition.Connector == nil {
+				continue
+			}
+			servers[name] = definition
+			allowed[PluginMCPServerName(item.ID, name)] = true
+		}
+		if len(servers) == 0 {
+			continue
+		}
+		item.MCPServers = servers
+		filtered = append(filtered, item)
+	}
+	for name := range cfg.MCPServers {
+		if !allowed[name] {
+			delete(cfg.MCPServers, name)
+		}
+	}
+	return cfg, filtered
+}
+
+func validateSharedConnectorPreference(cfg config.Config, item pluginpkg.Plugin, name string) error {
+	for localName, definition := range item.MCPServers {
+		if PluginMCPServerName(item.ID, localName) != name {
+			continue
+		}
+		if definition.Connector == nil || (item.Source != "user" && item.Source != "bundled") {
+			break
+		}
+		if cfg.Extensions != nil {
+			if !cfg.Extensions.IsEnabled(item.SubjectID, PluginEnabledByDefault(cfg, item)) || !pluginManagementTrusted(*cfg.Extensions, item) {
+				break
+			}
+		} else if !item.Official || !PluginEnabledByDefault(cfg, item) {
+			break
+		}
+		if override, ok := cfg.MCPServers[name]; ok && override.Enabled != nil {
+			definition.Enabled = override.Enabled
+		}
+		if definition.ConnectorEnabled() {
+			return nil
+		}
+		break
+	}
+	return errors.New("shared MCP connector is disabled or no longer authorized")
+}
+
+// Shared connector calls recheck the selected configuration and the active
+// package identity immediately before dispatch; an old tool cannot acquire a
+// replacement package's authority.
+func (s *Session) bindSharedMCPAdmission(manager *mcp.Manager, plugins []pluginpkg.Plugin) {
+	if manager == nil {
+		return
+	}
+	owners := make(map[string]pluginpkg.Plugin)
+	for _, item := range plugins {
+		for name := range item.MCPServers {
+			owners[PluginMCPServerName(item.ID, name)] = item
+		}
+	}
+	manager.SetCallAdmission(func(ctx context.Context, name string) error {
+		item, ok := owners[name]
+		if !ok {
+			if !s.UserBinding().IsUser() {
+				return nil
+			}
+			return errors.New("shared MCP connector is unavailable")
+		}
+		active := false
+		for _, current := range s.ExtensionSnapshot().ActivePlugins {
+			if current.ID == item.ID && current.Source == item.Source && current.Fingerprint == item.Fingerprint && current.SubjectID == item.SubjectID {
+				active = true
+				break
+			}
+		}
+		if !active {
+			return errors.New("shared MCP connector owner changed")
+		}
+		services, release, err := s.RetainStateServices()
+		if err != nil {
+			return err
+		}
+		defer release()
+		view, err := services.Config.Read(ctx)
+		if err != nil {
+			return err
+		}
+		return validateSharedConnectorPreference(view.Config, item, name)
+	})
 }

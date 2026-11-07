@@ -143,7 +143,7 @@ func TestMCPConnectorManagementUsesSelectedConfigurationAndFencesOwnership(t *te
 	if response := call("personal-enable", MethodMCPConfigure, map[string]any{"servers": map[string]any{name: map[string]any{"enabled": true}}, "revision": definition.Revision}); response["error"] == nil || provider.writes != 0 {
 		t.Fatalf("user-bound enable accepted: %+v", response)
 	}
-	if response := call("personal-auth", MethodMCPAuthStart, map[string]any{"name": name}); response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "domain-scoped") {
+	if response := call("personal-auth", MethodMCPAuthStart, map[string]any{"name": name}); response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), mcpConnectorConfigurationUnavailable) {
 		t.Fatalf("user-bound host started auth from shared preference: %+v", response)
 	}
 	for _, method := range []string{MethodMCPAuthStatus, MethodMCPAuthCancel, MethodMCPAuthRemove, MethodMCPDisconnect} {
@@ -152,7 +152,7 @@ func TestMCPConnectorManagementUsesSelectedConfigurationAndFencesOwnership(t *te
 			params["state"] = "coding-attempt"
 		}
 		response := call("personal-cleanup-"+method, method, params)
-		if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "domain-scoped") {
+		if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), mcpConnectorConfigurationUnavailable) {
 			t.Fatalf("user-bound host reached shared connector credentials: %s %+v", method, response)
 		}
 	}
@@ -694,5 +694,21 @@ func TestMCPRemovalWhileUnrelatedTurnRuns(t *testing.T) {
 	}
 	if !srv.threads["unrelated"].running {
 		t.Fatal("unrelated turn was stopped")
+	}
+}
+
+func TestSharedMCPManagementRejectsProjectAndUnownedConnectors(t *testing.T) {
+	connector := config.MCPServerConfig{Connector: &config.MCPConnectorDescriptor{Title: "Docs"}}
+	plain := config.MCPServerConfig{}
+	for _, tc := range []struct {
+		source     string
+		definition config.MCPServerConfig
+		allowed    bool
+	}{
+		{"user", connector, true}, {"bundled", connector, true}, {"project", connector, false}, {"user", plain, false},
+	} {
+		if got := sharedMCPConnectorAllowed(tc.source, tc.definition); got != tc.allowed {
+			t.Fatalf("source %q connector=%v allowed=%v", tc.source, tc.definition.Connector != nil, got)
+		}
 	}
 }

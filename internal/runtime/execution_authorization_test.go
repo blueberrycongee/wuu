@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +13,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/executionauth"
-	"github.com/blueberrycongee/wuu/internal/personalhost"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
@@ -144,35 +141,59 @@ func (f *executionLineageFixture) InvokeService(_ context.Context, p pluginhost.
 	}
 	return json.Marshal(out)
 }
+
+type delegatedObservationFixture struct {
+	*runtimeServiceConsumer
+	authorize func(context.Context, string, string) error
+	reads     int
+}
+
+func (*delegatedObservationFixture) ProvidedServices() []pluginhost.ServiceDescriptor {
+	return []pluginhost.ServiceDescriptor{{Name: "fixture.observation", Version: "1.0.0", Methods: []pluginhost.ServiceMethodDescriptor{{Name: "read", InputSchema: "fixture.observation.input.v1", OutputSchema: "fixture.observation.output.v1"}}}}
+}
+func (f *delegatedObservationFixture) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	var input struct {
+		SessionID string `json:"session_id"`
+	}
+	if err := json.Unmarshal(p.Params, &input); err != nil {
+		return nil, err
+	}
+	if input.SessionID != "worker-one" {
+		return nil, errors.New("foreign session")
+	}
+	if err := f.authorize(ctx, "user/session/context", input.SessionID); err != nil {
+		return nil, err
+	}
+	f.reads++
+	return json.RawMessage(`{"value":"synthetic observation"}`), nil
+}
+
 func TestSelectedExecutionGatewayDurableDelegation(t *testing.T) {
 	home := t.TempDir()
 	binding := userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}
 	item := serviceTestPlugin("fixture.task-provider", "plugin:fixture:tasks", "immutable-fingerprint")
 	item.Root = t.TempDir()
 	item.Runtime = &pluginpkg.RuntimeSpec{Command: "synthetic"}
-	task := &executionLineageFixture{runtimeServiceConsumer: &runtimeServiceConsumer{id: item.ID, state: pluginhost.StatePrepared, requirements: append(pluginhost.KernelServiceRequirements(pluginhost.KernelExecutionAuthorizationService), pluginhost.ServiceRequirement{Name: "calendar.personal", MajorVersion: 1, Required: true})}, revision: 1, worker: "worker-one"}
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Fatal(err)
-	}
-	calendarItem := serviceTestPlugin("personal-calendar", "plugin:fixture:calendar", "calendar-fixture-fingerprint")
-	calendarItem.Root, err = filepath.Abs(filepath.Join("..", "plugin", "bundled", "personal-calendar"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	calendarItem.Runtime = &pluginpkg.RuntimeSpec{Command: node, Args: []string{"runtime.mjs"}, Timeout: 10}
+	task := &executionLineageFixture{runtimeServiceConsumer: &runtimeServiceConsumer{id: item.ID, state: pluginhost.StatePrepared, requirements: append(pluginhost.KernelServiceRequirements(pluginhost.KernelExecutionAuthorizationService), pluginhost.ServiceRequirement{Name: "fixture.observation", MajorVersion: 1, Required: true})}, revision: 1, worker: "worker-one"}
+	observationItem := serviceTestPlugin("fixture.observer", "plugin:fixture:observer", "observer-fingerprint")
+	observationItem.Root = t.TempDir()
+	observationItem.Runtime = &pluginpkg.RuntimeSpec{Command: "synthetic"}
+	observation := &delegatedObservationFixture{runtimeServiceConsumer: &runtimeServiceConsumer{id: observationItem.ID, state: pluginhost.StatePrepared}}
 	router := NewPluginSessionRouter()
 	project := binding.Root(home)
 	stateDir, err := userHostWorkspaceStateDir(home, project, binding)
 	if err != nil {
 		t.Fatal(err)
 	}
-	host, kernel, err := buildPluginHostForBinding(context.Background(), []pluginpkg.Plugin{item, calendarItem}, project, "", home, stateDir, nil, func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
+	host, kernel, err := buildPluginHostForBinding(context.Background(), []pluginpkg.Plugin{item, observationItem}, project, "", home, stateDir, nil, func(ctx context.Context, cfg pluginhost.ProcessConfig) (pluginhost.Client, error) {
 		if cfg.ID == item.ID {
 			return task, nil
 		}
+		if cfg.ID == observationItem.ID {
+			return observation, nil
+		}
 		return pluginhost.Start(ctx, cfg)
-	}, router, nil, composition.DefaultConfig("headless", item.ID, calendarItem.ID, executionauth.ConsumerModule, executionauth.NativeModule), false, "", binding, nil)
+	}, router, nil, composition.DefaultConfig("headless", item.ID, observationItem.ID, executionauth.ConsumerModule, executionauth.NativeModule), false, "", binding, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +202,7 @@ func TestSelectedExecutionGatewayDurableDelegation(t *testing.T) {
 		t.Fatal(err)
 	}
 	core := &Session{PluginHost: host, Documents: kernel.state.documents, Sessions: kernel.state.sessions, UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, ProviderName: "synthetic", Model: "model-one", Permissions: config.ResolvedPermissions{Mode: "standard"}, StreamRunner: &agent.StreamRunner{ProviderName: "synthetic", Model: "model-one"}}
-	gen := &PluginGeneration{id: "captured-generation", state: kernel.state, host: host, active: []pluginpkg.Plugin{item, calendarItem}, models: captureGenerationModelBindings(core)}
+	gen := &PluginGeneration{id: "captured-generation", state: kernel.state, host: host, active: []pluginpkg.Plugin{item, observationItem}, models: captureGenerationModelBindings(core)}
 	gen.refs.Store(1)
 	core.pluginGeneration = gen
 	kernel.bindStateGeneration(gen, core)
@@ -216,11 +237,7 @@ func TestSelectedExecutionGatewayDurableDelegation(t *testing.T) {
 		return ctx, authorize(ctx, action, id)
 	})
 	defer unbindAccess()
-	calendar := &settingsCalendarFixture{connected: true, expectedSession: "worker-one"}
-	broker := personalhost.New(binding, personalhost.Options{Calendar: calendar, Authorize: func(ctx context.Context, op, id string) error { return authorize(ctx, "personal/"+op, id) }})
-	defer broker.Close()
-	unbindBroker := router.BindPersonalHost(broker.Call)
-	defer unbindBroker()
+	observation.authorize = authorize
 	for _, id := range []string{"main-one", "worker-one"} {
 		if _, err := core.Sessions.CreateInitialized(session.Session{ID: id, Owner: "plugin:" + item.ID, Visibility: "plugin", UserSpaceID: binding.UserSpaceID, ProductDomain: binding.ProductDomain, Provider: "synthetic", Model: "model-one", PermissionMode: "standard"}, nil); err != nil {
 			t.Fatal(err)
@@ -236,7 +253,7 @@ func TestSelectedExecutionGatewayDurableDelegation(t *testing.T) {
 		err := json.Unmarshal(result, &grant)
 		return grant, err
 	}
-	intent := ExecutionAuthorizationIntent{Operation: "issue", RequestID: "root-request", Kind: "task-lineage", AuthorityService: "fixture.tasks", TaskID: "task-one", SessionID: "main-one", MaxDepth: 2, ExpiresAt: time.Now().Add(time.Hour).UTC(), RequestedActions: []string{"user/session/create", "user/session/send", "personal/file.execute", "user/session/context", "service/calendar.personal/refresh", "personal/calendar.read.status", "personal/calendar.read.events", "personal/calendar.read.authorize"}}
+	intent := ExecutionAuthorizationIntent{Operation: "issue", RequestID: "root-request", Kind: "task-lineage", AuthorityService: "fixture.tasks", TaskID: "task-one", SessionID: "main-one", MaxDepth: 2, ExpiresAt: time.Now().Add(time.Hour).UTC(), RequestedActions: []string{"user/session/create", "user/session/send", "personal/file.execute", "user/session/context", "service/fixture.observation/read"}}
 	if _, err := invoke(context.Background(), intent); err == nil {
 		t.Fatal("plugin trusted itself into owner issuance")
 	}
@@ -289,7 +306,7 @@ func TestSelectedExecutionGatewayDurableDelegation(t *testing.T) {
 		t.Fatalf("disconnected background derivation: %v", err)
 	}
 	query := json.RawMessage(`{"session_id":"worker-one","calendar_id":"primary","time_min":"2026-10-24T00:00:00Z","time_max":"2026-10-25T00:00:00Z","timezone":"UTC"}`)
-	serviceIntent := ExecutionAuthorizationIntent{Operation: "call-service", Reference: &child.Reference, Service: "calendar.personal", Method: "refresh", Params: query}
+	serviceIntent := ExecutionAuthorizationIntent{Operation: "call-service", Reference: &child.Reference, Service: "fixture.observation", Method: "read", Params: query}
 	serviceCall := func(intent ExecutionAuthorizationIntent) (json.RawMessage, error) {
 		raw, _ := json.Marshal(intent)
 		result, err := host.CallService(context.Background(), item.ID, pluginhost.KernelExecutionAuthorizationService, "call", raw)
@@ -299,8 +316,8 @@ func TestSelectedExecutionGatewayDurableDelegation(t *testing.T) {
 		return result, nil
 	}
 	agenda, err := serviceCall(serviceIntent)
-	if err != nil || !strings.Contains(string(agenda), "Synthetic appointment") || calendar.reads != 1 || checksByAction["user/session/context"] == 0 || checksByAction["personal/calendar.read.events"] == 0 {
-		t.Fatalf("bounded gateway → generated Calendar → selected native policy: %s %v reads=%d checks=%v", agenda, err, calendar.reads, checksByAction)
+	if err != nil || !strings.Contains(string(agenda), "synthetic observation") || observation.reads != 1 || checksByAction["user/session/context"] == 0 {
+		t.Fatalf("bounded gateway → observation → selected native policy: %s %v reads=%d checks=%v", agenda, err, observation.reads, checksByAction)
 	}
 	wrongMethod := serviceIntent
 	wrongMethod.Method = "disconnect"
@@ -386,11 +403,11 @@ func TestSelectedExecutionGatewayDurableDelegation(t *testing.T) {
 	if err := who.Check(delegated); err == nil {
 		t.Fatal("parent revocation retained child validity")
 	}
-	if _, err := serviceCall(serviceIntent); err == nil || calendar.reads != 1 {
-		t.Fatalf("revoked observation dispatched another Calendar read: reads=%d err=%v", calendar.reads, err)
+	if _, err := serviceCall(serviceIntent); err == nil || observation.reads != 1 {
+		t.Fatalf("revoked observation dispatched another Calendar read: reads=%d err=%v", observation.reads, err)
 	}
 	if _, err := core.RestoreExecutionAuthorization(context.Background(), item.ID, child.Reference, "worker-one", "user/session/send", resources...); err == nil {
 		t.Fatal("revoked parent restarted background work")
 	}
-	t.Log("real selected graph: authenticated issue, stable retry, disconnected derivation, retained concurrent nonowner effects, generated Calendar downstream admission, exact-method/session denial and parent revocation passed")
+	t.Log("real selected graph: authenticated issue, stable retry, disconnected derivation, retained concurrent nonowner effects, downstream service admission, exact-method/session denial and parent revocation passed")
 }

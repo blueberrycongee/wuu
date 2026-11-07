@@ -24,8 +24,6 @@ import "../../src/renderer/styles.css";
 // Production bundled extension, not a screenshot-only reimplementation.
 // @ts-expect-error Bundled desktop contributions are runtime JavaScript.
 import { activate } from "../../../internal/plugin/bundled/personal/desktop.js";
-// @ts-expect-error Bundled desktop contributions are runtime JavaScript.
-import { activate as activateCalendar } from "../../../internal/plugin/bundled/personal-calendar/desktop.js";
 let fixtureApplication: ApplicationServiceV1;
 let controller: ApplicationWorkbenchV1;
 const fixtureLifetime = new AbortController();
@@ -53,11 +51,6 @@ if (["blocked","stale","denied","revoked","uncertain","succeeded"].includes(revi
   if (reviewScenario === "succeeded") reviewSnapshot.requests[0].receipt_json='{"receipt_id":"synthetic-file-receipt","path":"notes/weekly-reading.md","verified":true}';
 }
 
-// Synthetic connector owner boundary; does not touch accounts or provider APIs.
-const connectorScenario = new URLSearchParams(location.search).get("connectors") || "empty";
-const connectorActions: Array<Record<string,unknown>> = connectorScenario === "empty" ? [] : [{state:connectorScenario === "uncertain" ? "uncertain" : "awaiting_confirmation",action_id:"connector-synthetic",digest:"b".repeat(64),connection_id:"synthetic-gmail",account_id:"demo@example.invalid",operation:"gmail.send",summary:"发送一封合成示例邮件",arguments_json:JSON.stringify({to:["reader@example.invalid"],subject:"合成报告",body:"这是一份供界面验收的合成内容，不会发送真实邮件。"})}];
-const connectorCalls:Array<{method:string;input:unknown}>=[];
-Object.assign(window,{__connectorFixture:{actions:connectorActions,calls:connectorCalls}});
 const sendRecoveryFixture = { accepted: 0, refreshFailures: 0, failNextRefresh: false, requests: [] as unknown[] };
 Object.assign(window, { __sendRecoveryFixture: sendRecoveryFixture });
 const agents = [
@@ -221,22 +214,11 @@ histories.mosaic[3].attachments!.push({"kind": "artifact", "index": 3, "name": "
 files.set("mosaic:4:aba16615ae4487d98eddf1d76c7e4c08dea0c71bc99009c3a543f5090ad00586", {"data": "UEsDBFN5bnRoZXRpYyBhcmNoaXZlIGZpeHR1cmU7IG5vdCBhIHJlYWwgWklQLg==", "name": "合成归档.zip", "mime": "application/zip"});
 histories.mosaic[3].attachments!.push({"kind": "artifact", "index": 4, "name": "合成读取失败.txt", "mime_type": "text/plain", "size": 13, "sha256": "72e3ff58d7416ac8436ed00564dda7b4f6d81b5f54ac903a555f3a234c74a9b9"});
 files.set("mosaic:4:72e3ff58d7416ac8436ed00564dda7b4f6d81b5f54ac903a555f3a234c74a9b9", {"data": "ZXJyb3IgZml4dHVyZQ==", "name": "合成读取失败.txt", "mime": "text/plain"});
-let calendarWriteDemo = false;
-let calendarOperation:any = {
-  operation_id:"synthetic-calendar-operation",revision:1,status:"proposed",kind:"reschedule",preview_digest:"a".repeat(64),
-  user_space_id:"local",agent_id:"mosaic",session_id:"synthetic-main",task_id:"synthetic-lunch",requirements_revision:1,
-  account_id:"demo@example.test",calendar_id:"synthetic-calendar",event_id:"synthetic-event",original_event_etag:"synthetic-etag",
-  fields:{summary:"合成日程：周五午餐",location:"演示咖啡馆",start:{date_time:"2026-10-23T12:00:00+08:00",timezone:"Asia/Shanghai"},end:{date_time:"2026-10-23T13:00:00+08:00",timezone:"Asia/Shanghai"},attendees:[{email:"friend@example.test",optional:false}],send_updates:"all"},
-  original_event:{id:"synthetic-event",etag:"synthetic-etag",fields:{summary:"合成原日程",location:"演示地点",start:{date_time:"2026-10-23T11:00:00+08:00",timezone:"Asia/Shanghai"},end:{date_time:"2026-10-23T12:00:00+08:00",timezone:"Asia/Shanghai"},attendees:[{email:"friend@example.test",optional:false}]}},
-  availability:{checked_at:now,calendar_id:"synthetic-calendar",scope:"selected_calendar_only",conflicting_event_ids:[]},notification_notice:"合成演示：确认后会向列出的参与者请求发送更新邀请。",reconciliation_required:false,cancel_requested:false,
-};
 const reactionStore: Record<string, {owner?:string;agent?:string;revision:number}> = JSON.parse(localStorage.getItem("wuu.fixture.reactions") || "{}");
 const reactionReceipts = new Map<string, unknown>();
 const reactionsFor = (seq: number) => reactionStore[String(seq)] || { revision: 0 };
 const persistReactions = () => localStorage.setItem("wuu.fixture.reactions", JSON.stringify(reactionStore));
 let offline=false, empty=false;
-let calendarReads=0;
-const calendarFixture=new URLSearchParams(location.search).get("calendar")==="stale";
 let fixtureActivity: "idle" | "thinking" | "responding" = "idle";
 const modelFixture = { selection:{provider:"synthetic",model:"synthetic"}, calls:[] as Array<Record<string,unknown>> };
 Object.assign(window, {__modelFixture:modelFixture});
@@ -291,11 +273,6 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     case "agents.proposals":return {proposals:[]};
     case "agents.send":{if(receiptScenario.mode!=="default")return sendReceiptScenario(data,userInput);const prior=receiptRows.get(data.request_id);if(prior)return {receipt:prior.receipt,state:prior.receipt.execution_state};sendRecoveryFixture.requests.push(structuredClone(data)); const list=histories[data.agent_id],seq=(list.at(-1)?.seq ?? 0)+1; const attachments = userInput?.attachments?.map((file,index)=>{files.set(`${data.agent_id}:${seq}:${file.sha256}`,{data:file.data,name:file.filename,mime:file.media_type});return {kind:file.media_type.startsWith("image/")?"image":"file",index,name:file.filename,mime_type:file.media_type,size:atob(file.data).length,sha256:file.sha256};});list.push({seq,role:"user",at:now,content:data.prompt,attachments,relation:data.relation},{seq:seq+1,role:"assistant",at:now,content:"这是合成演示回复。主对话保持不变，后台事项仍会继续。",relation:data.relation});sendRecoveryFixture.accepted++; const delay = Math.min(10000, Math.max(0, Number(params.get("sendDelay")) || 0)); if (delay) await new Promise(resolve => setTimeout(resolve, delay)); sendRecoveryFixture.failNextRefresh = params.get("sendRefresh") === "error"; const receipt=fixtureReceipt(data.request_id,"completed",seq);list.find(row=>row.seq===seq)!.receipt=receipt;receiptRows.set(data.request_id,{receipt,prompt:data.prompt,relation:data.relation});return {state:"completed",receipt};}
     case "agents.attachments.read":{const file=files.get(`${data.agent_id}:${data.seq}:${data.sha256}`);if(!file)throw new Error("Synthetic file missing");if(file.name === "合成读取失败.txt")throw new Error("合成读取失败：用于展示错误与重试，不涉及真实文件。");const offset=data.offset||0;return {data:file.data.slice(offset,offset+128*1024),offset,total:file.data.length,content_type:file.mime,name:file.name,sha256:data.sha256};}
-    case "calendar.status":case "calendar.agenda":return {state:"unconnected",read_only:!calendarWriteDemo,freshness:"empty",events:[]};
-    case "calendar.operations.list":return {operations:calendarWriteDemo?[calendarOperation]:[]};
-    case "calendar.operations.confirm":if(!calendarWriteDemo)throw new Error("Synthetic writer is disabled");calendarOperation={...calendarOperation,status:"uncertain",revision:calendarOperation.revision+1,reconciliation_required:true,error_code:"synthetic_acknowledgement_lost"};return calendarOperation;
-    case "calendar.operations.cancel":calendarOperation={...calendarOperation,status:calendarOperation.status==="proposed"?"cancelled":"uncertain",cancel_requested:true,revision:calendarOperation.revision+1};return calendarOperation;
-    case "calendar.operations.reconcile":return calendarOperation;
     case "agents.stop_reply":return {cancelled:true};
     case "routines.list":return {routines:empty?[]:structuredClone(fixtureRoutines)};
     case "routines.history": {
@@ -341,19 +318,6 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     case "memory.correct":{const memory=memories.find(m=>m.id===data.id)!;memory.content=data.content;memory.revision++;return {record:memory};}
     case "memory.forget":{const memory=memories.find(m=>m.id===data.id)!;memory.status="forgotten";return {record:memory};}
     case "agents.pause":case "agents.resume":{const agent=agents.find(a=>a.agent_id===data.agent_id)!;agent.status=method.endsWith("pause")?"paused":"active";agent.revision++;return {agent};}
-    case "connectors.list":return {ok:true,value:{state:"available",connections:connectorScenario === "empty" ? [] : [{connection_id:"synthetic-gmail",provider:"gmail",account_id:"demo@example.invalid",domain:"personal",state:"connected",revision:"one",scopes:["gmail.readonly","gmail.send"],resources:["me"]}]}};
-    case "connectors.actions":return {ok:true,value:{actions:structuredClone(connectorActions)}};
-    case "connectors.decide": {
-      connectorCalls.push({method,input});const action=connectorActions.find(a=>a.action_id===data.action_id);if(!action||action.digest!==data.digest||action.state!=="awaiting_confirmation")throw Error("Stale synthetic decision");
-      action.state=data.approve?"completed":"rejected";if(connectorScenario==="lost-ack")throw Error("Synthetic lost response");return {ok:true,value:structuredClone(action)};
-    }
-    case "connectors.disconnect":connectorCalls.push({method,input});return {ok:true,value:{ok:true}};
-    case "connections.status":return {ok:true,value:calendarFixture?{product_domain:"personal",provider:"google-calendar",user_space_id:"local",account_id:"fixture-account",connection_id:"fixture-connection",selection_revision:"1",state:"connected",selected_calendars:["fixture-calendar"],authorization_diagnostics:[{attempt_id:"previous-synthetic-attempt",error_code:"credential_cleanup_failed"}]}:{product_domain:"personal",provider:"google-calendar",user_space_id:"local",state:"unavailable",selected_calendars:[],error_code:"oauth_client_not_configured"}};
-    case "connections.calendars":return {ok:true,value:[{id:"fixture-calendar",summary:"合成日历",timeZone:"Asia/Shanghai"}]};
-    case "connections.agenda": {
-      const stale=++calendarReads>1;
-      return {state:stale?"error":"ready",freshness:stale?"stale":"fresh",error_code:stale?"provider_unavailable":undefined,source:{...data,provider:"google-calendar",read_only:true,user_space_id:"local",account_id:"fixture-account",connection_id:"fixture-connection",selection_revision:"1",fetched_at:new Date().toISOString()},events:[{id:"fixture-event",status:"confirmed",summary:"合成日程 · 上次读取结果",all_day:true}],cancelled_events:[]};
-    }
     case "review.list":return {ok:true,value:reviewScenario === "unavailable" ? {schema:"personal-review.v1",kind:"unavailable",reason:"尚未配置审核服务，动作审批当前不可用。"} : reviewValue()};
     case "review.settings": {
       reviewCalls.push({method,input:structuredClone(data)});
@@ -492,9 +456,8 @@ async function start(){
   ] as const) await host.activateGeneration({graphGeneration:"fixture-graph",pluginId,generation:"fixture",register});
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"fixture-controls",generation:"fixture",register(api){fixtureApplication=api.application;}});
   controller = fixtureApplication.workbench;
-  window.addEventListener("pagehide", () => { fixtureLifetime.abort(); void host.selectApplicationBinding(undefined).finally(() => { for (const id of ["personal", "personal-calendar", "automations", "fixture-controls", "wuu.default-shell", "wuu.default-navigation", "wuu.default-composer", "wuu.default-conversation", "wuu.default-preview", "wuu.default-settings", "wuu.default-application"]) host.unload(id); }); }, {once:true});
+  window.addEventListener("pagehide", () => { fixtureLifetime.abort(); void host.selectApplicationBinding(undefined).finally(() => { for (const id of ["personal", "automations", "fixture-controls", "wuu.default-shell", "wuu.default-navigation", "wuu.default-composer", "wuu.default-conversation", "wuu.default-preview", "wuu.default-settings", "wuu.default-application"]) host.unload(id); }); }, {once:true});
   await host.activateGeneration({graphGeneration:personalSource?.graph_generation ?? "fixture-graph",pluginId:personalID,manifestId:"personal",generation:personalSource?.fingerprint ?? "synthetic-ui-fixture",contributions:{navigation:[{id:"personal",title:"twin",view:"personal.home",icon:{name:"mascot"},order:41}],settings_pages:[{id:"personal-preferences",title:"twin",view:"personal.preferences",icon:{name:"mascot"},order:41}]},register:activate});
-  await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"personal-calendar",generation:"synthetic-ui-fixture",register:activateCalendar});
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"automations",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"automations",title:"Automations",view:"automations.home",icon:{name:"clock"},order:40}]},register(api){api.registerViewType({id:"automations.home",title:"Automations",defaultRegion:"primary",render:()=> <div className="plugin-ui-page">合成 Automations 入口</div>});}});
   if (params.get("presentation") !== "standard") await controller.openPluginView(personalID, "personal.home");
   createRoot(document.getElementById("root")!).render(<FixtureSurface/>);

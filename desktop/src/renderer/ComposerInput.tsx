@@ -4,7 +4,7 @@ import type { MCPServerStatus } from "../shared/protocol";
 import { draftPluginReferences, pluginReferencePlainText, type DraftPluginReference } from "./ComposerPluginReferences";
 import { draftSkillReference, skillReferenceTitle } from "./ComposerSkillReferences";
 import { ComposerPluginIcon } from "./ComposerPluginIcon";
-import { useComposerServices } from "./ComposerServicesContext";
+import { useComposerPluginServices } from "./ComposerServicesContext";
 import "./ComposerInput.css";
 
 export interface RichComposerInput {
@@ -173,7 +173,7 @@ export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function Com
   const [rich, setRich] = useState(() => draftComposerReferences(value).length > 0);
   const [referenceNodes, setReferenceNodes] = useState<ReferenceNode[]>([]);
   const [servers, setServers] = useState<MCPServerStatus[]>([]);
-  const services = useComposerServices();
+  const services = useComposerPluginServices();
   useEffect(() => {
     if (!rich || !services) return;
     let active = true;

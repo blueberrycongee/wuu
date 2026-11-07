@@ -9,7 +9,6 @@ import org.json.JSONObject
 
 enum class PersonalTaskAction(val method: String) { UPDATE("update"), STOP("stop"), RESUME("resume") }
 /** Consent belongs to the displayed connection/selection, unlike a recoverable message draft. */
-class PersonalCalendarConfirmation internal constructor(internal val snapshot: String, internal val owner: UUID, internal val agentID: String, internal val epoch: Long) { val preview: JSONObject get() = JSONObject(snapshot) }
 
 enum class PersonalClientFailure { UNAVAILABLE, ISOLATION_REQUIRED, NO_AGENT_SELECTED, SELECTION_CHANGED, INVALID_RESPONSE, EMPTY_MESSAGE }
 class PersonalClientException(val reason: PersonalClientFailure) : IOException(when (reason) {
@@ -32,7 +31,6 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
     private var epoch = 0L
     private var verifiedScope: Pair<String, String>? = null
     private var binding: Binding? = null
-    private var calendarBinding: Binding? = null
     private var selected: String? = null
     val selectedAgentID: String? get() = synchronized(this) { selected }
 
@@ -56,10 +54,7 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
         if (record == null || record.optString("runtime_state") != "active" || record.opt("enabled") == false ||
             record.optString("id").isBlank() || record.optString("fingerprint").isBlank() || graph.isNullOrBlank()) throw PersonalClientException(PersonalClientFailure.UNAVAILABLE)
         binding = Binding(record.getString("id"), record.getString("fingerprint"), graph)
-        val calendars = (0 until (inventory?.length() ?: 0)).mapNotNull { inventory?.optJSONObject(it) }.filter { it.optString("id") == "plugin:bundled:personal-calendar" || it.optJSONObject("provenance")?.optString("plugin_id") == "personal-calendar" }
-        val calendar = calendars.firstOrNull { it.optString("id") == "plugin:bundled:personal-calendar" } ?: calendars.singleOrNull()
-        val calendarGraph = calendar?.opt("graph_generation") as? String
-        if (calendar != null && calendar.optString("runtime_state") == "active" && calendar.opt("enabled") != false && calendar.optString("id").isNotEmpty() && calendar.optString("fingerprint").isNotEmpty() && !calendarGraph.isNullOrBlank()) calendarBinding = Binding(calendar.getString("id"), calendar.getString("fingerprint"), calendarGraph)
+
     }
 
     /** Inventory events cannot recreate scope after disconnect; only verified live initialization supplies it. */
@@ -69,7 +64,7 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
     }
 
     /** Call immediately on disconnect, sign-out, revocation, or plugin-generation invalidation. */
-    @Synchronized fun invalidate() { epoch++; binding = null; calendarBinding = null; selected = null; verifiedScope = null }
+    @Synchronized fun invalidate() { epoch++; binding = null; selected = null; verifiedScope = null }
 
     suspend fun listAgents(): JSONObject = request("agents.list")
     suspend fun ensureDefaultAgent(name: String? = null): JSONObject = request("agents.ensure_default", if (name == null) JSONObject() else json("name" to name))
@@ -159,45 +154,6 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
     suspend fun settings(): JSONObject = request("settings.get")
     suspend fun updateSettings(expectedRevision: Long, notifications: Boolean, quietHours: JSONObject, notificationBatchSeconds: Int = 0): JSONObject = request("settings.update", json("expected_revision" to expectedRevision, "notifications" to notifications, "quiet_hours" to quietHours, "notification_batch_seconds" to notificationBatchSeconds))
     suspend fun routines(): JSONObject = request("routines.list")
-    suspend fun calendarAgenda(calendarID: String, start: String, end: String, timezone: String, refresh: Boolean = false): JSONObject {
-        val (agentID, stamp) = selectedSnapshot()
-        return request(if (refresh) "calendar.refresh" else "calendar.agenda", json("agent_id" to agentID, "calendar_id" to calendarID, "time_min" to start, "time_max" to end, "timezone" to timezone), stamp)
-    }
-    suspend fun calendarOperations(): JSONObject {
-        val (agentID, stamp) = selectedSnapshot()
-        val result = request("operations.list", expectedEpoch = stamp, calendar = true)
-        val rows = result.optJSONArray("operations")?.objects() ?: throw PersonalClientException(PersonalClientFailure.INVALID_RESPONSE)
-        if (rows.any { it.optString("user_space_id") != "local" }) throw PersonalClientException(PersonalClientFailure.INVALID_RESPONSE)
-        return json("operations" to org.json.JSONArray(rows.filter { it.optString("agent_id") == agentID }))
-    }
-    suspend fun calendarOperation(id: String, reconcile: Boolean = false): JSONObject {
-        val (agentID, stamp) = selectedSnapshot()
-        val result = request("operations.get", json("operation_id" to id), stamp, calendar = true)
-        if (result.optString("operation_id") != id || result.optString("agent_id") != agentID || result.optString("user_space_id") != "local") throw PersonalClientException(PersonalClientFailure.INVALID_RESPONSE)
-        return if (reconcile) request("operations.reconcile", json("operation_id" to id), stamp, calendar = true) else result
-    }
-    @Synchronized fun prepareCalendarConfirmation(preview: JSONObject): PersonalCalendarConfirmation {
-        val agentID = requireSelected(); val fields = preview.optJSONObject("fields"); val availability = preview.optJSONObject("availability")
-        if (preview.optString("agent_id") != agentID || preview.optString("user_space_id") != "local" || preview.optString("status") != "proposed" || preview.optLong("revision") < 1 || !preview.optString("preview_digest").matches(Regex("[a-f0-9]{64}")) || preview.optString("kind") !in listOf("create", "reschedule") || listOf("operation_id", "task_id", "account_id", "calendar_id", "notification_notice").any { preview.optString(it).isBlank() } || fields == null || !validCalendarFields(fields) || preview.optLong("requirements_revision") < 1 || fields.optString("send_updates") !in listOf("all", "externalOnly", "none") || fields.optJSONArray("attendees") == null || availability?.optString("checked_at").isNullOrEmpty() || availability?.optJSONArray("conflicting_event_ids") == null || (preview.optString("kind") == "reschedule" && !validCalendarFields(preview.optJSONObject("original_event")?.optJSONObject("fields")))) throw PersonalClientException(PersonalClientFailure.INVALID_RESPONSE)
-        return PersonalCalendarConfirmation(preview.toString(), owner, agentID, epoch)
-    }
-    private fun validCalendarFields(fields: JSONObject?): Boolean {
-        if (fields == null || fields.optString("summary").isBlank() || !fields.has("location")) return false
-        val attendees = fields.optJSONArray("attendees") ?: return false
-        if ((0 until attendees.length()).any { index -> val row = attendees.optJSONObject(index); row == null || !row.optString("email").contains('@') || row.opt("optional") !is Boolean }) return false
-        return listOf("start", "end").all { field ->
-            val time = fields.optJSONObject(field)
-            time != null && time.optString("timezone").isNotEmpty() &&
-                ((time.has("date") && !time.has("date_time") && time.optString("date").matches(Regex("\\d{4}-\\d{2}-\\d{2}"))) ||
-                    (!time.has("date") && time.optString("date_time").matches(Regex("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})"))))
-        }
-    }
-    suspend fun confirmCalendar(confirmation: PersonalCalendarConfirmation): JSONObject {
-        val stamp = synchronized(this) { if (confirmation.owner != owner || confirmation.agentID != selected || confirmation.epoch != epoch) throw PersonalClientException(PersonalClientFailure.SELECTION_CHANGED); epoch }
-        val preview = confirmation.preview
-        return request("operations.confirm", json("operation_id" to preview.getString("operation_id"), "expected_revision" to preview.getLong("revision"), "preview_digest" to preview.getString("preview_digest")), stamp, calendar = true)
-    }
-
     @Synchronized fun prepareMessage(prompt: String, attachments: List<InputAttachment> = emptyList()): PersonalMessageDraft {
         val agentID = requireSelected()
         PersonalStoredDraft.validate(prompt, attachments)
@@ -249,11 +205,11 @@ class PersonalClient(private var transport: suspend (String, JSONObject) -> JSON
     @Synchronized private fun requireSelected(): String = selected ?: throw PersonalClientException(PersonalClientFailure.NO_AGENT_SELECTED)
     @Synchronized private fun selectedSnapshot(): Pair<String, Long> = requireSelected() to epoch
 
-    private suspend fun request(method: String, input: JSONObject = JSONObject(), expectedEpoch: Long? = null, userInput: JSONObject? = null, calendar: Boolean = false): JSONObject {
+    private suspend fun request(method: String, input: JSONObject = JSONObject(), expectedEpoch: Long? = null, userInput: JSONObject? = null): JSONObject {
         coroutineContext.ensureActive()
         val (target, stamp, call) = synchronized(this) {
             if (expectedEpoch != null && expectedEpoch != epoch) throw PersonalClientException(PersonalClientFailure.SELECTION_CHANGED)
-            Triple((if (calendar) calendarBinding else binding) ?: throw PersonalClientException(PersonalClientFailure.UNAVAILABLE), epoch, transport)
+            Triple(binding ?: throw PersonalClientException(PersonalClientFailure.UNAVAILABLE), epoch, transport)
         }
         try {
             val params = json("id" to target.id, "fingerprint" to target.fingerprint, "graph_generation" to target.graph,
@@ -286,8 +242,8 @@ fun personalDisplayRecords(records: List<JSONObject>): List<JSONObject> = record
         "attachments" to (record.optJSONArray("attachments") ?: org.json.JSONArray()))
 }
 
-/** A local calendar day may contain 23 or 25 hours. Provider queries require explicit RFC3339 seconds. */
-fun personalCalendarDayWindow(day: java.time.LocalDate, timezone: java.time.ZoneId): Pair<String, String> {
+/** A local calendar day may contain 23 or 25 hours. History queries require explicit RFC3339 seconds. */
+fun personalDayWindow(day: java.time.LocalDate, timezone: java.time.ZoneId): Pair<String, String> {
     val start = day.atStartOfDay(timezone).toInstant()
     val end = day.plusDays(1).atStartOfDay(timezone).toInstant()
     return java.time.format.DateTimeFormatter.ISO_INSTANT.format(start) to java.time.format.DateTimeFormatter.ISO_INSTANT.format(end)

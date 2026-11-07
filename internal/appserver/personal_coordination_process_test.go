@@ -13,7 +13,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
@@ -107,19 +106,6 @@ func TestPersonalCoordinationExternalProcessEffects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer state.Close()
-	connectorCtx := runtime.WithInvocationState(owner, state)
-	actor := personalconnectors.Actor{ProductDomain: "personal", UserSpaceID: rt.UserSpaceID, SessionID: sessionID}
-	snapshot, err := host.server.connectorSnapshot(connectorCtx, actor)
-	if err != nil || snapshot != "independent-snapshot" {
-		t.Fatalf("external connector snapshot=%q err=%v", snapshot, err)
-	}
-	connectorCalls := 0
-	if err := host.server.connectorCommit(connectorCtx, actor, snapshot, func(context.Context) error { connectorCalls++; return nil }); err != nil || connectorCalls != 1 {
-		t.Fatalf("external connector effect calls=%d err=%v", connectorCalls, err)
-	}
-	if err := host.server.connectorCommit(connectorCtx, actor, "skip", func(context.Context) error { connectorCalls++; return nil }); err == nil || connectorCalls != 1 {
-		t.Fatalf("coordinator success without effect accepted: calls=%d err=%v", connectorCalls, err)
-	}
 	if _, ok := state.Host.RetirePlugin(context.Background(), externalID, nil); !ok {
 		t.Fatal("external provider was not retired")
 	}
@@ -215,17 +201,6 @@ func runPersonalCoordinatorHelper() {
 					deferred = prepared
 				} else if err == nil {
 					err = call("execute", PersonalEffectReference{EffectID: prepared.EffectID}, nil)
-				}
-			case "connector-snapshot":
-				write(request.ID, personalConnectorSnapshot{Authority: "independent-snapshot"})
-				continue
-			case "connector-commit":
-				var connector personalConnectorCoordination
-				if json.Unmarshal(input.Input, &connector) != nil {
-					os.Exit(13)
-				}
-				if connector.Expected != "skip" {
-					err = call("execute", PersonalEffectReference{EffectID: connector.EffectID}, nil)
 				}
 			case "call":
 				err = call("execute", PersonalEffectReference{EffectID: deferred.EffectID}, nil)

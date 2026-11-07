@@ -2560,8 +2560,8 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:mcp-auth-cancel", (event, name: string, state: string) =>
     appServerRequest(event, "mcp/auth/cancel", { name, state }),
   );
-  ipcMain.handle("wuu:mcp-list", (event) =>
-    appServerRequest<MCPListResult>(event, "mcp/list"),
+  ipcMain.handle("wuu:mcp-list", (event, context?: RuntimeContext) =>
+    appServerRequest<MCPListResult>(event, "mcp/list", undefined, context),
   );
   ipcMain.handle("wuu:mcp-connect", (event, name: string) =>
     appServerRequest<MCPServerActionResult>(event, "mcp/connect", { name }),

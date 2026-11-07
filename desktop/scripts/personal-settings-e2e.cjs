@@ -25,7 +25,8 @@ app.whenReady().then(async()=>{
   await until(()=>document.querySelector('.mosaic-model-select')?.disabled === false && window.__modelFixture.selection.model === 'model-two');
   assert.deepEqual(await evaluate(()=>window.__modelFixture.calls),[{provider:'synthetic-two',model:'model-two'}]);
   await capture('settings-model-selected');
-  await evaluate(()=>document.querySelector('[data-personal-connections]').scrollIntoView({block:'start'}));await capture('settings-connections-light');
+  assert.equal(await evaluate(()=>Boolean(document.querySelector('[data-personal-connections], [data-personal-connectors]'))),false);
+  await evaluate(()=>document.querySelector('.personal-review').scrollIntoView({block:'center'}));await capture('settings-review-light');
   await evaluate(()=>{Array.from(document.querySelectorAll('.mosaic-fixture-label button')).find(el=>el.textContent==='明 / 暗').click();document.documentElement.style.setProperty('--conversation-message-font-size','20px');});
   win.setContentSize(680,900);
   await evaluate(()=>document.querySelector('[data-personal-preferences]').scrollIntoView({block:'start'}));
