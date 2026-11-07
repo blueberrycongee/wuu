@@ -196,6 +196,7 @@ export const enUS = {
   "mobile.pushConnecting": "Connecting…",
   "mobile.pushDisable": "Disable notifications",
   "mobile.pushEnable": "Enable notifications",
+  "account.localLogout": "Signed out locally. Server revocation is unconfirmed.",
   "account.label": "Self-hosted account",
   "account.title": "{username}'s devices",
   "account.connect": "Sign in to Wuu",
