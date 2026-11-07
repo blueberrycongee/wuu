@@ -44,7 +44,7 @@ const DESKTOP_DOCK_SPRING = { stiffness: 200, damping: 24 };
 const DESKTOP_DOCK_ARC = 0.35;
 const DESKTOP_DOCK_ARC_MAX = 480;
 
-export type PiPStackLead = { frame: Rectangle; alignment: PipAlignment; dragging: boolean; index?: number };
+export type PiPStackLead = { frame: Rectangle; alignment: PipAlignment; dragging: boolean; index?: number; aspect?: number };
 
 type PiPTransition = {
   direction: "in" | "out";
@@ -158,13 +158,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private grab: PipPoint = { x: 0, y: 0 };
   private userSize: { width: number; height: number } | undefined;
   private stackMaxEdge: number | undefined;
-  // Choose the default card shape once. A panel visit changes the page
-  // viewport, but must not reshape the card when it returns.
+  // Browser shape survives panel visits; native shape follows captured frames.
   private initialAspect: number | undefined;
+  private pendingViewportAspect = false;
   // The page's layout viewport, captured before the card zooms it down.
   // Later view bounds are the zoomed size, so they must not replace this.
   private layoutViewport: { width: number; height: number } | undefined;
-  private resizeGesture: { edge: PipResizeEdge; start: PipRect; pointer: PipPoint } | undefined;
+  private resizeGesture: { edge: PipResizeEdge; start: PipRect; pointer: PipPoint; aspect: number } | undefined;
   private snapTimer: ReturnType<typeof setTimeout> | undefined;
   private transition: PiPTransition | undefined;
   private motion: {
@@ -624,6 +624,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.layoutViewport = viewport;
         const firstViewport = this.initialAspect === undefined;
         this.initialAspect ??= viewport.width / viewport.height;
+        if (this.activity.kind === "cua" && !firstViewport
+          && Math.abs(viewport.width / viewport.height / this.initialAspect - 1) >= .01) {
+          this.pendingViewportAspect = true;
+          this.followViewportAspect();
+        }
         // A new card may inherit the stack size before its first frame arrives.
         if (firstViewport && this.stackMaxEdge !== undefined) {
           this.userSize = browserPiPSizeForAspect(this.initialAspect, this.stackMaxEdge);
@@ -776,7 +781,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     if (!layout || !win || win.isDestroyed() || this.stackIndex > 0) return;
     this.cancelSnap();
     const card = this.userSize
-      ? browserPiPFitCard(layout.host, this.userSize)
+      ? this.activity.kind === "cua" ? browserPiPCardSize(layout.host, this.userSize) : browserPiPFitCard(layout.host, this.userSize)
       : browserPiPCardSize(layout.host, browserPiPSizeForAspect(this.initialAspect ?? 4 / 3));
     const anchor = browserPiPAnchors(layout.host, layout.obstacles, card)
       .find((item) => item.alignment === this.alignment);
@@ -784,6 +789,29 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const origin = browserPiPOrigin(anchor, card);
     if (fly && win.isVisible() && !this.transition) this.flyTo(origin, card);
     else this.applyBounds({ x: origin.x, y: origin.y, width: card.width, height: card.height });
+  }
+
+  private followViewportAspect(): boolean {
+    const win = this.win;
+    if (!this.pendingViewportAspect || !this.layoutViewport || !win || win.isDestroyed() || this.dragging || this.resizing) return false;
+    this.pendingViewportAspect = false;
+    const aspect = this.layoutViewport.width / this.layoutViewport.height;
+    if (this.initialAspect !== undefined && Math.abs(aspect / this.initialAspect - 1) < .01) return false;
+    this.initialAspect = aspect;
+    const before = this.restingFrame();
+    const preferred = browserPiPSizeForAspect(this.initialAspect, this.stackMaxEdge ?? Math.max(before.width, before.height));
+    const layout = this.placementLayout();
+    this.userSize = layout ? browserPiPCardSize(layout.host, preferred) : preferred;
+    if (layout && (this.stackIndex <= 0 || this.desktopDocked)) this.placeCommitted();
+    else {
+      this.cancelSnap();
+      this.applyBounds({
+        x: this.alignment.endsWith("right") ? before.x + before.width - this.userSize.width : before.x,
+        y: this.alignment.startsWith("bottom") ? before.y + before.height - this.userSize.height : before.y,
+        ...this.userSize,
+      });
+    }
+    return true;
   }
 
   private handleDrag(command: { phase: "start" | "move" | "end"; x: number; y: number; vx: number; vy: number }): void {
@@ -824,11 +852,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.applyBounds({ x: dragged.x, y: dragged.y, width: bounds.width, height: bounds.height });
     if (this.desktopDocked) this.refreshDesktopFrame(win.getBounds());
     const layout = this.placementLayout();
-    if (!layout) return;
+    if (!layout) { this.followViewportAspect(); return; }
     const settled = win.getBounds();
     // A card resized on a large display must shrink when it is released on a
     // smaller one; clamping the origin alone can leave most of it off-screen.
-    const fitted = browserPiPFitCard(layout.host, { width: settled.width, height: settled.height });
+    const fitted = browserPiPCardSize(layout.host, { width: settled.width, height: settled.height });
     const card = { width: fitted.width, height: fitted.height };
     if (card.width !== settled.width || card.height !== settled.height) this.userSize = card;
     const origin = { x: settled.x, y: settled.y };
@@ -840,6 +868,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     );
     if (!nearest) return;
     this.alignment = nearest.alignment;
+    if (this.followViewportAspect()) return;
     this.animateTo(browserPiPOrigin(nearest, card), card, { x: command.vx, y: command.vy });
   }
 
@@ -856,6 +885,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         edge: command.edge,
         start: { x: bounds.x, y: bounds.y, width: bounds.width, height: bounds.height },
         pointer: { x: command.x, y: command.y },
+        aspect: this.layoutViewport ? this.layoutViewport.width / this.layoutViewport.height : bounds.width / bounds.height,
       };
       return;
     }
@@ -867,7 +897,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         gesture.start,
         gesture.edge,
         { x: command.x - gesture.pointer.x, y: command.y - gesture.pointer.y },
-        { min: PIP_MIN_SIZE, frame },
+        { min: PIP_MIN_SIZE, frame, aspect: gesture.aspect },
       )
       : gesture.start;
     this.applyBounds(next);
@@ -879,7 +909,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.stackMaxEdge = undefined;
     if (this.desktopDocked) this.refreshDesktopFrame(settled);
     const layout = this.placementLayout();
-    if (!layout) return;
+    if (!layout) { this.followViewportAspect(); return; }
     const nearest = browserPiPNearestAnchor(
       browserPiPAnchors(layout.host, layout.obstacles, this.userSize),
       { x: settled.x, y: settled.y },
@@ -887,6 +917,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       { x: 0, y: 0 },
     );
     if (nearest) this.alignment = nearest.alignment;
+    this.followViewportAspect();
   }
 
   // The card may occupy the column inside the same margin the corners use.
@@ -1286,7 +1317,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   // corner of the column, or without a measured column that card's frame.
   setStackPosition(index: number, lead?: PiPStackLead): void {
     const win = this.win;
-    if (!win || win.isDestroyed() || this.dragging) return;
+    if (!win || win.isDestroyed() || this.dragging || this.resizing) return;
     // Detached cards own their screen corner and never join the column stack.
     if (this.desktopDocked) {
       this.stackIndex = 0;
@@ -1295,7 +1326,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const wasLead = this.stackIndex === 0;
     this.stackIndex = index;
     if (lead) this.stackMaxEdge = Math.max(lead.frame.width, lead.frame.height);
-    const sharedSize = lead && browserPiPSizeForAspect(this.initialAspect ?? 4 / 3, this.stackMaxEdge);
+    const sharedSize = lead && browserPiPSizeForAspect(lead.aspect ?? this.initialAspect ?? 4 / 3, this.stackMaxEdge);
     const layout = this.placementLayout();
     const card = sharedSize
       ? layout ? browserPiPCardSize(layout.host, sharedSize) : sharedSize
@@ -1346,7 +1377,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   stackLead(): PiPStackLead | undefined {
     const win = this.win;
     if (!win || win.isDestroyed()) return undefined;
-    return { frame: this.restingFrame(), alignment: this.alignment, dragging: this.dragging };
+    return { frame: this.restingFrame(), alignment: this.alignment, dragging: this.dragging,
+      aspect: this.activity.kind === "cua" ? this.initialAspect : undefined };
   }
 
   // Where the card is headed: a running spring's target, an appearance's

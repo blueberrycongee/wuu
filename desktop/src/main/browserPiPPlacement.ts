@@ -63,6 +63,7 @@ interface LocalRect {
 
 // A preview whose longer side is `maxEdge`, keeping the page's aspect ratio.
 export function browserPiPSizeForAspect(aspect: number, maxEdge = PIP_MAX_EDGE): PipSize {
+  // Extreme window shapes letterbox instead of producing a sliver of a card.
   const ratio = clamp(Number.isFinite(aspect) && aspect > 0 ? aspect : 4 / 3, 0.45, 2.4);
   if (ratio >= 1) {
     return { width: maxEdge, height: Math.max(1, Math.round(maxEdge / ratio)) };
@@ -70,15 +71,14 @@ export function browserPiPSizeForAspect(aspect: number, maxEdge = PIP_MAX_EDGE):
   return { width: Math.max(1, Math.round(maxEdge * ratio)), height: maxEdge };
 }
 
-// Clamp a chosen card into the column. Each side shrinks on its own so a
-// resize the user dragged is not forced back to the page's aspect ratio.
+// Fit a chosen card without changing its shape, even below the minimum when
+// the available frame cannot accommodate both minimum dimensions.
 export function browserPiPFitCard(host: PipRect, preferred: PipSize, min: PipSize = PIP_MIN_SIZE): PipSize {
   const maxW = Math.max(1, host.width - PIP_ANCHOR_MARGIN * 2);
   const maxH = Math.max(1, host.height - PIP_ANCHOR_MARGIN * 2);
-  return {
-    width: Math.round(clamp(preferred.width, Math.min(min.width, maxW), maxW)),
-    height: Math.round(clamp(preferred.height, Math.min(min.height, maxH), maxH)),
-  };
+  const scale = Math.min(maxW / preferred.width, maxH / preferred.height,
+    Math.max(1, min.width / preferred.width, min.height / preferred.height));
+  return { width: Math.max(1, Math.round(preferred.width * scale)), height: Math.max(1, Math.round(preferred.height * scale)) };
 }
 
 export function browserPiPCardSize(host: PipRect, preferred: PipSize = PIP_CARD_SIZE): PipSize {
@@ -145,34 +145,34 @@ export function browserPiPNearestAnchor(
   return best;
 }
 
-// The dragged edge moves. The opposite edges stay put. The page zoom is
-// recomputed afterwards so the whole layout viewport still fits this rect.
+// Corners keep their opposite corner fixed; single edges keep the opposite
+// edge's midpoint fixed. Frame limits take priority over minimum size.
 export function browserPiPResizeRect(
   start: PipRect,
   edge: PipResizeEdge,
   pointerDelta: PipPoint,
-  limits: { min: PipSize; frame: PipRect },
+  limits: { min: PipSize; frame: PipRect; aspect?: number },
 ): PipRect {
-  const right = start.x + start.width;
-  const bottom = start.y + start.height;
-  const maxW = Math.max(1, limits.frame.width);
-  const maxH = Math.max(1, limits.frame.height);
-  const minW = Math.min(limits.min.width, maxW);
-  const minH = Math.min(limits.min.height, maxH);
-  let width = start.width;
-  let height = start.height;
-  if (edge.includes("e")) width = start.width + pointerDelta.x;
-  if (edge.includes("s")) height = start.height + pointerDelta.y;
-  if (edge.includes("w")) width = start.width - pointerDelta.x;
-  if (edge.includes("n")) height = start.height - pointerDelta.y;
-  width = clamp(width, minW, maxW);
-  height = clamp(height, minH, maxH);
-  return browserPiPClampRect({
-    x: edge.includes("w") ? right - width : start.x,
-    y: edge.includes("n") ? bottom - height : start.y,
-    width,
-    height,
-  }, limits.frame);
+  const aspect = limits.aspect ?? start.width / start.height;
+  const horizontal = edge.includes("e") || edge.includes("w");
+  const vertical = edge.includes("n") || edge.includes("s");
+  const anchorX = edge.includes("w") ? 1 : horizontal ? 0 : .5;
+  const anchorY = edge.includes("n") ? 1 : vertical ? 0 : .5;
+  const x = start.x + start.width * anchorX;
+  const y = start.y + start.height * anchorY;
+  const frame = limits.frame;
+  const maxW = anchorX === 1 ? x - frame.x : anchorX === 0 ? frame.x + frame.width - x
+    : 2 * Math.min(x - frame.x, frame.x + frame.width - x);
+  const maxH = anchorY === 1 ? y - frame.y : anchorY === 0 ? frame.y + frame.height - y
+    : 2 * Math.min(y - frame.y, frame.y + frame.height - y);
+  const dx = (edge.includes("w") ? -1 : 1) * pointerDelta.x;
+  const dy = (edge.includes("n") ? -1 : 1) * pointerDelta.y;
+  const requested = horizontal && (!vertical || Math.abs(dx) >= Math.abs(dy * aspect))
+    ? start.width + dx : (start.height + dy) * aspect;
+  const maximum = Math.max(1, Math.min(maxW, maxH * aspect));
+  const width = clamp(requested, Math.min(maximum, Math.max(limits.min.width, limits.min.height * aspect)), maximum);
+  const height = width / aspect;
+  return { x: x - width * anchorX, y: y - height * anchorY, width, height };
 }
 
 export function browserPiPClampRect(rect: PipRect, frame: PipRect): PipRect {
