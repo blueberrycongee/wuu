@@ -14,7 +14,9 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agent"
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 // ResolveBinary locates the claude executable. The WUU_CLAUDE_BINARY
@@ -923,7 +925,7 @@ func (sub *turnSubscription) handleUser(envelope claudeLine) {
 				}
 			}
 		}
-		sub.finishToolResult(block.ToolUseID, state, claudeToolResultText(block.Content))
+		sub.finishToolResult(block.ToolUseID, state, claudeToolResultText(block.Content), claudeToolResultDetail(block.Content, block.IsError))
 	}
 }
 
@@ -949,6 +951,50 @@ func claudeToolResultText(raw json.RawMessage) string {
 		return out.String()
 	}
 	return string(raw)
+}
+
+// claudeToolResultDetail preserves tool_result media blocks (screenshots from
+// Read and MCP image outputs) as Wuu's rich result; text-only results keep the
+// flat string projection.
+func claudeToolResultDetail(raw json.RawMessage, isError bool) *toolresult.Result {
+	if len(raw) == 0 {
+		return nil
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return nil
+	}
+	var blocks []struct {
+		Type   string `json:"type"`
+		Text   string `json:"text"`
+		Source *struct {
+			Type      string `json:"type"`
+			MediaType string `json:"media_type"`
+			Data      string `json:"data"`
+		} `json:"source"`
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil
+	}
+	var contents []mcp.ToolContent
+	rich := false
+	for _, block := range blocks {
+		switch {
+		case block.Type == "text":
+			contents = append(contents, mcp.ToolContent{Type: toolresult.ContentTypeText, Text: block.Text})
+		case block.Type == "image" && block.Source != nil && block.Source.Type == "base64":
+			contents = append(contents, mcp.ToolContent{Type: toolresult.ContentTypeImage, Data: block.Source.Data, MIMEType: block.Source.MediaType})
+			rich = true
+		}
+	}
+	if !rich {
+		return nil
+	}
+	mapped, err := mcp.MapCallToolResult(&mcp.CallToolResult{Content: contents, IsError: isError})
+	if err != nil {
+		return nil
+	}
+	return &mapped
 }
 
 func (sub *turnSubscription) handleSystemEvent(envelope claudeLine) {
@@ -1125,18 +1171,19 @@ func (sub *turnSubscription) finishTool(toolID string, agentState providers.Agen
 	if agentState == providers.AgentActivityFailed {
 		result = "Tool failed"
 	}
-	sub.finishToolResult(toolID, agentState, result)
+	sub.finishToolResult(toolID, agentState, result, nil)
 }
 
-func (sub *turnSubscription) finishToolResult(toolID string, agentState providers.AgentActivityState, result string) {
+func (sub *turnSubscription) finishToolResult(toolID string, agentState providers.AgentActivityState, result string, detail *toolresult.Result) {
 	tool := sub.tools[toolID]
 	if tool == nil {
 		return
 	}
 	sub.emit(providers.StreamEvent{
-		Type:       providers.EventToolUseEnd,
-		ToolCall:   &providers.ToolCall{ID: tool.id, Name: tool.name, Arguments: tool.arguments.String()},
-		ToolResult: result,
+		Type:             providers.EventToolUseEnd,
+		ToolCall:         &providers.ToolCall{ID: tool.id, Name: tool.name, Arguments: tool.arguments.String()},
+		ToolResult:       result,
+		ToolResultDetail: detail,
 	})
 	if tool.agentActivity && !sub.tracksAgentActivity(tool.id) {
 		sub.emitAgentActivity(tool.id, "Claude agent", agentState)

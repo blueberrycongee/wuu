@@ -14,6 +14,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/enginecatalog"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 type Engine struct {
@@ -92,6 +93,12 @@ func (s *Session) RunTurn(ctx context.Context, input agentengine.TurnInput, sink
 		err = fmt.Errorf("unsupported engine protocol %q", s.engine.entry.Protocol)
 	}
 	result := t.result()
+	if len(result.NewMessages) > 0 && len(result.NewMessages[len(result.NewMessages)-1].Images) > 0 {
+		// Images collected during the turn surface live through the same
+		// item.Images path the persisted history projection uses.
+		message := providers.ChatMessage{Role: "assistant", Content: t.messageText.String(), Images: result.NewMessages[len(result.NewMessages)-1].Images}
+		t.emit(providers.StreamEvent{Type: providers.EventMessage, Message: &message})
+	}
 	if err != nil {
 		result.FinishReason = providers.FinishReasonError
 		t.failReconnect(err)
@@ -153,6 +160,7 @@ type turn struct {
 	engine         string
 	sink           agentengine.EventSink
 	text, thinking strings.Builder
+	messageText    strings.Builder
 	diagBuf        strings.Builder
 	reconnecting   bool
 	retryCount     int
@@ -160,7 +168,9 @@ type turn struct {
 	terminatedErr  string
 	tools          map[string]*providers.ToolCall
 	acpToolKinds   map[string]string
+	acpToolDetails map[string]*toolresult.Result
 	completed      map[string]bool
+	images         []providers.InputImage
 	usage          providers.TokenUsage
 	stopReason     string
 }
@@ -184,6 +194,7 @@ func (t *turn) content(text string, thinking bool) {
 		kind = providers.EventThinkingDelta
 	} else {
 		t.text.WriteString(text)
+		t.messageText.WriteString(text)
 	}
 	t.emit(providers.StreamEvent{Type: kind, Content: text})
 }
@@ -243,7 +254,16 @@ func (t *turn) failReconnect(err error) {
 	})
 }
 
-func (t *turn) tool(id, name, args, status, output string) {
+func (t *turn) image(image providers.InputImage) {
+	image.Data = strings.TrimSpace(image.Data)
+	if image.Data == "" {
+		return
+	}
+	t.images = append(t.images, image)
+	t.emit(providers.StreamEvent{Type: providers.EventImage, Image: &image})
+}
+
+func (t *turn) tool(id, name, args, status, output string, detail *toolresult.Result) {
 	if id == "" || t.completed[id] {
 		return
 	}
@@ -266,13 +286,19 @@ func (t *turn) tool(id, name, args, status, output string) {
 	kind := providers.EventToolUseDelta
 	if !exists {
 		kind = providers.EventToolUseStart
+		t.messageText.Reset()
 	}
 	t.emit(providers.StreamEvent{Type: kind, ToolCall: &copy})
 	if status == "completed" || status == "failed" {
 		if output == "" {
 			output = status
 		}
-		t.emit(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &copy, ToolResult: output})
+		var cloned *toolresult.Result
+		if detail != nil {
+			value := detail.Clone()
+			cloned = &value
+		}
+		t.emit(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &copy, ToolResult: output, ToolResultDetail: cloned})
 		t.completed[id] = true
 		delete(t.tools, id)
 	}
@@ -281,8 +307,8 @@ func (t *turn) tool(id, name, args, status, output string) {
 func (t *turn) result() agent.LoopResult {
 	r := agent.LoopResult{Content: t.text.String(), StopReason: t.stopReason, FinishReason: providers.FinishReasonStop,
 		InputTokens: t.usage.InputTokens, OutputTokens: t.usage.OutputTokens, CacheReadTokens: t.usage.CacheReadTokens, CacheCreationTokens: t.usage.CacheCreationTokens}
-	if t.text.Len() > 0 || t.thinking.Len() > 0 {
-		r.NewMessages = []providers.ChatMessage{{Role: "assistant", Content: t.text.String(), ReasoningContent: t.thinking.String()}}
+	if t.text.Len() > 0 || t.thinking.Len() > 0 || len(t.images) > 0 {
+		r.NewMessages = []providers.ChatMessage{{Role: "assistant", Content: t.text.String(), ReasoningContent: t.thinking.String(), Images: append([]providers.InputImage(nil), t.images...)}}
 	}
 	return r
 }

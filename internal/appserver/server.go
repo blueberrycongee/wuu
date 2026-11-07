@@ -178,6 +178,12 @@ type threadState struct {
 
 	nextItemIndex     int
 	activeAgentItemID string
+	// externalArtifactTurnID and externalArtifactText remember how much
+	// assistant text was already written before external artifact rows. The
+	// final engine message is split at that boundary so replay preserves the
+	// live text/artifact/text order.
+	externalArtifactTurnID string
+	externalArtifactText   string
 	// preemptingAgentTurnID suppresses late transport events after a steer
 	// closed the visible assistant item. The next model-step admission clears it.
 	preemptingAgentTurnID string

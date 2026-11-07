@@ -36,7 +36,7 @@ func TestToolAnnotationsDecodeReadOnlyHint(t *testing.T) {
 }
 
 func TestMapCallToolResultPreservesRichMCPContent(t *testing.T) {
-	result, err := mapCallToolResult(&CallToolResult{
+	result, err := MapCallToolResult(&CallToolResult{
 		Content: []ToolContent{
 			{Type: "text", Text: "hello"},
 			{Type: "image", Data: "aW1hZ2U=", MIMEType: "image/png"},
@@ -63,7 +63,7 @@ func TestMapCallToolResultPreservesRichMCPContent(t *testing.T) {
 }
 
 func TestMapCallToolResultDowngradesOversizedPartsWithoutError(t *testing.T) {
-	result, err := mapCallToolResult(&CallToolResult{
+	result, err := MapCallToolResult(&CallToolResult{
 		Content: []ToolContent{
 			{Type: "text", Text: strings.Repeat("text ", toolresult.MaxStructuredJSONSize)},
 			{Type: "image", Data: strings.Repeat("A", toolresult.MaxInlineDataBytes*2), MIMEType: "image/png"},

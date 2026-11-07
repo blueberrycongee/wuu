@@ -2672,7 +2672,11 @@ type ThreadItem struct {
 	Activity *ConversationActivity      `json:"activity,omitempty"`
 	// steered preserves input identity from live messages and the durable display
 	// transcript, independently of compactable provider history. It is host-only.
-	steered          bool
+	steered bool
+	// externalArtifact marks the host-owned row that replaced an external
+	// engine's present_artifact call. Later engine tool events must not
+	// overwrite its rich result or add another visible row.
+	externalArtifact bool
 	MarkdownImages   []ThreadItemImage `json:"markdown_images,omitempty"`
 	RemoteContentRef string            `json:"remote_content_ref,omitempty"`
 	ID               string            `json:"id"`

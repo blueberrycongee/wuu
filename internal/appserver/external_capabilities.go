@@ -27,17 +27,18 @@ import (
 // externalCapabilities owns one turn's authority. The unguessable endpoint is
 // handed only to its engine process; request data never supplies scope or grants.
 type externalCapabilities struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	server   *http.Server
-	host     string
-	path     string
-	executor agent.ToolExecutor
-	tools    []mcp.Tool
-	allowed  map[string]bool
-	serial   chan struct{}
-	binding  *runtime.State
-	journal  providers.InferenceJournal
+	ctx             context.Context
+	cancel          context.CancelFunc
+	server          *http.Server
+	host            string
+	path            string
+	executor        agent.ToolExecutor
+	tools           []mcp.Tool
+	allowed         map[string]bool
+	serial          chan struct{}
+	binding         *runtime.State
+	journal         providers.InferenceJournal
+	publishArtifact func(context.Context, providers.ToolCall, toolresult.Result) error
 
 	mu       sync.Mutex
 	closed   bool
@@ -270,6 +271,7 @@ func (b *externalCapabilities) call(ctx context.Context, call providers.ToolCall
 	if err := activity.ControlErr(ctx); err != nil {
 		return capabilityToolResult(toolresult.Result{}, err)
 	}
+	publicationCtx := ctx
 	var result toolresult.Result
 	var err error
 	var finishReceipts func() error
@@ -285,6 +287,22 @@ func (b *externalCapabilities) call(ctx context.Context, call providers.ToolCall
 	defer func() {
 		if finishReceipts != nil {
 			err = errors.Join(err, finishReceipts())
+		}
+		if call.Name == "present_artifact" && err != nil {
+			result = toolresult.Result{}
+		}
+		if err == nil && !result.IsError && call.Name == "present_artifact" {
+			err = activity.ControlErr(publicationCtx)
+			if err == nil && b.publishArtifact == nil {
+				err = errors.New("artifact publication is unavailable for this turn")
+			} else if err == nil {
+				err = b.publishArtifact(publicationCtx, call, result)
+			}
+			if err == nil {
+				result = toolresult.FromText("Artifact presented to the user.")
+			} else {
+				result = toolresult.Result{}
+			}
 		}
 		response = capabilityToolResult(result, err)
 	}()

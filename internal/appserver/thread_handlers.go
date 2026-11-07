@@ -849,9 +849,17 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 	// The provider checkpoint is only the active model context. Fork from the
 	// active transcript first so earlier conversation is not silently lost.
 	var history []providers.ChatMessage
+	var display []forkDisplayRecord
+	resolvedDisplay := false
 	err = errForkTargetNotFound
 	if len(source.rawHistory) > 0 {
-		history, err = forkPersistedHistoryAtTarget(source.rawHistory, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
+		var prefix []persistedMessage
+		prefix, err = forkPersistedPrefixAtTarget(source.rawHistory, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
+		if err == nil {
+			history = cloneForkHistory(chatMessagesFromPersistedMessages(prefix))
+			display = forkDisplayRecords(prefix, history)
+			resolvedDisplay = true
+		}
 	}
 	if errors.Is(err, errForkTargetNotFound) && len(source.displayHistory) > 0 {
 		history, err = forkHistoryAtTargetWithIdentity(source.displayHistory, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
@@ -862,6 +870,8 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 	if errors.Is(err, errForkTargetNotFound) && source.liveHistory {
 		if liveTurn, ok := turnByID(source.thread.Turns, strings.TrimSpace(params.TurnID)); ok {
 			base := source.history
+			var baseDisplay []forkDisplayRecord
+			baseResolved := len(source.rawHistory) == 0
 			if len(source.rawHistory) > 0 {
 				// Streaming tools may already have been archived. Materialize
 				// the live turn only after its admitted prompt, not after those
@@ -870,13 +880,46 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 					if item.Type != ThreadItemUserMessage {
 						continue
 					}
-					if prefix, prefixErr := forkPersistedHistoryAtTarget(source.rawHistory, source.thread.ID, source.thread.Turns, liveTurn.ID, item.ID, item); prefixErr == nil {
-						base = prefix
+					if prefix, prefixErr := forkPersistedPrefixAtTarget(source.rawHistory, source.thread.ID, source.thread.Turns, liveTurn.ID, item.ID, item); prefixErr == nil {
+						base = cloneForkHistory(chatMessagesFromPersistedMessages(prefix))
+						baseDisplay = forkDisplayRecords(prefix, base)
+						baseResolved = true
 					}
 					break
 				}
 			}
-			history, err = forkLiveAnswerHistory(base, liveTurn, params.ItemID)
+			var liveDisplay []forkDisplayRecord
+			history, liveDisplay, err = forkLiveAnswerHistoryWithDisplay(base, liveTurn, params.ItemID, source.rawHistory, !canonicalHistory)
+			if err == nil {
+				display = append(baseDisplay, liveDisplay...)
+				resolvedDisplay = baseResolved
+			}
+		}
+	}
+	if err == nil && len(source.rawHistory) == 0 && !canonicalHistory {
+		cutoffReached := false
+		for _, turn := range source.thread.Turns {
+			for _, item := range turn.Items {
+				if item.Type == ThreadItemToolCall {
+					err = errors.New("cannot verify external tool item provenance for this fork")
+					break
+				}
+				if params.ItemID != "" && item.ID == params.ItemID && (params.TurnID == "" || turn.ID == params.TurnID) {
+					cutoffReached = true
+					break
+				}
+			}
+			if err != nil || cutoffReached || (params.ItemID == "" && params.TurnID != "" && turn.ID == params.TurnID) {
+				break
+			}
+		}
+	}
+	if err == nil && !resolvedDisplay {
+		for _, rec := range source.rawHistory {
+			if rec.Role == "meta" && rec.Content == externalArtifactHistoryRecord {
+				err = errors.New("cannot determine artifact history for this fork target")
+				break
+			}
 		}
 	}
 	if err != nil {
@@ -948,7 +991,7 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if err := s.preserveForkArtifacts(artifactServices, stateDir, source.thread.ID, id, history); err != nil {
+	if err := s.preserveForkArtifactsWithDisplay(artifactServices, stateDir, source.thread.ID, id, history, display); err != nil {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
 	}
@@ -964,21 +1007,43 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		Speed: source.speed, ModelOptions: source.modelOptions, PermissionMode: source.permissionMode, ApproveForMe: source.approveForMe,
 		Entries: persistableMessageCount(history), Summary: threadPreview(history),
 	}
-	sess, err := binding.Sessions.CreateInitialized(initial, historyRecordsFromChatMessages(history))
+	hasExternalDisplay := false
+	for _, entry := range display {
+		if entry.record.Content == externalArtifactHistoryRecord {
+			hasExternalDisplay = true
+			break
+		}
+	}
+	initialRecords := historyRecordsFromChatMessages(history)
+	var projectedRecords []persistedMessage
+	if hasExternalDisplay {
+		initialRecords, projectedRecords, err = forkInitialRecords(id, history, display, now)
+		if err != nil {
+			cleanupWorktree()
+			return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
+		}
+	}
+	sess, err := binding.Sessions.CreateInitialized(initial, initialRecords)
 	if err != nil {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
 	}
-	seq := 0
-	for i := range history {
-		history[i].Seq = 0
-		if shouldPersistMessage(history[i]) {
-			seq++
-			history[i].Seq = seq
+	if !hasExternalDisplay {
+		seq := 0
+		for i := range history {
+			history[i].Seq = 0
+			if shouldPersistMessage(history[i]) {
+				seq++
+				history[i].Seq = seq
+			}
 		}
 	}
-
 	th := newThreadState(sess.ID, history, source.modelProvider, source.model, forkCWD, true, now)
+	if hasExternalDisplay {
+		th.historyHeadSeq = len(projectedRecords)
+		th.Turns = turnsFromPersistedHistory(id, projectedRecords, now, s.participantResolver(binding))
+		restorePluginToolLabels(binding.Host, th.Turns)
+	}
 	th.state = binding.Retain()
 	applySessionMetadata(th, *sess)
 	s.mu.Lock()

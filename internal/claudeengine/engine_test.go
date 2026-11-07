@@ -14,6 +14,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
 func buildFakeClaude(t *testing.T) string {
@@ -469,6 +470,45 @@ func TestTurnSubscriptionDeduplicatesToolAndUsesEchoResult(t *testing.T) {
 	}
 	if starts != 1 || ends != 1 {
 		t.Fatalf("tool events starts/ends = %d/%d, want 1/1", starts, ends)
+	}
+}
+
+func TestTurnSubscriptionPreservesImageToolResultDetail(t *testing.T) {
+	var events []providers.StreamEvent
+	done := make(chan turnOutcome, 1)
+	sub := newTurnSubscription(func(event providers.StreamEvent) {
+		events = append(events, event)
+	}, done)
+
+	sub.handleLine(`{"type":"stream_event","event":{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_shot","name":"Read","input":{}}}}`)
+	sub.handleLine(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_shot","name":"Read","input":{"file_path":"/tmp/shot.png"}}]}}`)
+	sub.handleLine(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_shot","content":[{"type":"text","text":"captured"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"aW1hZ2U="}}]}]}}`)
+	sub.handleLine(`{"type":"result","is_error":false,"result":"done"}`)
+
+	out := <-done
+	if out.err != nil {
+		t.Fatalf("turn error: %v", out.err)
+	}
+	var detail *toolresult.Result
+	for _, event := range events {
+		if event.Type == providers.EventToolUseEnd {
+			detail = event.ToolResultDetail
+		}
+	}
+	if detail == nil {
+		t.Fatal("tool result detail missing")
+	}
+	var sawText, sawImage bool
+	for _, part := range detail.Content {
+		switch part.Type {
+		case toolresult.ContentTypeText:
+			sawText = part.Text == "captured"
+		case toolresult.ContentTypeImage:
+			sawImage = part.Data == "aW1hZ2U=" && part.MIMEType == "image/png"
+		}
+	}
+	if !sawText || !sawImage {
+		t.Fatalf("detail content = %+v", detail.Content)
 	}
 }
 
