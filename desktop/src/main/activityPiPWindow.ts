@@ -38,6 +38,8 @@ const LEAD_SPRING = { stiffness: 320, damping: 42 };
 const FOLLOW_SPRING = { stiffness: 150, damping: 30 };
 const FOLLOW_DRAG_SPRING = { stiffness: 260, damping: 32 };
 const STACK_OFFSET = { x: 28, y: 22 };
+// Detaching glides the card from the column to its display corner.
+const DESKTOP_DOCK_SPRING = { stiffness: 200, damping: 24 };
 
 export type PiPStackLead = { frame: Rectangle; alignment: PipAlignment; dragging: boolean; index?: number };
 
@@ -165,6 +167,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     spring: { stiffness: number; damping: number };
     point: PipPoint;
     speed: PipPoint;
+    size: { width: number; height: number };
+    growth: { width: number; height: number };
     previous: number;
   } | undefined;
   // 0 leads the stack; -1 until the coordinator first places the card.
@@ -462,7 +466,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       win.setParentWindow(parent);
     }
     this.pushDesktopDock();
-    this.placeCommitted();
+    this.placeCommitted(enabled ? DESKTOP_DOCK_SPRING : undefined);
     this.deps.sink.onEvent({ event: "desktop_dock", desktop: enabled });
     this.applyVisibility();
   }
@@ -470,7 +474,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   setDesktopAlignment(alignment: PipAlignment): void {
     if (!this.desktopDocked || this.alignment === alignment) return;
     this.alignment = alignment;
-    this.placeCommitted();
+    this.placeCommitted(DESKTOP_DOCK_SPRING);
   }
 
   isDesktopDocked(): boolean {
@@ -755,12 +759,13 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.execute(`window.wuuPipDesktop?.(${JSON.stringify(this.desktopDocked)})`);
   }
 
-  private placeCommitted(): void {
+  // Layout changes place the card at once; a spring makes a visible card
+  // travel there instead.
+  private placeCommitted(spring?: { stiffness: number; damping: number }): void {
     const layout = this.placementLayout();
     const win = this.win;
     // A trailing card rests relative to its lead, never at a corner of its own.
     if (!layout || !win || win.isDestroyed() || this.stackIndex > 0) return;
-    this.cancelSnap();
     const card = this.userSize
       ? browserPiPFitCard(layout.host, this.userSize)
       : browserPiPCardSize(layout.host, browserPiPSizeForAspect(this.initialAspect ?? 4 / 3));
@@ -768,6 +773,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       .find((item) => item.alignment === this.alignment);
     if (!anchor) return;
     const origin = browserPiPOrigin(anchor, card);
+    if (spring && win.isVisible() && !this.transition) {
+      this.animateTo(origin, card, { x: 0, y: 0 }, spring);
+      return;
+    }
+    this.cancelSnap();
     this.applyBounds({ x: origin.x, y: origin.y, width: card.width, height: card.height });
   }
 
@@ -1175,6 +1185,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       origin, card, spring,
       point: { x: start.x, y: start.y },
       speed: { x: velocity.x * release, y: velocity.y * release },
+      size: { width: start.width, height: start.height },
+      growth: { width: 0, height: 0 },
       previous: Date.now(),
     };
     this.motion = motion;
@@ -1185,18 +1197,27 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       const now = Date.now();
       const dt = Math.min(1 / 30, Math.max(1 / 120, (now - motion.previous) / 1000));
       motion.previous = now;
-      const { point, speed } = motion;
-      speed.x += (motion.spring.stiffness * (motion.origin.x - point.x) - motion.spring.damping * speed.x) * dt;
-      speed.y += (motion.spring.stiffness * (motion.origin.y - point.y) - motion.spring.damping * speed.y) * dt;
+      const { point, speed, size, growth, card, spring } = motion;
+      speed.x += (spring.stiffness * (motion.origin.x - point.x) - spring.damping * speed.x) * dt;
+      speed.y += (spring.stiffness * (motion.origin.y - point.y) - spring.damping * speed.y) * dt;
       point.x += speed.x * dt;
       point.y += speed.y * dt;
+      // The frame size rides the same spring, so a card changing size on the
+      // way grows or shrinks with its travel instead of jumping on the first frame.
+      growth.width += (spring.stiffness * (card.width - size.width) - spring.damping * growth.width) * dt;
+      growth.height += (spring.stiffness * (card.height - size.height) - spring.damping * growth.height) * dt;
+      size.width += growth.width * dt;
+      size.height += growth.height * dt;
       const settled = Math.hypot(motion.origin.x - point.x, motion.origin.y - point.y) <= 0.5
-        && Math.hypot(speed.x, speed.y) <= 2;
+        && Math.hypot(speed.x, speed.y) <= 2
+        && Math.hypot(card.width - size.width, card.height - size.height) <= 0.5
+        && Math.hypot(growth.width, growth.height) <= 2;
       const next = settled ? motion.origin : point;
+      const extent = settled ? card : size;
       const layout = this.placementLayout();
       const confined = layout
-        ? browserPiPClampOrigin(next, motion.card, layout.visibleFrame) : next;
-      this.applyBounds({ ...confined, width: motion.card.width, height: motion.card.height });
+        ? browserPiPClampOrigin(next, extent, layout.visibleFrame) : next;
+      this.applyBounds({ ...confined, width: extent.width, height: extent.height });
       if (settled) this.motion = undefined;
       else this.scheduleSnap(frame);
     };
