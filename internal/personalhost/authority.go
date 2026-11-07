@@ -5,13 +5,13 @@ package personalhost
 // a live owner admission. Read describes effect scope, not permission exemption.
 func OperationAccess(operation string) (read, execution, known bool) {
 	switch operation {
-	case "memory.read", "memory.operation", "memory.source", "review.execution.status", "calendar.read.status", "calendar.read.events", "calendar.read.authorize", "connectors.read.list", "connectors.read.actions":
+	case "memory.read", "memory.operation", "memory.source", "review.execution.status":
 		return true, true, true
-	case "memory.commit", "connectors.call", "connectors.poll":
+	case "memory.commit":
 		return false, true, true
-	case "memory.operations", "owner.check", "review.list", "calendar.status", "calendar.calendars", "calendar.attempt", "connectors.list", "connectors.actions", "connectors.attempt", "connectors.rule.preview", "review.rule.preview":
+	case "memory.operations", "owner.check", "review.list", "review.rule.preview":
 		return true, false, true
-	case "memory.reconcile", "review.settings", "review.resolve", "review.revoke", "calendar.select", "calendar.disconnect", "calendar.cancel", "calendar.start", "connectors.start", "connectors.cancel", "connectors.decide", "connectors.disconnect", "connectors.rule.save", "review.rules":
+	case "memory.reconcile", "review.settings", "review.resolve", "review.revoke", "review.rules":
 		return false, false, true
 	default:
 		return false, false, false

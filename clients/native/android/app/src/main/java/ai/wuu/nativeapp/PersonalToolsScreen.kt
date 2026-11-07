@@ -11,7 +11,6 @@ import kotlinx.coroutines.launch
 import org.json.JSONObject
 import org.json.JSONArray
 import java.time.ZoneId
-import java.time.ZonedDateTime
 import java.util.UUID
 
 /** Public client services only; no workspace/session lookup and no authority from cached state. */
@@ -26,7 +25,6 @@ import java.util.UUID
     var query by remember { mutableStateOf("") }
     var historyFrom by remember { mutableStateOf("") }
     var historyThrough by remember { mutableStateOf("") }
-    var calendarID by remember { mutableStateOf("primary") }
     var notifications by remember { mutableStateOf(true) }
     var notificationBatchSeconds by remember { mutableStateOf(0) }
     var quiet by remember { mutableStateOf(false) }
@@ -37,21 +35,19 @@ import java.util.UUID
     var memoryContent by remember { mutableStateOf("") }
     var editRequestID by remember { mutableStateOf("") }
     var forget by remember { mutableStateOf<JSONObject?>(null) }
-    var confirmation by remember { mutableStateOf<PersonalCalendarConfirmation?>(null) }
-    var confirmationAttempted by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf<String?>(null) }
     val enabled = personal.available && !personal.controlBusy
-    LaunchedEffect(query, historyFrom, historyThrough, section) { if (section == 6) data = null }
-    suspend fun load(refresh: Boolean = false, historyCursor: String? = null) {
+    LaunchedEffect(query, historyFrom, historyThrough, section) { if (section == 5) data = null }
+    suspend fun load(historyCursor: String? = null) {
         val searchQuery = query; val searchFrom = historyFrom; val searchThrough = historyThrough
-        val zone = ZoneId.systemDefault(); val (from, to) = personalCalendarDayWindow(ZonedDateTime.now(zone).toLocalDate(), zone)
+        val zone = ZoneId.systemDefault()
         val result = personal.control { client ->
             when (section) {
                 3 -> client.memory(query)
-                6 -> {
+                5 -> {
                     if (searchQuery.isBlank()) json("matches" to JSONArray()) else {
-                        val lower = searchFrom.takeIf { it.isNotBlank() }?.let { personalCalendarDayWindow(java.time.LocalDate.parse(it), zone).first }
-                        val upper = searchThrough.takeIf { it.isNotBlank() }?.let { personalCalendarDayWindow(java.time.LocalDate.parse(it), zone).second }
+                        val lower = searchFrom.takeIf { it.isNotBlank() }?.let { personalDayWindow(java.time.LocalDate.parse(it), zone).first }
+                        val upper = searchThrough.takeIf { it.isNotBlank() }?.let { personalDayWindow(java.time.LocalDate.parse(it), zone).second }
                         client.searchHistory(searchQuery, lower, upper, historyCursor)
                     }
                 }
@@ -63,14 +59,11 @@ import java.util.UUID
                         try { value.put("proposals", client.specialistProposals().getJSONArray("proposals")) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { value.put("proposal_error", e.message) }
                         try { value.put("routines", client.routines().getJSONArray("routines")) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { value.put("routine_error", e.message) }
                     }
-                    try { value.put("agenda", client.calendarAgenda(calendarID, from, to, zone.id, refresh)) }
-                    catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { value.put("calendar_error", e.message) }
-                    if (section == 5 || section == 2) try { value.put("operations", client.calendarOperations().getJSONArray("operations")) } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { value.put("operations_error", e.message) }
                     value
                 }
             }
         } ?: return
-        if (section == 6 && (query != searchQuery || historyFrom != searchFrom || historyThrough != searchThrough)) return
+        if (section == 5 && (query != searchQuery || historyFrom != searchFrom || historyThrough != searchThrough)) return
         data = result
         if (section == 4) {
             val agent = result.getJSONObject("agent"); name = agent.optString("name"); communication = agent.optString("communication"); responsibility = agent.optString("responsibility")
@@ -88,7 +81,6 @@ import java.util.UUID
     LazyColumn(modifier.fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
             if (section == 3) OutlinedTextField(query, { query = it }, label = { Text("搜索记忆") }, modifier = Modifier.fillMaxWidth())
-            if (section == 5) OutlinedTextField(calendarID, { calendarID = it }, label = { Text("日历 ID") }, modifier = Modifier.fillMaxWidth())
             TextButton(onClick = { scope.launch { load() } }, enabled = enabled) { Text("刷新") }
             feedback?.let { Text(it) }
             if (!personal.available) Text("离线时仅显示已经读取的内容，不能修改、确认或提交执行。")
@@ -103,9 +95,7 @@ import java.util.UUID
                 items(data?.optJSONArray("proposals")?.objects() ?: emptyList()) { value ->
                     TextButton(onClick = { proposal = JSONObject(value.toString()) }, enabled = enabled) { Text((if (value.optString("status") == "approved") "重试创建：" else "创建专属助理：") + value.optString("name")) }
                 }
-                items(data?.optJSONArray("operations")?.objects()?.filter { it.optString("status") in listOf("proposed", "uncertain") } ?: emptyList()) { value -> TextButton(onClick = { selectSection(5) }) { Text("日历：${value.optJSONObject("fields")?.optString("summary") ?: "待审阅操作"}") } }
                 data?.optString("proposal_error")?.takeIf { it.isNotEmpty() }?.let { message -> item { Text(message) } }
-                data?.optString("operations_error")?.takeIf { it.isNotEmpty() }?.let { message -> item { Text(message) } }
                 item { Text("最近结果", style = MaterialTheme.typography.titleMedium) }
                 items(data?.optJSONArray("tasks")?.objects()?.filter { it.optString("state") in listOf("completed", "failed", "stopped") }?.take(10) ?: emptyList()) { value ->
                     TextButton(onClick = { scope.launch { personal.openTask(value.getString("task_id")) } }) { Column { Text(value.optString("title")); Text(value.optString("state")); value.optJSONObject("result")?.let { Text(it.optString("summary")) } } }
@@ -113,9 +103,8 @@ import java.util.UUID
                 item { Text("持续事项", style = MaterialTheme.typography.titleMedium) }
                 items(data?.optJSONArray("routines")?.objects() ?: emptyList()) { routine -> Column { Text(routine.optString("title").ifEmpty { routine.optString("goal", "持续事项") }); Text(routine.optString("status")); routine.optJSONObject("binding")?.optString("next_run_at")?.takeIf { it.isNotEmpty() }?.let { Text("下次：$it") } } }
                 data?.optString("routine_error")?.takeIf { it.isNotEmpty() }?.let { message -> item { Text(message) } }
-                item { Text("今日日程", style = MaterialTheme.typography.titleMedium); PersonalAgenda(data?.optJSONObject("agenda")); data?.optString("calendar_error")?.let { Text(it) } }
             }
-            6 -> {
+            5 -> {
                 item {
                     OutlinedTextField(query, { query = it }, label = { Text("人物、事情或原话") })
                     OutlinedTextField(historyFrom, { historyFrom = it }, label = { Text("从 YYYY-MM-DD（可选）") })
@@ -189,26 +178,7 @@ import java.util.UUID
                     } }, enabled = enabled) { Text("保存设置") }
                 }
             }
-            5 -> {
-                item {
-                    Text("今日日程", style = MaterialTheme.typography.titleMedium); PersonalAgenda(data?.optJSONObject("agenda"))
-                    TextButton(onClick = { scope.launch { load(true) } }, enabled = enabled) { Text("从已授权日历重新读取") }
-                    data?.optString("calendar_error")?.let { Text(it) }
-                    Text("待确认与执行结果", style = MaterialTheme.typography.titleMedium)
-                    data?.optString("operations_error")?.let { Text(it) }
-                }
-                items(data?.optJSONArray("operations")?.objects() ?: emptyList()) { operation -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(operation.optJSONObject("fields")?.optString("summary") ?: "日历修改"); Text(personalCalendarOutcome(operation))
-                    if (operation.optString("status") == "proposed") TextButton(onClick = { scope.launch {
-                        val preview = personal.control { it.calendarOperation(operation.getString("operation_id")) } ?: return@launch
-                        personal.control { confirmation = it.prepareCalendarConfirmation(preview); confirmationAttempted = false; JSONObject() }
-                    } }, enabled = enabled) { Text("审阅完整提案") }
-                    else if (operation.optString("status") in listOf("uncertain", "running")) TextButton(onClick = { scope.launch {
-                        personal.control { it.calendarOperation(operation.getString("operation_id"), true) }?.let { feedback = personalCalendarOutcome(it); load() }
-                    } }, enabled = enabled) { Text("只读核对远端结果") }
-                    operation.optJSONObject("result")?.optJSONObject("source")?.optString("verified_at")?.let { Text("远端读取核验：$it", style = MaterialTheme.typography.bodyMedium) }
-                } }
-            }
+
         }
     }
     proposal?.let { value -> AlertDialog(onDismissRequest = { proposal = null }, title = { Text("创建具名专属助理？") }, text = {
@@ -230,57 +200,4 @@ import java.util.UUID
     forget?.let { record -> AlertDialog(onDismissRequest = { forget = null }, title = { Text("忘记这条共享记忆？") }, text = { Text("所有 Personal 助理将停止使用此记忆。原始聊天、文件、导出和备份仍保留；不能保证识别所有不同表述。") }, confirmButton = { TextButton(onClick = {
         forget = null; scope.launch { personal.control { it.forgetMemory(record.getString("id"), record.getLong("revision")) }?.let { feedback = it.optJSONObject("retention")?.optString("history") ?: "记忆已移除，原始资料仍保留"; load() } }
     }, enabled = enabled) { Text("忘记记忆") } }, dismissButton = { TextButton(onClick = { forget = null }) { Text("取消") } }) }
-    confirmation?.let { frozen ->
-        androidx.compose.ui.window.Dialog(onDismissRequest = { confirmation = null }, properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)) {
-            Surface(Modifier.fillMaxSize()) {
-                Column(Modifier.fillMaxSize().padding(16.dp)) {
-                    Text("确认日历修改", style = MaterialTheme.typography.titleLarge)
-                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        val value = frozen.preview
-                        item { Text(if (value.optString("kind") == "reschedule") "改期" else "创建日程"); Text("账号：${value.optString("account_id")}"); Text("日历：${value.optString("calendar_id")}"); Text("事项：${value.optString("task_id")} · 要求版本 ${value.optLong("requirements_revision")}") }
-                        value.optJSONObject("original_event")?.optJSONObject("fields")?.let { fields -> item { Text("修改前"); PersonalEventFields(fields) } }
-                        item { Text("将提交的内容"); PersonalEventFields(value.getJSONObject("fields")) }
-                        item {
-                            Text("通知选项：${value.getJSONObject("fields").optString("send_updates")}"); Text(value.optString("notification_notice"))
-                            val availability = value.getJSONObject("availability"); Text("检查时间：${availability.optString("checked_at")}")
-                            val conflicts = availability.getJSONArray("conflicting_event_ids"); Text("仅检查选定日历；冲突数：${conflicts.length()}"); repeat(conflicts.length()) { Text(conflicts.optString(it)) }
-                            Text("确认会按此不可变预览向 Google Calendar 提交修改。刷新或修改事项后，必须重新审阅新的提案。")
-                            personal.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                        }
-                    }
-                    if (confirmationAttempted) {
-                        Text("提交结果尚待核对。请读取状态，不会再次提交。")
-                        TextButton(onClick = { scope.launch {
-                            personal.control { it.calendarOperation(frozen.preview.getString("operation_id")) }?.let { feedback = personalCalendarOutcome(it); confirmation = null; load() }
-                        } }, enabled = enabled) { Text("读取操作状态") }
-                    }
-                    Button(onClick = { confirmationAttempted = true; scope.launch {
-                        personal.control { it.confirmCalendar(frozen) }?.let { feedback = personalCalendarOutcome(it); confirmation = null; load() }
-                    } }, enabled = enabled && !confirmationAttempted) { Text("确认并提交日历修改") }
-                    TextButton(onClick = { confirmation = null }) { Text("取消") }
-                }
-            }
-        }
-    }
-}
-@Composable private fun PersonalAgenda(value: JSONObject?) {
-    if (value == null) return
-    Text("状态：${value.optString("state", "未知")} · ${value.optString("freshness", "未知新鲜度")}")
-    value.optString("last_success_at").takeIf { it.isNotEmpty() }?.let { Text("最近读取：$it", style = MaterialTheme.typography.bodyMedium) }
-    Text("空列表或过期缓存不能证明这个时段有空。冲突检查只覆盖选定日历。", style = MaterialTheme.typography.bodyMedium)
-    value.optJSONArray("events")?.objects()?.forEach { event -> Text(event.optString("summary", "日程")); Text("${personalCalendarTime(event.optJSONObject("start"))} → ${personalCalendarTime(event.optJSONObject("end"))}", style = MaterialTheme.typography.bodyMedium) }
-}
-@Composable private fun PersonalEventFields(fields: JSONObject) {
-    Text(fields.optString("summary")); Text("地点：${fields.optString("location")}")
-    Text("开始：${personalCalendarTime(fields.optJSONObject("start"))}"); Text("结束：${personalCalendarTime(fields.optJSONObject("end"))}")
-    val attendees = fields.getJSONArray("attendees").objects()
-    if (attendees.isEmpty()) Text("无受邀人")
-    attendees.forEach { Text(it.optString("email") + if (it.optBoolean("optional")) "（可选）" else "（必需）") }
-}
-private fun personalCalendarTime(value: JSONObject?): String = if (value == null) "时间未知" else value.optString("date_time").ifEmpty { value.optString("date", "时间未知") } + " " + value.optString("timezone")
-private fun personalCalendarOutcome(value: JSONObject): String {
-    val state = value.optString("status", "未知")
-    if (state == "uncertain" || value.optBoolean("reconciliation_required")) return "结果尚不确定，请只读核对远端状态。不会自动重复提交。"
-    if (state == "completed") return "远端日程已读取核验；通知是否送达仍未验证。"
-    return "状态：$state" + value.optString("error_code").takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty()
 }

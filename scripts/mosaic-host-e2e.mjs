@@ -1179,7 +1179,6 @@ try {
     const refreshed = await personal.client("calendar.refresh", input);
     assert.equal(refreshed.state, "unconnected"); assert.equal(refreshed.freshness, "empty"); assert.equal(refreshed.read_only, true); assert.deepEqual(refreshed.events, []);
     const agenda = await personal.client("calendar.agenda", input); assert.equal(agenda.state, "unconnected"); assert.equal(agenda.source, undefined);
-    await assert.rejects(coding.client("calendar.status", {}, "personal-calendar"), /unavailable|does not accept|outside|capability/i);
     return { status, refreshed, no_external_calendar_account: true };
   });
   await scenario("Stale generation is rejected and explicit Personal composition removal preserves Coding", async () => {

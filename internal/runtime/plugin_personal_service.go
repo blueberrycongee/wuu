@@ -7,8 +7,6 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/blueberrycongee/wuu/internal/personalcalendar"
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/userspace"
@@ -64,7 +62,7 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 		if !found || !s.binding.Matches(userspace.Binding{UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain}) || metadata.Visibility != "plugin" || !strings.HasPrefix(metadata.Owner, "plugin:") {
 			return nil, errors.New("Personal read requires a host-resolved plugin session")
 		}
-		if (call.Operation == "review.execution.status" || strings.HasPrefix(call.Operation, "connectors.") || strings.HasPrefix(call.Operation, "memory.")) && metadata.Owner != "plugin:"+s.pluginID {
+		if (call.Operation == "review.execution.status" || strings.HasPrefix(call.Operation, "memory.")) && metadata.Owner != "plugin:"+s.pluginID {
 			return nil, errors.New("review status requires the owning plugin session")
 		}
 		verifiedSession = metadata.ID
@@ -84,14 +82,6 @@ func (s *pluginHostServices) personalService(ctx context.Context, raw json.RawMe
 	}
 	value, err := handler(ctx, call.Operation, call.Input, verifiedSession)
 	if err != nil {
-		var failure *personalcalendar.Failure
-		if errors.As(err, &failure) {
-			return json.Marshal(map[string]any{"ok": false, "error": failure})
-		}
-		var connectorFailure *personalconnectors.Failure
-		if errors.As(err, &connectorFailure) {
-			return json.Marshal(map[string]any{"ok": false, "error": connectorFailure})
-		}
 		return nil, err
 	}
 	return json.Marshal(map[string]any{"ok": true, "value": value})

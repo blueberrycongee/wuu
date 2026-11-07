@@ -20,6 +20,7 @@ async function until(fn) {
 }
 async function capture(name) {
   await until(() => !document.querySelector('.mosaic-send-overlay, [data-personal-send-source]'));
+  await evaluate(() => Promise.all(document.getAnimations().filter(animation => Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation => animation.finished.catch(() => {}))));
   await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
 }
@@ -43,6 +44,7 @@ function checkOverlay(state) {
 
 app.whenReady().then(async () => {
   win = new BrowserWindow({ width: 1100, height: 900, show: true, webPreferences: { contextIsolation: true } });
+  if (!process.env.WUU_PERSONAL_MCP_E2E_ONLY) {
   for (const scope of ["main", "reply"]) for (const [appearance, width, height, theme, font] of [["light-wide", 1100, 900, "light", "15"], ["dark-narrow-large", 620, 900, "dark", "20"]]) {
     const name = `${scope}-${appearance}`;
     win.setSize(width, height);
@@ -155,6 +157,36 @@ app.whenReady().then(async () => {
     if (scenario === 'reject-before-accept') { assert.notEqual(retry.attempts[0].request_id, retry.attempts[1].request_id); assert.equal(retry.attempts[0].prompt, retry.attempts[1].prompt); assert.deepEqual(retry.proofs[0].attachments, retry.proofs[1].attachments); }
     await capture(`${name}-retried`);
     report.cases.push({ name, attempts: retry.attempts.length, accepted: retry.accepted, preservedDraft: true, exactAttachment: true });
+  }
+  }
+  for (const [appearance, width, height, theme, font] of [["light-wide", 1280, 900, "light", "15"], ["dark-large-narrow", 680, 900, "dark", "20"]]) {
+    win.setContentSize(width, height);
+    await win.loadURL("about:blank");
+    await win.webContents.session.clearStorageData({ storages: ["localstorage"] });
+    await win.loadFile(path.resolve(__dirname, "../out/personal-fixture/index.html"), { query: { mcp: "1", sendScenario: "retry-same-id", theme, font } });
+    await until(() => document.querySelector('.mosaic-main .composer-plus-button'));
+    await evaluate(() => document.querySelector('.mosaic-main .composer-plus-button').click());
+    await until(() => document.querySelector('[data-plugin-key="mcp:plugin.account-connectors.notion"]'));
+    assert.equal(await evaluate(() => document.querySelector('.composer-plugin-choices')?.textContent.includes('Coding private connection') ?? false), false);
+    const scope = await evaluate(() => window.__mcpFixture.contexts);
+    assert(scope.some(context => context?.kind === 'user' && context.user_space_id === 'local' && context.product_domain === 'personal'));
+    await capture(`mcp-${appearance}-menu`);
+    await evaluate(() => document.querySelector('[data-plugin-key="mcp:plugin.account-connectors.notion"]').click());
+    await until(() => document.querySelector('.mosaic-main [data-plugin-token]'));
+    await capture(`mcp-${appearance}-draft`);
+    await evaluate(() => document.querySelector('.mosaic-main .composer-send-button').click());
+    await until(() => document.querySelector('.mosaic-main [data-action="retry-message"]'));
+    const original = await evaluate(() => ({ request: window.__receiptScenario.attempts[0], proof: window.__receiptScenario.proofs[0] }));
+    assert.equal(original.request.content_parts.find(part => part.type === 'plugin_reference').plugin.authorization_id, 'synthetic-original-grant');
+    assert.deepEqual(original.proof.contentParts, original.request.content_parts);
+    await evaluate(() => { window.__mcpFixture.authorization = 'replacement-grant'; window.__receiptScenario.statusOffline = true; window.__receiptScenario.mode = 'processing'; document.querySelector('.mosaic-main [data-action="retry-message"]').click(); });
+    await until(() => window.__receiptScenario.accepted === 1 && window.__receiptScenario.attempts.length === 2);
+    const retried = await evaluate(() => ({ attempts: window.__receiptScenario.attempts, proofs: window.__receiptScenario.proofs, width: innerWidth, pageWidth: document.documentElement.scrollWidth }));
+    assert.deepEqual(retried.attempts[0], retried.attempts[1]);
+    assert.deepEqual(retried.proofs[0], retried.proofs[1]);
+    assert(retried.pageWidth <= retried.width);
+    await capture(`mcp-${appearance}-retried`);
+    report.cases.push({ name: `mcp-${appearance}`, scopedDiscovery: true, frozenAuthorizationOnRetry: true, accepted: 1 });
   }
   report.status = "passed";
 }).catch(async error => { report.status = "failed"; report.error = error.stack; console.error(error); if (win) { report.failure = await evaluate(() => ({ state: window.__receiptCheck?.(), attempts: window.__receiptScenario?.attempts, messages: [...document.querySelectorAll('.mosaic-main .plugin-conversation-message')].map(node => ({ text: node.textContent, receipt: node.querySelector('[data-receipt-id]')?.dataset, height: node.getBoundingClientRect().height })) })); await capture('failure'); } }).finally(() => {

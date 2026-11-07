@@ -240,23 +240,6 @@ jobs:
         if: matrix.suite == 'plugins'
         run: make test-plugins
 
-      - name: Guard Personal connector approval and recovery
-        timeout-minutes: 5
-        env:
-          WUU_CONNECTOR_CHAIN_E2E: '1'
-        run: |
-          set -o pipefail
-          fixture_version="$(make -s print-version)"
-          go test -ldflags "-X github.com/blueberrycongee/wuu/internal/version.Version=${fixture_version}" ./internal/appserver -run '^TestPersonalConnectorRealBundleOwnerReceiptChain$' -count=1 -v 2>&1 | tee "$RUNNER_TEMP/personal-connector-approval.log"
-
-      - name: Upload Personal connector approval evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: personal-connector-approval-evidence
-          path: ${{ runner.temp }}/personal-connector-approval.log
-          if-no-files-found: ignore
-          retention-days: 14
 
       - name: Guard single-file plugins under desktop CSP
         if: matrix.suite == 'plugins'
@@ -1859,7 +1842,6 @@ jobs:
           node desktop/scripts/build-personal-fixture.cjs 2>&1 | tee -a desktop/out/personal-desktop-acceptance/build.log
           shasum -a 256 desktop/out/personal-fixture/index.html \
             internal/plugin/bundled/personal/desktop.js \
-            internal/plugin/bundled/personal-calendar/desktop.js \
             desktop/package-lock.json clients/mobile-web/package-lock.json \
             > desktop/out/personal-desktop-acceptance/inputs.sha256
       - name: Install locked Chromium for Personal desktop approval checks

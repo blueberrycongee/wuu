@@ -163,45 +163,6 @@ func TestPersonalEffectPublicFileContract(t *testing.T) {
 	}
 }
 
-func TestPersonalEffectConnectorPublicExecuteAndRelease(t *testing.T) {
-	f := newPersonalBoundaryFixture(t, &fakeClient{})
-	state, err := f.rt.RetainState()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer state.Close()
-	registry := state.Host.ServiceRegistry()
-	b := NewPersonalEffectBridge()
-	defer b.Close()
-	client, err := b.ProviderFactory().Build(runtime.NativeProviderContext{Registry: registry})
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := client.(*personalEffectMechanisms)
-	_ = m.Activate(context.Background())
-	ctx := b.Context(f.owner, f.host.server, state, nil)
-	var uses atomic.Int32
-	id, release, err := b.RegisterConnector(ctx, state, func(context.Context) error { uses.Add(1); return nil })
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer release()
-	raw, _ := json.Marshal(PersonalEffectReference{id})
-	if _, err := m.InvokeService(ctx, pluginhost.ServiceInvokeParams{Caller: personalActionsConsumerID, Method: "execute", Params: raw}); err != nil {
-		t.Fatal(err)
-	}
-	if uses.Load() != 1 {
-		t.Fatal("connector effect not executed")
-	}
-	release()
-	b.ReleaseCoordinator(registry, personalActionsConsumerID)
-	if _, _, err := b.RegisterConnector(ctx, state, func(context.Context) error { t.Fatal("disabled callback"); return nil }); err == nil {
-		t.Fatal("disabled coordinator admitted new effect")
-	}
-}
-
-// add publishes the unregister callback and resource under the same bridge
-// mutex used by retirement. A callback cannot read a partially initialized entry.
 func TestPersonalEffectConcurrentRegisterAndRetire(t *testing.T) {
 	for i := 0; i < 100; i++ {
 		b := NewPersonalEffectBridge()

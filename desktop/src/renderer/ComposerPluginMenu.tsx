@@ -3,7 +3,7 @@ import type { ApplicationSettingsControlsV1 } from "../../../packages/plugin-sdk
 import type { MCPServerStatus, PluginReference } from "../shared/protocol";
 import { composerInputElement, type ComposerInputHandle } from "./ComposerInput";
 import { draftPluginReferences, pluginReferenceToken } from "./ComposerPluginReferences";
-import { useComposerServices } from "./ComposerServicesContext";
+import { useComposerPluginServices } from "./ComposerServicesContext";
 import { useI18n } from "./i18n";
 import { Puzzle } from "./WuuIcons";
 import { ComposerPluginIcon } from "./ComposerPluginIcon";
@@ -12,10 +12,10 @@ import "./ComposerPluginMenu.css";
 
 // The plus menu mounts on every open. Keep the connector status beside the
 // composer so reopening it never swaps a loading row for the real list.
-const pluginServers = new WeakMap<ApplicationSettingsControlsV1, MCPServerStatus[]>();
-const pluginServerRequests = new WeakMap<ApplicationSettingsControlsV1, Promise<MCPServerStatus[]>>();
+const pluginServers = new WeakMap<Pick<ApplicationSettingsControlsV1, "listMCPServers">, MCPServerStatus[]>();
+const pluginServerRequests = new WeakMap<Pick<ApplicationSettingsControlsV1, "listMCPServers">, Promise<MCPServerStatus[]>>();
 
-function loadPluginServers(controls: ApplicationSettingsControlsV1): Promise<MCPServerStatus[]> {
+function loadPluginServers(controls: Pick<ApplicationSettingsControlsV1, "listMCPServers">): Promise<MCPServerStatus[]> {
   const pending = pluginServerRequests.get(controls);
   if (pending) return pending;
   const request = Promise.resolve().then(() => controls.listMCPServers()).then(result => {
@@ -29,7 +29,7 @@ function loadPluginServers(controls: ApplicationSettingsControlsV1): Promise<MCP
 }
 
 export function useComposerPluginMenu(inputRef: RefObject<ComposerInputHandle | null>, onChange: (value: string) => void, owner?: string, disabled = false) {
-  const services = useComposerServices();
+  const services = useComposerPluginServices();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [fromMention, setFromMention] = useState(false);
@@ -96,7 +96,7 @@ export function useComposerPluginMenu(inputRef: RefObject<ComposerInputHandle | 
 export type ComposerPluginMenu = ReturnType<typeof useComposerPluginMenu>;
 
 export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): JSX.Element | null {
-  const services = useComposerServices();
+  const services = useComposerPluginServices();
   const { t } = useI18n();
   const settingsControls = services?.settingsControls;
   const cachedServers = settingsControls ? pluginServers.get(settingsControls) : undefined;
@@ -109,7 +109,7 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
     let active = true;
     const cached = pluginServers.get(settingsControls);
     if (cached) { setServers(cached); setLoading(false); }
-    else setLoading(true);
+    else { setServers([]); setLoading(true); }
     setError("");
     // Refresh in the background; a cached list stays visible while it does.
     void loadPluginServers(settingsControls).then(result => {
@@ -142,7 +142,7 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
           ...(identity?.state === "verified" ? { account_id: identity.account?.id, workspace_id: identity.workspace?.id } : {}) } as PluginReference,
         server }];
     }),
-    ...inventory.filter(item => item.kind === "plugin" && item.conversation_tools?.length && item.enabled !== false && item.runtime_state === "active").map(item => ({
+    ...(services.includePluginTools === false ? [] : inventory).filter(item => item.kind === "plugin" && item.conversation_tools?.length && item.enabled !== false && item.runtime_state === "active").map(item => ({
       key: `plugin:${item.id}`, name: item.name, description: item.description, detail: "",
       plugin: { plugin_id: item.provenance.plugin_id }, server: undefined,
     })),

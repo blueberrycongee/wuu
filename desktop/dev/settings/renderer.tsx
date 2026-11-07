@@ -525,25 +525,6 @@ const previewHost = new PluginHost({
         };
       case "connections.calendars":
         return { ok: true, value: [{ id: "primary", summary: "工作与日程", timeZone: "Asia/Shanghai", primary: true }] };
-      case "connectors.list":
-        return {
-          ok: true,
-          value: {
-            connections: [
-              {
-                connection_id: "c-gh",
-                provider: "github",
-                account_id: "blueberrycongee",
-                domain: "work",
-                state: "connected",
-                scopes: ["pull_requests:read", "issues:read"],
-                resources: ["blueberrycongee/wuu"],
-              },
-            ],
-          },
-        };
-      case "connectors.actions":
-        return { ok: true, value: { actions: [] } };
       case "review.list":
         return {
           ok: true,

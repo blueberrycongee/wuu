@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,6 +26,20 @@ var ErrOAuthSuperseded = fmt.Errorf("%w: OAuth operation was superseded; sign in
 // ErrOAuthResourceMismatch requires a new login for the configured resource.
 // The stored credential is retained for the resource that originally issued it.
 var ErrOAuthResourceMismatch = fmt.Errorf("%w: stored credentials do not match the configured resource; sign in again", ErrOAuthRequired)
+
+// ErrOAuthRefreshUncertain requires reauthorization instead of replaying a
+// rotating refresh token whose exchange or durable publication is unknown.
+var ErrOAuthRefreshUncertain = fmt.Errorf("%w: OAuth refresh did not complete; sign in again", ErrOAuthRequired)
+
+const oauthRefreshTimeout = 30 * time.Second
+
+var errOAuthRefreshChanged = errors.New("OAuth refresh record changed")
+
+type oauthRefreshAttempt struct {
+	ID        string    `json:"id"`
+	StartedAt time.Time `json:"started_at"`
+	Uncertain bool      `json:"uncertain,omitempty"`
+}
 
 type OAuthManager struct {
 	store   credentialstore.Store
@@ -118,20 +133,21 @@ type pendingOAuth struct {
 }
 
 type storedOAuthToken struct {
-	GrantID           string          `json:"grant_id,omitempty"`
-	Identity          *storedIdentity `json:"identity,omitempty"`
-	LoginGeneration   string          `json:"login_generation,omitempty"`
-	CredentialVersion string          `json:"credential_version,omitempty"`
-	AccessToken       string          `json:"access_token,omitempty"`
-	RefreshToken      string          `json:"refresh_token,omitempty"`
-	TokenType         string          `json:"token_type,omitempty"`
-	ExpiresAt         time.Time       `json:"expires_at,omitempty"`
-	Scopes            []string        `json:"scopes,omitempty"`
-	ClientID          string          `json:"client_id,omitempty"`
-	ClientSecret      string          `json:"client_secret,omitempty"`
-	TokenAuthMode     string          `json:"token_auth_mode,omitempty"`
-	TokenEndpoint     string          `json:"token_endpoint,omitempty"`
-	ResourceURL       string          `json:"resource_url,omitempty"`
+	Refresh           *oauthRefreshAttempt `json:"refresh,omitempty"`
+	GrantID           string               `json:"grant_id,omitempty"`
+	Identity          *storedIdentity      `json:"identity,omitempty"`
+	LoginGeneration   string               `json:"login_generation,omitempty"`
+	CredentialVersion string               `json:"credential_version,omitempty"`
+	AccessToken       string               `json:"access_token,omitempty"`
+	RefreshToken      string               `json:"refresh_token,omitempty"`
+	TokenType         string               `json:"token_type,omitempty"`
+	ExpiresAt         time.Time            `json:"expires_at,omitempty"`
+	Scopes            []string             `json:"scopes,omitempty"`
+	ClientID          string               `json:"client_id,omitempty"`
+	ClientSecret      string               `json:"client_secret,omitempty"`
+	TokenAuthMode     string               `json:"token_auth_mode,omitempty"`
+	TokenEndpoint     string               `json:"token_endpoint,omitempty"`
+	ResourceURL       string               `json:"resource_url,omitempty"`
 }
 
 type tokenResponse struct {
@@ -433,44 +449,101 @@ func (m *OAuthManager) boundTokenProvider(ctx context.Context, serverID, resourc
 }
 
 func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL string, forceRefresh bool, grant string) (string, error) {
+	// Capture the rejected credential before waiting. A concurrent refresh may
+	// already replace it, including when the caller requested a forced refresh.
+	initial, err := m.loadResourceToken(ctx, serverID, resourceURL)
+	if err != nil {
+		return "", err
+	}
 	refreshLock, release := m.refreshLock(serverID, resourceURL)
 	defer release()
-	// Compatible retained generations share only this gate, not service clients
-	// or call budgets.
-	// A short caller must stop waiting without canceling the active refresh.
 	select {
 	case refreshLock <- struct{}{}:
 		defer func() { <-refreshLock }()
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
-	if err := ctx.Err(); err != nil {
-		return "", err
+
+	var token storedOAuthToken
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		token, err = m.loadResourceToken(ctx, serverID, resourceURL)
+		if err != nil {
+			return "", err
+		}
+		if grant != "" && token.GrantID != grant {
+			return "", ErrOAuthSuperseded
+		}
+		if token.Refresh != nil {
+			// A surviving claim may have rotated the remote token before its
+			// process died. Never acquire it by timeout or retry its token.
+			if token.Refresh.Uncertain || time.Since(token.Refresh.StartedAt) >= oauthRefreshTimeout {
+				return "", ErrOAuthRefreshUncertain
+			}
+			timer := time.NewTimer(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return "", ctx.Err()
+			case <-timer.C:
+			}
+			continue
+		}
+		changed := token.CredentialVersion != initial.CredentialVersion || token.AccessToken != initial.AccessToken
+		if (!forceRefresh || changed) && (token.ExpiresAt.IsZero() || time.Now().Before(token.ExpiresAt)) {
+			return token.AccessToken, nil
+		}
+		if strings.TrimSpace(token.RefreshToken) == "" {
+			return "", fmt.Errorf("%w: token expired and has no refresh token", ErrOAuthRequired)
+		}
+		attemptID, err := randomURLToken(32)
+		if err != nil {
+			return "", err
+		}
+		err = m.store.Update(ctx, oauthNamespace(serverID), "oauth", func(data []byte) ([]byte, error) {
+			var latest storedOAuthToken
+			if len(data) > 0 {
+				if err := json.Unmarshal(data, &latest); err != nil {
+					return nil, err
+				}
+			}
+			if latest.AccessToken == "" || latest.GrantID != token.GrantID {
+				return nil, ErrOAuthSuperseded
+			}
+			if !sameOAuthResource(latest.ResourceURL, resourceURL) {
+				return nil, ErrOAuthResourceMismatch
+			}
+			if latest.Refresh != nil || latest.CredentialVersion != token.CredentialVersion || latest.AccessToken != token.AccessToken || latest.RefreshToken != token.RefreshToken {
+				return nil, errOAuthRefreshChanged
+			}
+			latest.Refresh = &oauthRefreshAttempt{ID: attemptID, StartedAt: time.Now()}
+			token = latest
+			return json.Marshal(latest)
+		})
+		if errors.Is(err, errOAuthRefreshChanged) {
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		break
 	}
-	token, err := m.loadResourceToken(ctx, serverID, resourceURL)
-	if err != nil {
-		return "", err
-	}
-	if grant != "" && token.GrantID != grant {
-		return "", ErrOAuthSuperseded
-	}
-	if !forceRefresh && (token.ExpiresAt.IsZero() || time.Now().Before(token.ExpiresAt)) {
-		return token.AccessToken, nil
-	}
-	if strings.TrimSpace(token.RefreshToken) == "" {
-		return "", errors.New("MCP OAuth token expired and has no refresh token")
-	}
+
 	form := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {token.RefreshToken}, "client_id": {token.ClientID}}
 	if token.ResourceURL != "" {
 		form.Set("resource", token.ResourceURL)
 	}
-	response, exchangeErr := m.exchangeToken(ctx, token.TokenEndpoint, token.ClientSecret, token.TokenAuthMode, form)
-	version, err := randomURLToken(32)
-	if err != nil {
-		return "", err
-	}
+	exchangeCtx, cancelExchange := context.WithTimeout(ctx, oauthRefreshTimeout)
+	response, exchangeErr := m.exchangeToken(exchangeCtx, token.TokenEndpoint, token.ClientSecret, token.TokenAuthMode, form)
+	cancelExchange()
 	var accessToken string
-	err = m.store.Update(ctx, oauthNamespace(serverID), "oauth", func(data []byte) ([]byte, error) {
+	// Persist a received rotation even if its caller has gone away. Failed
+	// persistence leaves the claim intact, so another host cannot replay it.
+	publishCtx, cancelPublish := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancelPublish()
+	err = m.store.Update(publishCtx, oauthNamespace(serverID), "oauth", func(data []byte) ([]byte, error) {
 		var latest storedOAuthToken
 		if len(data) > 0 {
 			if err := json.Unmarshal(data, &latest); err != nil {
@@ -486,26 +559,20 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 		if grant != "" && latest.GrantID != grant {
 			return nil, ErrOAuthSuperseded
 		}
-		// Start changes only login ordering. Refresh compares the credential version
-		// and the legacy payload, so it cannot overwrite a same-resource new account.
-		expected := token
-		expected.LoginGeneration = latest.LoginGeneration
-		expected.Identity = latest.Identity
-		// Legacy grant migration changes metadata, not the credential being refreshed.
-		if expected.GrantID == "" {
-			expected.GrantID = latest.GrantID
-		}
-		expectedData, _ := json.Marshal(expected)
-		latestData, _ := json.Marshal(latest)
-		if !bytes.Equal(expectedData, latestData) {
-			if latest.ExpiresAt.IsZero() || time.Now().Before(latest.ExpiresAt) {
+		if latest.Refresh == nil || latest.Refresh.ID != token.Refresh.ID {
+			if latest.Refresh == nil && (latest.ExpiresAt.IsZero() || time.Now().Before(latest.ExpiresAt)) {
 				accessToken = latest.AccessToken
 				return data, nil
 			}
 			return nil, ErrOAuthSuperseded
 		}
 		if exchangeErr != nil {
-			return nil, exchangeErr
+			if refreshNotIssued(exchangeErr) {
+				latest.Refresh = nil
+				return json.Marshal(latest)
+			}
+			latest.Refresh.Uncertain = true
+			return json.Marshal(latest)
 		}
 		latest.AccessToken = response.AccessToken
 		if response.RefreshToken != "" {
@@ -514,19 +581,32 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 		latest.TokenType = response.TokenType
 		latest.ExpiresAt = tokenExpiry(response.ExpiresIn)
 		latest.Scopes = scopesFromResponse(response.Scope, latest.Scopes)
-		latest.CredentialVersion = version
+		latest.CredentialVersion = token.Refresh.ID
+		latest.Refresh = nil
 		accessToken = latest.AccessToken
 		return json.Marshal(latest)
 	})
 	if err != nil {
 		return "", err
 	}
+	if accessToken == "" {
+		if exchangeErr != nil && refreshNotIssued(exchangeErr) {
+			var endpointErr *oauthTokenEndpointError
+			if errors.As(exchangeErr, &endpointErr) && (endpointErr.status == http.StatusBadRequest || endpointErr.status == http.StatusUnauthorized) {
+				return "", fmt.Errorf("%w: %v", ErrOAuthRequired, exchangeErr)
+			}
+			return "", exchangeErr
+		}
+		return "", errors.Join(ErrOAuthRefreshUncertain, exchangeErr)
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
 	return accessToken, nil
 }
 
-// Refresh coordination is process-local and does not confer credential authority.
-// Token CAS fences credential publication, but this does not serialize remote
-// token rotation across processes or provide distributed refresh safety.
+// This process-local gate avoids redundant storage polling between retained
+// generations. The credential store claim coordinates independent processes.
 type oauthRefreshKey struct{ server, resource string }
 type oauthRefreshGate struct {
 	lock  chan struct{}
@@ -744,6 +824,35 @@ func (m *OAuthManager) registerClient(ctx context.Context, endpoint, redirectURI
 	return registered.ClientID, registered.ClientSecret, mode, nil
 }
 
+// oauthTokenEndpointError reports a non-2xx token endpoint response.
+type oauthTokenEndpointError struct {
+	status int
+	text   string
+	body   string
+}
+
+func (e *oauthTokenEndpointError) Error() string {
+	return fmt.Sprintf("OAuth token endpoint returned %s: %s", e.text, e.body)
+}
+
+// refreshNotIssued reports whether a failed refresh provably did not reach the
+// token endpoint or was answered without issuing a token, so the stored
+// refresh token cannot have been rotated by this request.
+func refreshNotIssued(err error) bool {
+	var endpointErr *oauthTokenEndpointError
+	if errors.As(err, &endpointErr) {
+		// RFC 6749 §5.2 error responses (4xx) and 503 issue no token. Other 5xx
+		// may come from a gateway or a crash after the server rotated the token.
+		return endpointErr.status < 500 || endpointErr.status == http.StatusServiceUnavailable
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
 func (m *OAuthManager) exchangeToken(ctx context.Context, endpoint, clientSecret, authMode string, form url.Values) (tokenResponse, error) {
 	if authMode == "client_secret_post" && clientSecret != "" {
 		form.Set("client_secret", clientSecret)
@@ -767,7 +876,7 @@ func (m *OAuthManager) exchangeToken(ctx context.Context, endpoint, clientSecret
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return tokenResponse{}, fmt.Errorf("OAuth token endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return tokenResponse{}, &oauthTokenEndpointError{status: resp.StatusCode, text: resp.Status, body: strings.TrimSpace(string(body))}
 	}
 	var token tokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {
@@ -985,7 +1094,11 @@ func (m *OAuthManager) loadRecord(ctx context.Context, serverID string) (storedO
 func oauthNamespace(serverID string) string { return "mcp:" + strings.TrimSpace(serverID) }
 
 func oauthStatus(serverID string, token storedOAuthToken) OAuthStatus {
-	return OAuthStatus{ServerID: serverID, Authenticated: token.AccessToken != "", ExpiresAt: token.ExpiresAt, Scopes: append([]string(nil), token.Scopes...)}
+	authenticated := token.AccessToken != ""
+	if token.Refresh != nil && (token.Refresh.Uncertain || time.Since(token.Refresh.StartedAt) >= oauthRefreshTimeout) {
+		authenticated = false
+	}
+	return OAuthStatus{ServerID: serverID, Authenticated: authenticated, ExpiresAt: token.ExpiresAt, Scopes: append([]string(nil), token.Scopes...)}
 }
 
 func tokenExpiry(seconds int64) time.Time {

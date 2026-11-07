@@ -345,36 +345,6 @@ func (b *PersonalEffectBridge) releaseContext(ctx context.Context, id, owner str
 	return nil
 }
 
-// RegisterConnector exposes only this synchronous, already-bound broker effect.
-// The caller must defer release, even if coordinator invocation fails. Its
-// cancellation terminates execution; the coordinator cannot detach account use.
-func (b *PersonalEffectBridge) RegisterConnector(ctx context.Context, state *runtime.State, use func(context.Context) error) (string, func(), error) {
-	scope := personalEffectScopeForCall(ctx, pluginhost.ServiceInvokeParams{})
-	if scope == nil || scope.bridge != b || scope.server == nil || state == nil || scope.state == nil || state.Host == nil || scope.state.Host != state.Host {
-		return "", nil, errors.New("connector effect requires captured host scope")
-	}
-	owner, ok := state.Host.ServiceRegistry().ProviderPluginIDFor("wuu.personal-client", "personal.coordination", 1)
-	if !ok {
-		return "", nil, errors.New("personal coordinator unavailable")
-	}
-	held := state.Retain()
-	if held == nil {
-		return "", nil, errors.New("connector effect state expired")
-	}
-	r := newPersonalEffectResource()
-	r.owner, r.registry, r.server, r.state = owner, state.Host.ServiceRegistry(), scope.server, held
-	r.use = func(effectCtx context.Context) (toolresult.Result, error) {
-		return toolresult.Result{}, use(runtime.WithInvocationState(effectCtx, held))
-	}
-	id, err := b.add(r)
-	if err != nil {
-		r.finish(context.Background())
-		return "", nil, err
-	}
-	stop := context.AfterFunc(ctx, r.cancel)
-	return id, func() { stop(); _ = b.release(id, owner) }, nil
-}
-
 // ReleaseCoordinator is for disable/crash, not ordinary compatible publication.
 // The runtime must invoke it before waiting for generation-retained references.
 func (b *PersonalEffectBridge) ReleaseCoordinator(registry *pluginhost.ServiceRegistry, owner string) {

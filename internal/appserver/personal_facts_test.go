@@ -8,13 +8,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/blueberrycongee/wuu/internal/personalconnectors"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	"github.com/blueberrycongee/wuu/internal/pluginsettings"
 	"github.com/blueberrycongee/wuu/internal/session"
 )
 
-func TestPersonalReplacementFactsDriveReviewMemoryAndConnector(t *testing.T) {
+func TestPersonalReplacementFactsDriveReviewAndMemory(t *testing.T) {
 	f := newPersonalBoundaryFixtureWithProvider(t, nil, "independent-assistant")
 	f.setReviewMode(false)
 	subject := "plugin:bundled:independent-assistant"
@@ -38,22 +37,6 @@ func TestPersonalReplacementFactsDriveReviewMemoryAndConnector(t *testing.T) {
 	if err != nil || len(document.Values) != 1 {
 		t.Fatalf("replacement state: %+v %v", document, err)
 	}
-	actor := personalconnectors.Actor{ProductDomain: "personal", UserSpaceID: f.rt.UserSpaceID, SessionID: f.id}
-	authority, err := f.host.actionsForTest(t).connectorAuthority(f.owner, actor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	called := false
-	if err := f.host.actionsForTest(t).withConnectorAuthorization(f.owner, actor, authority, func(context.Context) error {
-		called = true
-		_, updateErr := pluginsettings.UpdateState(f.rt.ProductDataRoot(), f.rt.RootDir, subject, pluginsettings.ScopeUser, func(values map[string]string) error { values["fixture.facts."+f.id] = `{}`; return nil })
-		if updateErr == nil {
-			t.Error("provider facts changed while effect inspection was held")
-		}
-		return nil
-	}); err != nil || !called {
-		t.Fatalf("connector effect: %v %v", called, err)
-	}
 	raw, _ := json.Marshal(map[string]string{"ref": memoryCanonicalRef(f.id, f.sourceSeq)})
 	sourceRaw, err := f.host.actionsForTest(t).callMemory(f.owner, "memory.source", raw, f.id)
 	if err != nil {
@@ -75,10 +58,6 @@ func TestPersonalReplacementFactsDriveReviewMemoryAndConnector(t *testing.T) {
 	facts.Active = false
 	save()
 	f.host.actionsForTest(t).drainMu.Unlock()
-	called = false
-	if err := f.host.actionsForTest(t).withConnectorAuthorization(f.owner, actor, authority, func(context.Context) error { called = true; return nil }); err == nil || called {
-		t.Fatalf("inactive replacement executed: %v %v", called, err)
-	}
 	if err := f.host.actionsForTest(t).drain(context.Background()); err != nil {
 		t.Fatal(err)
 	}

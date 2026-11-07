@@ -10,7 +10,7 @@ Internal SDK embeddings can explicitly select `UserHostIsolationMode: "verified_
 
 `initialize` returns `user_host_isolation: { memory: "logical", host: "unverified" }` for ordinary user hosts. A successfully verified embedding reports `host: "verified"`. These additive capabilities are separate from the immutable `user_space_id` and `product_domain`. Ordinary Coding initialization and permissions are unchanged.
 
-The `app-server` and `remote host` commands accept `--user-space` and `--product-domain` with the default logical-memory policy. A user host cannot inherit a workspace identity or borrow the Coding desktop execution bridge. Model access, connector grants, remote pairing, notification credentials and deployment remain separate setup responsibilities.
+The `app-server` and `remote host` commands accept `--user-space` and `--product-domain` with the default logical-memory policy. A user host cannot inherit a workspace identity or borrow the Coding desktop execution bridge. Model access, remote pairing, notification credentials and deployment remain separate setup responsibilities.
 
 ## Selected composition and desktop routing
 
@@ -40,7 +40,7 @@ With the bundled local storage providers, user data is separated as follows. The
 - `user-spaces/<user-space>/<domain>/state`: sessions, private plugin storage, memory and managed artifacts
 - `user-spaces/<user-space>/<domain>/files`: permitted user working files and explicit attachment working copies
 
-User hosts load an explicit absolute configuration or the user configuration. They do not inherit project instructions, global Coding skills, MCP servers, hooks or external execution environments. Protected private-state paths are excluded from Personal file and process tools. Installed extensions remain trusted code; this is not an untrusted-extension sandbox.
+User hosts load an explicit absolute configuration or the user configuration. They do not inherit project instructions, global Coding skills, project MCP servers, hooks or external execution environments. The desktop explicitly binds its own Personal user space to globally installed MCP connectors and the selected credential provider. Other user spaces have no shared-connector access by default. Protected private-state paths are excluded from Personal file and process tools. Installed extensions remain trusted code; this is not an untrusted-extension sandbox.
 
 twin exposes one persistent main conversation per Personal user space. Its main Session ID is reused across navigation, reconnect and restart; it is not rotated or rebuilt by joining other sessions. Hidden task executions retain separate Session IDs and requirements versions. Missing main sessions report recovery errors instead of silently creating replacements. Historical identities and task data are retained, while current questions and results return to the main conversation.
 
@@ -54,7 +54,7 @@ A slow consumer has a bounded queue and is disconnected without blocking other c
 
 User-host transports expose `initialize`, `plugin/client/request`, `plugin/client/cancel`, user-question decision methods, device-bound push registration and connection shutdown. Generic Coding thread, workspace, storage, configuration and package-mutation APIs are unavailable on this transport. Desktop extension management retains its normal host context. The Coding account-history exporter detects user-host scope and stops; it does not export Personal data or interpret its inventory as Coding deletions.
 
-Non-interactive remote hosts do not provide generic `ask_user` interaction. A plugin-specific confirmation contract, such as Calendar's immutable operation preview, is a separate client operation.
+Non-interactive remote hosts do not provide generic `ask_user` interaction.
 
 The persisted owner admits user attention through `session.attention` under its current notification and quiet-hours policy. Raw terminal events do not authorize Personal push. `Runtime.SubscribeUserAttention` is a host-lifetime observer independent of phone attachment. Its bounded, content-free startup buffer rechecks current ownership, generation and policy before replay; it is best-effort notification transport, not a durable provider-delivery receipt. Closing or disabling the owner suppresses late attention.
 
@@ -168,11 +168,13 @@ File approvals support local `write_file` and `edit_file` in the Personal files 
 
 These rules do not cover opaque arbitrary MCP/plugin effects, `apply_patch`, remote execution, independent external-engine permission prompts, or OAuth/credential grants. Trusted extensions retain their own declared capabilities. The separate Calendar provider's immutable confirmation protocol remains in place; connector calendar operations use the account-action flow above. Synthetic provider tests do not establish a live OAuth or account result.
 
-The bundled Calendar adapter starts unconnected. The read and write interfaces accept a trusted, user-space/account-bound provider for an already authorized grant; tool input and plugin configuration cannot supply credentials. The shipped default does not wire an authorization provider or writer. An embedding must supply that integration after separate account authorization; source adapter tests do not complete this setup. Its write contract requires a full immutable preview, explicit client confirmation, exact revision and digest, and read-back verification. A lost acknowledgment produces an uncertain outcome that is reconciled without blindly replaying a write. Provider-injected tests do not establish a real OAuth or account outcome.
+
+Personal's independent account connectors and Calendar OAuth adapter have been removed. Manage accounts through the shared plugin catalog, then select a connected plugin in the Personal composer. Native Wuu and external engines with conversation-plugin support use the same enabled shared connectors, including fresh background sessions. An explicit message selection narrows the external-engine bridge and rechecks the selected account identity. Background tasks still require their admitted execution authorization and tool policy; account sharing does not authorize a new task or bypass permission checks. Personal's local file approval adapter does not approve MCP writes.
+
+Hosts using one selected credential authority coordinate OAuth refresh through an atomic stored attempt. A canceled, lost, or interrupted refresh is not replayed: reconnect the account when its outcome is uncertain. Restart older app-server processes when adopting this version, because they do not participate in this coordination. Disconnecting or replacing an account invalidates its bound grant. A disabled connector rejects new tool dispatches; a request already admitted may finish remotely.
 
 See the [app-server protocol](app-server-protocol.md), [plugin authoring](../customize/plugin-authoring.md), and [native client setup](../../../clients/native/README.md) for the underlying integration surfaces.
 
-Calendar proposals are reachable from the main conversation without replacing its Session. The review overlay retains the full immutable preview and exact revision/digest confirmation. Personal exposes only a read-only operations-list adapter; confirmation and cancellation remain trusted Calendar client operations. With no authorized provider, the UI reports the disconnected/read-only state and cannot confirm a write.
 
 #### Migrating the legacy review ledger
 
@@ -225,66 +227,9 @@ child-policy calls therefore fail closed. Product session and effect handlers
 retain the parent authority; this does not establish support for every direct
 child-graph invocation. See [composition boundaries](../customize/plugin-compositions.md).
 
-### Scoped Personal connectors
-
-The Personal local host now exposes Gmail, Notion, Drive, Google Calendar,
-and isolated Slack/Feishu adapters through `host.personal`. They are not Coding
-or MCP tools. Connection metadata, allowed resources, read/write scopes and
-account identity are separate; an installed adapter is not a connected account.
-The older Calendar agenda/cache integration remains available. Calendar writes
-use the connector action path rather than upgrading a read-only grant silently.
-
-Credentials remain in the OS secure store with no plaintext fallback. A trusted
-administrator can run `wuu connector-client client-import --user-space-id SPACE`
-and supply an already registered OAuth client's JSON on stdin. The configuration
-contains `provider`, `client_id`, optional `client_secret`, and a registered
-`redirect_uri` where required. Never paste this JSON into a chat. Importing client
-configuration does not authorize an account. Start, inspect and cancel account
-consent in Personal settings; the host opens the provider URL without returning
-it to model tools. Provider app registration, required scope verification and
-real account acceptance remain separate setup steps. HTTPS-only callback
-providers require a trusted configured callback transport; a desktop HTTP
-loopback is not an interchangeable redirect. `connector-client import` is an
-explicit host-only fallback for an already granted token, with provider identity
-verification; it is not automatic OAuth setup.
-
-Gmail supports thread search/read, attachments, draft creation and sending.
-Notion search/read/query and report append are limited to selected resources.
-Drive `drive.file` access means selected/shared files, not unrestricted Drive
-search; Docs export is text and PDF is a managed attachment, not claimed PDF text
-extraction. Calendar create/reschedule/cancel requires explicit
-notification behavior; editing existing events requires their current ETag.
-Slack and Feishu search/mentions filter a bounded page from selected channels,
-not an organization-wide index. Continue provider cursors for later pages.
-
-External writes freeze their exact arguments, account, resource, connection
-revision and host-derived execution authority. The original tool waits for an
-owner decision; only a live owner control can approve the stored digest. New
-human requirements, cancelled tasks, revoked connections and disabled Personal
-invalidate stale authority. Saved receipts survive restarts. Unknown outcomes
-are not replayed, including by changing the request ID. Read-only inspection is
-separate from retrying a mutation; an acknowledgement is not proof of email
-recipient delivery. Reconciliation or a new deliberate action may still require
-an owner. Ordinary connector reads do not need approval. Work data is isolated
-from default Personal memory; owners may explicitly allow reads of selected work
-resources, otherwise individual cross-domain requests require confirmation.
-
-Large output is paged with a content hash. Binary attachments use the existing
-execution-bound artifact importer instead of putting base64 into model context.
-Provider text is untrusted content and never supplies user authorization.
-
 Explicit share/import feeds the existing main-chat submission and receipt path.
 The browser extension requests only a user-activated current tab, never browser
 history. Imported URLs are not automatically fetched. Android shares enter a
 Personal draft; iOS shares use a separately enabled, short-lived App Group inbox
 and still require the main chat's send action. Native compilation, signing,
 entitlements and real-device verification are independent acceptance stages.
-
-`personal_connector_poll` compares one explicitly chosen, bounded read query.
-The first result establishes a silent baseline; subsequent changes receive a
-persisted sequence/change identity, and an unchanged result stays silent after
-restart. Reconnecting starts a new baseline. Checkpoints belong to the verified execution session: a newly created routine
-execution starts its own baseline rather than sharing another session’s history.
-It does not itself start a background loop, install webhooks or
-consume a full-mailbox/provider history feed. A limited first page cannot prove
-that every upstream change was observed.

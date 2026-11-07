@@ -1532,3 +1532,95 @@ func TestPluginSessionCreationIdentityIsOwnedDiscoveryMetadata(t *testing.T) {
 		})
 	}
 }
+
+func TestPluginSessionPreservesAdmittedReferencesAndRejectsSubstitution(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse("done")})
+	owner := &pluginTurnLifecycleClient{id: "fixture", calls: make(chan pluginhost.AgentTurnLifecycleInput, 32)}
+	attachTestModelGeneration(t, rt, owner)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	created, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := []providers.MessageContentPart{{Type: "plugin_reference", Text: "@Issue", Plugin: &providers.PluginReference{PluginID: "connector", MCPServer: "plugin.connector.issue", AuthorizationID: "original"}}, {Type: "text", Text: " inspect"}}
+	input := runtime.ClientUserInput{RequestID: "client", Prompt: "@Issue inspect", ContentParts: parts}
+	ctx := pluginInvocationContext(t, rt, runtime.WithClientUserInput(context.Background(), owner.id, input))
+	params := pluginhost.SessionSendParams{RequestID: "send", SessionID: created.SessionID, UserInputRequestID: "client", Input: pluginhost.SessionInput{Prompt: input.Prompt, ContentParts: providers.CloneMessageContentParts(parts)}}
+	params.Input.ContentParts[0].Plugin.AuthorizationID = "replacement"
+	if _, err := srv.sendPluginSession(ctx, owner.id, params); err == nil {
+		t.Fatal("plugin substituted reference account")
+	}
+	params.Input.ContentParts = providers.CloneMessageContentParts(parts)
+	params.UserInputRequestID = ""
+	if _, err := srv.sendPluginSession(ctx, owner.id, params); err == nil {
+		t.Fatal("plugin minted client reference")
+	}
+	params.UserInputRequestID = "client"
+	result, err := srv.sendPluginSession(ctx, owner.id, params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The selected connection is deliberately absent. Execution must fail closed,
+	// while the durable user message retains the selected identity for recovery.
+	select {
+	case event := <-owner.calls:
+		if event.State != pluginhost.TurnLifecycleFailed {
+			t.Fatalf("unavailable connection did not fail closed: %+v", event)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("reference failure did not produce terminal lifecycle")
+	}
+	history, err := loadChatMessages(rt.Sessions, result.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, msg := range history {
+		if msg.Role == "user" {
+			found = true
+			if !reflect.DeepEqual(msg.ContentParts, parts) {
+				t.Fatalf("references lost: %+v", msg.ContentParts)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("user message not persisted")
+	}
+}
+
+func TestPluginClientSelectionSuppliesExactToolGuidance(t *testing.T) {
+	requests := make(chan providers.ChatRequest, 1)
+	client := &fakeClient{response: providersResponse("done"), onChat: func(_ int, req providers.ChatRequest) { requests <- req }}
+	rt := newTestRuntime(t, client)
+	owner := &pluginTurnLifecycleClient{id: "fixture", calls: make(chan pluginhost.AgentTurnLifecycleInput, 4)}
+	selected := &toolLabelTestClient{tools: []pluginhost.ToolRegistration{{ID: "inspect", Description: "Inspect records", InputSchema: map[string]any{"type": "object"}}}}
+	attachTestModelGeneration(t, rt, owner, selected)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+	created, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), owner.id, pluginhost.SessionCreateParams{RequestID: "create", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextFresh})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parts := []providers.MessageContentPart{{Type: "plugin_reference", Text: "@Records", Plugin: &providers.PluginReference{PluginID: selected.ID()}}}
+	input := runtime.ClientUserInput{RequestID: "client", Prompt: "@Records", ContentParts: parts}
+	ctx := pluginInvocationContext(t, rt, runtime.WithClientUserInput(context.Background(), owner.id, input))
+	result, err := srv.sendPluginSession(ctx, owner.id, pluginhost.SessionSendParams{RequestID: "send", SessionID: created.SessionID, UserInputRequestID: input.RequestID, Input: pluginhost.SessionInput{Prompt: input.Prompt, ContentParts: parts}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTurnCompletedForThread(t, out, result.SessionID)
+	req := <-requests
+	toolName := rt.PluginHost.ToolDefinitions()[0].Name
+	bound := false
+	for _, msg := range req.Messages {
+		if strings.Contains(msg.Content, toolName) && strings.Contains(msg.Content, selected.ID()) {
+			bound = true
+		}
+	}
+	if !bound {
+		t.Fatal("selected tool identity absent from model context")
+	}
+}
