@@ -1,3 +1,4 @@
+import "./test-support/AbortSignal";
 import * as Notices from "./Toast";
 /**
  * Sidebar collapse-state independence regression test.
@@ -431,6 +432,104 @@ describe("sidebar collapse-state independence", () => {
       root = null;
       await host.unloadAndWait("shell");
       shared.mockRestore();
+    }
+  });
+
+  it.each(["open", "newer interaction", "newer selection", "back", "navigation changed", "unmount", "started cancellation", "real error"] as const)("preserves a catalog click during the stopped-writer gap: %s", async outcome => {
+    installWuuApi();
+    const record: ExtensionInventoryRecord = {
+      id: "plugin:user:route-probe", name: "Route probe", kind: "plugin", state: "active",
+      fingerprint: "unchanged", enabled: true, approval_state: "granted", runtime_state: "active",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "route-probe" },
+    };
+    vi.mocked(window.wuu.initialize).mockResolvedValue({ ...initialized(), extension_inventory: [record, { ...record, id: "plugin:user:other", name: "Other", provenance: { ...record.provenance, plugin_id: "other" } }] });
+    window.wuu.listSkills = vi.fn().mockResolvedValue({ skills: [] });
+    const { PluginLifecycleCancellationError } = await import("../shared/PluginLifecycle");
+    const reported = vi.spyOn(Notices, "showErrorToast");
+    const selections: string[] = [];
+    const { activate: activateProvider } = await import("./plugins/DefaultApplicationProvider");
+    const host = new PluginHost({ react: React });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const register = (hold: boolean) => (api: import("./plugins/PluginHost").PluginGenerationApi) => activateProvider({ ...api,
+      registerApplicationProvider(definition) {
+        return api.registerApplicationProvider({ ...definition, async prepare() {
+          const instance = await definition.prepare();
+          return { ...instance, async activate(checkpoint) {
+            await instance.activate(checkpoint);
+            if (!hold && outcome === "navigation changed") {
+              await instance.createScope(new AbortController().signal).invoke("navigation.show-section", { section: "conversations" });
+            }
+          }, createScope(signal) {
+            const scope = instance.createScope(signal);
+            return new Proxy(scope, { get(target, key) {
+              if (key !== "invoke") return Reflect.get(target, key);
+              return async (action: string, input: { pluginId: string }, options: { signal?: AbortSignal }) => {
+                if (action === "catalog.select-plugin") {
+                  selections.push(input.pluginId);
+                  if (hold && outcome === "started cancellation") throw new PluginLifecycleCancellationError();
+                  if (hold && outcome === "real error") throw new Error("Catalog denied");
+                }
+                return scope.invoke(action as never, input as never, options);
+              };
+            } });
+          }, async deactivate() {
+            const checkpoint = await instance.deactivate();
+            if (hold) await gate;
+            return checkpoint;
+          } };
+        } });
+      },
+    } as Parameters<typeof activateProvider>[0]);
+    await host.selectApplicationBinding({ pluginId: "business", generation: "one", id: "ui.application" });
+    await host.activateGeneration({ pluginId: "business", generation: "one", register: register(true) });
+    await host.activateGeneration({ pluginId: "wuu.default-shell", generation: "fixture",
+      register: api => host.registerPresentation(api, activateDefaultShell) });
+    let switching: Promise<void> | undefined;
+    try {
+      await act(async () => {
+        root = createRoot(container);
+        root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "wuu.default-shell", generation: "fixture", id: "ui.shell" }} />);
+      });
+      const service = host.getPresentationApplication("wuu.default-shell", "fixture", undefined!);
+      await act(async () => { await service.invoke("navigation.show-section", { section: "catalog" }); });
+      await flushAsync();
+      const row = container.querySelector<HTMLButtonElement>('[data-plugin="route-probe"] .catalog-row-open')!;
+      expect(row).not.toBeNull();
+      const started = outcome === "started cancellation" || outcome === "real error";
+      if (started) await act(async () => row.click());
+      await act(async () => { switching = host.applicationProviders.select(undefined); await Promise.resolve(); });
+      expect(host.applicationProviders.current).toBeUndefined();
+      expect(row.isConnected).toBe(true);
+      if (!started) await act(async () => row.click());
+      expect(container.querySelector('.catalog-section-pane')?.getAttribute("aria-busy")).toBe(started ? null : "true");
+      expect(selections).toHaveLength(started ? 1 : 0);
+      expect(service.getSnapshot().navigation.catalogPluginId).toBe("");
+      if (outcome === "newer interaction") document.body.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      if (outcome === "newer selection") await act(async () => container.querySelector<HTMLButtonElement>('[data-plugin="other"] .catalog-row-open')!.click());
+      if (outcome === "back") await act(async () => window.dispatchEvent(new Event("wuu:workbench-back")));
+      if (outcome === "unmount") { act(() => root!.unmount()); root = null; }
+      await act(async () => { release(); await switching; });
+      await act(async () => {
+        await host.selectApplicationBinding({ pluginId: "business", generation: "two", id: "ui.application" });
+        await host.activateGeneration({ pluginId: "business", generation: "two", register: register(false) });
+      });
+      await flushAsync();
+      const successor = host.getPresentationApplication("wuu.default-shell", "fixture", undefined!);
+      expect(successor.getSnapshot().navigation.catalogPluginId).toBe(outcome === "open" ? record.id : outcome === "newer selection" ? "plugin:user:other" : "");
+      expect(selections).toEqual(outcome === "open" || started ? [record.id] : outcome === "newer selection" ? ["plugin:user:other"] : []);
+      if (outcome === "real error") expect(reported).toHaveBeenCalledWith(expect.objectContaining({ message: "Catalog denied" }));
+      if (outcome === "open") {
+        expect(container.querySelector('[data-wuu-component="plugin-detail"]')).not.toBeNull();
+        expect(container.querySelector('.catalog-section-pane')?.getAttribute("aria-busy")).toBeNull();
+        await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')!.click());
+        expect(successor.getSnapshot().navigation.catalogPluginId).toBe("");
+        expect(selections).toEqual([record.id, ""]);
+      }
+    } finally {
+      release(); await switching;
+      act(() => root?.unmount()); root = null;
+      await host.unloadAndWait("wuu.default-shell"); await host.unloadAndWait("business");
     }
   });
 
