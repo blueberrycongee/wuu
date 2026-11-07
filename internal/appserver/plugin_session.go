@@ -949,7 +949,7 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 		}
 	}
 	params.Cause = strings.TrimSpace(params.Cause)
-	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0 && params.ResumeReceiptID == "") {
+	if pluginID == "" || params.RequestID == "" || params.SessionID == "" || (params.Input.Prompt == "" && len(params.Input.Attachments) == 0 && params.Input.AttachmentHandoff == nil && params.ResumeReceiptID == "") {
 		return pluginhost.SessionSendResult{}, errors.New("plugin owner, request_id, session_id, and input.prompt are required")
 	}
 	if (len(params.Input.Attachments) > 0 || len(params.Input.ContentParts) > 0) && params.UserInputRequestID == "" {
@@ -961,7 +961,10 @@ func (s *Server) sendPluginSession(ctx context.Context, pluginID string, params 
 	if params.ResumeAccepted != (params.ResumeReceiptID != "") {
 		return pluginhost.SessionSendResult{}, errors.New("resume_accepted and resume_receipt_id must be provided together")
 	}
-	var clientAttachments []runtime.ClientInputAttachment
+	clientAttachments, handoffErr := validateAttachmentHandoff(params)
+	if handoffErr != nil {
+		return pluginhost.SessionSendResult{}, handoffErr
+	}
 	if params.ResumeReceiptID != "" {
 		if !params.ResumeAccepted || params.Input.Prompt != "" || len(params.Input.Attachments) > 0 || len(params.Input.ContextBlocks) > 0 || len(params.Input.ContentParts) > 0 || params.Relation != nil || params.Presentation != nil || params.DisableTools || params.ToolPolicy != nil {
 			return pluginhost.SessionSendResult{}, errors.New("resume must reference only the immutable accepted input")

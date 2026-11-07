@@ -49,7 +49,13 @@ type SessionHistoryAttachment struct {
 	SHA256   string `json:"sha256"`
 }
 
+type SessionAttachmentSnapshotResult struct {
+	SnapshotID string                   `json:"snapshot_id"`
+	Attachment SessionHistoryAttachment `json:"attachment"`
+}
+
 type SessionAttachmentReadParams struct {
+	SnapshotID             string                           `json:"snapshot_id,omitempty"`
 	ExecutionAuthorization *ExecutionAuthorizationReference `json:"execution_authorization,omitempty"`
 	SessionID              string                           `json:"session_id"`
 	Seq                    int                              `json:"seq"`

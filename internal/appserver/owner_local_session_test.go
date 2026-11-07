@@ -2,6 +2,9 @@ package appserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/principal"
@@ -10,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +37,10 @@ func TestOwnerLocalSessionExistingTargetAndIntentFence(t *testing.T) {
 	locator.SessionID = target.ID
 	control := ownerLocalController{Consumer: "personal-subject", UserSpaceID: "local", ProductDomain: "personal", SessionID: "main", RunID: "run"}
 	route := pluginhost.SessionRouteRequest{Version: 1, Operation: "send", OperationID: "run", Locator: locator, Params: json.RawMessage(`{"session_id":"existing-coding","request_id":"run","if_running":"queue","input":{"prompt":"bounded work"}}`)}
+	data := []byte("delegated file bytes")
+	digest := sha256.Sum256(data)
+	handoff := map[string]any{"version": 1, "session_id": target.ID, "request_id": "run", "source": map[string]any{"session_id": "main", "seq": 7}, "attachments": []any{map[string]any{"sha256": hex.EncodeToString(digest[:]), "filename": "delegated.txt", "media_type": "text/plain", "data": base64.StdEncoding.EncodeToString(data)}}}
+	route.Params, _ = json.Marshal(map[string]any{"session_id": target.ID, "request_id": "run", "if_running": "queue", "input": map[string]any{"prompt": "bounded work", "attachment_handoff": handoff}})
 	input := ownerLocalSessionRequest{Request: route, Controller: &control}
 	first, err := s.dispatchOwnerLocalSession(context.Background(), source, input)
 	if err != nil || first.Status != "completed" || first.Error != nil {
@@ -58,6 +66,26 @@ func TestOwnerLocalSessionExistingTargetAndIntentFence(t *testing.T) {
 	json.Unmarshal(result.Result, &inspected)
 	if inspected.Turn == nil || inspected.Turn.RequestID != "run" {
 		t.Fatalf("lost business run: %s", result.Result)
+	}
+	history, historyErr := loadChatMessages(rt.Sessions, target.ID)
+	if historyErr != nil {
+		t.Fatal(historyErr)
+	}
+	foundFile := false
+	for _, msg := range history {
+		if len(msg.Files) > 0 {
+			foundFile = true
+			actual, err := os.ReadFile(msg.Files[0].LocalPath)
+			if err != nil || string(actual) != string(data) {
+				t.Fatalf("missing target bytes: %q %v", actual, err)
+			}
+			if msg.Origin == "user" || !msg.ReadOnly {
+				t.Fatal("delegation impersonated user")
+			}
+		}
+	}
+	if !foundFile {
+		t.Fatal("attachment absent from target history")
 	}
 	metadata, _, _ := rt.Sessions.Find(target.ID)
 	if metadata.Owner != target.Owner || metadata.ParentID != "" || metadata.PermissionMode != target.PermissionMode || metadata.ToolPolicyJSON != "" {

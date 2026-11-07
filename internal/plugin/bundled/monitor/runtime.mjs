@@ -458,6 +458,7 @@ var EXECUTION_AUTHORIZATION_DESCRIPTOR = {
 };
 
 // packages/plugin-sdk/src/index.ts
+var MAX_SESSION_HANDOFF_BYTES = 20 * 1024 * 1024;
 var CAPABILITY_PROTOCOL_V3 = 3;
 var KERNEL_SERVICE_METHOD = "call";
 var SECURITY_AUTHORIZE_SERVICE = "security.authorize";
@@ -481,6 +482,7 @@ var KERNEL_SERVICE_NAMES = {
   "host.session.control": "host.session.control",
   "host.session.model": "host.session.model",
   "host.session.attachment.read": "host.session.attachment.read",
+  "host.session.attachment.snapshot": "host.session.attachment.snapshot",
   "host.session.history.read": "host.session.history.read",
   "host.session.history.search": "host.session.history.search",
   "host.workspace.status": "host.workspace.status",

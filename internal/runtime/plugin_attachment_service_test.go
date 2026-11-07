@@ -28,7 +28,8 @@ func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 	data := strings.Repeat("x", 150000)
 	digest := sha256.Sum256([]byte(data))
 	sum := hex.EncodeToString(digest[:])
-	files, _ := json.Marshal([]providers.InputFile{{Filename: "record.txt", MediaType: "text/plain", Data: base64.StdEncoding.EncodeToString([]byte(data)), LocalPath: "/private/never-expose"}})
+	// App-server history persists snake_case fields rather than provider structs.
+	files, _ := json.Marshal([]map[string]any{{"filename": "record.txt", "media_type": "text/plain", "data": base64.StdEncoding.EncodeToString([]byte(data)), "local_path": "/private/never-expose"}})
 	if err := sessions.AppendHistoryRecord("private", session.HistoryRecord{Role: "user", Content: "read", Files: files}); err != nil {
 		t.Fatal(err)
 	}
@@ -40,7 +41,7 @@ func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 		t.Fatalf("metadata missing: %+v", page)
 	}
 	meta := page.Records[0].Attachments[0]
-	if meta.SHA256 != sum || meta.Name != "record.txt" || meta.Size != 150000 {
+	if meta.SHA256 != sum || meta.Name != "record.txt" || meta.Size != 150000 || meta.MIMEType != "text/plain" {
 		t.Fatalf("metadata: %+v", meta)
 	}
 	projected, _ := json.Marshal(page)
@@ -49,7 +50,7 @@ func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 	}
 	params := pluginhost.SessionAttachmentReadParams{SessionID: "private", Seq: 1, Kind: "file", Index: 0, SHA256: sum}
 	chunk, err := readPluginSessionAttachment(context.Background(), sessions, nil, "personal", userspace.Binding{}, params)
-	if err != nil || len(chunk.Data) > 128*1024 || chunk.Total != len(base64.StdEncoding.EncodeToString([]byte(data))) {
+	if err != nil || len(chunk.Data) > 128*1024 || chunk.Total != len(base64.StdEncoding.EncodeToString([]byte(data))) || chunk.ContentType != "text/plain" {
 		t.Fatalf("chunk: %d %+v %v", len(chunk.Data), chunk, err)
 	}
 	params.Offset = len(chunk.Data)
@@ -66,6 +67,18 @@ func TestPluginHistoryAttachmentReadIsScopedImmutableAndChunked(t *testing.T) {
 	params.SHA256 = strings.Repeat("0", 64)
 	if _, err := readPluginSessionAttachment(context.Background(), sessions, nil, "personal", userspace.Binding{}, params); err == nil {
 		t.Fatal("digest mismatch accepted")
+	}
+}
+
+func TestHistoryAttachmentMediaTypesSupportPersistedAndProviderFormats(t *testing.T) {
+	for _, mediaKey := range []string{"media_type", "MediaType"} {
+		t.Run(mediaKey, func(t *testing.T) {
+			attachments, _ := json.Marshal([]map[string]string{{mediaKey: "image/png", "data": "eA==", "filename": "picture.png"}})
+			meta := HistoryAttachmentMetadata(session.HistoryRecord{Images: attachments, Files: attachments})
+			if len(meta) != 2 || meta[0].MIMEType != "image/png" || meta[1].MIMEType != "image/png" {
+				t.Fatalf("attachment media types lost: %+v", meta)
+			}
+		})
 	}
 }
 

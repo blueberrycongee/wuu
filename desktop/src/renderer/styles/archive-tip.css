@@ -75,7 +75,7 @@
   white-space: nowrap;
   font-weight: var(--weight-medium);
   color: var(--ink-strong);
-  max-width: min(16em, 100%);
+  max-width: 16em;
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -124,5 +124,9 @@
 @media (max-width: 480px) {
   .archive-tip {
     max-width: calc(100vw - 24px);
+  }
+
+  .archive-tip-message strong {
+    max-width: 100%;
   }
 }

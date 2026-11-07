@@ -113,6 +113,7 @@ func main() {
 				"platformOs":     "test",
 			})
 		case "model/list":
+			waitForGate("WUU_TEST_CODEX_MODEL_LIST_GATE")
 			respond(req.ID, map[string]any{"data": []any{map[string]any{"id": "gpt-6-astra", "model": "gpt-6-astra", "displayName": "GPT-6 Astra", "isDefault": true, "defaultReasoningEffort": "high", "supportedReasoningEfforts": []any{map[string]any{"reasoningEffort": "low"}, map[string]any{"reasoningEffort": "high"}}, "serviceTiers": []any{map[string]any{"id": "fast"}}, "defaultServiceTier": os.Getenv("WUU_TEST_CODEX_DEFAULT_TIER")}}})
 		case "config/read":
 			var effort any
