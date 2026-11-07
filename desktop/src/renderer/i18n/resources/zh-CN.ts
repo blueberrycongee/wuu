@@ -53,7 +53,6 @@ export const zhCN = {
   "connection.moveUp": "上移 {name}",
   "connection.moveDown": "下移 {name}",
   "connection.subscriptionQuota": "额度",
-  "connection.subscriptionPlan": "{provider} {plan} 订阅",
 
   "desktopUpdate.available": "Wuu {version} 已可用，点击下载",
   "desktopUpdate.downloading": "正在下载更新 · {percent}%",

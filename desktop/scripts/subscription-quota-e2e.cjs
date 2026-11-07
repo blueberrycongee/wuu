@@ -340,9 +340,12 @@ async function run() {
       && [...team.querySelectorAll('p.settings-muted-line')].some(line => line.textContent.trim() && !line.textContent.includes('team-with-a-long-account-name@example.test'));
   }), true, 'Team connection keeps its own unknown allowance without borrowing personal usage.');
   await capture(main, '01-team-account-light.png');
-  await openProviderDetail(main, 'deepseek');
-  assert.equal(await evaluate(main, selector => Boolean(document.querySelector(`${selector} .select-menu`)), card('deepseek')), false);
-  assert.equal(await evaluate(main, selector => document.querySelector(selector).textContent.includes('12.3400 USD'), card('deepseek')), true, 'The observed balance remains visible in connection detail.');
+  await click(main, '[data-testid="settings-provider-back"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-card"][data-provider="deepseek"]')?.textContent.includes('12.3400 USD'));
+  await click(main, '[data-testid="settings-provider-card"][data-provider="deepseek"]');
+  await waitFor(main, () => document.querySelector('[data-testid="settings-provider-back"]'));
+  assert.equal(await evaluate(main, () => Boolean(document.querySelector('[data-testid="settings-subscriptions"]'))), false,
+    'A bare balance stays on its connection row instead of repeating in connection detail.');
   await openProviderDetail(main, 'personal');
   const resetTimes = await evaluate(main, selector => [...document.querySelectorAll(`${selector} time.connection-usage-reset`)].map(time => ({
     datetime: time.dateTime, exact: time.getAttribute('aria-label'),

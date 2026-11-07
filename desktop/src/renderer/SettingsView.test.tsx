@@ -746,7 +746,7 @@ describe("SettingsView model services", () => {
     expect(inventory.engines.find(item => item.id === "codex")?.enabled).toBe(true);
   });
 
-  it("keeps a plain API account balance available when opening its connection details", async () => {
+  it("keeps a plain API account balance on its row without repeating it in the connection details", async () => {
     const api = installServicesStub();
     const initialized = servicesInitialized();
     const provider = { name: "balance-api", type: "openai", model: "model", api_key_configured: true, base_url: "https://api.deepseek.com" };
@@ -758,8 +758,10 @@ describe("SettingsView model services", () => {
     await flush();
     click(document.querySelector('[data-provider="balance-api"]'));
     await flush();
-    expect(document.querySelector('[data-testid="settings-subscriptions"]')).not.toBeNull();
-    expect(document.querySelector('[data-testid="subscription-builtin-balance-api"]')?.textContent).toContain("12.3400");
+    expect(document.querySelector('[data-testid="settings-subscriptions"]')).toBeNull();
+    click(document.querySelector('[data-testid="settings-provider-back"]'));
+    await flush();
+    expect(document.querySelector('[data-provider="balance-api"]')?.textContent).toContain("12.3400");
     expect(initialized.providers[0]).not.toHaveProperty("quota");
   });
 

@@ -831,10 +831,7 @@ function ServiceDetail({
 
   return (
     <ConnectionPage title={<ConnectionTitle connectionKey={`provider:${provider.name}`} fallback={identity.label} disabled={disabled} />} icon={<ServiceMark identity={identity} />}
-      subtitle={<span className="connection-status-row">
-        {provider.quota?.plan ? <span>{t("connection.subscriptionPlan", { provider: identity.label, plan: provider.quota.plan })}</span> : null}
-        {attention ? <span className="connection-status-text">{attention}</span> : null}
-      </span>}
+      subtitle={attention ? <span className="connection-status-text">{attention}</span> : undefined}
       actions={<details className="connection-credential-menu">
         <summary className="settings-button">{t(!identity.subscription ? "connection.connectionSettings" : attention ? "provider.authSignIn" : "connection.account")}</summary>
         <div className="connection-credential-panel">

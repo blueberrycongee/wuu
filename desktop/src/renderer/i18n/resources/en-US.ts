@@ -55,7 +55,6 @@ export const enUS = {
   "connection.moveUp": "Move {name} up",
   "connection.moveDown": "Move {name} down",
   "connection.subscriptionQuota": "Allowance",
-  "connection.subscriptionPlan": "{provider} {plan} subscription",
 
   "desktopUpdate.available": "Wuu {version} is available. Click to download",
   "desktopUpdate.downloading": "Downloading update · {percent}%",

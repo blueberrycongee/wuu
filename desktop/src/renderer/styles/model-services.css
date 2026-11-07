@@ -839,7 +839,7 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
   .connection-page .model-choice:is(:hover, :focus-within) :is(.model-choice-action, .connection-model-order),
   .connection-page .model-choice-action[aria-expanded="true"] { opacity: 1; }
 }
-.connection-status-row, .connection-login { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.connection-login { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .connection-login-feedback { flex-basis: 100%; font-size: var(--font-sm); color: var(--ink-soft); }
 .connection-page .model-choice-label .model-choice-name { flex: 0 1 auto; min-width: 0; }
 .connection-auth-source { display: block; flex-basis: 100%; color: var(--ink-soft); font-size: var(--font-sm); }
@@ -867,6 +867,9 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-detail-quota .connection-usage-scope, .connection-detail-quota .connection-usage-display { grid-column: 1 / -1; }
 .connection-model-head, .connection-model-table-heading, .connection-page .connection-model-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 3em var(--connection-model-order-width); column-gap: var(--space-3); align-items: center; }
 .connection-model-table-heading, .connection-page .model-choice.connection-model-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 3em var(--connection-model-order-width) var(--control-field-height); }
+/* Rows run edge to edge so the hover fill and dividers span the whole table. */
+.connection-page .connection-model-table { padding-inline: 0; }
+.connection-page .connection-model-table > * { padding-inline: var(--settings-card-pad-inline); }
 .connection-page .connection-model-row { min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2); padding-block: var(--space-2); }
 .connection-page :is(.connection-model-head, .connection-model-table-heading) { min-height: 0; padding-block: var(--space-2); color: var(--ink-tertiary); font-size: var(--font-xs); }
 /* The name button spans the row height so it centers with the other cells. */

@@ -180,8 +180,7 @@ export function EngineSettingsSection({
     title={<ConnectionTitle connectionKey={displayKey} fallback={engineLabel(selected.id, selected)} disabled={busy}
       suffix={selected.cli_version ? <span className="connection-engine-version">{selected.cli_version}</span> : undefined} />}
     icon={<EngineIcon engine={selected.id} />}
-    subtitle={<span className="connection-status-row">{quotaFor(selected)?.plan?.trim() ? <span>{t("connection.subscriptionPlan", { provider: selected.id === "codex" ? "ChatGPT" : selected.id === "claude" ? "Claude" : engineLabel(selected.id, selected), plan: quotaFor(selected)!.plan! })}</span> : null}
-      {headerStatus ? <span className="connection-status-text">{headerStatus}</span> : null}</span>}
+    subtitle={headerStatus ? <span className="connection-status-text">{headerStatus}</span> : undefined}
     actions={<>
       {selected.binary_ok && (selected.update_url || selected.install_url) ? <Tooltip asChild content={t("settings.engineUpdateGuideHint")}><button aria-description={t("settings.engineUpdateGuideHint")} className="settings-button" type="button" data-testid="engine-update-guide"
         disabled={busy}
