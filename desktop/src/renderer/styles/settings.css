@@ -2915,21 +2915,21 @@ button.settings-engine-expand:hover {
 }
 
 /* --- Narrow windows -------------------------------------------------------
- * The panel becomes the whole sheet, and the rail turns into a horizontal
- * destination strip so the content keeps a readable width. */
-@media (max-width: 760px) {
+ * Below ~620px the two-column panel no longer fits: the rail turns into a
+ * horizontal destination strip so the content keeps a readable width. The
+ * sheet keeps its card chrome and a scrim margin so it still reads as a
+ * modal over the workbench rather than the window changing shape. */
+@media (max-width: 620px) {
   .settings-overlay-layer,
   .settings-standalone-layer,
   .settings-workbench-layer {
-    padding: 0;
+    padding: 12px;
   }
 
   .settings-shell.settings-floating,
   .settings-overlay-layer > .view-switch-loading-inline {
     width: 100%;
     height: 100%;
-    border: 0;
-    border-radius: 0;
   }
 
   .settings-shell.settings-floating {

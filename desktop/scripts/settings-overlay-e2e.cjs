@@ -242,7 +242,7 @@ async function run() {
   win = new BrowserWindow({ width: 1180, height: 820, show: true,
     webPreferences: { preload: path.join(fixture, "preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true } });
   for (const event of ["focus", "blur"]) win.on(event, () => trace({ kind: "window", event }));
-  for (const [index, { width, font, theme }] of [{ width: 1180, font: 15, theme: "light" }, { width: 760, font: 20, theme: "dark" }].entries()) {
+  for (const [index, { width, font, theme }] of [{ width: 1180, font: 15, theme: "light" }, { width: 560, font: 20, theme: "dark" }].entries()) {
     win.setContentSize(1180, 820);
     await win.loadFile(path.join(desktop, "out/renderer/index.html"));
     win.show(); win.focus();
@@ -297,8 +297,8 @@ async function run() {
       return r?.width > 0 && r?.height > 0 && e.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2));
     }), "Settings page is visible and above the conversation");
     await capture(`${name}-settings`);
-    // The narrow pass is a full-sheet layout: the panel covers the whole
-    // window and there is no scrim to click, so dismiss with Escape there.
+    // The narrow pass uses the single-column sheet layout; keep its dismissal
+    // on Escape so both the scrim gap and keyboard paths stay covered.
     if (index === 0) await dismissSettingsViaScrim();
     else key(win.webContents, "Escape");
     await until(() => evaluate(win.webContents, draft => !document.querySelector(".settings-shell") && document.querySelector("textarea")?.value === draft, draft), "Settings closes without replacing draft or active turn");
