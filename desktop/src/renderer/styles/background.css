@@ -171,28 +171,25 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
   mask-repeat: no-repeat;
 }
 
-/* Exposure follows each surface's role, not its position. Navigation panes
-   (docked sidebar, docked workspace panel) share one material so the window
-   stays symmetric; the conversation veils only as much as prose needs; floating
-   surfaces (tool rail, composer) carry their own glass. Canvas skins keep their
-   own texture on every pane. The collapsed drawer and sheet-mode panel float
-   over content and stay opaque. */
+/* The docked sidebar, the conversation and the docked workspace panel are one
+   continuous sheet of the same material, so the picture reads as one image
+   across the window. Floating surfaces (tool rail, composer) carry their own
+   glass. The collapsed drawer and sheet-mode panel float over content and stay
+   opaque. */
 @media screen and (not ((prefers-reduced-transparency: reduce) or (forced-colors: active))) {
-  /* The material is a tone plus a fill. The tone compresses the picture's
+  /* The material is a tone plus a cover. The tone compresses the picture's
      light range toward the theme canvas (lifting shadows in light, dimming
-     highlights in dark), so a thin fill keeps text readable while the
-     picture's color still shows. Canvas panes scale the skin's own veil. */
+     highlights in dark), so a thin cover keeps text readable while the
+     picture's color still shows. Frame skins use the host fill; canvas skins
+     use their own veil on every pane. */
   .navigation-ribbon-layout:has(.sidebar-ribbon) {
     --shell-tone: contrast(0.4) brightness(1.5) saturate(1.6);
-    --shell-pane-fill: 40%;
-    --shell-read-fill: 64%;
-    --shell-pane-veil: calc(var(--shell-veil, 0.86) * 0.8);
+    --shell-pane-fill: 44%;
   }
 
   :root[data-theme="dark"] .navigation-ribbon-layout:has(.sidebar-ribbon) {
     --shell-tone: contrast(0.7) brightness(0.75) saturate(1.2);
-    --shell-pane-fill: 52%;
-    --shell-read-fill: 74%;
+    --shell-pane-fill: 58%;
   }
 
   html[data-shell-placement="frame"] .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon)::before {
@@ -204,12 +201,7 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
   }
 
   html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane:not([data-canvas="opaque"]) {
-    --shell-conversation-fill: var(--shell-read-fill);
     background-color: transparent;
-  }
-
-  html[data-shell-placement="frame"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane[data-canvas="transparent"] {
-    --shell-conversation-fill: var(--shell-pane-fill);
   }
 
   /* The material sits on a layer: a backdrop filter on the pane itself would
@@ -219,7 +211,7 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
     inset: 0;
     z-index: -1;
     border-radius: inherit;
-    background: color-mix(in srgb, var(--workbench-canvas-bg) var(--shell-conversation-fill), transparent);
+    background: color-mix(in srgb, var(--workbench-canvas-bg) var(--shell-pane-fill), transparent);
     -webkit-backdrop-filter: var(--shell-tone);
     backdrop-filter: var(--shell-tone);
     content: "";
@@ -280,7 +272,7 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
     border-radius: inherit;
     background: var(--paper);
     content: "";
-    opacity: var(--shell-pane-veil);
+    opacity: var(--shell-veil, 0.86);
     pointer-events: none;
   }
 
@@ -305,7 +297,7 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
     z-index: -1;
     background: var(--paper);
     content: "";
-    opacity: var(--shell-pane-veil);
+    opacity: var(--shell-veil, 0.86);
     pointer-events: none;
   }
 }
@@ -320,6 +312,10 @@ html[data-shell-placement] .navigation-ribbon-layout:has(.sidebar-ribbon) .conve
 
   html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane[data-canvas="transparent"] {
     --canvas-veil: 0;
+  }
+
+  html[data-shell-placement="canvas"] .navigation-ribbon-layout:has(.sidebar-ribbon) .conversation-pane[data-canvas="translucent"] > .shell-canvas-artwork {
+    filter: var(--shell-tone);
   }
 
   /* Floating surfaces on a see-through pane use the host glass recipe. */
