@@ -594,6 +594,8 @@ export class PluginHost {
   private inventoryGraphs?: Map<string, string | undefined>;
   private readonly activationCounts = new Map<string, number>();
   private readonly reportedActivations = new Map<string, number>();
+  // Keep only the latest acknowledged activation per plugin, not every visited graph.
+  private readonly registeredActivations = new Map<string, { graph: string; activation: number }>();
   private readonly activeGenerations = new Map<string, GenerationState>();
   private readonly pendingActivations = new Map<string, PendingActivation>();
   private readonly listeners = new Set<() => void>();
@@ -1987,7 +1989,16 @@ export class PluginHost {
       if (this.inventoryGraphs && this.inventoryGraphs.get(params.id) !== params.graph_generation) return;
       if (params.activation < (this.reportedActivations.get(params.id) ?? 0)) return;
       if (phase === "registration") this.reportedActivations.set(params.id, params.activation);
+      else {
+        // Enqueuing registration does not acknowledge an activation: inventory changes
+        // can drop it before dispatch, and transport can fail before an ACK. In particular,
+        // returning to an old graph must not publish orphaned render/cleanup ACKs.
+        const registered = this.registeredActivations.get(params.id);
+        if (registered?.graph !== params.graph_generation || registered.activation !== params.activation) return;
+      }
       await send(params);
+      if (phase === "registration") this.registeredActivations.set(params.id, { graph: params.graph_generation, activation: params.activation });
+      else if (phase === "cleanup") this.registeredActivations.delete(params.id);
       if (phase === "registration" && this.reportFailures.delete(state.pluginId)) {
         this.reportFailure = [...this.reportFailures.values()].join("\n") || undefined;
         this.notifyListeners();
