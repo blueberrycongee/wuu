@@ -2911,6 +2911,11 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		if guidance := workspaces.Instructions(catalog); guidance != "" {
 			sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
 		}
+		if threadRuntime != nil && threadRuntime.CapabilityTools != nil {
+			if guidance := externalCapabilityInstructions(threadRuntime.CapabilityTools.Definitions()); guidance != "" {
+				sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
+			}
+		}
 	}
 	capabilityErr := instructionsErr
 	referenceParts := latestPluginReferenceParts(history)

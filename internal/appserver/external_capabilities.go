@@ -375,3 +375,27 @@ func writeCapabilityRPC(w http.ResponseWriter, id json.RawMessage, result any, r
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(response)
 }
+
+// externalCapabilityInstructions hands external engines the usage contract for
+// capability tools whose cross-call semantics the tool schema cannot express.
+// Internal agents learn the same rules from bundled plugin skills, which the
+// per-turn MCP bridge does not deliver.
+func externalCapabilityInstructions(definitions []providers.ToolDefinition) string {
+	for _, definition := range definitions {
+		// control_epoch marks the CUA input protocol: the host injects the
+		// lease token and the helper consumes one snapshot_id per input.
+		properties, _ := definition.InputSchema["properties"].(map[string]any)
+		if _, ok := properties["control_epoch"]; ok {
+			return fmt.Sprintf(externalCUAInstructions, definition.Name)
+		}
+	}
+	return ""
+}
+
+const externalCUAInstructions = `%s drives macOS apps through Accessibility, screenshots, and synthesized input:
+- Find the target with list_apps, then copy the exact Target app="..." value into app. Give every call a short display_title; it names the visible activity.
+- observe returns a snapshot_id. element_id values and coordinates are valid only against the latest snapshot, and each input consumes it. On stale_snapshot, call observe once and retry with the fresh ids; do not replay the failed call.
+- Prefer snapshot-free actions (activate_control, press_key/press_keys, type_text, paste); they survive UI changes.
+- Use sequence for multi-step input: every step needs risk, and non-safe steps need confirmed=true only after explicit user confirmation.
+- Set after to "ax" or "both" to return a fresh observation with the input result instead of a separate observe call.
+- Apps that mirror your own live output change constantly; prefer non-snapshot actions there.`
