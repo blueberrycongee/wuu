@@ -37,6 +37,26 @@ export function createPreviewUIKit(): PluginUIKit {
     ToolbarToggle: ({ pressed, ...props }) => <button aria-pressed={pressed} {...props} />,
     TextInput: ({ label, description, ...props }) => <label>{label}<input {...props} />{description && <small>{description}</small>}</label>,
     TextArea: ({ label, description, ...props }) => <label>{label}<textarea {...props} />{description && <small>{description}</small>}</label>,
+    ModelPicker: ({ models, aliases = {}, value, onChange, disabled, className }) => {
+      const current = !value ? '' : 'alias' in value ? `alias:${value.alias}` : JSON.stringify([value.provider, value.model]);
+      const selected = value && !('alias' in value) ? models.find(entry => entry.provider === value.provider && entry.model === value.model) : undefined;
+      return <span className={className}>
+        <select aria-label="Model" disabled={disabled} value={current} onChange={event => {
+          const next = event.currentTarget.value;
+          if (next.startsWith('alias:')) return onChange({ alias: next.slice('alias:'.length) });
+          const [provider, model] = JSON.parse(next) as [string, string];
+          onChange({ provider, model, variant: '' });
+        }}>
+          {!current && <option value="" disabled>Select a model</option>}
+          {models.map(entry => <option key={JSON.stringify([entry.provider, entry.model])} value={JSON.stringify([entry.provider, entry.model])}>{entry.label} · {entry.provider}</option>)}
+          {Object.keys(aliases).sort().map(name => <option key={name} value={`alias:${name}`}>{name}</option>)}
+        </select>
+        <select aria-label="Reasoning level" disabled={disabled || !selected?.variants.length} value={value && !('alias' in value) ? value.variant ?? '' : ''} onChange={event => value && !('alias' in value) && onChange({ provider: value.provider, model: value.model, variant: event.currentTarget.value })}>
+          <option value="">Default</option>
+          {selected?.variants.map(id => <option key={id} value={id}>{id}</option>)}
+        </select>
+      </span>;
+    },
     Select: ({ label, description, children, ...props }) => <label>{label}<select {...props}>{children}</select>{description && <small>{description}</small>}</label>,
     Checkbox: ({ label, description, ...props }) => <label><input type="checkbox" {...props} />{label}{description && <small>{description}</small>}</label>,
     EmptyState: ({ title, description, actions }) => <section role="status"><h2>{title}</h2><p>{description}</p>{actions}</section>,
