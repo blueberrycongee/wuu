@@ -736,7 +736,8 @@ async function chromeToggleGeometry(win) {
     // Settings owns its title/actions in the scrolling reading column, not
     // the window chrome. Keep hit/clipping coverage at their actual location.
     const activeHeader = settingsOpen ? document.querySelector('.settings-page-header') : chromeHeader;
-    const headers = [...new Set([chromeHeader, activeHeader])];
+    // The floating panel has no window strip; only the page header is left to check.
+    const headers = [...new Set([chromeHeader, activeHeader])].filter(Boolean);
     const clippedChrome = [];
     for (const header of headers) {
       const bounds = header.getBoundingClientRect();

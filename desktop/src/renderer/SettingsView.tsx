@@ -165,27 +165,22 @@ function nativeSettingsGroups(browserSettingsAllowed: boolean, capabilities: imp
   return [
     {
       id: "app",
+      pages: ["general", "appearance"],
+    },
+    {
+      id: "connections",
+      labelKey: "settings.navConnections",
       pages: [
-        "general",
-        "appearance",
+        "providers",
+        "mcp",
         ...(browserSettingsAllowed && capabilities.browser ? ["browser" as const] : []),
         ...(capabilities.remote ? ["remote" as const] : []),
       ],
     },
     {
-      id: "models-agents-tools",
-      labelKey: "settings.navModelsAgentsTools",
-      pages: [
-        "providers",
-      ],
-    },
-    {
-      id: "account-data",
-      labelKey: "settings.navAccountData",
-      pages: [
-        "usage",
-        "archive",
-      ],
+      id: "data",
+      labelKey: "settings.navData",
+      pages: ["usage", "archive"],
     },
   ];
 }
@@ -760,23 +755,22 @@ function SettingsViewContent({
       )}
       <main className="settings-main" data-wuu-component="settings-content">
         <SettingsTitlebarSlot.Provider value={titlebarSlot}>
-          <div className="settings-titlebar">
+          {floating ? (
+            <button
+              type="button"
+              className="icon-button settings-close-button"
+              aria-label={t("settings.close")}
+              onClick={onBack}
+            >
+              <X className="icon-lg" />
+            </button>
+          ) : <div className="settings-titlebar">
             {isTouchWebShell() && !floating && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
             {/* Match the main shell's docked/collapsed slots. Keep the collapsed
              * toggle inside the drag strip so native hit testing honors no-drag. */}
             {railCollapsed && !embedded && !floating ? sidebarToggle : null}
             <div ref={setTitlebarSlot} className="settings-titlebar-slot" />
-            {floating ? (
-              <button
-                type="button"
-                className="icon-button settings-close-button"
-                aria-label={t("settings.close")}
-                onClick={onBack}
-              >
-                <X className="icon-lg" />
-              </button>
-            ) : null}
-          </div>
+          </div>}
           <div ref={settingsScrollRef} className="settings-scroll">
             <div
               className="settings-page"
