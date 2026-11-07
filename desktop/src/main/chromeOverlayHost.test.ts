@@ -318,6 +318,15 @@ it("cancels on an outside owner pointer event before a delayed layout acknowledg
   expect(view.webContents.focus).not.toHaveBeenCalled();
 });
 
+it.each(["mouseDown", "mouseWheel"])("dismisses a presented menu on outside %s without waiting for blur", type => {
+  const { owner, view, paint, emit, request } = accountMenu();
+  paint();
+  expect(view.getVisible()).toBe(true);
+  owner.webContents.emit("before-mouse-event", {}, { type });
+  expect(view.getVisible()).toBe(false);
+  expect(emit).toHaveBeenCalledWith(owner, { token: request.token, generation: request.generation, command: { type: "dismiss", reason: "outside" } });
+});
+
 it("does not present an opening clipped to an empty viewport", () => {
   const { host, owner, window, view, event, request } = accountMenu();
   owner.getContentSize = () => [100, 100];

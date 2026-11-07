@@ -113,7 +113,10 @@ async function presentMenu() {
   });
 }
 async function hideMenu() {
-  await evaluate(win.webContents, () => window.wuu.chromeOverlay.hide(window.__menu.token, window.__menu.generation));
+  await evaluate(win.webContents, async () => {
+    await window.wuu.chromeOverlay.hide(window.__menu.token, window.__menu.generation);
+    window.__menu.open = false;
+  });
 }
 async function openMenu() {
   await presentMenu();
