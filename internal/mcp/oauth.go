@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -566,6 +567,10 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 			return nil, ErrOAuthSuperseded
 		}
 		if exchangeErr != nil {
+			if refreshNotIssued(exchangeErr) {
+				latest.Refresh = nil
+				return json.Marshal(latest)
+			}
 			latest.Refresh.Uncertain = true
 			return json.Marshal(latest)
 		}
@@ -585,6 +590,13 @@ func (m *OAuthManager) accessToken(ctx context.Context, serverID, resourceURL st
 		return "", err
 	}
 	if accessToken == "" {
+		if exchangeErr != nil && refreshNotIssued(exchangeErr) {
+			var endpointErr *oauthTokenEndpointError
+			if errors.As(exchangeErr, &endpointErr) && (endpointErr.status == http.StatusBadRequest || endpointErr.status == http.StatusUnauthorized) {
+				return "", fmt.Errorf("%w: %v", ErrOAuthRequired, exchangeErr)
+			}
+			return "", exchangeErr
+		}
 		return "", errors.Join(ErrOAuthRefreshUncertain, exchangeErr)
 	}
 	if err := ctx.Err(); err != nil {
@@ -812,6 +824,35 @@ func (m *OAuthManager) registerClient(ctx context.Context, endpoint, redirectURI
 	return registered.ClientID, registered.ClientSecret, mode, nil
 }
 
+// oauthTokenEndpointError reports a non-2xx token endpoint response.
+type oauthTokenEndpointError struct {
+	status int
+	text   string
+	body   string
+}
+
+func (e *oauthTokenEndpointError) Error() string {
+	return fmt.Sprintf("OAuth token endpoint returned %s: %s", e.text, e.body)
+}
+
+// refreshNotIssued reports whether a failed refresh provably did not reach the
+// token endpoint or was answered without issuing a token, so the stored
+// refresh token cannot have been rotated by this request.
+func refreshNotIssued(err error) bool {
+	var endpointErr *oauthTokenEndpointError
+	if errors.As(err, &endpointErr) {
+		// RFC 6749 §5.2 error responses (4xx) and 503 issue no token. Other 5xx
+		// may come from a gateway or a crash after the server rotated the token.
+		return endpointErr.status < 500 || endpointErr.status == http.StatusServiceUnavailable
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return true
+	}
+	var opErr *net.OpError
+	return errors.As(err, &opErr) && opErr.Op == "dial"
+}
+
 func (m *OAuthManager) exchangeToken(ctx context.Context, endpoint, clientSecret, authMode string, form url.Values) (tokenResponse, error) {
 	if authMode == "client_secret_post" && clientSecret != "" {
 		form.Set("client_secret", clientSecret)
@@ -835,7 +876,7 @@ func (m *OAuthManager) exchangeToken(ctx context.Context, endpoint, clientSecret
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return tokenResponse{}, fmt.Errorf("OAuth token endpoint returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return tokenResponse{}, &oauthTokenEndpointError{status: resp.StatusCode, text: resp.Status, body: strings.TrimSpace(string(body))}
 	}
 	var token tokenResponse
 	if err := json.NewDecoder(resp.Body).Decode(&token); err != nil {

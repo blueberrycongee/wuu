@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -235,5 +236,100 @@ func seedOAuthRefresh(t *testing.T, path, resource string) {
 	}
 	if err := credentialstore.NewFileStore(path).Set(context.Background(), oauthNamespace("docs"), "oauth", data); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestOAuthDefiniteRefreshFailureKeepsCredential(t *testing.T) {
+	for _, failure := range []string{"unavailable", "invalid-grant", "unreachable"} {
+		t.Run(failure, func(t *testing.T) {
+			var exchanges atomic.Int32
+			var refreshTokens []string
+			resource := ""
+			var endpoint *httptest.Server
+			if failure == "unreachable" {
+				listener, err := net.Listen("tcp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				resource = "http://" + listener.Addr().String()
+				if err := listener.Close(); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				endpoint = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					_ = r.ParseForm()
+					refreshTokens = append(refreshTokens, r.Form.Get("refresh_token"))
+					switch failure {
+					case "unavailable":
+						if exchanges.Add(1) == 1 {
+							w.WriteHeader(http.StatusServiceUnavailable)
+							return
+						}
+						_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "recovered", RefreshToken: "rotated-refresh", ExpiresIn: 3600})
+					case "invalid-grant":
+						exchanges.Add(1)
+						w.WriteHeader(http.StatusBadRequest)
+						_, _ = w.Write([]byte(`{"error":"invalid_grant"}`))
+					}
+				}))
+				defer endpoint.Close()
+				resource = endpoint.URL
+			}
+			path := filepath.Join(t.TempDir(), "oauth.json")
+			seedOAuthRefresh(t, path, resource)
+			client := http.DefaultClient
+			if endpoint != nil {
+				client = endpoint.Client()
+			}
+			manager := NewOAuthManager(credentialstore.NewFileStore(path), client)
+			_, err := manager.AccessToken(context.Background(), "docs", resource)
+			if err == nil {
+				t.Fatal("definite refresh failure returned a token")
+			}
+			if errors.Is(err, ErrOAuthRefreshUncertain) {
+				t.Fatalf("definite failure marked the grant uncertain: %v", err)
+			}
+			if failure == "invalid-grant" {
+				if !errors.Is(err, ErrOAuthRequired) {
+					t.Fatalf("invalid_grant must require sign-in: %v", err)
+				}
+			} else if errors.Is(err, ErrOAuthRequired) {
+				t.Fatalf("transient failure must not require sign-in: %v", err)
+			}
+			record := storedOAuthToken{}
+			data, err := credentialstore.NewFileStore(path).Get(context.Background(), oauthNamespace("docs"), "oauth")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(data, &record); err != nil {
+				t.Fatal(err)
+			}
+			if record.Refresh != nil {
+				t.Fatalf("claim survived a definite failure: %+v", record.Refresh)
+			}
+			if record.RefreshToken != "original-refresh" {
+				t.Fatalf("credential changed after a definite failure: %+v", record)
+			}
+			switch failure {
+			case "unavailable":
+				restarted := NewOAuthManager(credentialstore.NewFileStore(path), endpoint.Client())
+				token, err := restarted.AccessToken(context.Background(), "docs", resource)
+				if err != nil || token != "recovered" {
+					t.Fatalf("retry after restart did not recover: %q %v", token, err)
+				}
+				if got := exchanges.Load(); got != 2 {
+					t.Fatalf("endpoint saw %d exchanges", got)
+				}
+				for i, refreshToken := range refreshTokens {
+					if refreshToken != "original-refresh" {
+						t.Fatalf("exchange %d replayed %q instead of the original refresh token", i, refreshToken)
+					}
+				}
+			case "invalid-grant":
+				if got := exchanges.Load(); got != 1 {
+					t.Fatalf("endpoint saw %d exchanges", got)
+				}
+			}
+		})
 	}
 }
