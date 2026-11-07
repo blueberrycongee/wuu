@@ -421,7 +421,6 @@ export async function activate(api) {
     .mosaic-routine-next { flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-muted);font-size:var(--font-ui-small); }
     .mosaic-routine-detail { padding:4px 0 12px 32px; }
     .mosaic-settings { display:flex;flex-direction:column;min-width:0; }
-    .mosaic-settings > [role="alert"] { margin:var(--space-3) 0 0;color:var(--danger-text,var(--ink)); }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
@@ -743,13 +742,12 @@ export async function activate(api) {
     };
     const currentAvailable = availableModels.some(item => modelKey(item) === selectedModel);
     return h("section", { className: "mosaic-settings", "data-personal-preferences": true },
-      h(Card, null,
+      h(settingsPanels.Review, { locale, leading: h(React.Fragment, null,
         h(Select, {className:"mosaic-model-select", label:t("modelTitle"), description:model && !availableModels.length ? t("modelUnavailable") : undefined, value:selectedModel, disabled:!model || modelSaving || !availableModels.length, onChange:event => void saveModel(event.target.value) },
           !model && h("option", {value:""}, "…"),
           model && !currentAvailable && h("option", {value:selectedModel}, `${model.provider} · ${model.model} (${t("modelCurrentUnavailable")})`),
-          ...availableModels.map(item => h("option", {key:modelKey(item),value:modelKey(item)}, `${item.provider} · ${item.label}`)))),
-      modelError && h("p", {role:"alert"}, modelError),
-      h(settingsPanels.Review, { locale }));
+          ...availableModels.map(item => h("option", {key:modelKey(item),value:modelKey(item)}, `${item.provider} · ${item.label}`))),
+        modelError && h("p", {role:"alert"}, modelError)) }));
   }
 
   let identityAgent;

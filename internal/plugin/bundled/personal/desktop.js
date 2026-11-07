@@ -409,8 +409,12 @@ var personalDesktop = (() => {
 .personal-review-rule-preview h5 { margin:0 0 var(--space-3);font:inherit;font-weight:600; }
 .personal-review-settings { display:flex;flex-direction:column; }
 .personal-review-settings>.plugin-ui-section { margin-top:var(--settings-gap,var(--space-8)); }
-.personal-review-rule { display:flex;align-items:center;gap:var(--space-3); }
-.personal-review-rule>.plugin-ui-field { flex:1;min-width:0;border-bottom:0!important; }
+.personal-review-settings .plugin-ui-card>p[role="alert"] { padding-block:var(--settings-row-pad-block,var(--space-3));color:var(--danger-text,var(--ink));font-size:var(--font-sm); }
+.personal-review-settings .plugin-ui-card>.personal-review-item { padding:var(--space-1) 0;border-top:0; }
+.personal-review-settings .personal-review-parameters summary { color:var(--ink-soft);font-size:var(--font-sm); }
+.personal-review-rule { display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--space-2); }
+.personal-review-rule>.plugin-ui-field { flex:1 1 10em;min-width:0; }
+.personal-review-rule .plugin-ui-field-label { overflow-wrap:anywhere; }
 .personal-review-failure { display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);margin-top:var(--space-3); }
 .personal-review-failure .personal-review-error { margin-top:0!important; }
 .personal-review-notice { margin-top:var(--space-3)!important;color:var(--ink-muted); }
@@ -420,7 +424,7 @@ var personalDesktop = (() => {
 `;
   function createPersonalReviewPanel(react, ui) {
     const h = react.createElement;
-    return function PersonalReviewPanel({ service, locale = "en", variant = "settings" }) {
+    return function PersonalReviewPanel({ service, locale = "en", variant = "settings", leading }) {
       const conversation = variant === "conversation";
       const words = locale.startsWith("zh") ? copy.zh : copy.en;
       const hadActions = react.useRef(false);
@@ -697,15 +701,16 @@ var personalDesktop = (() => {
         h(
           ui.Card,
           null,
+          leading,
           settings && service.settings ? h(ui.Checkbox, { label: words.mode, description: words.modeHelp, role: "switch", "aria-checked": settings.auto_review_enabled, checked: settings.auto_review_enabled, disabled: Boolean(busy) || unverified || !settings.auto_review_enabled && settings.scope.length === 0, onChange: () => void changeSettings() }) : h(ui.Checkbox, { label: words.mode, description: snapshot?.kind === "unavailable" ? snapshot.reason : void 0, checked: false, disabled: true })
         ),
         failureRow,
         notice && h("p", { role: "status", className: "personal-review-notice" }, notice),
-        rules && rules.rules.length > 0 && h(
-          ui.Section,
-          { title: words.rules, "aria-label": words.rules },
+        rules && rules.rules.length > 0 && h(ui.Section, { title: words.rules, "aria-label": words.rules }, h(
+          ui.Card,
+          null,
           rules.rules.map((rule) => h(
-            ui.Card,
+            "div",
             { key: rule.id, className: "personal-review-rule", "data-review-rule": rule.id },
             h(
               ui.Select,
@@ -716,9 +721,9 @@ var personalDesktop = (() => {
             ),
             h(ui.Button, { variant: "ghost", disabled: Boolean(busy) || unverified, "data-review-rule-delete": rule.id, onClick: () => void changeRule({ action: "delete", expected_revision: rules.revision, id: rule.id }) }, words.deleteRule)
           ))
-        ),
-        pending.length > 0 && h(ui.Section, { title: words.pending }, h("div", { className: "personal-review-list" }, pending.map(renderRecord))),
-        history.length > 0 && h(ui.Section, { title: words.recent }, h("div", { className: "personal-review-list" }, history.map(renderRecord)))
+        )),
+        pending.length > 0 && h(ui.Section, { title: words.pending }, pending.map((record) => h(ui.Card, { key: record.action.id }, renderRecord(record)))),
+        history.length > 0 && h(ui.Section, { title: words.recent }, history.map((record) => h(ui.Card, { key: record.action.id }, renderRecord(record))))
       );
     };
   }
@@ -738,7 +743,7 @@ var personalDesktop = (() => {
     const h = react.createElement, ReviewPanel = createPersonalReviewPanel(react, ui);
     const host = async (method, input) => unwrapPersonalHost(await invoke(method, input));
     const reviewService = { list: () => host("review.list"), rules: (input) => host("review.rules", input), previewRule: (input) => host("review.rule.preview", input), resolve: (input) => host("review.resolve", input), revoke: (input) => host("review.revoke", input), settings: (input) => host("review.settings", input) };
-    return { ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale }) => h(ReviewPanel, { service: reviewService, locale }), styles: personalReviewStyles };
+    return { ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale, leading }) => h(ReviewPanel, { service: reviewService, locale, leading }), styles: personalReviewStyles };
   }
 
   // plugins/personal/ui/send-motion.js
@@ -1365,7 +1370,6 @@ var personalDesktop = (() => {
     .mosaic-routine-next { flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-muted);font-size:var(--font-ui-small); }
     .mosaic-routine-detail { padding:4px 0 12px 32px; }
     .mosaic-settings { display:flex;flex-direction:column;min-width:0; }
-    .mosaic-settings > [role="alert"] { margin:var(--space-3) 0 0;color:var(--danger-text,var(--ink)); }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
@@ -1838,8 +1842,8 @@ var personalDesktop = (() => {
       return h(
         "section",
         { className: "mosaic-settings", "data-personal-preferences": true },
-        h(
-          Card,
+        h(settingsPanels.Review, { locale, leading: h(
+          React.Fragment,
           null,
           h(
             Select,
@@ -1847,10 +1851,9 @@ var personalDesktop = (() => {
             !model && h("option", { value: "" }, "\u2026"),
             model && !currentAvailable && h("option", { value: selectedModel }, `${model.provider} \xB7 ${model.model} (${t("modelCurrentUnavailable")})`),
             ...availableModels.map((item) => h("option", { key: modelKey(item), value: modelKey(item) }, `${item.provider} \xB7 ${item.label}`))
-          )
-        ),
-        modelError && h("p", { role: "alert" }, modelError),
-        h(settingsPanels.Review, { locale })
+          ),
+          modelError && h("p", { role: "alert" }, modelError)
+        ) })
       );
     }
     let identityAgent;

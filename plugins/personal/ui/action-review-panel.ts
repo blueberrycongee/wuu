@@ -223,8 +223,12 @@ export const personalReviewStyles = `
 .personal-review-rule-preview h5 { margin:0 0 var(--space-3);font:inherit;font-weight:600; }
 .personal-review-settings { display:flex;flex-direction:column; }
 .personal-review-settings>.plugin-ui-section { margin-top:var(--settings-gap,var(--space-8)); }
-.personal-review-rule { display:flex;align-items:center;gap:var(--space-3); }
-.personal-review-rule>.plugin-ui-field { flex:1;min-width:0;border-bottom:0!important; }
+.personal-review-settings .plugin-ui-card>p[role="alert"] { padding-block:var(--settings-row-pad-block,var(--space-3));color:var(--danger-text,var(--ink));font-size:var(--font-sm); }
+.personal-review-settings .plugin-ui-card>.personal-review-item { padding:var(--space-1) 0;border-top:0; }
+.personal-review-settings .personal-review-parameters summary { color:var(--ink-soft);font-size:var(--font-sm); }
+.personal-review-rule { display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--space-2); }
+.personal-review-rule>.plugin-ui-field { flex:1 1 10em;min-width:0; }
+.personal-review-rule .plugin-ui-field-label { overflow-wrap:anywhere; }
 .personal-review-failure { display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);margin-top:var(--space-3); }
 .personal-review-failure .personal-review-error { margin-top:0!important; }
 .personal-review-notice { margin-top:var(--space-3)!important;color:var(--ink-muted); }
@@ -237,7 +241,7 @@ export const personalReviewStyles = `
 // factory can be mounted inside personal.preferences without a new navigation API.
 export function createPersonalReviewPanel(react: typeof React, ui: UI) {
   const h = react.createElement;
-  return function PersonalReviewPanel({ service, locale = "en", variant = "settings" }: { service: ReviewService; locale?: string; variant?: "settings" | "conversation" }): React.ReactNode {
+  return function PersonalReviewPanel({ service, locale = "en", variant = "settings", leading }: { service: ReviewService; locale?: string; variant?: "settings" | "conversation"; leading?: React.ReactNode }): React.ReactNode {
     const conversation = variant === "conversation";
     const words = locale.startsWith("zh") ? copy.zh : copy.en;
     const hadActions = react.useRef(false);
@@ -390,17 +394,17 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
     const ruleChoice = (rule: ReviewRule) => !rule.enabled ? "paused" : rule.decision;
     const changeRuleChoice = (rule: ReviewRule, choice: string) => rules && void changeRule({action:"update",expected_revision:rules.revision,id:rule.id,decision:choice === "paused" ? rule.decision : choice === "ask" ? "ask" : "allow",enabled:choice !== "paused"});
     return h("div",{className:"personal-review personal-review-settings","data-personal-action-review":true,"data-review-variant":variant},h("style",null,personalReviewStyles),
-      h(ui.Card,null,
+      h(ui.Card,null,leading,
         settings && service.settings ? h(ui.Checkbox,{label:words.mode,description:words.modeHelp,role:"switch","aria-checked":settings.auto_review_enabled,checked:settings.auto_review_enabled,disabled:Boolean(busy)||unverified||(!settings.auto_review_enabled&&settings.scope.length===0),onChange:()=>void changeSettings()})
           : h(ui.Checkbox,{label:words.mode,description:snapshot?.kind === "unavailable" ? snapshot.reason : undefined,checked:false,disabled:true})),
       failureRow,
       notice && h("p",{role:"status",className:"personal-review-notice"},notice),
-      rules && rules.rules.length>0 && h(ui.Section,{title:words.rules,"aria-label":words.rules},
-        rules.rules.map(rule=>h(ui.Card,{key:rule.id,className:"personal-review-rule","data-review-rule":rule.id},
+      rules && rules.rules.length>0 && h(ui.Section,{title:words.rules,"aria-label":words.rules},h(ui.Card,null,
+        rules.rules.map(rule=>h("div",{key:rule.id,className:"personal-review-rule","data-review-rule":rule.id},
           h(ui.Select,{label:ruleSubject(rule,locale),title:rule.target,value:ruleChoice(rule),disabled:Boolean(busy)||unverified,"data-review-rule-choice":rule.id,onChange:(event: React.ChangeEvent<HTMLSelectElement>)=>changeRuleChoice(rule,event.target.value)},
             h("option",{value:"allow"},words.allowRule),h("option",{value:"ask"},words.askRule),h("option",{value:"paused"},words.pausedRule)),
-          h(ui.Button,{variant:"ghost",disabled:Boolean(busy)||unverified,"data-review-rule-delete":rule.id,onClick:()=>void changeRule({action:"delete",expected_revision:rules.revision,id:rule.id})},words.deleteRule)))),
-      pending.length>0 && h(ui.Section,{title:words.pending},h("div",{className:"personal-review-list"},pending.map(renderRecord))),
-      history.length>0 && h(ui.Section,{title:words.recent},h("div",{className:"personal-review-list"},history.map(renderRecord))));
+          h(ui.Button,{variant:"ghost",disabled:Boolean(busy)||unverified,"data-review-rule-delete":rule.id,onClick:()=>void changeRule({action:"delete",expected_revision:rules.revision,id:rule.id})},words.deleteRule))))),
+      pending.length>0 && h(ui.Section,{title:words.pending},pending.map(record=>h(ui.Card,{key:record.action.id},renderRecord(record)))),
+      history.length>0 && h(ui.Section,{title:words.recent},history.map(record=>h(ui.Card,{key:record.action.id},renderRecord(record)))));
   };
 }

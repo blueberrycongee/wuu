@@ -139,7 +139,7 @@ async function capture(name) {
   // toggle exists.
   if(narrow){const toggle=page.locator('[data-wuu-component="settings-overlay"] [data-wuu-component="sidebar-toggle"]:visible');if(await toggle.count()){await toggle.click();await page.waitForSelector('.settings-embedded.sidebar-collapsed');}}
   await page.locator('[data-review-rule]').scrollIntoViewIfNeeded();await capture(narrow?'settings-saved-rule-narrow-dark':'settings-saved-rule');
-  await page.locator('[data-review-rule-ask]').click();await page.waitForFunction(()=>window.__reviewFixture.rules.rules[0].decision==='ask');
+  await page.locator('[data-review-rule-choice]').selectOption('ask');await page.waitForFunction(()=>window.__reviewFixture.rules.rules[0].decision==='ask');
   await page.locator('[data-review-rule-delete]').click();await page.waitForFunction(()=>window.__reviewFixture.rules.rules.length===0);
   report.cases.push(`${narrow?'narrow-dark-large':'wide-light'}: rule preview grants nothing; saving precedes the exact once-only decision; settings can require confirmation or remove a saved rule`);
   }
