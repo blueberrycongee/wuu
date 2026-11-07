@@ -67,8 +67,8 @@ export function createApplicationSettingsControls(options: {
       key: theme.key, legacyKeys: theme.legacyKeys, name: theme.name, base: theme.base,
       preview: {
         canvas: theme.tokens["--wuu-color-canvas"] ?? (theme.base === "dark" ? "#191a1c" : "#fcfcfd"),
-        ink: theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#f3f3f4" : "#151515"),
-        accent: theme.tokens["--wuu-color-accent"] ?? theme.tokens["--wuu-accent"] ?? theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#f3f3f4" : "#151515"),
+        ink: theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#e0e1e3" : "#151515"),
+        accent: theme.tokens["--wuu-color-accent"] ?? theme.tokens["--wuu-accent"] ?? theme.tokens["--wuu-color-text"] ?? (theme.base === "dark" ? "#e0e1e3" : "#151515"),
       },
     })),
     observeContentThemeSelection: listener => {

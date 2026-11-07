@@ -27,7 +27,7 @@ export function ContentThemeControl({ inventory }: { inventory?: readonly Extens
     <SelectMenu ariaLabel={t("settings.contentTheme")} value={selected?.key ?? ""}
       options={[{
         value: "", label: t("settings.skinDefault"),
-        preview: <PaletteSwatch canvas={mode === "dark" ? "#191a1c" : "#fcfcfd"} ink={mode === "dark" ? "#f3f3f4" : "#151515"} accent={mode === "dark" ? "#f3f3f4" : "#151515"} />,
+        preview: <PaletteSwatch canvas={mode === "dark" ? "#191a1c" : "#fcfcfd"} ink={mode === "dark" ? "#e0e1e3" : "#151515"} accent={mode === "dark" ? "#e0e1e3" : "#151515"} />,
       }, ...themes.map(theme => ({
         value: theme.key, label: theme.name,
         preview: theme.preview ? <PaletteSwatch {...theme.preview} /> : undefined,

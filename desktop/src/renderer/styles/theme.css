@@ -21,7 +21,11 @@
   --settings-card-bg: color-mix(in srgb, var(--surface-1) 50%, var(--paper));
   /* --- Neutral gray ramp, dark declaration. Same slots as the light
    *     ramp in base.css: 0-350 surfaces/hairlines (deeper = further
-   *     from the reader), 400-650 text grays, 800-900 strong text. --- */
+   *     from the reader), 400-650 text grays, 800-900 strong text.
+   *     Dark text stops below white: near-white glyphs bloom on charcoal
+   *     and flatten the hierarchy that dark ink provides in light mode.
+   *     Strong text sits near 87% of white, body near 77%, and secondary
+   *     near 64%; those text tiers stay well above 4.5:1. --- */
   --gray-0: #191a1c;
   --gray-50: #222326;
   --gray-100: #2a2b2e;
@@ -32,13 +36,13 @@
   --gray-350: #5a5b60;
   --gray-400: #6e6f74;
   --gray-450: #808186;
-  --gray-500: #919297;
-  --gray-550: #a0a1a5;
-  --gray-600: #b0b1b5;
-  --gray-650: #bfc0c4;
-  --gray-700: #d0d1d4;
-  --gray-800: #e2e3e5;
-  --gray-900: #f3f3f4;
+  --gray-500: #848589;
+  --gray-550: #919296;
+  --gray-600: #9fa0a4;
+  --gray-650: #adaeb2;
+  --gray-700: #bcbdc1;
+  --gray-800: #cbccd0;
+  --gray-900: #e0e1e3;
 
   /* --- Ink scale: light text on dark paper --- */
   --ink-strong: var(--theme-override-color-text, var(--gray-900));
