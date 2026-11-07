@@ -361,9 +361,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   setAppearance(dark: boolean, preferences?: ActivityPreviewAppearance): void {
     this.dark = dark;
     if (preferences) this.appearance = preferences;
-    if (process.platform === "linux") {
-      this.win?.setBackgroundColor?.(this.appearance?.surface ?? (dark ? "#242426" : "#f8f8fa"));
-    }
+    this.win?.setBackgroundColor?.(dark ? "#4e5054" : "#b4b6ba");
     this.execute(`window.wuuPipAppearance?.(${JSON.stringify({ dark, ...this.appearance })})`);
   }
 
@@ -1392,7 +1390,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
       // even without shadows. A translucent host removes those insets; the
       // configured background still paints an opaque card inside its shape.
       transparent: shapeLinuxWindow,
-      backgroundColor: "#f4f4f5",
+      backgroundColor: this.dark ? "#4e5054" : "#b4b6ba",
       // On X11 Electron's client-side shadow adds a rectangular frame even to
       // frameless windows. The Linux host uses one explicit rounded shape.
       hasShadow: !shapeLinuxWindow,
