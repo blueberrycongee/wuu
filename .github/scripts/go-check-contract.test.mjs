@@ -136,12 +136,14 @@ test('final CI gate never reports unsuccessful required jobs as passing', () => 
     'desktop-macos-controls', 'clients-check', 'macos-check', 'windows-check', 'linux-check',
   ].map(job => [job, { result: 'success' }]));
   needs.changes.outputs = { go: 'true', architecture: 'true', desktop: 'true', desktop_suites: '["unit","unit-extra","shell"]', desktop_e2e_suites: '["shell"]', clients: 'true', native: 'true' };
-  const passes = () => gatePasses('ci-check', { RESULTS: JSON.stringify(needs), EVENT: 'pull_request' });
+  const passes = (event = 'pull_request') => gatePasses('ci-check', { RESULTS: JSON.stringify(needs), EVENT: event });
   assert.equal(passes(), true);
+  assert.equal(passes('push'), true);
   for (const job of Object.keys(needs)) {
     for (const result of ['failure', 'cancelled', 'skipped', '']) {
       needs[job].result = result;
       assert.equal(passes(), false, `${job}=${result}`);
+      assert.equal(passes('push'), false, `push: ${job}=${result}`);
     }
     needs[job].result = 'success';
   }
@@ -152,6 +154,8 @@ test('final CI gate never reports unsuccessful required jobs as passing', () => 
   assert.equal(passes(), true, 'unrelated paths permit only unselected jobs to skip');
   needs['repository-check'].result = 'skipped';
   assert.equal(passes(), false, 'pull requests still require repository checks');
+  assert.equal(gatePasses('ci-check', { RESULTS: JSON.stringify(needs), EVENT: 'push' }), false, 'main pushes still require repository checks');
+  needs['repository-check'].result = 'success';
   assert.equal(gatePasses('ci-check', { RESULTS: JSON.stringify(needs), EVENT: 'push' }), true);
 });
 

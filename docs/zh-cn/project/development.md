@@ -742,7 +742,7 @@ iOS 的核心集成、模拟器构建和设备构建在三个独立任务中运�
 
 [Native mobile](../../../.github/workflows/native-mobile.yml) 在修改 iOS 客户端、共享原生测试环境、远程协议或 Go 依赖的拉取请求与 `main` 推送上，运行 iOS 核心集成和未签名模拟器／真机目标构建。手动 `workflow_dispatch` 还会运行原有 Android 集成、Release 构建和 lint。这些检查不覆盖真机签名、商店分发或实体手机交互。
 
-[主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异选择任务，包含删除文件和重命名前后的路径。PR 中的仓库契约与元数据检查必须在共享构建前通过；选中非单元 Desktop 套件时，依赖安装与这些检查在同一 runner 上并行，所有分支均等待结束，任一失败仍会阻止构建。该 runner 随后生成校验源码提交和文件哈希的只读 renderer/core 构建产物，避免独立构建任务再次排队。纯文档或仅单元测试改动不安装构建依赖。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。
+[主 CI 工作流](../../../.github/workflows/ci.yml)按完整 PR 差异，或 `main` 推送中从 `github.event.before` 到推送 SHA 的差异选择任务，包含删除文件和重命名前后的路径。推送的基准提交缺失、全零、不可用或不是目标提交的祖先时，执行完整覆盖。仓库契约与元数据检查必须在共享构建前通过；选中非单元 Desktop 套件时，依赖安装与这些检查在同一 runner 上并行，所有分支均等待结束，任一失败仍会阻止构建。该 runner 随后生成校验源码提交和文件哈希的只读 renderer/core 构建产物，避免独立构建任务再次排队。纯文档或仅单元测试改动不安装构建依赖。纯文档或原生手机改动跳过主 CI 的产品测试套件；原生手机仍由独立工作流验证。
 
 Renderer 改动运行 Desktop 和 Clients，因为 Web 客户端直接引用 renderer 源码。其他桌面改动运行 Desktop、Clients 和原生系统检查。共享协议、客户端 core、Go、插件及 SDK、上述限定目录之外的依赖锁文件、构建脚本及未知路径保守地运行全部套件。prompts 或插件中的运行时 Markdown 不属于豁免项。Go CI 提供 PostgreSQL，覆盖数据库相关行为。
 
@@ -764,9 +764,9 @@ PR 仅修改已有 renderer TypeScript/TSX 模块（可同时修改文档）时�
 
 样式、资源、测试环境、运行时插件模块、新增／删除／重命名、依赖、配置和混合范围保持全量单元覆盖。类型检查、开发启动器检查、串行 Git 服务测试及原有 E2E 组均保留。现有 E2E 加载完整 App，共享其依赖闭包，不能因为某测试没有打开某页面就按静态依赖排除该组。安装桌面依赖后，使用 `node --test desktop/scripts/ci-unit-dependencies.test.mjs` 验证依赖选择契约。
 
-桌面 CI 在并行单元测试前串行安装 Electron 二进制，避免并发解压同一目录。macOS 和 Windows 在相关 PR 上保留平台专属测试；macOS 在原生资源或打包输入变化时还验证打包。
+桌面 CI 在并行单元测试前串行安装 Electron 二进制，避免并发解压同一目录。macOS 和 Windows 在相关 PR 和 main 推送上保留平台专属测试；macOS 在原生资源或打包输入变化时还验证打包。
 
-`main` 推送不再重复 Go、Desktop、Clients 或原生测试套件，在改动路径选中原生检查时运行 macOS／Windows 打包，以及 Linux 打包、沙箱和启动门禁。手动 `workflow_dispatch` 执行全部检查和三平台打包。因此直接推送 main 不具备 PR 测试覆盖；需要完整验证时应使用 PR 或手动运行 CI。
+`main` 推送与 PR 按相同差异规则运行 Go 验证／竞态／契约、Desktop 单元／E2E、Clients 和原生平台验证，每次推送还运行 Repository check。保留原有 main 专属 macOS／Windows 打包，以及 Linux 打包、沙箱和启动门禁。手动 `workflow_dispatch` 执行全部检查和三平台打包。自定义 Go 竞态、Swift 和 Windows 原生模块缓存仅在 PR 中恢复；只有成功的 main 推送在精确键未命中时才保存。
 
 `Go check` 仅在路径选择明确排除 Go 时接受 Go 任务跳过。`CI check` 要求路径选择成功、所有选中任务成功；意外跳过、失败或取消都会导致汇总失败。这些汇总不修改仓库保护规则。
 

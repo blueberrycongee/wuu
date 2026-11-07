@@ -53,7 +53,7 @@ def ci_gate(env):
         'SUITES_RESULT': needs['desktop-suite']['result'],
     })
     expected = {
-        'repository-check': env['EVENT'] != 'push',
+        'repository-check': True,
         'desktop-macos-controls': selected['desktop'] == 'true' and 'shell' in json.loads(selected['desktop_suites']),
         'clients-check': selected['clients'] == 'true',
         'macos-check': selected['native'] == 'true',

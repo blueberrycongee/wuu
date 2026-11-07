@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 
 const { suites, entries } = JSON.parse(readFileSync(new URL('./desktop-ci-suites.json', import.meta.url)));
@@ -18,8 +18,10 @@ if (!['pull_request', 'push', 'workflow_dispatch'].includes(event)) {
   throw new Error(`Unsupported CI event: ${event}`);
 }
 
-// Manual runs cover everything. A newly created branch has no before commit.
-if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
+// Missing or non-ancestral push bases cannot safely narrow validation.
+const unusablePushBase = event === 'push' && (!process.env.CI_BASE || /^0+$/.test(process.env.CI_BASE)
+  || spawnSync('git', ['merge-base', '--is-ancestor', process.env.CI_BASE, process.env.CI_HEAD || 'HEAD'], { stdio: 'ignore' }).status !== 0);
+if (event === 'workflow_dispatch' || unusablePushBase || /^0+$/.test(process.env.CI_BASE || '')) {
   all();
 } else {
   if (!process.env.CI_BASE || !process.env.CI_HEAD) throw new Error('Missing CI comparison refs');
@@ -79,16 +81,15 @@ if (event === 'workflow_dispatch' || /^0+$/.test(process.env.CI_BASE || '')) {
 // Unit work retains one selected surface but executes both inventory shards.
 if (desktopSuites.has('unit')) desktopSuites.add('unit-extra');
 
-// Main pushes only check native packaging. PRs own validation and E2E suites.
-const desktopSelection = event !== 'push' && selected.desktop
+const desktopSelection = selected.desktop
   ? suites.filter(suite => fullDesktop || desktopSuites.has(suite)) : [];
 const outputs = {
-  go: event !== 'push' && selected.go,
-  architecture: event !== 'push' && (selected.go || desktopArchitecture),
-  desktop: event !== 'push' && selected.desktop,
-  clients: event !== 'push' && selected.clients,
+  go: selected.go,
+  architecture: selected.go || desktopArchitecture,
+  desktop: selected.desktop,
+  clients: selected.clients,
   native: selected.native,
-  desktop_related: JSON.stringify(event === 'pull_request' && relatedEligible ? relatedSources : []),
+  desktop_related: JSON.stringify(event !== 'workflow_dispatch' && relatedEligible ? relatedSources : []),
   desktop_suites: JSON.stringify(desktopSelection),
   desktop_e2e_suites: JSON.stringify(desktopSelection.filter(suite => !suite.startsWith('unit'))),
 };

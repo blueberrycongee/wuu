@@ -29,26 +29,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 1
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
       - name: Select jobs from the complete change
         id: select
         env:
           CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD: ${{ github.sha }}
         run: |
-          # Selection compares two trees, not history. Fetch the exact base even
-          # when a push spans several commits; failures must not skip checks.
-          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
+          # PRs compare two trees; pushes use full history to verify ancestry.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
             git fetch --no-tags --depth=1 origin "$CI_BASE"
           fi
           node .github/scripts/select-ci.mjs
 
   repository-check:
     name: Repository check
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: ${{ github.event_name == 'push' && '0' || '1' }}
 
       - uses: actions/setup-node@v4
         with:
@@ -62,9 +62,8 @@ jobs:
           CI_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
           CI_HEAD: ${{ github.sha }}
         run: |
-          # Selection compares two trees, not history. Fetch the exact base even
-          # when a push spans several commits; failures must not skip checks.
-          if [ "$GITHUB_EVENT_NAME" != workflow_dispatch ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
+          # PRs compare two trees; pushes use full history to verify ancestry.
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && [ -n "$CI_BASE" ] && ! [[ "$CI_BASE" =~ ^0+$ ]]; then
             git fetch --no-tags --depth=1 origin "$CI_BASE"
           fi
           node .github/scripts/select-ci.mjs
@@ -391,7 +390,8 @@ jobs:
 
       # Ordinary build caches can be saved before any race objects are compiled.
       # Give the race detector one complete cache instead of competing for that key.
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: race-cache
         with:
           path: |
             ~/go/pkg/mod
@@ -440,6 +440,15 @@ jobs:
           name: go-race-runtime-${{ matrix.shard }}-inventory
           path: ${{ runner.temp }}/go-race-shard/manifest.json
           if-no-files-found: warn
+
+      - name: Save Go race cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.race-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/go/pkg/mod
+            ~/.cache/go-build
+          key: ${{ steps.race-cache.outputs.cache-primary-key }}
 
   architecture-conformance:
     name: Public provider conformance / ${{ matrix.suite }}
@@ -2246,7 +2255,8 @@ jobs:
         id: swift-toolchain
         run: echo "digest=$(xcrun swift --version | shasum -a 256 | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: swift-cache
         with:
           path: |
             desktop/native/cua-mac/.build
@@ -2257,15 +2267,12 @@ jobs:
             ${{ runner.os }}-${{ runner.arch }}-swift-${{ steps.swift-toolchain.outputs.digest }}-
 
       - name: Test macOS process sandbox
-        if: github.event_name != 'push'
         run: go test ./internal/processsandbox -count=1
 
       - name: Test macOS PTY lifecycle
-        if: github.event_name != 'push'
         run: go test ./internal/process -run '^Test(PTY|ManagerTTY|StartTTY|WriteStdinToTTY)' -count=1
 
       - name: Test macOS release signing fixtures
-        if: github.event_name != 'push'
         run: |
           npm --prefix desktop run test:release-signing
           npm --prefix desktop run test:release-packaging
@@ -2273,7 +2280,6 @@ jobs:
           node --test desktop/scripts/test-notarization.cjs desktop/scripts/test-release-checkpoint.cjs desktop/scripts/test-update-metadata.cjs
 
       - name: Validate app snapshot and native helpers
-        if: github.event_name != 'push'
         shell: bash
         run: |
           # These Swift packages have separate .build directories and outputs.
@@ -2325,6 +2331,16 @@ jobs:
             execFileSync(process.execPath, ["desktop/scripts/verify-mac-release.cjs", bundles[0]], { stdio: "inherit" });
           })().catch(error => { console.error(error); process.exitCode = 1; });
           NODE
+
+      - name: Save Swift cache
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.swift-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            desktop/native/cua-mac/.build
+            desktop/native/app-context-mac/.build
+            desktop/native/speech-mac/.build
+          key: ${{ steps.swift-cache.outputs.cache-primary-key }}
 
   linux-check:
     name: Linux package check
@@ -2416,7 +2432,6 @@ jobs:
       # contracts. Keep this job focused on the Windows-native boundaries it can
       # validate rather than turning expected POSIX differences into a red gate.
       - name: Test Windows-native runtime boundaries
-        if: github.event_name != 'push'
         run: |
           go test ./internal/process -run '^Test(VerifyProcessGroupRejectsMismatchedRecords|LookupProcessGroupIsPid|PTYUnsupported|TaskkillTreeIgnoresInvalidPids|ProcessExistsSelf)$'
           go test ./internal/mcp -run '^TestStdioTransportCloseTerminatesWindowsDescendants$' -count=1
@@ -2424,7 +2439,6 @@ jobs:
           go test ./internal/tools -run '^TestProcessSandbox(PolicyMapsWorkspaceBoundary|TempRejectsSymlink|PolicyFailsClosedWithoutBackend)$'
 
       - name: Test Windows plugin generation leases
-        if: github.event_name != 'push'
         run: go test ./internal/session -run '^Test(PluginGenerationLease|ReadPluginGenerationEpoch|PluginCatalogMutation|PluginCatalogReadLease)' -count=1 -v
 
       - name: Install Desktop dependencies
@@ -2433,7 +2447,6 @@ jobs:
           npm ci --prefix clients/core
 
       - name: Typecheck Desktop on Windows
-        if: github.event_name != 'push'
         run: npm --prefix desktop run typecheck
 
       - name: Install phone Web dependencies

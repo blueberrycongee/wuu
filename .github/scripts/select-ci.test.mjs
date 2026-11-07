@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 
 const script = resolve('.github/scripts/select-ci.mjs');
 const suites = ['unit', 'unit-extra', 'selection', 'corpus', 'layout', 'session', 'session-lifecycle', 'shell'];
-function select(paths, event = 'pull_request', remove = false) {
+function select(paths, event = 'pull_request', remove = false, comparison = 'normal') {
   const cwd = mkdtempSync(join(tmpdir(), 'wuu-ci-selection-'));
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
   try {
@@ -26,7 +26,9 @@ function select(paths, event = 'pull_request', remove = false) {
     }
     git('add', '-A'); git('commit', '-qm', 'change');
     const stdout = execFileSync(process.execPath, [script], { cwd, encoding: 'utf8', env: {
-      ...process.env, GITHUB_OUTPUT: '', GITHUB_EVENT_NAME: event, CI_BASE: base, CI_HEAD: 'HEAD',
+      ...process.env, GITHUB_OUTPUT: '', GITHUB_EVENT_NAME: event,
+      CI_BASE: comparison === 'missing' ? '' : comparison === 'zero' ? '0'.repeat(40) : comparison === 'unavailable' ? 'f'.repeat(40) : comparison === 'reversed' ? 'HEAD' : base,
+      CI_HEAD: comparison === 'reversed' ? base : 'HEAD',
     } });
     return Object.fromEntries(stdout.split('\n').filter(line => line.includes('=')).map(line => {
       const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)];
@@ -67,8 +69,20 @@ test('documentation excludes Desktop; manual runs restore full coverage', () => 
   assert.deepEqual(JSON.parse(select(['docs/en/project/development.md']).desktop_suites), []);
   assert.deepEqual(JSON.parse(select(['docs/en/project/development.md'], 'workflow_dispatch').desktop_suites), suites);
 });
-test('main push retains existing no-duplicate-test policy', () => {
-  assert.deepEqual(JSON.parse(select(['desktop/scripts/image-layout-e2e.cjs'], 'push').desktop_suites), []);
+test('main pushes select the same validation as PRs for the complete diff', () => {
+  for (const paths of [['docs/en/project/development.md'], ['desktop/scripts/image-layout-e2e.cjs'], ['internal/session/run.go'], ['desktop/src/renderer/LanguagePreferenceSection.tsx'], ['desktop/native/helper.swift']]) {
+    assert.deepEqual(select(paths, 'push'), select(paths), paths.join(','));
+  }
+  assert.deepEqual(select(['desktop/scripts/image-layout-e2e.cjs'], 'push', true), select(['desktop/scripts/image-layout-e2e.cjs'], 'pull_request', true));
+});
+
+test('pushes with an unusable before revision fail closed to full coverage', () => {
+  for (const comparison of ['missing', 'zero', 'unavailable', 'reversed']) {
+    const result = select(['docs/en/project/development.md'], 'push', false, comparison);
+    for (const job of ['go', 'architecture', 'desktop', 'clients', 'native']) assert.equal(result[job], 'true', `${comparison}: ${job}`);
+    assert.deepEqual(JSON.parse(result.desktop_suites), suites, comparison);
+    assert.deepEqual(JSON.parse(result.desktop_related), [], comparison);
+  }
 });
 
 test('ordinary renderer edits pass source paths to dependency-based unit selection', () => {
@@ -105,7 +119,7 @@ test('architecture conformance follows shared changes and existing event policy,
   assert.equal(select(['desktop/src/renderer/LanguagePreferenceSection.tsx']).architecture, 'false');
   assert.equal(select(['docs/en/project/development.md']).architecture, 'false');
   assert.equal(select(['docs/en/project/development.md'], 'workflow_dispatch').architecture, 'true');
-  assert.equal(select(['desktop/src/main/trustedRemoteTransport.ts'], 'push').architecture, 'false');
+  assert.equal(select(['desktop/src/main/trustedRemoteTransport.ts'], 'push').architecture, 'true');
 });
 
 test('MCP authentication lifecycle inputs select required architecture and desktop unit gates', () => {

@@ -94,7 +94,8 @@ jobs:
           node -e "const electron = require('electron'); if (!electron) process.exit(1); console.log(electron)"
 
       - name: Restore Electron native module build
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
+        id: windows-pty-cache
         with:
           # npm ci has already restored the exact sources. Electron rebuild still
           # checks its architecture/ABI marker before reusing these build outputs.
@@ -159,3 +160,10 @@ jobs:
             desktop/release/builder-effective-config.yaml
           if-no-files-found: error
           retention-days: 14
+
+      - name: Save Electron native module build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.windows-pty-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: desktop/node_modules/node-pty/build/Release
+          key: ${{ steps.windows-pty-cache.outputs.cache-primary-key }}
