@@ -95,8 +95,11 @@ func TestOpenCodeStreamingReconciliationAndResume(t *testing.T) {
 		if ref != "ses_native" || result.Result.Content != "Hello world" || text.String() != "Hello world" || done != 1 || approvals != 1 || ends != 1 {
 			t.Fatalf("ref=%s result=%+v text=%q done=%d approvals=%d ends=%d", ref, result, text.String(), done, approvals, ends)
 		}
-		if result.Result.InputTokens != 10 || result.Result.OutputTokens != 5 || result.Result.CacheReadTokens != 2 || len(result.Result.NewMessages) != 1 || result.Result.NewMessages[0].ReasoningContent != "Thinking" {
+		if result.Result.InputTokens != 10 || result.Result.OutputTokens != 5 || result.Result.CacheReadTokens != 2 || len(result.Result.NewMessages) != 2 || result.Result.NewMessages[0].ReasoningContent != "Thinking" {
 			t.Fatalf("missing or duplicated usage/reasoning: %+v", result)
+		}
+		if result.Result.NewMessages[1].Role != "tool" || result.Result.NewMessages[1].Content != "file contents" {
+			t.Fatalf("missing tool result message: %+v", result.Result.NewMessages)
 		}
 	}
 }

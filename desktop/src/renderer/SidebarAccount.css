@@ -26,8 +26,7 @@
   grid-template-columns: var(--sidebar-nav-icon-col, 18px) minmax(0, 1fr);
 }
 
-.sidebar-account-trigger:hover,
-.sidebar-account-trigger[aria-expanded="true"] {
+.sidebar-account-trigger:hover {
   background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
 }
 
@@ -75,7 +74,6 @@
   font-weight: var(--sidebar-label-weight, 500);
 }
 
-.sidebar-account-trigger > svg { justify-self: center; flex-shrink: 0; color: var(--ink-muted); }
 .sidebar-account-menu {
   width: var(--floating-menu-available-width);
   min-width: 0;
