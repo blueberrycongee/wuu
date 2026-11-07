@@ -466,7 +466,7 @@ export function composerSlashPrompt(command: ComposerSlashCommand, args: string)
   return `/${command.name}${instructions ? ` ${instructions}` : " "}`;
 }
 
-function buildSkillSlashCommands(skills: SkillSummary[], disabledReason?: string): ComposerSlashCommand[] {
+export function buildSkillSlashCommands(skills: SkillSummary[], disabledReason?: string): ComposerSlashCommand[] {
   const seen = new Set<string>();
   const out: ComposerSlashCommand[] = [];
   for (const skill of [...skills].sort(compareSkillSummaries)) {

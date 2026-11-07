@@ -357,7 +357,17 @@ export interface PluginUIConversationAttachmentProps {
   onLoad(): void | Promise<string | void>;
 }
 
+export type PluginUIConversationCommand = {
+  id: string;
+  name: string;
+  description: string;
+} & ({ kind: "skill"; skill: import("./ui-catalog.js").CatalogSkillV1 } | { kind: "action"; onSelect(): void | Promise<void> });
+
 export interface PluginUIConversationComposerProps {
+  commands?: readonly PluginUIConversationCommand[];
+  commandsLoading?: boolean;
+  commandsError?: string;
+  onRefreshCommands?(): void;
  replyContext?: { label: string; preview: string; cancelLabel: string; onCancel(): void };
   conversationId: string;
   /** Discover connectors in this independent conversation's host. */
@@ -1680,11 +1690,14 @@ export interface HostServiceContracts {
       /** Requires explicit request_id and session.progress.v1 host feature.
        * Samples current display progress without subscribing or changing work. */
       include_progress?: boolean;
+      /** Discover user-invocable skills in an owned session, never the active Coding workspace. */
+      include_skills?: boolean;
     };
     result: {
       receipt?: ClientInputReceipt;
       accepted_input?: AcceptedClientInputView;
       pending_inputs?: AcceptedClientInputView[];
+      skills?: import("./ui-catalog.js").CatalogSkillV1[];
       session: {
         session_id: string;
         /** Present only when the calling plugin owns this session. */

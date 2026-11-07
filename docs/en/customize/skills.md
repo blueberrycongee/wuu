@@ -16,6 +16,14 @@ The Wuu engine gives the model a catalog of skill names and descriptions. When a
 
 Availability depends on the workspace, discovered sources, and current tool surface. A skill that requires unavailable tools may be filtered out. Requirements can name reachable built-in, plugin, or MCP tools by their exact published names, including deferred and PTC tools. Session tool restrictions apply to those requirements even before a tool is discovered or loaded. They never enable a disabled tool or grant permissions. Inspect the source path if the wrong version appears.
 
+## Twin skills
+
+Twin's main and reply composers expose user-invocable skills through `/`. Type to filter, use Up/Down and Enter or Tab to select, then add your request and send. Escape closes the menu; Shift+Enter adds a line. `/settings` opens Twin's existing settings panel without sending a message.
+
+Install a Twin skill at `$WUU_HOME/user-spaces/<space>/personal/files/.agents/skills/<name>/SKILL.md`. The default local space is `local`. Twin reads only that product's directory, not Coding projects, global skills, or their settings. The existing `skills.enabled` setting must be enabled. Reopen Twin to refresh the menu after installing a skill; submission always rechecks its identity and current availability. Discovery failures retain the draft and offer Retry.
+
+Selected skills are expanded only for authenticated user messages. Their contents are saved when the message is accepted, so queued messages and receipt retries retain the same instructions and attachments. Plugin wakeups remain literal. Unknown commands, file paths and multiline text remain ordinary messages.
+
 ## Editing a local skill
 
 Project and user skill edits do not require a runtime restart. Browsing rereads the local catalog with a short cache; model rounds adopt changes at the next safe step boundary, adding a catalog update only when its visible entries change. Loading a local skill reads the current instructions from that admitted file and rechecks invocation and tool requirements. A missing, renamed, retargeted, or malformed file cannot silently supply stale instructions or switch that load to another same-name source.

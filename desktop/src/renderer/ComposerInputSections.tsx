@@ -30,7 +30,8 @@ import {
 } from "./WuuIcons";
 import { type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useOptionalImagePreview } from "./ImagePreview";
-import { isComposerTextComposing } from "./ComposerSlashCommands";
+import { isComposerTextComposing, parseComposerSlashDraft, composerSlashPrompt, type ComposerSlashCommand } from "./ComposerSlashCommands";
+import { useConversationCommands } from "./useConversationCommands";
 import {
   CollapsedComposerPromptCard,
   rememberCollapsedPromptParts,
@@ -138,6 +139,7 @@ export function ComposerContinueButton({ continuation, disabled }: {
 
 export function SplitPaneComposer({
   pluginHost,
+  slashCommands, commandsLoading, commandsError, onRefreshCommands, onCommandAction,
   placeholder,
   framed = false,
   allowWorkspaceReferences = true,
@@ -172,6 +174,11 @@ export function SplitPaneComposer({
   onInterrupt,
 }: {
   pluginHost?: PluginHost;
+  slashCommands?: ComposerSlashCommand[];
+  commandsLoading?: boolean;
+  commandsError?: string;
+  onRefreshCommands?(): void;
+  onCommandAction?(command: ComposerSlashCommand): void;
   placeholder?: string;
   framed?: boolean;
   allowWorkspaceReferences?: boolean;
@@ -323,6 +330,9 @@ export function SplitPaneComposer({
     inputDraftUpdates.current.push(nextPrompt);
     setPrompt(nextPrompt);
   }
+  const commandMenu = useConversationCommands({ commands: slashCommands, value: visiblePromptValue, setValue: updateVisiblePrompt,
+    disabled: readOnly || hasCollapsedPromptBlocks || cameraOpen || dictation.active, inputRef: textareaRef, anchorRef: shellRef,
+    onAction: onCommandAction, loading: commandsLoading, error: commandsError, refresh: onRefreshCommands });
   const services = useComposerServices();
   const pluginServices = useComposerPluginServices();
   const inline = useComposerInlineCompletion({
@@ -395,7 +405,12 @@ export function SplitPaneComposer({
 
   function submitDraft(promptOverride?: string): void {
     const visiblePrompt = promptOverride ?? textareaRef.current?.value ?? visiblePromptValue;
-    const currentPrompt = promptOverride ?? (hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${visiblePrompt}` : visiblePrompt);
+    let currentPrompt = promptOverride ?? (hasCollapsedPromptBlocks ? `${collapsedPromptPrefix}${visiblePrompt}` : visiblePrompt);
+    const commandDraft = slashCommands && !hasCollapsedPromptBlocks && !currentPrompt.includes("\n") ? parseComposerSlashDraft(currentPrompt) : undefined;
+    const command = commandDraft && slashCommands?.find(item => item.name.toLowerCase() === commandDraft.query);
+    if (command?.disabledReason || commandDraft && !commandDraft.query.includes("/") && (commandsLoading || commandsError) && command?.kind !== "action") return;
+    if (command?.kind === "action" && !commandDraft?.args) { commandMenu.apply(command); return; }
+    if (command?.kind === "skill") currentPrompt = composerSlashPrompt(command, commandDraft?.args ?? "");
     const currentSignature = JSON.stringify([currentPrompt, images.map(image => image.id), files.map(file => file.id), selections]);
     if (readOnly || sendDisabled || submittedDraftRef.current === currentSignature) return;
     resetQueryHistoryNavigation();
@@ -441,9 +456,10 @@ export function SplitPaneComposer({
     if (readOnly) {
       return;
     }
-    if (isComposerTextComposing(event)) {
+    if (composing.current || isComposerTextComposing(event) || event.keyCode === 229) {
       return;
     }
+    if (commandMenu.handleKeyDown(event)) return;
     if (pluginMenu.handleKeyDown(event)) return;
     if (event.key === "Tab") {
       if (!event.shiftKey && !event.altKey && !event.ctrlKey && !event.metaKey && !event.repeat && inline.actions.accept()) {
@@ -474,6 +490,7 @@ export function SplitPaneComposer({
       <div className="composer-stack">
         <DictationErrorToast key={dictation.sessionId} message={dictation.error} />
         <div className="composer-shell" ref={shellRef}>
+          {commandMenu.menu}
           <div className="composer-frame-shell">
             {cameraOpen && !readOnly ? (
               <ComposerCameraPanel onCapture={captureCamera} onClose={closeCamera} />
@@ -540,10 +557,10 @@ export function SplitPaneComposer({
                   {dictation.active && dictation.api && <DictationRecording api={dictation.api} sessionId={dictation.sessionId} phase={dictation.phase} stop={dictation.stop} cancel={dictation.cancel} />}
                   <div className="composer-bar-left">
                     {framed || services ? (
-                      <ComposerPlusButton variant="dock" disabled={readOnly} commands={[]} pluginMenu={pluginMenu} menuAnchorRef={shellRef}
+                      <ComposerPlusButton variant="dock" disabled={readOnly} commands={slashCommands ?? []} pluginMenu={pluginMenu} menuAnchorRef={shellRef}
                         onAddAttachment={() => attachmentInputRef.current?.click()}
                         mobileAttachments={mobileWeb ? { onTakePhoto: openCamera, onPickPhotos: () => photosInputRef.current?.click(), onPickFiles: () => attachmentInputRef.current?.click() } : undefined}
-                        onSelectCommand={() => {}} />
+                        onSelectCommand={commandMenu.apply} />
                     ) : mobileWeb ? (
                       <ComposerAttachMenuButton
                         variant="dock"
@@ -574,8 +591,9 @@ export function SplitPaneComposer({
                     disabled={readOnly || dictation.active}
                     aria-readonly={readOnly || dictation.active}
                     aria-describedby={inline.text ? inline.descriptionId : undefined}
-                    onFocus={() => inline.observe()}
-                    onBlur={() => inline.observe()}
+                    aria-controls={commandMenu.controls} aria-expanded={commandMenu.open || undefined} aria-activedescendant={commandMenu.activeDescendant}
+                    onFocus={() => { commandMenu.onFocus(); inline.observe(); }}
+                    onBlur={() => { commandMenu.onBlur(); inline.observe(); }}
                     onSelect={() => inline.observe()}
                     onCompositionStart={() => { composing.current = true; inline.observe(true); }}
                     onCompositionEnd={() => { composing.current = false; inline.observe(false); }}

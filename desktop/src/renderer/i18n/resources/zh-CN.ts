@@ -766,6 +766,7 @@ export const zhCN = {
   "plugins.retrySurface": "重试",
   "plugins.surfaceUnavailable": "插件视图未能显示。请在设置中查看详情。",
   "plugins.viewUnavailable": "插件视图不可用。",
+  "composer.retryCommands": "重试",
   "common.loading": "加载中",
   "common.loadingEllipsis": "加载中…",
   "common.back": "返回",

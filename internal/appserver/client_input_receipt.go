@@ -282,6 +282,9 @@ func (s *Server) materializeAcceptedClientInput(binding *runtime.State, entry *q
 	if err != nil {
 		return err
 	}
+	// Keep the instructions frozen at acceptance, including across restarts.
+	msg.Content = entry.msg.Content
+	msg.DisplayContent = proof.Prompt
 	msg, err = s.persistInputWorkingCopies(context.Background(), entry.clientInput.Receipt.SessionID, msg, received, false)
 	if err != nil {
 		return err

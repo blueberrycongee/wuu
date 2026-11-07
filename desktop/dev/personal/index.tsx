@@ -227,6 +227,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
   if(offline)throw new Error("演示：宿主暂时离线。未发送的内容会保留，请连接后重试。");
   const data=input as Record<string,any> || {};
   switch(method){
+    case "agents.skills":return {skills:[]};
     case "agents.list":return {agents:empty?[]:agents,default_agent_id:"mosaic"};
     case "agents.ensure_default":empty=false;return {agent:agents[0]};
     case "agents.update": {
@@ -444,7 +445,7 @@ if (params.has("messageFlow")) {
 }
 async function start(){
   const scoped = (window as unknown as {__scopedFixture?: {call(method:string):Promise<any>}}).__scopedFixture;
-  const personalSource = params.has("genui") && scoped ? (await scoped.call("personal-source")) : undefined;
+  const personalSource = (params.has("genui") || params.has("commands")) && scoped ? (await scoped.call("personal-source")) : undefined;
   const personalID = personalSource?.id ?? "personal";
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"wuu.default-application",generation:"fixture",register:activateApplication});
   await host.selectApplicationBinding({pluginId:"wuu.default-application",generation:"fixture",id:"ui.application"});
@@ -460,6 +461,6 @@ async function start(){
   await host.activateGeneration({graphGeneration:"fixture-graph",pluginId:"automations",generation:"synthetic-ui-fixture",contributions:{navigation:[{id:"automations",title:"Automations",view:"automations.home",icon:{name:"clock"},order:40}]},register(api){api.registerViewType({id:"automations.home",title:"Automations",defaultRegion:"primary",render:()=> <div className="plugin-ui-page">合成 Automations 入口</div>});}});
   if (params.get("presentation") !== "standard") await controller.openPluginView(personalID, "personal.home");
   createRoot(document.getElementById("root")!).render(<FixtureSurface/>);
-  (window as any).mosaicFixture={host,controller,setOffline:(value:boolean)=>{offline=value;},setEmpty:(value:boolean)=>{empty=value;},state:()=>({agents,tasks,memories}),setActivity,synthetic:true};
+  (window as any).mosaicFixture={host,controller,application:fixtureApplication,openPersonal:()=>controller.openPluginView(personalID,"personal.home"),setOffline:(value:boolean)=>{offline=value;},setEmpty:(value:boolean)=>{empty=value;},state:()=>({agents,tasks,memories}),setActivity,synthetic:true};
 }
 start().catch(error=>{document.body.textContent=String(error);console.error(error);});

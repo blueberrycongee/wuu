@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/blueberrycongee/wuu/internal/skills"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -534,5 +536,74 @@ func TestAuthenticatedClientTerminalReceiptUsesExecutedTurnIdentity(t *testing.T
 			}
 			assertFakeClientRequestCount(t, client, 1)
 		})
+	}
+}
+
+// Explicit owner skills must resolve in the owned session, freeze before queuing,
+// preserve attachments on admission, and never reinterpret plugin wakeups.
+func TestAuthenticatedClientSkillAdmission(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	rt.UserSpaceID, rt.ProductDomain = "local", "personal"
+	rt.Skills = []skills.Skill{{Name: "fixture-skill", Source: "user", UserInvocable: true, Content: "FROZEN_SKILL_INSTRUCTIONS"}}
+	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "fixture"}}}
+	attachTestModelGeneration(t, rt, &pluginClientRequestTestRuntime{id: "fixture"})
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	ctx := pluginInvocationContext(t, rt, context.Background())
+	created, err := srv.createPluginSession(ctx, "fixture", pluginhost.SessionCreateParams{RequestID: "create", Visibility: "plugin", ContextSource: "fresh", AgentID: "assistant"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	th := srv.thread(created.SessionID)
+	th.mu.Lock()
+	th.running = true
+	th.mu.Unlock()
+	t.Cleanup(func() { th.mu.Lock(); th.running = false; th.mu.Unlock() })
+	catalog, err := srv.inspectPluginSession(ctx, "fixture", pluginhost.SessionInspectParams{SessionID: th.ID, IncludeSkills: true})
+	if err != nil || len(catalog.Skills) != 1 || catalog.Skills[0].Name != "fixture-skill" {
+		t.Fatalf("owned catalog: %+v %v", catalog.Skills, err)
+	}
+	if _, err = srv.inspectPluginSession(ctx, "another-plugin", pluginhost.SessionInspectParams{SessionID: th.ID, IncludeSkills: true}); err == nil {
+		t.Fatal("foreign plugin read owned skills")
+	}
+	for _, prompt := range []string{`/skill {"name":"missing","source":"user","path":""}`, `/skill not-json`} {
+		proof := runtime.ClientUserInput{RequestID: "invalid", Prompt: prompt}
+		_, err = srv.sendPluginSession(pluginInvocationContext(t, rt, runtime.WithClientUserInput(context.Background(), "fixture", proof)), "fixture", pluginhost.SessionSendParams{RequestID: "invalid", UserInputRequestID: proof.RequestID, SessionID: th.ID, Input: pluginhost.SessionInput{Prompt: prompt}})
+		if err == nil {
+			t.Fatal("invalid selection was admitted")
+		}
+	}
+	prompt := `/skill {"name":"fixture-skill","source":"user","path":""}` + "\n\n中文 argument"
+	raw := []byte("attached context")
+	digest := fmt.Sprintf("%x", sha256.Sum256(raw))
+	proof := runtime.ClientUserInput{RequestID: "selected", Prompt: prompt, Attachments: []runtime.ClientInputAttachment{{SHA256: digest, Filename: "context.txt", MediaType: "text/plain", Data: base64.StdEncoding.EncodeToString(raw)}}}
+	params := pluginhost.SessionSendParams{RequestID: "selected", UserInputRequestID: proof.RequestID, SessionID: th.ID, IfRunning: "queue", Input: pluginhost.SessionInput{Prompt: prompt, Attachments: []pluginhost.SessionInputAttachment{{SHA256: digest, Filename: "context.txt", MediaType: "text/plain"}}}}
+	admitted := pluginInvocationContext(t, rt, runtime.WithClientUserInput(context.Background(), "fixture", proof))
+	ack, err := srv.sendPluginSession(admitted, "fixture", params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, found, err := th.state.Sessions.ReadClientInput(srv.clientInputScope(th.ID, "fixture"), "selected")
+	if err != nil || !found {
+		t.Fatalf("accepted input: %v %v", found, err)
+	}
+	entry, err := clientInputQueuedTurn(row)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(entry.msg.Content, "FROZEN_SKILL_INSTRUCTIONS") || !strings.Contains(entry.msg.Content, "中文 argument") || entry.msg.DisplayContent != prompt {
+		t.Fatalf("skill not frozen: %+v", entry.msg)
+	}
+	// The queued snapshot must survive catalog changes and attachment materialization.
+	rt.Skills = nil
+	if err = srv.materializeAcceptedClientInput(th.state, &entry); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(entry.msg.Content, "FROZEN_SKILL_INSTRUCTIONS") || len(entry.msg.Files) != 1 || entry.msg.Files[0].LocalPath == "" {
+		t.Fatalf("lost skill or attachment: %+v", entry.msg)
+	}
+	again, err := srv.sendPluginSession(admitted, "fixture", params)
+	if err != nil || again.QueueID != ack.QueueID {
+		t.Fatalf("retry re-resolved skill: %+v %v", again, err)
 	}
 }

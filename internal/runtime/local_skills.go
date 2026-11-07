@@ -19,7 +19,19 @@ func (s *Session) bindLocalSkillRefresh(kit *tools.Toolkit, root string, generat
 		return
 	}
 	if s.UserBinding().IsUser() {
-		kit.SetSkillRefresh(nil)
+		// Only explicit installs in this user's product files belong to this host.
+		// Do not search Coding/global directories or ancestor projects.
+		cfg := s.skillsConfig
+		if generation != nil {
+			cfg = generation.settings.Skills
+		}
+		kit.SetSkillRefresh(func(ctx context.Context, _ bool) ([]skills.Skill, error) {
+			if !cfg.IsEnabled() {
+				return nil, ctx.Err()
+			}
+			items, _, err := skills.DiscoverLocal(ctx, []skills.SourceDir{{Path: filepath.Join(s.RootDir, ".agents", "skills"), Source: "user"}}, nil)
+			return items, err
+		})
 		return
 	}
 	plugins, cfg := s.pluginSkills, s.skillsConfig
