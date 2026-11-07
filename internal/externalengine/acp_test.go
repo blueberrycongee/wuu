@@ -856,6 +856,10 @@ func TestACPHelper(t *testing.T) {
 				fmt.Fprintln(os.Stderr, "token sk-abcdefghijklmnopqrstuvwxyz0123456789ABCDEF")
 				continue
 			}
+			if scenario == "env" {
+				// Devin publishes its model configuration asynchronously.
+				write(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "native-session", "update": map[string]any{"sessionUpdate": "config_option_update", "configOptions": []any{}}}})
+			}
 			result = map[string]any{"sessionId": "native-session"}
 		case "session/set_model":
 			var params struct {
@@ -1046,7 +1050,8 @@ func TestACPHelper(t *testing.T) {
 				break
 			}
 			if scenario == "env" {
-				text(os.Getenv("HOME"))
+				backend, set := os.LookupEnv("ACP_BACKEND")
+				text(fmt.Sprintf("%s|%s|%t", os.Getenv("HOME"), backend, set))
 				result = map[string]string{"stopReason": "end_turn"}
 				break
 			}
@@ -1120,18 +1125,30 @@ func TestACPHelper(t *testing.T) {
 func TestACPChildInheritsParentEnvironment(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := testEngine(t, "env").SessionForThread(ctx, testBinding())
-	if err != nil {
-		t.Fatal(err)
-	}
-	result, err := session.RunTurn(ctx, testInput(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Result.Content != home {
-		t.Fatalf("ACP child HOME = %q, want inherited %q", result.Result.Content, home)
+	for _, tc := range []struct {
+		engine, backend, want string
+	}{
+		{engine: "test", backend: "windsurf", want: home + "|windsurf|true"},
+		// Devin Desktop exports ACP_BACKEND to what it launches; passed on, it
+		// makes Devin ignore the user's CLI login and wait for host credentials.
+		{engine: "devin", backend: "windsurf", want: home + "||false"},
+	} {
+		t.Run(tc.engine+"/"+tc.backend, func(t *testing.T) {
+			t.Setenv("ACP_BACKEND", tc.backend)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			session, err := testEngineID(t, tc.engine, "env").SessionForThread(ctx, testBinding())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := session.RunTurn(ctx, testInput(), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if result.Result.Content != tc.want {
+				t.Fatalf("ACP child environment = %q, want %q", result.Result.Content, tc.want)
+			}
+		})
 	}
 }
 
