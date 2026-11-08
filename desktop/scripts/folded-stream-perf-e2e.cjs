@@ -168,8 +168,16 @@ async function run() {
 
   await stream(30);
   const followMarker = `module-${index - 1}`;
-  const followed = await waitFor(win, new Function(`const text = document.querySelector(${JSON.stringify(textSelector)})?.textContent ?? "";
-    return text.includes(${JSON.stringify(followMarker)});`), 3000);
+  // Following means the latest text is rendered and its scroll container stays
+  // pinned to the bottom.
+  const followed = await waitFor(win, new Function(`const node = document.querySelector(${JSON.stringify(textSelector)});
+    if (!node?.textContent?.includes(${JSON.stringify(followMarker)})) return false;
+    for (let el = node.parentElement; el && !el.matches(${JSON.stringify(foldSelector)}); el = el.parentElement) {
+      if (el.scrollHeight > el.clientHeight + 1 && /auto|scroll/.test(getComputedStyle(el).overflowY)) {
+        return el.scrollHeight - el.clientHeight - el.scrollTop < 32;
+      }
+    }
+    return true;`), 3000).catch(() => false);
   assert.equal(followed, true, "An open fold must keep following the live stream.");
   await delay(400);
   fs.writeFileSync(path.join(output, `${scenario}-expanded.png`), (await win.webContents.capturePage()).toPNG());
