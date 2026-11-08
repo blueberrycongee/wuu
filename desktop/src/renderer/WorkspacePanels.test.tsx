@@ -310,7 +310,7 @@ describe("WorkspaceRightPanel", () => {
     };
     try {
       await host.activateGeneration({ pluginId: "broken", generation: "one", register });
-      mount(<WorkspaceRightPanel {...baseProps()} slots={slots} />);
+      mount(<WorkspaceRightPanel {...baseProps()} open={false} slots={slots} />);
       const rail = container!.querySelector(".workspace-tool-rail-contributions")!;
       const healthy = rail.querySelector("button");
       expect(rail.textContent).toBe("Healthy");
@@ -333,6 +333,12 @@ describe("WorkspaceRightPanel", () => {
       for (const id of ["broken", "healthy", "wuu.default-preview"]) host.unload(id);
       errorLog.mockRestore();
     }
+  });
+  it("hides the tool rail while the panel is open and restores it on close", async () => {
+    mount(<WorkspaceRightPanel {...baseProps()} />);
+    expect(container!.querySelector('[data-wuu-component="workspace-tool-rail"]')).toBeNull();
+    await act(async () => root!.render(<WorkspaceRightPanel {...baseProps()} open={false} />));
+    expect(container!.querySelector('[data-wuu-component="workspace-tool-rail"]')).not.toBeNull();
   });
   it("keeps a legacy provider's conversation tab selectable without offering an unsupported close", () => {
     mount(<WorkspaceRightPanel {...baseProps()} globalized legacyPreview

@@ -749,7 +749,7 @@ function WorkspacePanelContent({
 
   return (
     <>
-    {!covered && toolsVisible ? (
+    {!covered && toolsVisible && !open ? (
       <nav className={toolRailCollapsed ? "workspace-tool-rail-collapsed" : "workspace-tool-rail"}
         aria-label={t("workspace.tools")} data-wuu-component="workspace-tool-rail">
         <Tooltip content={t(toolRailCollapsed ? "workspace.expandTools" : "workspace.collapseTools")}>
