@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Pasted text in sent messages — design draft</title></head>
+  <body><div id="root"></div><script>
+    const showFixtureError = (text) => {
+      const pre = document.createElement("pre");
+      pre.style.cssText = "color:#b42318;padding:16px;white-space:pre-wrap;font:12px/1.5 monospace";
+      pre.textContent = text;
+      document.body.appendChild(pre);
+    };
+    window.addEventListener("error", (event) => showFixtureError(event.error?.stack || event.message));
+    window.addEventListener("unhandledrejection", (event) => showFixtureError(event.reason?.stack || String(event.reason)));
+  </script><script type="module" src="./renderer.tsx?v=2"></script></body>
+</html>

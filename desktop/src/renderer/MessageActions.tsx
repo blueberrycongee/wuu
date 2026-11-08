@@ -297,12 +297,15 @@ export function MessageFileList({
   files,
   onRemove,
   collapsedLimit,
+  tile,
 }: {
   files: InputFile[];
   /** When provided, each file gets a remove button (used inside the inline editor). */
   onRemove?: (index: number) => void;
   /** Static message lists collapse after this many files. Editors always show all files. */
   collapsedLimit?: number;
+  /** Renders files as 72px page tiles to match the user-message media row. */
+  tile?: boolean;
 }): JSX.Element {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -318,7 +321,7 @@ export function MessageFileList({
   }, [files.length]);
 
   return (
-    <div className={`message-files${onRemove ? " message-files-editable" : ""}`}>
+    <div className={`message-files${onRemove ? " message-files-editable" : ""}${tile ? " message-files-tile" : ""}`}>
       {visibleFiles.map((file, index) => {
         const filename = file.filename?.trim() || t("message.fileNumber", { number: index + 1 });
         const { stem, extension } = fileNameParts(filename);
