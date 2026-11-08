@@ -27,8 +27,8 @@
   justify-content: space-between;
   gap: 8px;
   padding: var(--control-padding-block) var(--control-padding-inline);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-control);
   background: var(--field-bg);
   color: var(--ink);
   font: inherit;
@@ -44,11 +44,11 @@
 
 .select-menu-trigger:hover:not(:disabled) {
   background: var(--field-hover-bg);
-  border-color: var(--hairline-strong);
+  border-color: var(--field-border-hover);
 }
 
 .select-menu-trigger[aria-expanded="true"] {
-  border-color: var(--hairline-strong);
+  border-color: var(--field-border-hover);
 }
 
 .select-menu-trigger:disabled {
@@ -196,14 +196,7 @@
 
 /* Settings inputs and dropdown triggers share the same field material. */
 .select-menu-trigger.settings-select-trigger {
-  border-color: var(--hairline);
-  background: var(--field-bg);
-  font-weight: 400;
-}
-
-.select-menu-trigger.settings-select-trigger:hover:not(:disabled) {
-  background: var(--field-hover-bg);
-  border-color: var(--hairline);
+  font-weight: var(--weight-regular);
 }
 
 .select-menu-trigger.settings-select-trigger:disabled {
@@ -212,8 +205,6 @@
 
 .select-menu-trigger.settings-select-trigger[aria-expanded="true"] {
   background: var(--field-hover-bg);
-  border-color: var(--hairline);
-  box-shadow: none;
 }
 
 /* ---- panel (the open option list) ---------------------------------- */
@@ -302,8 +293,11 @@
   background: transparent;
   color: var(--ink);
   font: inherit;
-  font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
+  /* The open list is the same control as the closed trigger: same size and
+     weight, so opening a dropdown does not swap typography. The check mark
+     carries selection. */
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
   line-height: var(--line-ui);
   text-align: left;
   cursor: pointer;
