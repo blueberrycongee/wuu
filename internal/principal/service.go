@@ -9,7 +9,6 @@ import (
 )
 
 const ServiceName = "identity.authentication"
-const ServiceMajor = 1
 
 type Client struct {
 	call func(context.Context, string, json.RawMessage) (json.RawMessage, error)
