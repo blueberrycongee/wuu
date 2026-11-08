@@ -22,6 +22,10 @@ export function installFixtureBridge(invoke: NonNullable<PluginHostOptions["invo
     setPluginStorage: async ({id,key,scope,value}: {id:string;key:string;scope:string;value:string}) => { localStorage.setItem(`fixture:${id}:${scope}:${key}`, value); },
     getBuildInfo: async () => ({ desktop: { version: "synthetic-fixture" } }),
     listMCPServers: async (context?: RuntimeContext) => {
+      if (scoped && new URLSearchParams(location.search).has("commands")) {
+        if (context?.kind !== "user") throw new Error("Expected user-scoped connector request");
+        return scoped.call("mcp/list", { user_space_id: context.user_space_id, product_domain: context.product_domain });
+      }
       if (!new URLSearchParams(location.search).has("mcp")) return { servers: [] };
       mcpFixture.contexts.push(context);
       const personal = context?.kind === "user" && context.product_domain === "personal" && context.user_space_id === "local";
