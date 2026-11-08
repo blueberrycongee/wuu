@@ -3,9 +3,11 @@ import { TruncatedText } from "./TruncatedText";
 import {
   AlertCircle,
   AlertTriangle,
+  Bot,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Layers,
   Monitor,
   MoreHorizontal,
   PackagePlus,
@@ -15,6 +17,7 @@ import {
   PanelRight,
   RefreshCw,
   Settings,
+  Sparkles,
   Terminal,
 } from "./WuuIcons";
 import { PluginBlocksIcon } from "./PluginBlocksIcon";
@@ -455,6 +458,7 @@ function SkillsCatalogView({
             const bounds = button.getBoundingClientRect();
             setPackageActionMenu({ record: selectedPlugin, x: bounds.right, y: bounds.bottom + 4 });
           }}
+          relatedPluginName={pluginName}
         />
         {previewSkill ? (
           <SkillPreviewDialog
@@ -756,8 +760,9 @@ export function pluginSourceLabel(record: ExtensionInventoryRecord, t: ReturnTyp
 
 type PluginContribution = { key: string; icon: ReactNode; title: string; kind: string; onOpen?: () => void };
 
-// What a plugin adds that people meet in Wuu: pages, commands, skills, and
-// themes. Agent tools and host wiring are the plugin's own business.
+// What a plugin adds that people meet in Wuu: pages, commands, skills, the
+// tools it lends the agent, and appearance packages. Host wiring is the
+// plugin's own business.
 function pluginContributions(
   record: ExtensionInventoryRecord,
   skills: readonly SkillSummary[],
@@ -784,17 +789,36 @@ function pluginContributions(
       kind: t("skills.addsSkill"),
       onOpen: () => onPreviewSkill(skill),
     })),
+    ...(record.conversation_tools ?? []).map((tool) => ({
+      key: `tool:${tool}`,
+      icon: <Bot className="icon" aria-hidden="true" />,
+      title: tool,
+      kind: t("skills.addsAgentTool"),
+    })),
     ...(contributions?.themes ?? []).map((theme) => ({
       key: `theme:${theme.id}`,
       icon: <Monitor className="icon" aria-hidden="true" />,
       title: theme.name,
       kind: t("skills.addsTheme"),
     })),
+    ...(contributions?.skins ?? []).map((skin) => ({
+      key: `skin:${skin.id}`,
+      icon: <Sparkles className="icon" aria-hidden="true" />,
+      title: skin.name,
+      kind: t("skills.addsSkin"),
+    })),
+    ...(contributions?.presenters ?? []).map((presenter) => ({
+      key: `presenter:${presenter.id}`,
+      icon: <Layers className="icon" aria-hidden="true" />,
+      title: presenter.title || presenter.id,
+      kind: t("skills.addsPresenter"),
+    })),
   ];
 }
 
-// Keep identity and enablement together, then put configuration before reference
-// content. Approval notices and permissions precede both when a decision is due.
+// The page reads in the order questions arrive: what it is and what it is
+// waiting for, what it may touch, what it adds to Wuu, its longer story, its
+// settings, then the quiet reference facts.
 function PluginDetailPage({
   record,
   skills,
@@ -810,6 +834,7 @@ function PluginDetailPage({
   onPreviewSkill,
   onMoreActions,
   backLabel,
+  relatedPluginName,
 }: {
   backLabel?: string;
   record: ExtensionInventoryRecord;
@@ -825,6 +850,7 @@ function PluginDetailPage({
   onReload: () => void;
   onPreviewSkill: (skill: SkillSummary) => void;
   onMoreActions: (button: HTMLButtonElement) => void;
+  relatedPluginName: (id: string) => string;
 }): JSX.Element {
   const { t } = useI18n();
   const primaryAction = extensionPackagePrimaryAction(record);
@@ -847,10 +873,59 @@ function PluginDetailPage({
       .filter((code) => !PLUGIN_PERMISSIONS.some((permission) => permission.code === code))
       .map((code) => ({ code, label: code })),
   ];
-  const notices = [
-    ...(approval ? [{ key: "approval", text: record.provenance.official ? approval : `${pluginSourceLabel(record, t)} · ${approval}` }] : []),
-    ...(record.pending_update ? [{ key: "update", text: t("skills.pluginUpdateReady") }] : []),
+  const runtimeState = record.runtime_state;
+  const stateText = mutating
+    ? t("skills.pluginUpdating")
+    : !toggle.on
+      ? t("skills.groupDisabled")
+      : runtimeState === "starting"
+        ? t("skills.pluginStateStarting")
+        : runtimeState === "stopping"
+          ? t("skills.pluginStateStopping")
+          : runtimeState === "failed"
+            ? t("skills.pluginStatusFailed")
+            : runtimeState === "inactive" || runtimeState === "stopped"
+              ? t("skills.pluginStateStopped")
+              : runtimeState === "active"
+                ? t("skills.pluginStateRunning")
+                : t("skills.groupEnabled");
+  const notices: { key: string; tone: "warning" | "error"; text: string; detail?: string; retry?: boolean }[] = [
+    ...(approval ? [{ key: "approval", tone: "warning" as const, text: record.provenance.official ? approval : `${pluginSourceLabel(record, t)} · ${approval}` }] : []),
+    ...(record.pending_update ? [{ key: "update", tone: "warning" as const, text: t("skills.pluginUpdateReady"), detail: record.pending_update.version }] : []),
+    ...(runtimeState === "failed" ? [{ key: "failed", tone: "error" as const, text: t("skills.pluginStatusFailed"), detail: record.last_error, retry: true }] : []),
+    ...(record.activation_issues ?? []).map((issue) => {
+      const notice = pluginActivationNotice(issue, t, relatedPluginName);
+      return { key: `issue:${issue.kind}:${issue.related_plugin_id}`, tone: notice.tone, text: notice.text };
+    }),
+    ...(record.unsupported_fields?.length ? [{ key: "unsupported", tone: "warning" as const, text: t("skills.pluginUnsupportedNotice") }] : []),
   ];
+  const grantScopeKeys: Record<string, TranslationKey> = {
+    user: "skills.grantScopeUser",
+    project: "skills.grantScopeProject",
+    session: "skills.grantScopeSession",
+    action: "skills.grantScopeAction",
+  };
+  const detailRows: { key: string; title: string; value: string; mono?: boolean }[] = [
+    { key: "id", title: "ID", value: record.provenance.plugin_id ?? record.id, mono: true },
+  ];
+  if (record.provenance.path) {
+    detailRows.push({ key: "path", title: t("skills.pluginDetailLocation"), value: record.provenance.path, mono: true });
+  }
+  if (record.grant_scope) {
+    detailRows.push({ key: "scope", title: t("skills.pluginDetailGrantScope"), value: t(grantScopeKeys[record.grant_scope] ?? "skills.grantScopeUser") });
+  }
+  const dependencyNames = [
+    ...(record.requires ?? []).map(relatedPluginName),
+    ...(record.dependencies ?? []).map((dependency) =>
+      `${relatedPluginName(dependency.id)}${dependency.version ? ` ${dependency.version}` : ""}${dependency.optional ? ` (${t("skills.pluginDependencyOptional")})` : ""}`),
+  ];
+  if (dependencyNames.length > 0) {
+    detailRows.push({ key: "requires", title: t("skills.pluginDependencies"), value: dependencyNames.join(" · ") });
+  }
+  const conflictNames = [...new Set([...(record.conflicts ?? []), ...(record.breaks ?? [])])].map(relatedPluginName);
+  if (conflictNames.length > 0) {
+    detailRows.push({ key: "conflicts", title: t("skills.pluginConflicts"), value: conflictNames.join(" · ") });
+  }
 
   return (
     <>
@@ -868,21 +943,10 @@ function PluginDetailPage({
           <div className="plugin-page-meta">
             {record.developer ? <span>{t("skills.pluginDeveloper", { name: record.developer })}</span> : null}
             <span>{pluginSourceLabel(record, t)}</span>
+            <span className="plugin-page-state" data-tone={runtimeState === "failed" ? "danger" : undefined} aria-live="polite">{stateText}</span>
           </div>
         </div>
-        {record.description ? <p className="plugin-page-tagline">{record.description}</p> : null}
-      </header>
-
-      <div className="plugin-page-controls">
-        <span className="plugin-page-state" aria-live="polite">
-          {mutating ? t("skills.pluginUpdating") : t(toggle.on ? "skills.groupEnabled" : "skills.groupDisabled")}
-        </span>
         <div className="plugin-page-actions">
-          {record.runtime_state === "failed" ? (
-            <button type="button" className="settings-button" disabled={reloading || Boolean(packageMutation)} data-mutation-blocked={Boolean(packageMutation) || undefined} onClick={onReload}>
-              {t("skills.pluginRetryStart")}
-            </button>
-          ) : null}
           {hasMoreActions ? (
             <button
               type="button"
@@ -916,20 +980,27 @@ function PluginDetailPage({
             />
           )}
         </div>
-      </div>
+        {record.description ? <p className="plugin-page-tagline">{record.description}</p> : null}
+      </header>
 
       {notices.length > 0 ? (
         <div className="plugin-detail-notices">
           {notices.map((notice) => (
-            <div key={notice.key} className="plugin-detail-notice is-warning" role="status">
-              <AlertTriangle className="icon-sm" aria-hidden="true" />
+            <div key={notice.key} className={`plugin-detail-notice${notice.tone === "error" ? " is-error" : ""}`} role={notice.tone === "error" ? "alert" : "status"}>
+              {notice.tone === "error" ? <AlertCircle className="icon-sm" aria-hidden="true" /> : <AlertTriangle className="icon-sm" aria-hidden="true" />}
               <span className="plugin-detail-notice-text">{notice.text}</span>
+              {notice.detail ? <span className="plugin-detail-notice-detail">{notice.detail}</span> : null}
+              {notice.retry ? (
+                <button type="button" className="settings-button" disabled={reloading || Boolean(packageMutation)} data-mutation-blocked={Boolean(packageMutation) || undefined} onClick={onReload}>
+                  {t("skills.pluginRetryStart")}
+                </button>
+              ) : null}
             </div>
           ))}
         </div>
       ) : null}
 
-      {deciding && permissionRows.length > 0 ? (
+      {permissionRows.length > 0 ? (
         <SettingsSection title={t("skills.pluginPermissions")}>
           <SettingsGroup>
             {permissionRows.map((permission) => (
@@ -938,15 +1009,6 @@ function PluginDetailPage({
               </div></Tooltip>
             ))}
           </SettingsGroup>
-        </SettingsSection>
-      ) : null}
-
-      <PluginSettingsEditor plugin={record} title={t("skills.pluginSettingsLabel")} />
-      <MCPServices pluginID={record.provenance.plugin_id ?? record.id} enabled={toggle.on && !deciding} />
-
-      {record.long_description ? (
-        <SettingsSection title={t("skills.pluginAbout")}>
-          <p className="plugin-page-about">{record.long_description}</p>
         </SettingsSection>
       ) : null}
 
@@ -977,6 +1039,30 @@ function PluginDetailPage({
           </ul>
         </SettingsSection>
       ) : null}
+
+      {record.long_description ? (
+        <SettingsSection title={t("skills.pluginAbout")}>
+          <p className="plugin-page-about">{record.long_description}</p>
+        </SettingsSection>
+      ) : null}
+
+      <PluginSettingsEditor plugin={record} title={t("skills.pluginSettingsLabel")} />
+      <MCPServices pluginID={record.provenance.plugin_id ?? record.id} enabled={toggle.on && !deciding} />
+
+      <SettingsSection title={t("skills.pluginDetails")}>
+        <SettingsGroup>
+          {detailRows.map((row) => (
+            <div key={row.key} className="settings-row plugin-detail-row">
+              <div className="settings-row-label">
+                <span className="settings-row-label-title">{row.title}</span>
+              </div>
+              <div className="settings-row-control">
+                <span className={`plugin-detail-value${row.mono ? " is-mono" : ""}`}>{row.value}</span>
+              </div>
+            </div>
+          ))}
+        </SettingsGroup>
+      </SettingsSection>
     </>
   );
 }
