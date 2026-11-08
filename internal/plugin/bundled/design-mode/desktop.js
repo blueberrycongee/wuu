@@ -48,7 +48,6 @@ export function preview(api) {
 }
 
 const EN_STRINGS = {
-  "design.title": "Design",
   "design.workspace": "Workspace",
   "design.page": "Page",
   "design.viewport.mobile": "Mobile",
@@ -65,8 +64,15 @@ const EN_STRINGS = {
   "design.reload": "Reload page",
   "design.external": "Open in browser",
   "design.send": "Send to agent",
+  "design.sending": "Sending…",
   "design.send.done": "Sent {count} comments to the agent.",
   "design.send.failed": "Could not send the comments. The conversation was left unchanged.",
+  "design.stale": "Updated on disk — Reload",
+  "design.nav.discard.title": "Discard unsaved edits?",
+  "design.nav.discard.help": "{count} unsaved edits on this page will be lost.",
+  "design.nav.discard.confirm": "Discard edits",
+  "design.nav.keep": "Keep editing",
+  "design.comment.orphan": "Target is no longer on the page",
   "design.loading": "Preparing the design canvas…",
   "design.empty.workspaces": "No project workspaces",
   "design.empty.workspacesHelp": "Add a project workspace in Wuu, then open its pages here.",
@@ -112,7 +118,6 @@ const EN_STRINGS = {
 };
 
 const ZH_STRINGS = {
-  "design.title": "设计",
   "design.workspace": "工作区",
   "design.page": "页面",
   "design.viewport.mobile": "手机",
@@ -129,8 +134,15 @@ const ZH_STRINGS = {
   "design.reload": "重新加载页面",
   "design.external": "在浏览器中打开",
   "design.send": "发给 Agent",
+  "design.sending": "发送中…",
   "design.send.done": "已向 Agent 发送 {count} 条评论。",
   "design.send.failed": "评论未能发送，对话保持不变。",
+  "design.stale": "磁盘上已更新 — 重新载入",
+  "design.nav.discard.title": "放弃未保存的修改？",
+  "design.nav.discard.help": "这个页面上有 {count} 处未保存的修改将丢失。",
+  "design.nav.discard.confirm": "放弃修改",
+  "design.nav.keep": "继续编辑",
+  "design.comment.orphan": "页面上已找不到该元素",
   "design.loading": "正在准备设计画布…",
   "design.empty.workspaces": "没有可用的项目工作区",
   "design.empty.workspacesHelp": "先在 Wuu 中添加项目工作区，再回到这里打开页面。",
@@ -222,7 +234,7 @@ const VIEWPORTS = [
   { id: "fill", width: null },
 ];
 
-function Studio({ api, host, context, translate, devServer, devWorkspace }) {
+function Studio({ api, host, translate, devServer, devWorkspace }) {
   const React = api.react;
   const h = React.createElement;
   const { useCallback, useEffect, useMemo, useRef, useState } = React;
@@ -239,7 +251,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   const [bootNonce, setBootNonce] = useState(0);
   const [error, setError] = useState("");
   const [workspaces, setWorkspaces] = useState([]);
-  const [workspaceId, setWorkspaceId] = useState(context?.workspaceId ?? "");
+  const [workspaceId, setWorkspaceId] = useState("");
   const workspace = workspaces.find((item) => item.id === workspaceId) ?? workspaces[0];
   const [base, setBase] = useState("");
   const [pages, setPages] = useState([]);
@@ -257,6 +269,9 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   const [bridgeLost, setBridgeLost] = useState(false);
   const [revertArmed, setRevertArmed] = useState(false);
   const [frameKey, setFrameKey] = useState(0);
+  const [stale, setStale] = useState(false);
+  const [orphans, setOrphans] = useState([]);
+  const [pendingNav, setPendingNav] = useState(null); // null | { kind: "page" | "workspace", value }
 
   const frameRef = useRef(null);
   const revertTimerRef = useRef(0);
@@ -270,7 +285,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
     clearTimeout(revertTimerRef.current);
     revertTimerRef.current = setTimeout(() => setRevertArmed(false), 2600);
   }, []);
-  useEffect(() => () => clearTimeout(revertTimerRef.current), []);
+  useEffect(() => () => { clearTimeout(revertTimerRef.current); clearTimeout(textTimerRef.current); }, []);
 
   const notify = useCallback((message, tone = "info") => {
     try { api.showNotice?.({ message, tone, key: `design-${tone}` }); }
@@ -332,14 +347,23 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
         case "ready":
           bridge.ready = true;
           setBridgeReady(true);
+          setBridgeLost(false);
           command("set-mode", { mode });
-          command("comments-restore", { comments: commentsRef.current });
+          void request("comments-restore", { comments: commentsRef.current })
+            .then((reply) => setOrphans(reply.missing ?? []))
+            .catch(() => {});
           break;
         case "select": setSelected(message.element); break;
         case "metrics": setSelected((current) => current ? { ...current, rect: message.rect } : current); break;
         case "escape": if (mode === "comment") setMode("edit"); break;
         case "deselect": setSelected(null); break;
-        case "op": setOps((list) => upsertOp(list, message.op)); break;
+        case "op":
+          setOps((list) => upsertOp(list, message.op));
+          if (message.op?.kind === "text") {
+            setSelected((current) => current && current.selector === message.op.selector ? { ...current, text: message.op.text } : current);
+            setTextDraft((draft) => selected?.selector === message.op.selector ? message.op.text : draft);
+          }
+          break;
         case "comment-draft":
           setComments((list) => [...list, { ...message.comment, text: "" }]);
           break;
@@ -347,7 +371,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
     };
     addEventListener("message", onMessage);
     return () => removeEventListener("message", onMessage);
-  }, [command, mode, initializeBridge]);
+  }, [command, request, mode, selected?.selector, initializeBridge]);
 
   // If the bridge never arrives the page left the server or failed to inject.
   useEffect(() => {
@@ -380,7 +404,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   }, [host]);
 
   const refreshPages = useCallback(async (root) => {
-    const { pages: list } = await backend.pages(root);
+    const list = await backend.pages(root);
     setPages(list);
     return list;
   }, [backend]);
@@ -400,8 +424,12 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
       setOps([]);
       setConflict(null);
       setSelected(null);
+      setStale(false);
+      setOrphans([]);
+      setRevertArmed(false);
     } catch (err) {
       setError(String(err?.message ?? err));
+      setPhase("error");
     }
   }, [backend, storageGet]);
 
@@ -411,17 +439,19 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
     (async () => {
       try {
         let list;
+        let activeId = "";
         if (devBase) {
           const name = devWorkspace ?? new URLSearchParams(location.search).get("design-workspace") ?? "Design preview";
           list = [{ id: "dev", name, root: "", available: true }];
         } else {
           const snapshot = await api.listWorkspaces();
           list = (snapshot?.workspaces ?? []).filter((item) => item.available);
+          activeId = snapshot?.activeWorkspaceId ?? "";
         }
         if (cancelled) return;
         setWorkspaces(list);
         const remembered = devBase ? null : await storageGet("design.workspace");
-        const ws = list.find((item) => item.id === workspaceId)
+        const ws = list.find((item) => item.id === activeId)
           ?? list.find((item) => item.id === remembered)
           ?? list[0];
         if (ws) setWorkspaceId(ws.id);
@@ -434,14 +464,6 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bootNonce]);
-
-  // Workspace switch reloads the server session and page list.
-  const chooseWorkspace = useCallback((id) => {
-    if (id === workspace?.id) return;
-    setWorkspaceId(id);
-    const ws = workspaces.find((item) => item.id === id);
-    if (ws) void openWorkspace(ws);
-  }, [workspace?.id, workspaces, openWorkspace]);
 
   // Persist choices; load per-page comments when the page changes.
   useEffect(() => { if (workspaceId) void storageSet("design.workspace", workspaceId); }, [workspaceId, storageSet]);
@@ -463,8 +485,12 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   useEffect(() => {
     if (!commentsReadyRef.current || !commentsKeyRef.current) return;
     void storageSet(commentsKeyRef.current, JSON.stringify(comments));
-    if (bridgeRef.current.ready) command("comments-restore", { comments });
-  }, [comments, storageSet, command]);
+    if (bridgeRef.current.ready) {
+      void request("comments-restore", { comments })
+        .then((reply) => setOrphans(reply.missing ?? []))
+        .catch(() => {});
+    }
+  }, [comments, storageSet, request]);
 
   useEffect(() => { setTextDraft(selected?.text ?? ""); }, [selected?.selector]);
 
@@ -484,6 +510,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
       setSha(result.sha256);
       setOps([]);
       setConflict(null);
+      setStale(false);
       return true;
     } catch (err) {
       notify(`${t("design.save.failed")} ${String(err?.message ?? err)}`, "error");
@@ -497,23 +524,51 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
     setConflict(null);
     setSelected(null);
     setRevertArmed(false);
-    const entry = pages.find((item) => item.path === path);
-    if (entry) setSha(entry.sha256);
-    command("comments-restore", { comments: [] });
+    setStale(false);
     setFrameKey((key) => key + 1); // remounts the iframe and re-handshakes
-    void refreshPages(workspace?.root ?? "").finally(() => setBusy(""));
-  }, [pages, path, workspace, refreshPages, command]);
+    // sha comes from the fresh list — the stale snapshot is exactly what conflicted.
+    void refreshPages(workspace?.root ?? "")
+      .then((list) => { const entry = list.find((item) => item.path === path); if (entry) setSha(entry.sha256); })
+      .catch(() => {})
+      .finally(() => setBusy(""));
+  }, [path, workspace, refreshPages]);
 
-  const choosePage = useCallback((next) => {
-    if (next === path) return;
+  const commitPage = useCallback((next) => {
     const entry = pages.find((item) => item.path === next);
     setPath(next);
     setSha(entry?.sha256 ?? "");
     setOps([]);
     setConflict(null);
     setSelected(null);
-    command("comments-restore", { comments: [] });
-  }, [pages, path, command]);
+    setStale(false);
+    setOrphans([]);
+    setRevertArmed(false);
+  }, [pages]);
+
+  const commitWorkspace = useCallback((id) => {
+    setWorkspaceId(id);
+    const ws = workspaces.find((item) => item.id === id);
+    if (ws) void openWorkspace(ws);
+  }, [workspaces, openWorkspace]);
+
+  // Switching page or workspace drops unsaved canvas edits — guard it the same
+  // way reload/revert are guarded instead of silently discarding them.
+  const requestNav = useCallback((kind, value) => {
+    if (dirty) setPendingNav({ kind, value });
+    else if (kind === "page") commitPage(value);
+    else commitWorkspace(value);
+  }, [dirty, commitPage, commitWorkspace]);
+
+  const choosePage = useCallback((next) => {
+    if (next === path) return;
+    requestNav("page", next);
+  }, [path, requestNav]);
+
+  // Workspace switch reloads the server session and page list.
+  const chooseWorkspace = useCallback((id) => {
+    if (id === workspace?.id) return;
+    requestNav("workspace", id);
+  }, [workspace?.id, requestNav]);
 
   const sendToAgent = useCallback(async () => {
     if (comments.length === 0 || busy) return;
@@ -529,29 +584,20 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
         "",
         `The file lives at \`${workspace?.root ? `${workspace.root}/${path}` : path}\`. Apply the requested changes directly to that file.`,
       ].join("\n");
-      const threadKey = `design.thread.${hash(workspace?.id ?? "")}`;
-      let threadId = (await storageGet(threadKey)) || "";
-      let accepted = false;
-      if (threadId) {
-        const result = await api.application.invoke("conversation.continue", { threadId, text: brief }).catch(() => ({ accepted: false }));
-        accepted = result?.accepted === true;
-      }
-      if (!accepted) {
-        const tab = await api.application.invoke("tab.new", { workspaceId: workspace?.id }).catch(() => undefined);
-        if (!tab?.tabId) throw new Error(t("design.newTab.failed"));
-        await api.application.invoke("composer.set-draft", { text: brief, ownerTabId: tab.tabId });
-        const submitted = await api.application.invoke("composer.submit", { ownerTabId: tab.tabId, text: brief });
-        if (!submitted?.accepted) throw new Error(t("design.send.failed"));
-        threadId = submitted.threadId ?? "";
-        if (threadId) await storageSet(threadKey, threadId);
-      }
+      // Each send opens a fresh, self-contained conversation — the brief
+      // already carries the file path and every pinned comment.
+      const tab = await api.application.invoke("tab.new", { workspaceId: workspace?.id }).catch(() => undefined);
+      if (!tab?.tabId) throw new Error(t("design.newTab.failed"));
+      await api.application.invoke("composer.set-draft", { text: brief, ownerTabId: tab.tabId });
+      const submitted = await api.application.invoke("composer.submit", { ownerTabId: tab.tabId, text: brief });
+      if (!submitted?.accepted) throw new Error(t("design.send.failed"));
       const count = comments.length;
       setComments([]);
       notify(t("design.send.done", { count }));
     } catch (err) {
       notify(String(err?.message ?? err) || t("design.send.failed"), "error");
     } finally { setBusy(""); }
-  }, [comments, busy, dirty, save, path, workspace, workspaceId, api, storageGet, storageSet, notify, t]);
+  }, [comments, busy, dirty, save, path, workspace, workspaceId, api, notify, t]);
 
   const recordOpAsync = useCallback((op, after) => {
     void request("apply", { op })
@@ -565,8 +611,11 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
 
   const applyStyle = useCallback((prop, value) => {
     if (!selected) return;
+    // styles arrive camelCased from the bridge's computed-style payload; merge
+    // under the camel key so controlled fields reflect their own edits.
+    const key = prop.replace(/-([a-z])/g, (_, c) => c.toUpperCase());
     recordOpAsync({ kind: "style", selector: selected.selector, prop, value },
-      () => setSelected((current) => current ? { ...current, styles: { ...current.styles, [prop]: value } } : current));
+      () => setSelected((current) => current ? { ...current, styles: { ...current.styles, [key]: value } } : current));
   }, [selected, recordOpAsync]);
 
   const textTimerRef = useRef(0);
@@ -581,7 +630,25 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
     textTimerRef.current = setTimeout(() => applyTextNow(value), 450);
   }, [applyTextNow]);
 
+  // Poll the page list so an agent revision on disk surfaces as a reload hint
+  // instead of leaving the canvas silently stale (or colliding on the next save).
+  useEffect(() => {
+    if (!workspace?.root || !path || phase !== "ready") return;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled || document.hidden || busy) return;
+      try {
+        const list = await refreshPages(workspace.root);
+        const fresh = list?.find((item) => item.path === path);
+        if (!cancelled && fresh) setStale(fresh.sha256 !== sha);
+      } catch { /* polling is best-effort */ }
+    };
+    const id = setInterval(tick, 4000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [workspace?.root, path, sha, busy, backend, phase, refreshPages]);
+
   const frameWidth = VIEWPORTS.find((item) => item.id === viewport)?.width ?? null;
+  const flush = frameWidth == null;
   const sheetOpen = (mode === "edit" && Boolean(selected)) || (mode === "comment" && comments.length > 0);
   const hintText = bridgeLost ? t("design.bridge.lost")
     : mode === "comment" && bridgeReady ? t("design.comment.hint")
@@ -633,7 +700,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
       h("div", { className: "plugin-design-topbar-spacer" }),
       h("button", {
         type: "button", className: "plugin-design-iconbutton", title: dirty && revertArmed ? t("design.revert.confirm") : t("design.reload"),
-        "aria-label": t("design.reload"), disabled: !url || busy === "reload",
+        "aria-label": t("design.reload"), disabled: !url || Boolean(busy),
         "data-armed": dirty && revertArmed || undefined,
         onClick: () => {
           if (dirty && !revertArmed) { setRevertArmed(true); armRevertTimer(); return; }
@@ -654,13 +721,13 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
       }, busy === "save" ? t("design.saving") : dirty ? `${t("design.save")} · ${ops.length}` : t("design.save"))),
     h("div", { className: "plugin-design-body" },
       h("div", {
-        className: "plugin-design-stage", "data-mode": mode, "data-flush": frameWidth == null || undefined,
-        onClick: (event) => { if (event.target === event.currentTarget && mode === "edit") command("deselect"); },
+        className: "plugin-design-stage", "data-mode": mode, "data-flush": flush || undefined,
+        onClick: (event) => { if (event.target === event.currentTarget && mode === "edit") { command("deselect"); setSelected(null); } },
       },
         url
           ? h("div", {
               className: "plugin-design-frame",
-              "data-flush": frameWidth == null || undefined,
+              "data-flush": flush || undefined,
               style: frameWidth ? { width: `${frameWidth}px` } : { width: "100%" },
             },
               h("iframe", {
@@ -680,19 +747,38 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
                 actions: h(Button, { variant: "secondary", onClick: () => void openWorkspace(workspace) }, t("design.empty.refresh")),
               })),
         url && hintText && !sheetOpen ? h("div", { className: "plugin-design-hint" }, hintText) : null,
+        url && stale && !dirty && !sheetOpen ? h("button", {
+          type: "button", className: "plugin-design-hint plugin-design-stale", onClick: reload,
+        }, t("design.stale")) : null,
         conflict ? h("div", { className: "plugin-design-conflict" },
           h("div", { className: "plugin-design-conflict-card" },
             h("strong", null, t("design.conflict.title")),
             h("p", null, t("design.conflict.help")),
             h("div", { className: "plugin-design-conflict-actions" },
+              h(Button, { variant: "ghost", onClick: () => setConflict(null) }, t("design.nav.keep")),
               h(Button, { variant: "secondary", onClick: reload }, t("design.conflict.reload")),
               h(Button, { variant: "danger", onClick: () => void save(true) }, t("design.conflict.force")))),
+        ) : null,
+        pendingNav ? h("div", { className: "plugin-design-conflict" },
+          h("div", { className: "plugin-design-conflict-card" },
+            h("strong", null, t("design.nav.discard.title")),
+            h("p", null, t("design.nav.discard.help", { count: ops.length })),
+            h("div", { className: "plugin-design-conflict-actions" },
+              h(Button, { variant: "secondary", onClick: () => setPendingNav(null) }, t("design.nav.keep")),
+              h(Button, {
+                variant: "danger",
+                onClick: () => {
+                  const nav = pendingNav;
+                  setPendingNav(null);
+                  if (nav.kind === "workspace") commitWorkspace(nav.value);
+                  else commitPage(nav.value);
+                },
+              }, t("design.nav.discard.confirm")))),
         ) : null),
       sheetOpen ? h("section", { className: "plugin-design-sheet" },
         h("header", { className: "plugin-design-sheet-head" },
           mode === "comment"
-            ? h("span", { className: "plugin-design-sheet-title" }, t("design.comment.title"),
-                comments.length ? h("span", { className: "plugin-design-count" }, comments.length) : null)
+            ? h("span", { className: "plugin-design-sheet-title" }, t("design.comment.title"))
             : h(React.Fragment, null,
                 h("span", { className: "plugin-design-tag" }, selected.tag),
                 h("span", { className: "plugin-design-rect" }, `${selected.rect.w} × ${selected.rect.h}`)),
@@ -731,13 +817,15 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
           comments.length > 0 ? h(Button, {
             variant: "secondary", disabled: Boolean(busy),
             onClick: () => void sendToAgent(),
-          }, h(Glyph, { h, d: ICON_PATHS.send }), " ", t("design.send")) : null)) : null));
+          }, h(Glyph, { h, d: ICON_PATHS.send }), " ", busy === "send" ? t("design.sending") : t("design.send")) : null)) : null));
 
   function commentsSection() {
     return h("section", { className: "plugin-design-section plugin-design-comments" },
       h("ol", { className: "plugin-design-comment-list" },
             comments.map((comment, index) => h("li", {
               key: comment.id, className: "plugin-design-comment",
+              "data-orphan": orphans.includes(comment.id) || undefined,
+              title: orphans.includes(comment.id) ? t("design.comment.orphan") : undefined,
               onMouseEnter: () => command("comment-focus", { id: comment.id }),
               onMouseLeave: () => command("comment-focus", { id: null }),
               onClick: (event) => { if (event.target === event.currentTarget || event.target.closest(".plugin-design-selector")) command("scroll-to", { selector: comment.selector }); },
@@ -783,9 +871,10 @@ function StyleRows({ h, React, t, selected, onApply }) {
   const styles = selected.styles ?? {};
   const numeric = (value) => String(value ?? "").replace(/px$/, "");
   // Uncontrolled fields remount per element so stale drafts never leak across selections.
-  const field = { reset: selected.selector, h };
+  const field = { h };
   const key = (prop) => `${selected.selector}:${prop}`;
-  const pxCommit = (prop) => (value) => onApply(prop, value ? `${value}px` : "");
+  const pxify = (value) => (/^-?\d*\.?\d+$/.test(value) ? `${value}px` : value);
+  const pxCommit = (prop) => (value) => onApply(prop, value ? pxify(value) : "");
   const fontOptions = [...FONT_STACKS];
   if (styles.fontFamily && !fontOptions.some((item) => item.value === styles.fontFamily)) {
     fontOptions.unshift({ label: String(styles.fontFamily).split(",")[0].replace(/["']/g, "").trim() || t("design.style.font"), value: styles.fontFamily });
@@ -818,12 +907,12 @@ function StyleRows({ h, React, t, selected, onApply }) {
     h(QuadField, {
       ...field, key: key("padding"), label: t("design.style.padding"), full: true,
       values: { Top: styles.paddingTop, Right: styles.paddingRight, Bottom: styles.paddingBottom, Left: styles.paddingLeft },
-      onCommit: (axis, value) => onApply(`padding-${axis.toLowerCase()}`, value ? `${value}px` : ""),
+      onCommit: (axis, value) => onApply(`padding-${axis.toLowerCase()}`, value ? pxify(value) : ""),
     }),
     h(QuadField, {
       ...field, key: key("margin"), label: t("design.style.margin"), full: true,
       values: { Top: styles.marginTop, Right: styles.marginRight, Bottom: styles.marginBottom, Left: styles.marginLeft },
-      onCommit: (axis, value) => onApply(`margin-${axis.toLowerCase()}`, value ? `${value}px` : ""),
+      onCommit: (axis, value) => onApply(`margin-${axis.toLowerCase()}`, value ? pxify(value) : ""),
     }),
     h("div", { className: "plugin-design-row plugin-design-row-full" },
       h("span", { className: "plugin-design-row-label" }, t("design.style.align")),
@@ -846,34 +935,34 @@ function StyleRows({ h, React, t, selected, onApply }) {
 }
 
 /** Single 34px field row: muted label left, right-aligned value — the cc-row idiom. */
-function Row({ h, label, full, reset, children }) {
-  return h("div", { className: `plugin-design-row${full ? " plugin-design-row-full" : ""}`, "data-reset": reset },
+function Row({ h, label, full, children }) {
+  return h("div", { className: `plugin-design-row${full ? " plugin-design-row-full" : ""}` },
     h("span", { className: "plugin-design-row-label" }, label),
     h("span", { className: "plugin-design-row-value" }, children));
 }
 
-/** Uncontrolled text field: commits on blur or Enter; remounts when `reset` changes. */
-function Field({ h, label, value, placeholder, suffix, reset, full, onCommit }) {
-  return h(Row, { h, label, full, reset },
+/** Uncontrolled text field: commits on blur or Enter; remounts on key change. */
+function Field({ h, label, value, placeholder, suffix, full, onCommit }) {
+  return h(Row, { h, label, full },
     h("input", {
-      defaultValue: value ?? "", placeholder,
+      defaultValue: value ?? "", placeholder, "aria-label": label,
       onBlur: (event) => { if (event.currentTarget.value.trim() !== String(value ?? "")) onCommit(event.currentTarget.value.trim()); },
       onKeyDown: (event) => { if (event.key === "Enter") event.currentTarget.blur(); },
     }),
     suffix ? h("span", { className: "plugin-design-suffix" }, suffix) : null);
 }
 
-function SelectField({ h, label, value, options, reset, full, onCommit }) {
-  return h(Row, { h, label, full, reset },
+function SelectField({ h, label, value, options, full, onCommit }) {
+  return h(Row, { h, label, full },
     h("select", {
-      value: value ?? "", onChange: (event) => onCommit(event.currentTarget.value),
+      value: value ?? "", "aria-label": label, onChange: (event) => onCommit(event.currentTarget.value),
     }, options.map((option) => h("option", { key: option.value, value: option.value }, option.label))));
 }
 
-function ColorField({ h, label, value, reset, full, onCommit }) {
+function ColorField({ h, label, value, full, onCommit }) {
   const empty = !value || value === "transparent" || /^rgba\(0,\s*0,\s*0,\s*0\)$/.test(value);
   const hex = empty ? null : toHex(value);
-  return h(Row, { h, label, full, reset },
+  return h(Row, { h, label, full },
     h("span", {
       className: "plugin-design-swatch", "data-empty": empty || undefined,
       style: hex ? { background: hex } : undefined,
@@ -882,15 +971,15 @@ function ColorField({ h, label, value, reset, full, onCommit }) {
       onChange: (event) => onCommit(event.currentTarget.value),
     })),
     h("input", {
-      defaultValue: empty ? "" : String(value), placeholder: "—",
+      defaultValue: empty ? "" : String(value), placeholder: "—", "aria-label": label,
       onBlur: (event) => { if (event.currentTarget.value.trim() !== String(empty ? "" : value ?? "")) onCommit(event.currentTarget.value.trim()); },
       onKeyDown: (event) => { if (event.key === "Enter") event.currentTarget.blur(); },
     }));
 }
 
 /** Four numeric cells (T/R/B/L) sharing one row; each commits its own axis. */
-function QuadField({ h, label, values, reset, full, onCommit }) {
-  return h("div", { className: `plugin-design-row${full ? " plugin-design-row-full" : ""} plugin-design-quad`, "data-reset": reset },
+function QuadField({ h, label, values, full, onCommit }) {
+  return h("div", { className: `plugin-design-row${full ? " plugin-design-row-full" : ""} plugin-design-quad` },
     h("span", { className: "plugin-design-row-label" }, label),
     h("span", { className: "plugin-design-quad-cells" },
       QUAD_AXES.map((axis) => h("label", { key: axis, className: "plugin-design-quad-cell", title: axis },
@@ -1032,7 +1121,10 @@ const DESIGN_CSS = `
 }
 .plugin-design *, .plugin-design *::before { box-sizing: border-box; }
 .plugin-design-center { display: grid; place-items: center; height: 100%; min-height: 0; padding: var(--space-8, 32px); }
-.plugin-design-muted { color: var(--ink-tertiary); font-size: .84em; margin: 0; line-height: 1.55; opacity: .9; }
+.plugin-design-tools {
+  flex: none; display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+  border-radius: var(--wuu-radius-menu, 10px); background: var(--wuu-color-surface-muted, rgba(127,127,127,.12));
+}
 
 /* -- top bar -- */
 .plugin-design-topbar {
@@ -1049,11 +1141,7 @@ const DESIGN_CSS = `
 .plugin-design-picker { font-size: var(--wuu-font-size-ui, 15px); max-width: 190px; min-width: 0; }
 .plugin-design-page-picker { max-width: 230px; }
 
-.plugin-design-topbar-spacer { flex: 1; min-width: 8px; }
-.plugin-design-tools {
-  flex: none; display: inline-flex; align-items: center; gap: 2px; padding: 2px;
-  border-radius: 10px; background: var(--wuu-color-surface-muted, rgba(127,127,127,.12));
-}
+.plugin-design-topbar-spacer, .plugin-design-sheet-spacer { flex: 1; min-width: 8px; }
 
 .plugin-design-iconbutton {
   position: relative; flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px;
@@ -1067,14 +1155,7 @@ const DESIGN_CSS = `
   background: var(--wuu-color-surface-elevated, var(--paper, #fff)); color: var(--ink);
   box-shadow: 0 1px 2px rgba(15,23,42,.1), 0 0 0 .5px rgba(15,23,42,.06);
 }
-.plugin-design-iconbutton[disabled] { opacity: .45; cursor: default; }
 .plugin-design-iconbutton svg { width: 15px; height: 15px; }
-.plugin-design-count {
-  display: inline-grid; place-items: center; min-width: 18px; height: 18px;
-  padding-inline: 5px; margin-inline-start: 4px; border-radius: 9px;
-  background: var(--wuu-color-surface-muted, rgba(127,127,127,.2)); color: var(--ink-soft);
-  font-size: .78em; font-weight: 650;
-}
 .plugin-design-badge {
   position: absolute; top: -2px; right: -4px;
   display: inline-grid; place-items: center; min-width: 15px; height: 15px;
@@ -1085,7 +1166,8 @@ const DESIGN_CSS = `
 .plugin-design-viewport { position: relative; flex: none; }
 .plugin-design-viewport-trigger { display: inline-flex; align-items: center; width: auto; padding-inline: 7px; gap: 5px; font: inherit; font-size: .85em; }
 .plugin-design-viewport-trigger .plugin-design-viewport-name { color: var(--ink-soft); }
-.plugin-design-viewport-trigger svg:last-child { width: 12px; height: 12px; opacity: .7; }
+.plugin-design-viewport-trigger svg:last-child { width: 12px; height: 12px; opacity: .7; transition: transform .16s ease; }
+.plugin-design-viewport-trigger[data-open] svg:last-child { transform: rotate(180deg); }
 .plugin-design-menu {
   position: absolute; z-index: 40; top: calc(100% + 4px); inset-inline-start: 0; min-width: 148px;
   padding: 4px; border-radius: var(--wuu-radius-menu, 10px);
@@ -1100,14 +1182,14 @@ const DESIGN_CSS = `
 }
 .plugin-design-menu-item svg { width: 15px; height: 15px; flex: none; }
 .plugin-design-menu-item:hover { background: var(--wuu-nav-item-hover-background, rgba(127,127,127,.12)); color: var(--ink); }
-.plugin-design-menu-item[data-active] { color: var(--ink); font-weight: 550; }
+.plugin-design-menu-item[data-active] { color: var(--ink); }
 .plugin-design-menu-item svg:last-child { margin-inline-start: auto; width: 13px; height: 13px; }
 .plugin-design-menu-item span { flex: 1; }
 .plugin-design .plugin-ui-button svg,
 .plugin-design button[data-variant] svg { width: 15px; height: 15px; flex: none; }
 .plugin-design button[data-variant] { display: inline-flex; align-items: center; gap: 6px; }
 .plugin-design [data-armed] { color: var(--wuu-color-danger, #c33); }
-.plugin-design button[disabled] { opacity: .4; filter: saturate(.2); }
+.plugin-design button[disabled] { opacity: .4; filter: saturate(.2); cursor: default; }
 
 /* -- body -- */
 .plugin-design-body { position: relative; flex: 1; min-height: 0; display: flex; }
@@ -1132,17 +1214,23 @@ const DESIGN_CSS = `
   transition: width .28s var(--environment-panel-motion-easing, ease);
 }
 .plugin-design-frame[data-flush] { border: 0; border-radius: 0; box-shadow: none; }
-.plugin-design-iframe { flex: 1; width: 100%; border: 0; background: #fff; }
+.plugin-design-iframe { flex: 1; width: 100%; border: 0; background: var(--wuu-color-surface-elevated, #fff); }
 .plugin-design-hint {
   position: absolute; z-index: 3; bottom: calc(var(--space-6, 24px) + 10px); left: 50%; transform: translateX(-50%);
   padding: 7px 14px; border-radius: var(--radius-pill, 999px);
   background: var(--wuu-color-surface-elevated, var(--paper, #fff));
   border: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.2)));
   box-shadow: var(--shadow-soft, 0 4px 16px rgba(0,0,0,.14));
-  color: var(--ink-soft); font-size: .84em; pointer-events: none; white-space: nowrap;
+  color: var(--ink-soft); font-size: .84em; pointer-events: none;
+  max-width: min(92%, 460px); text-align: center;
+}
+.plugin-design-stale {
+  pointer-events: auto; cursor: pointer; font: inherit; font-size: .84em;
+  color: var(--wuu-color-accent, #3b82f6); font-weight: 550;
+  border-color: color-mix(in srgb, var(--wuu-color-accent, #3b82f6) 40%, transparent);
 }
 .plugin-design-conflict {
-  position: absolute; z-index: 4; inset: 0; display: grid; place-items: center;
+  position: absolute; z-index: 8; inset: 0; display: grid; place-items: center;
   background: var(--wuu-color-overlay-backdrop, rgba(15,23,42,.32));
 }
 .plugin-design-conflict-card {
@@ -1208,7 +1296,7 @@ const DESIGN_CSS = `
 }
 .plugin-design-selector {
   display: block; font-family: var(--wuu-font-family-mono, ui-monospace, monospace); font-size: .74em;
-  color: var(--ink-tertiary); opacity: .78; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .plugin-design-rect { font-size: .78em; color: var(--ink-faint, var(--ink-tertiary)); font-variant-numeric: tabular-nums; }
 .plugin-design-field { display: grid; gap: 4px; margin-block-start: var(--space-2, 8px); }
@@ -1273,9 +1361,15 @@ const DESIGN_CSS = `
 
 /* -- comments -- */
 .plugin-design-comment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3, 12px); }
-.plugin-design-comment { display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-2, 8px); align-items: start; }
+.plugin-design-comment {
+  display: grid; grid-template-columns: auto 1fr auto; gap: var(--space-2, 8px); align-items: start;
+  padding: 4px; margin: -4px; border-radius: var(--radius-sm, 8px);
+  transition: background-color .12s ease, opacity .12s ease;
+}
+.plugin-design-comment:hover { background: var(--wuu-nav-item-hover-background, rgba(127,127,127,.1)); }
+.plugin-design-comment[data-orphan] { opacity: .55; }
 .plugin-design-pin {
-  display: grid; place-items: center; width: 20px; height: 20px; margin-block-start: 2px;
+  display: grid; place-items: center; width: 22px; height: 22px; margin-block-start: 1px;
   border-radius: 50%; background: #f59e0b; color: #fff;
   font-size: .72em; font-weight: 700;
 }

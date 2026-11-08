@@ -7,6 +7,11 @@
   window.__wuuDesignBridge = true;
 
   const MARKER = "data-wuu-design-ui";
+  // Mode cursor lives in a marked <style> so serialize() strips it — mutating
+  // documentElement.style would leak "cursor: crosshair" into saved files.
+  const modeStyle = document.createElement("style");
+  modeStyle.setAttribute(MARKER, "");
+  (document.head ?? document.documentElement).append(modeStyle);
   const state = {
     nonce: null,
     mode: "off",
@@ -89,12 +94,14 @@
       const rect = el.getBoundingClientRect();
       pin.style.display = "grid";
       pin.style.opacity = state.mode === "comment" ? "1" : "0.55";
+      const clampX = (v) => Math.max(12, Math.min(innerWidth - 12, v));
+      const clampY = (v) => Math.max(12, Math.min(innerHeight - 12, v));
       if (comment.anchor === "tr") {
-        pin.style.left = `${Math.min(rect.right, innerWidth - 12) + (comment.offset?.x ?? 0)}px`;
-        pin.style.top = `${rect.top + (comment.offset?.y ?? 0)}px`;
+        pin.style.left = `${clampX(rect.right + (comment.offset?.x ?? 0))}px`;
+        pin.style.top = `${clampY(rect.top + (comment.offset?.y ?? 0))}px`;
       } else {
-        pin.style.left = `${rect.left + (comment.offset?.x ?? 8)}px`;
-        pin.style.top = `${rect.top + (comment.offset?.y ?? -10)}px`;
+        pin.style.left = `${clampX(rect.left + (comment.offset?.x ?? 8))}px`;
+        pin.style.top = `${clampY(rect.top + (comment.offset?.y ?? -10))}px`;
       }
     }
   }
@@ -183,6 +190,9 @@
 
   // ---- modes ---------------------------------------------------------------
   function isOurs(el) { return el instanceof Element && Boolean(el.closest?.(`[${MARKER}]`)); }
+  function applyModeCursor() {
+    modeStyle.textContent = state.mode === "comment" ? "html, html * { cursor: crosshair !important; }" : "";
+  }
   function deselect() {
     state.selected = null;
     endTextEdit(false);
@@ -279,12 +289,14 @@
     drag.el.style.transform = drag.base ? `${drag.base} ${translate}` : translate;
     schedulePaint();
   }, true);
-  document.addEventListener("pointerup", () => {
+  function endDrag() {
     const drag = state.drag;
     state.drag = null;
     if (!drag?.moved) return;
     emitOp({ kind: "style", selector: selectorFor(drag.el), prop: "transform", value: drag.el.style.transform });
-  }, true);
+  }
+  document.addEventListener("pointerup", endDrag, true);
+  document.addEventListener("pointercancel", endDrag, true);
 
   // ---- comments --------------------------------------------------------------
   function pinElement(comment) {
@@ -328,13 +340,16 @@
     }
     schedulePaint();
   }
+  // Restores pins in list order and returns the ids whose selector no longer
+  // resolves, so the sheet can mark them as orphaned instead of diverging.
   function restoreComments(comments) {
     state.comments = [];
     pinLayer.replaceChildren();
-    for (const item of comments ?? []) {
+    const missing = [];
+    (comments ?? []).forEach((item, i) => {
       const comment = {
         id: item.id ?? `c${++state.seq}`,
-        index: state.comments.length + 1,
+        index: i + 1,
         selector: item.selector,
         tag: item.tag,
         snippet: item.snippet,
@@ -342,13 +357,14 @@
         anchor: item.anchor,
         offset: item.offset ?? (item.anchor === "tr" ? { x: -2, y: -2 } : { x: 8, y: -10 }),
       };
-      if (!comment.selector || !document.querySelector(comment.selector)) continue;
+      if (!comment.selector || !document.querySelector(comment.selector)) { missing.push(comment.id); return; }
       state.comments.push(comment);
       pinElement(comment);
       const numeric = /^c(\d+)$/.exec(comment.id ?? "");
       if (numeric) state.seq = Math.max(state.seq, Number(numeric[1]));
-    }
+    });
     schedulePaint();
+    return missing;
   }
 
   // ---- ops + serialize --------------------------------------------------------
@@ -364,9 +380,6 @@
         break;
       case "text":
         el.innerText = String(op.text ?? "");
-        break;
-      case "html":
-        el.innerHTML = String(op.html ?? "");
         break;
       default:
         return { ok: false, error: `unknown op ${op.kind}` };
@@ -394,7 +407,7 @@
       state.nonce = message.nonce;
       if (typeof message.accent === "string" && message.accent) { state.accent = message.accent; paintAccent(); }
       state.mode = message.mode === "comment" ? "comment" : message.mode === "off" ? "off" : "edit";
-      document.documentElement.style.cursor = state.mode === "comment" ? "crosshair" : "";
+      applyModeCursor();
       post({ type: "ready", url: location.pathname, title: document.title });
       schedulePaint();
       return;
@@ -404,7 +417,7 @@
       case "set-mode":
         state.mode = message.mode === "comment" ? "comment" : message.mode === "off" ? "off" : "edit";
         if (state.mode !== "edit") { state.hover = null; endTextEdit(state.mode !== "off"); }
-        document.documentElement.style.cursor = state.mode === "comment" ? "crosshair" : "";
+        applyModeCursor();
         schedulePaint();
         break;
       case "apply":
@@ -413,11 +426,6 @@
       case "serialize":
         post({ type: "serialized", id: message.id, html: serialize() });
         break;
-      case "select": {
-        const el = document.querySelector(message.selector ?? "");
-        if (el) select(el);
-        break;
-      }
       case "scroll-to": {
         const el = document.querySelector(message.selector ?? "");
         if (el) { el.scrollIntoView({ block: "center", behavior: "smooth" }); schedulePaint(); }
@@ -425,7 +433,7 @@
       }
       case "deselect": deselect(); break;
       case "comment-remove": removeComment(message.id); break;
-      case "comments-restore": restoreComments(message.comments); break;
+      case "comments-restore": post({ type: "restored", id: message.id, missing: restoreComments(message.comments) }); break;
       case "comment-focus":
         for (const pin of pinLayer.children) {
           const focused = pin.dataset.id === message.id;
