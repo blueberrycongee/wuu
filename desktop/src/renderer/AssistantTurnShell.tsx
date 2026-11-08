@@ -45,8 +45,10 @@ import {
 import { AnimatedProcessText, ProcessLabel } from "./ProcessTextMotion";
 import { motionDurationMs } from "./motion";
 import {
+  ConversationRenderActivityProvider,
   useConversationRenderActive,
   useConversationRevealSnap,
+  useDisclosureRenderActive,
 } from "./ConversationRenderActivity";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { useConversationControls } from "./ConversationControlsContext";
@@ -722,6 +724,7 @@ function ReasoningFold({
     activeGray ? " is-live-gray" : ""
   }${streaming ? " is-streaming" : ""}`;
   const [open, setOpen] = useState(false);
+  const bodyActivity = useDisclosureRenderActive(open);
   const reasoningScroll = useAutoFollowScrollContainer({ open, initialAutoFollow: streaming });
 
   const handleReasoningStreamFrame = useCallback((): void => {
@@ -738,7 +741,7 @@ function ReasoningFold({
       open={open}
       onToggle={handleToggle}
     >
-      <summary className="turn-reasoning-summary">
+      <summary className="turn-reasoning-summary" onClick={bodyActivity.onSummaryClick}>
         <ProcessSurfaceMascot
           active={Boolean(activeGray)}
           activity="thinking"
@@ -766,17 +769,19 @@ function ReasoningFold({
             ref={reasoningScroll.scrollRef}
             {...{ [AUTO_FOLLOW_NESTED_SCROLL_ATTR]: "true" }}
           >
-            <ThreadItemView
-              {...messagePresentation}
-              turnID={turnID}
-              turnStatus={turnStatus}
-              item={item}
-              cwd={cwd}
-              onOpenFile={onOpenFile}
-              onOpenAgent={onOpenAgent}
-              streaming={streaming}
-              onStreamFrame={handleReasoningStreamFrame}
-            />
+            <ConversationRenderActivityProvider active={bodyActivity.active} catchUpMs={bodyActivity.catchUpMs}>
+              <ThreadItemView
+                {...messagePresentation}
+                turnID={turnID}
+                turnStatus={turnStatus}
+                item={item}
+                cwd={cwd}
+                onOpenFile={onOpenFile}
+                onOpenAgent={onOpenAgent}
+                streaming={streaming}
+                onStreamFrame={handleReasoningStreamFrame}
+              />
+            </ConversationRenderActivityProvider>
           </div>
         </div>
       </div>

@@ -5,6 +5,7 @@ import type {
   Ref,
   SyntheticEvent,
 } from "react";
+import { ConversationRenderActivityProvider, useDisclosureRenderActive } from "./ConversationRenderActivity";
 import { ChevronRight } from "./WuuIcons";
 
 /**
@@ -66,6 +67,7 @@ export function ProcessSurfaceFold({
   bodyProps,
 }: ProcessSurfaceFoldProps): JSX.Element {
   const hasDetails = !disabled;
+  const bodyActivity = useDisclosureRenderActive(hasDetails && open);
   const layoutRef = useRef<HTMLDivElement>(null);
   const accessoryRef = useRef<HTMLDivElement>(null);
   const hasAccessory = Boolean(summaryAccessory);
@@ -96,6 +98,7 @@ export function ProcessSurfaceFold({
       event.preventDefault();
     }
     onSummaryClick?.(event);
+    if (hasDetails) bodyActivity.onSummaryClick(event);
   };
   const fold = (
     <details
@@ -125,7 +128,9 @@ export function ProcessSurfaceFold({
           ref={bodyRef}
           {...bodyProps}
         >
-          {children}
+          <ConversationRenderActivityProvider active={bodyActivity.active} catchUpMs={bodyActivity.catchUpMs}>
+            {children}
+          </ConversationRenderActivityProvider>
         </div>
       ) : null}
     </details>
