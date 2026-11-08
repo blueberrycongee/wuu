@@ -284,7 +284,11 @@ func (s *nativeEngineAdmin) cachedEngineCatalog(parent context.Context, entry en
 		if err != nil {
 			return nil, nil, "error", err
 		}
-		return nil, nil, "error", errors.New("engine configuration changed during model discovery; refresh to retry")
+		// A concurrent native write (credential refresh, config edit) moved the
+		// fingerprint after the probe ran. The catalog cannot be trusted as
+		// current, but it is still better than an empty picker: publish it with
+		// the error and keep it out of the cache.
+		return models, modes, "error", errors.New("engine configuration changed during model discovery; refresh to retry")
 	}
 	cache.completed, cache.err = time.Now(), discoverErr
 	previousStatus := cache.status

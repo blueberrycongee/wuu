@@ -815,6 +815,19 @@ func TestACPHelper(t *testing.T) {
 				result = probeStallSessionResult("model-a")
 				break
 			}
+			if scenario == "large-catalog" {
+				var choices []any
+				for i := 0; i < 60; i++ {
+					choices = append(choices, map[string]string{"value": fmt.Sprintf("model-%02d", i), "name": fmt.Sprintf("Model %02d", i)})
+				}
+				result = map[string]any{
+					"sessionId": "native-session",
+					"configOptions": []any{
+						map[string]any{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "model-00", "options": choices},
+					},
+				}
+				break
+			}
 			if scenario == "unattended-mode" {
 				result = map[string]any{
 					"sessionId": "native-session",
@@ -869,6 +882,25 @@ func TestACPHelper(t *testing.T) {
 			selectedModel = params.ModelID
 			result = map[string]any{}
 		case "session/set_config_option":
+			if scenario == "large-catalog" {
+				var params struct {
+					ConfigID string `json:"configId"`
+					Value    string `json:"value"`
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				if params.ConfigID == "model" {
+					time.Sleep(100 * time.Millisecond)
+					var choices []any
+					for i := 0; i < 60; i++ {
+						choices = append(choices, map[string]string{"value": fmt.Sprintf("model-%02d", i), "name": fmt.Sprintf("Model %02d", i)})
+					}
+					result = map[string]any{"configOptions": []any{
+						map[string]any{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": params.Value, "options": choices},
+						map[string]any{"id": "reasoning_effort", "category": "thought_level", "type": "select", "currentValue": "high", "options": []any{map[string]string{"value": "low"}, map[string]string{"value": "high"}}},
+					}}
+					break
+				}
+			}
 			if scenario == "catalog-probe-stall" {
 				var params struct {
 					ConfigID string `json:"configId"`
@@ -1402,6 +1434,30 @@ func TestACPCatalogKeepsProbingPastAStalledModel(t *testing.T) {
 	}
 	if catalog.Models[2].ID != "model-c" || len(catalog.Models[2].SupportedEfforts) != 1 || catalog.Models[2].SupportedEfforts[0] != "turbo" {
 		t.Fatalf("probe after the stall did not run: %+v", catalog.Models[2])
+	}
+}
+
+// A catalog larger than the discovery budget still publishes every advertised
+// model; the probes that no longer fit leave those models without option
+// metadata instead of failing the whole catalog.
+func TestACPCatalogKeepsUnprobedModelsWhenBudgetRunsOut(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), acpCatalogProbeReserve+450*time.Millisecond)
+	defer cancel()
+	catalog, err := testEngine(t, "large-catalog").DiscoverCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 60 {
+		t.Fatalf("budget-exhausted discovery dropped models: %d listed", len(catalog.Models))
+	}
+	probed := 0
+	for _, model := range catalog.Models {
+		if len(model.SupportedEfforts) > 0 {
+			probed++
+		}
+	}
+	if probed == 0 || probed >= 59 {
+		t.Fatalf("expected a bounded number of probes, got %d of 59", probed)
 	}
 }
 
