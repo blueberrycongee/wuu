@@ -620,7 +620,7 @@ export function SplitPaneComposer({
                   <div className="composer-bar-right">
                     {dictation.api && !dictation.active && <DictationButton disabled={readOnly || draftPending || cameraOpen} start={dictation.start} />}
                     {showStop ? (
-                      <Tooltip asChild content={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}><button
+                      <button
                         className="composer-action-button composer-stop-button"
                         type="button"
                         onClick={onInterrupt}
@@ -630,7 +630,7 @@ export function SplitPaneComposer({
                         aria-label={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pause")}
                       >
                         <ComposerStopIcon state={stopState} submitting={submitting} />
-                      </button></Tooltip>
+                      </button>
                     ) : showContinue ? (
                       <ComposerContinueButton
                         key={`${continuation.threadID}:${continuation.turnID}`}
@@ -638,7 +638,7 @@ export function SplitPaneComposer({
                         disabled={sendDisabled}
                       />
                     ) : (
-                      <Tooltip asChild content={sendLabel}><button
+                      <button
                         className="composer-action-button composer-send-button"
                         data-wuu-component="composer-send"
                         data-wuu-state={draftPending ? "submitting" : "send"}
@@ -654,7 +654,7 @@ export function SplitPaneComposer({
                         disabled={readOnly || sendDisabled || (dictation.active ? dictation.phase !== "listening" : !hasDraft)}
                       >
                         {draftPending ? <ComposerStopIcon submitting /> : <ArrowUp aria-hidden="true" />}
-                      </button></Tooltip>
+                      </button>
                     )}
                   </div>
                 </div>

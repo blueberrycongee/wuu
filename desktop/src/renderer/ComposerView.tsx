@@ -1545,31 +1545,29 @@ export function Composer({
                     continuation={continuation}
                     disabled={effectiveSendDisabled}
                   />
-                ) : <Tooltip asChild content={sendDisabledReason || (stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel)}>
-                  <button
-                    className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
-                    data-wuu-component="composer-send"
-                    data-wuu-state={stopState ?? (draftPending ? "submitting" : showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
-                    aria-busy={draftPending || stopState === "pending" || (showComposerStopAction && submitting) || undefined}
-                    type="button"
-                    onPointerDown={(event) => {
-                      if (!showComposerStopAction && event.button === 0 && textareaRef.current && document.activeElement === composerInputElement(textareaRef.current)) {
-                        // Keep editing focus while the pointer activates Send;
-                        // keyboard navigation and the Stop action stay native.
-                        event.preventDefault();
-                      }
-                    }}
-                    onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
-                    aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
-                    aria-description={sendDisabledReason}
-                    disabled={
-                      stopState === "pending" || (!showComposerStopAction &&
-                      (effectiveSendDisabled || readOnly || (dictation.active ? dictation.phase !== "listening" : !hasDraft) || (handoffMode && !canConfirmHandoff)))
+                ) : <Tooltip asChild content={sendDisabledReason}><button
+                  className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
+                  data-wuu-component="composer-send"
+                  data-wuu-state={stopState ?? (draftPending ? "submitting" : showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
+                  aria-busy={draftPending || stopState === "pending" || (showComposerStopAction && submitting) || undefined}
+                  type="button"
+                  onPointerDown={(event) => {
+                    if (!showComposerStopAction && event.button === 0 && textareaRef.current && document.activeElement === composerInputElement(textareaRef.current)) {
+                      // Keep editing focus while the pointer activates Send;
+                      // keyboard navigation and the Stop action stay native.
+                      event.preventDefault();
                     }
-                  >
-                    {showComposerStopAction || draftPending ? <ComposerStopIcon state={stopState} submitting={submitting || draftPending} /> : <ArrowUp aria-hidden="true" />}
-                  </button>
-                </Tooltip>}
+                  }}
+                  onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
+                  aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
+                  aria-description={sendDisabledReason}
+                  disabled={
+                    stopState === "pending" || (!showComposerStopAction &&
+                    (effectiveSendDisabled || readOnly || (dictation.active ? dictation.phase !== "listening" : !hasDraft) || (handoffMode && !canConfirmHandoff)))
+                  }
+                >
+                  {showComposerStopAction || draftPending ? <ComposerStopIcon state={stopState} submitting={submitting || draftPending} /> : <ArrowUp aria-hidden="true" />}
+                </button></Tooltip>}
               </div>
             </div>
           </div>
