@@ -249,9 +249,13 @@ func TestScanDevin(t *testing.T) {
 	// Branch copies carry the same request_id: the spend must count once.
 	assistant("dev-free", 5, 1780382460, "m1", "req-1", "swe-2-max", 100, 20, 30)
 	assistant("dev-free", 2, 1780382500, "m2", "req-2", "swe-2-max", 50, 10, 0)
+	// Rows without a request_id dedupe on message_id, then the node itself.
+	assistant("dev-free", 6, 1780382600, "m9", "", "swe-2-max", 7, 3, 0)
+	assistant("dev-free", 8, 1780382660, "m9", "", "swe-2-max", 7, 3, 0)
+	assistant("dev-free", 9, 1780382700, "", "", "swe-2-max", 5, 1, 0)
 	// A session Wuu drives stays in the result; the caller attributes it.
 	assistant("dev-bound", 1, 1780382400, "m3", "req-3", "swe-2-high", 999, 999, 0)
-	if _, err := db.Exec(`INSERT INTO message_nodes (session_id, node_id, chat_message, created_at) VALUES ('dev-free', 9, '{"role":"user","content":"hi"}', 1780382400)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO message_nodes (session_id, node_id, chat_message, created_at) VALUES ('dev-free', 10, '{"role":"user","content":"hi"}', 1780382400)`); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -263,11 +267,11 @@ func TestScanDevin(t *testing.T) {
 	if res.Failed["devin"] != nil {
 		t.Fatalf("devin scan failed: %v", res.Failed["devin"])
 	}
-	if len(res.Rows) != 3 {
-		t.Fatalf("expected 3 deduped rows, got %v", res.Rows)
+	if len(res.Rows) != 5 {
+		t.Fatalf("expected 5 deduped rows, got %v", res.Rows)
 	}
 	tokens, sessions := totals(res.Rows)
-	if tokens != 100+20+30+50+10+999+999 || sessions != 2 {
+	if tokens != 100+20+30+50+10+7+3+5+1+999+999 || sessions != 2 {
 		t.Fatalf("unexpected totals: tokens=%d sessions=%d rows=%v", tokens, sessions, res.Rows)
 	}
 	var bound, dup Row

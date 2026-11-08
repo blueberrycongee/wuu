@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -129,18 +130,28 @@ func (s *Scanner) codexDirs() []string {
 	}
 }
 
+// dataHome mirrors the XDG data directory the engines themselves honor
+// (XDG_DATA_HOME, else ~/.local/share), matching enginecatalog's discovery
+// context for the same ledgers.
+func (s *Scanner) dataHome() string {
+	if value := strings.TrimSpace(os.Getenv("XDG_DATA_HOME")); value != "" {
+		return value
+	}
+	return filepath.Join(s.home(), ".local", "share")
+}
+
 func (s *Scanner) devinDB() string {
 	if s.DevinDB != "" {
 		return s.DevinDB
 	}
-	return filepath.Join(s.home(), ".local", "share", "devin", "cli", "sessions.db")
+	return filepath.Join(s.dataHome(), "devin", "cli", "sessions.db")
 }
 
 func (s *Scanner) openCodeDB() string {
 	if s.OpenCodeDB != "" {
 		return s.OpenCodeDB
 	}
-	return filepath.Join(s.home(), ".local", "share", "opencode", "opencode.db")
+	return filepath.Join(s.dataHome(), "opencode", "opencode.db")
 }
 
 // openLedgerDB opens a SQLite ledger read-only. query_only and a bounded busy

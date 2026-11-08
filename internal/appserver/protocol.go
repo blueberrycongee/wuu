@@ -2951,9 +2951,10 @@ type SettingsEngineUsage struct {
 // the per-model table sorted by total context tokens descending (legacy
 // rows with empty provider+model are surfaced as "(unknown)"), and Days
 // is the calendar-day series for the heatmap (gaps filled by the
-// desktop). EngineBreakdowns attributes the same in-Wuu totals per agent
-// engine and adds the usage each engine recorded outside Wuu in its own
-// local ledger.
+// desktop). EngineBreakdowns attributes usage per agent engine — the
+// in-Wuu trail plus bound-session ledger rows on engines that never
+// report to the trail — and adds the usage each engine recorded
+// outside Wuu in its own local ledger.
 type SettingsUsageResponse struct {
 	TotalSessions    int                   `json:"total_sessions"`
 	GeneratedAt      string                `json:"generated_at"`

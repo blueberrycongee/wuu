@@ -3007,11 +3007,11 @@ export type SettingsEngineUsage = {
 // SettingsUsageResponse is the single source of truth for the desktop
 // usage page. ModelBreakdowns is sorted by total context tokens
 // descending; empty Provider+Model entries are bucketed as "(unknown)"
-// in the UI. Days carries the calendar-day series for the heatmap —
-// both are derived from the same per-row token_usage trail so the
-// views always sum to the same totals. EngineBreakdowns attributes the
-// same in-Wuu totals per agent engine and adds the usage each engine
-// recorded outside Wuu in its own local ledger.
+// in the UI. Days carries the calendar-day series for the heatmap.
+// EngineBreakdowns attributes usage per agent engine — the in-Wuu trail
+// plus bound-session ledger rows on engines that never report to the
+// trail — and adds the usage each engine recorded outside Wuu in its
+// own local ledger.
 export type SettingsUsageResponse = {
   total_sessions: number;
   generated_at: string;
