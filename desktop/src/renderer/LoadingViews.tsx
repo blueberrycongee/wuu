@@ -1,17 +1,21 @@
 import { useEffect, useId, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { WuuIconMascot } from "./WuuIconMascot";
+import { AlertCircle } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
 
 export function RuntimeLoading({
-  status, fullscreen = false, recovering = false, onRetry, onRecovery,
+  status, fullscreen = false, recovering = false, onRetry, onRecovery, detail,
 }: {
+  /** Only discriminates the state: a starting verb or any failure value; never rendered. */
   status: string;
   fullscreen?: boolean;
   recovering?: boolean;
   onRetry?: () => void;
   onRecovery?: () => void;
+  /** Optional failure detail under the title; absent leaves title and actions. */
+  detail?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const isStarting = status === "connecting" || status === "opening";
@@ -27,22 +31,25 @@ export function RuntimeLoading({
     <div className={`project-empty-pane${fullscreen ? " application-recovery" : ""}`} data-wuu-component="launch-view">
       <div className="wuu-launch" role={isStarting ? "status" : "alert"}
         aria-label={t(isStarting ? "loading.starting" : "loading.failed")}
-        aria-describedby={!isStarting || recovering || slow ? descriptionId : undefined}>
-        {isStarting && !recovering && <div className="wuu-launch-glass" aria-hidden="true">
+        aria-describedby={(isStarting ? (recovering || slow) : Boolean(detail)) ? descriptionId : undefined}>
+        {!(isStarting && recovering) && <div className="wuu-launch-mark" aria-hidden="true">
+          <div className="wuu-launch-glass">
             <WuuIconMascot className="wuu-launch-mascot" />
+          </div>
+          {!isStarting && <span className="wuu-launch-badge"><AlertCircle size={20} /></span>}
         </div>}
         <div className="wuu-launch-message">
           <p className="wuu-launch-title">{t(isStarting ? "loading.starting" : "loading.failed")}</p>
           {isStarting ? <>
             {!recovering && <div className="loading-rail" aria-hidden="true" />}
             <p id={descriptionId} className="wuu-launch-description" aria-hidden={!recovering && !slow}>{recovering || slow ? t("loading.slow") : "\u00a0"}</p>
-          </> : <>
-            <pre id={descriptionId} className="wuu-launch-error">{status}</pre>
-          </>}
-          {(!isStarting || recovering) && <>
-            {onRecovery && <button type="button" className="settings-button" onClick={onRecovery}>{t("loading.openRecovery")}</button>}
-            {onRetry && <button type="button" className="settings-button" onClick={onRetry}>{t("loading.reconnect")}</button>}
-          </>}
+          </> : detail ? (
+            <p id={descriptionId} className="wuu-launch-error">{detail}</p>
+          ) : null}
+          {(!isStarting || recovering) && (onRecovery || onRetry) && <div className="wuu-launch-actions">
+            {onRecovery && <button type="button" className={`settings-button${onRetry ? "" : " settings-button-primary"}`} onClick={onRecovery}>{t("loading.openRecovery")}</button>}
+            {onRetry && <button type="button" className="settings-button settings-button-primary" onClick={onRetry}>{t("loading.reconnect")}</button>}
+          </div>}
         </div>
       </div>
     </div>

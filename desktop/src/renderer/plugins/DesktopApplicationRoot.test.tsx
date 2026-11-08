@@ -46,7 +46,7 @@ it("offers explicit recovery without an unbounded window-switch animation when n
     expect(fixture.notice).not.toHaveBeenCalled();
     fixture.notice.mockReturnValueOnce(71);
     fixture.pending = false; await render();
-    expect(container.textContent).toBe("plugins.applicationUnavailable");
+    expect(container.textContent).toBe("failed");
     expect(fixture.notice).toHaveBeenLastCalledWith("plugins.applicationUnavailable", "", "application-activation");
     fixture.failure = "same failure plus effective graph identity"; await render();
     expect(container.textContent).not.toContain("graph identity");

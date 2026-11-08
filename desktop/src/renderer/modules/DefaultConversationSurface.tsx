@@ -153,8 +153,8 @@ function ConversationSurface({ application, slots, ...layout }: DefaultConversat
   </>} />;
   const usage = <slots.Slot name="wuu.default-conversation/welcome.usage" context={welcomeContext} fallback={<EmptyHomeOverview application={application} />} />;
   const welcome: ConversationWelcomeContextV1 = { mascot, greeting: greetingPart, usage };
-  if (view.phase === "starting" || view.conversation.loading) return <RuntimeLoading status={view.connection.message ?? "connecting"} />;
-  if (view.phase === "error" && !primary) return <RuntimeLoading status={view.conversation.error ?? view.connection.message ?? t("sideThread.unavailable")} />;
+  if (view.phase === "starting" || view.conversation.loading) return <RuntimeLoading status={view.connection.message ?? "connecting"} detail={view.connection.message} />;
+  if (view.phase === "error" && !primary) return <RuntimeLoading status="failed" detail={view.conversation.error ?? view.connection.message ?? t("sideThread.unavailable")} />;
   return <WorkbenchConnectionContext.Provider value={view.connection.status === "connected"}>
     <div ref={layout.scrollRef} data-pip-anchor-host={layout.restoring || layout.visible === false || switching ? undefined : "conversation"} data-scroll-fade={!empty && !split ? "" : undefined}
       className={`scroll-region${empty ? " empty-scroll-region" : ""}${split ? " split-scroll-region" : ""}`}

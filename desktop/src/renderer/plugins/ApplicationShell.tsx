@@ -173,7 +173,6 @@ function ShellInteractionBoundary({ host, shell, children }: { host: PluginHost;
 
 /** The selected graph binding is authoritative; absence never chooses a local default. */
 export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pending = false, pendingFallback }: { host: PluginHost; binding: ApplicationShellBinding | null; surfaceBindings?: Readonly<Record<string, ApplicationShellBinding>>; pending?: boolean; pendingFallback?: React.ReactNode }): React.ReactNode {
-  const { t } = useI18n();
   const surfaceKey = JSON.stringify(surfaceBindings);
   const stableBindings = React.useMemo(() => surfaceBindings, [surfaceKey]);
   const shells = React.useSyncExternalStore(listener => host.subscribe(listener), host.getApplicationShells, host.getApplicationShells);
@@ -181,7 +180,7 @@ export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pe
     && shell.generation === binding.generation && shell.id === binding.id);
   if (!selected && pending && pendingFallback) return pendingFallback;
   if (!selected) return <RuntimeLoading fullscreen recovering={pending} onRetry={() => window.location.reload()}
-    status={pending ? "connecting" : t("plugins.applicationUnavailable")} />;
+    status={pending ? "connecting" : "failed"} />;
   // Activation identity changes even when a reload reuses the same code fingerprint.
   const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
   return <ShellBoundary fullShell key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>

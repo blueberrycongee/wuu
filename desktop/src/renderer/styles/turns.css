@@ -4875,53 +4875,87 @@ pre {
  * The launch signature shows the same round wuu blobatar as the empty home
  * greeting, centered inside one opaque app-icon surface. The mascot is the
  * color mark itself, and the old monochrome carving plus startup sweep are
- * gone.
+ * gone. A failure keeps the same mark so a stall does not make the icon
+ * vanish; it only stamps a status badge on the corner.
  */
 .wuu-launch {
   display: grid;
   justify-items: center;
-  gap: 24px;
+  gap: var(--space-6);
   width: min(400px, 100%);
-  padding: 16px;
+  padding: var(--space-4);
   text-align: center;
   color: var(--ink);
   font-size: var(--font-ui);
+}
+
+.wuu-launch-mark {
+  position: relative;
+}
+
+.wuu-launch-badge {
+  position: absolute;
+  inset-inline-end: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  aspect-ratio: 1;
+  border: 3px solid var(--paper);
+  border-radius: var(--radius-pill);
+  background: var(--danger);
+  color: var(--paper);
+  --enter-scale: 0.6;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 
 .wuu-launch-message {
   position: relative;
   display: grid;
   justify-items: center;
-  gap: 16px;
+  gap: var(--space-4);
   min-width: 0;
   width: 100%;
 }
 
-.wuu-launch-title,
-.wuu-launch-description {
+.wuu-launch-title {
   margin: 0;
-  line-height: var(--line-body);
+  color: var(--ink-strong);
+  font-size: var(--font-heading);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
 }
 
 .wuu-launch-description {
   /* Keep the delayed hint from shifting the centered icon, title and rail. */
   position: absolute;
-  top: calc(100% + 16px);
+  top: calc(100% + var(--space-4));
   inset-inline: 0;
+  margin: 0;
   color: var(--ink-soft);
+  line-height: var(--line-body);
 }
 
+/* A <p> keeps raw error text without picking up the code-block chrome a
+ * <pre> gets globally. */
 .wuu-launch-error {
   margin: 0;
   max-height: 35vh;
   width: 100%;
   overflow: auto;
+  color: var(--ink-soft);
+  line-height: var(--line-body);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  font: inherit;
-  line-height: var(--line-body);
-  color: var(--ink-soft);
   user-select: text;
+}
+
+.wuu-launch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
 }
 
 @container style(--motion-reduced: 1) {
