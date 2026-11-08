@@ -31,7 +31,7 @@ func (s *Scanner) scanClaude(ctx context.Context, exclude func(string, string) b
 		if exclude("claude", strings.TrimSuffix(info.Name(), ".jsonl")) {
 			return nil
 		}
-		if cached, ok := s.cachedRows(path, info); ok {
+		if cached, ok := s.cachedRows(path, info.Size(), info.ModTime()); ok {
 			rows = append(rows, cached...)
 			return nil
 		}
@@ -39,7 +39,7 @@ func (s *Scanner) scanClaude(ctx context.Context, exclude func(string, string) b
 		if err != nil {
 			return nil
 		}
-		s.storeRows(path, info, fileRows)
+		s.storeRows(path, info.Size(), info.ModTime(), fileRows)
 		rows = append(rows, fileRows...)
 		return nil
 	})

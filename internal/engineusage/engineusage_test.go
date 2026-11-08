@@ -111,7 +111,7 @@ func TestScanClaude(t *testing.T) {
 	})
 	writeFile(t, filepath.Join(projects, "-tmp-a", "notes.txt"), []string{"ignore me"})
 
-	s := &Scanner{ClaudeDir: projects, CodexDirs: []string{filepath.Join(root, "none")}, OpenCodeDB: filepath.Join(root, "none.db")}
+	s := &Scanner{ClaudeDir: projects, CodexDirs: []string{filepath.Join(root, "none")}, DevinDB: filepath.Join(root, "none-devin.db"), OpenCodeDB: filepath.Join(root, "none.db")}
 	res := s.Scan(context.Background(), ExcludeRefs{"claude": {"sess-bound": {}}})
 	if res.Failed["claude"] != nil {
 		t.Fatalf("claude scan failed: %v", res.Failed["claude"])
@@ -148,7 +148,7 @@ func TestScanCodex(t *testing.T) {
 		`{"type":"event_msg","payload":{"type":"token_count","info":null}}`,
 	})
 
-	s := &Scanner{ClaudeDir: filepath.Join(root, "none"), CodexDirs: []string{codexSessions}, OpenCodeDB: filepath.Join(root, "none.db")}
+	s := &Scanner{ClaudeDir: filepath.Join(root, "none"), CodexDirs: []string{codexSessions}, DevinDB: filepath.Join(root, "none-devin.db"), OpenCodeDB: filepath.Join(root, "none.db")}
 	res := s.Scan(context.Background(), ExcludeRefs{"codex": {boundID: {}}})
 	if res.Failed["codex"] != nil {
 		t.Fatalf("codex scan failed: %v", res.Failed["codex"])
@@ -197,7 +197,7 @@ func TestScanOpenCode(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := &Scanner{ClaudeDir: filepath.Join(root, "none"), CodexDirs: []string{filepath.Join(root, "none")}, OpenCodeDB: dbPath}
+	s := &Scanner{ClaudeDir: filepath.Join(root, "none"), CodexDirs: []string{filepath.Join(root, "none")}, DevinDB: filepath.Join(root, "none-devin.db"), OpenCodeDB: dbPath}
 	res := s.Scan(context.Background(), ExcludeRefs{"opencode": {"ses_bound": {}}})
 	if res.Failed["opencode"] != nil {
 		t.Fatalf("opencode scan failed: %v", res.Failed["opencode"])
@@ -208,12 +208,92 @@ func TestScanOpenCode(t *testing.T) {
 	}
 }
 
+func TestScanDevin(t *testing.T) {
+	root := t.TempDir()
+	dbPath := filepath.Join(root, "sessions.db")
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY);
+		CREATE TABLE message_nodes (
+			row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			node_id INTEGER NOT NULL,
+			parent_node_id INTEGER,
+			chat_message TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	assistant := func(sessionID string, nodeID int, createdSec int64, messageID, requestID, model string, input, output, cacheRead int) {
+		msg, err := json.Marshal(map[string]any{
+			"message_id": messageID, "role": "assistant", "content": "ok",
+			"metadata": map[string]any{
+				"request_id":       requestID,
+				"generation_model": model,
+				"metrics": map[string]any{
+					"input_tokens": input, "output_tokens": output,
+					"cache_read_tokens": cacheRead, "cache_creation_tokens": nil,
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO message_nodes (session_id, node_id, chat_message, created_at) VALUES (?, ?, ?, ?)`, sessionID, nodeID, string(msg), createdSec); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assistant("dev-free", 1, 1780382400, "m1", "req-1", "swe-2-max", 100, 20, 30)
+	// Branch copies carry the same request_id: the spend must count once.
+	assistant("dev-free", 5, 1780382460, "m1", "req-1", "swe-2-max", 100, 20, 30)
+	assistant("dev-free", 2, 1780382500, "m2", "req-2", "swe-2-max", 50, 10, 0)
+	// A session Wuu drives stays in the result; the caller attributes it.
+	assistant("dev-bound", 1, 1780382400, "m3", "req-3", "swe-2-high", 999, 999, 0)
+	if _, err := db.Exec(`INSERT INTO message_nodes (session_id, node_id, chat_message, created_at) VALUES ('dev-free', 9, '{"role":"user","content":"hi"}', 1780382400)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	s := &Scanner{ClaudeDir: filepath.Join(root, "none"), CodexDirs: []string{filepath.Join(root, "none")}, DevinDB: dbPath, OpenCodeDB: filepath.Join(root, "none.db")}
+	res := s.Scan(context.Background(), ExcludeRefs{"devin": {"dev-bound": {}}})
+	if res.Failed["devin"] != nil {
+		t.Fatalf("devin scan failed: %v", res.Failed["devin"])
+	}
+	if len(res.Rows) != 3 {
+		t.Fatalf("expected 3 deduped rows, got %v", res.Rows)
+	}
+	tokens, sessions := totals(res.Rows)
+	if tokens != 100+20+30+50+10+999+999 || sessions != 2 {
+		t.Fatalf("unexpected totals: tokens=%d sessions=%d rows=%v", tokens, sessions, res.Rows)
+	}
+	var bound, dup Row
+	for _, r := range res.Rows {
+		if r.SessionID == "dev-bound" {
+			bound = r
+		}
+		if r.SessionID == "dev-free" && r.InputTokens == 100 {
+			dup = r
+		}
+	}
+	if bound.Engine != "devin" || bound.Model != "swe-2-high" {
+		t.Fatalf("bound row: %+v", bound)
+	}
+	// The earliest copy timestamps the deduped observation.
+	if dup.At != time.Unix(1780382400, 0).UTC() {
+		t.Fatalf("dedup kept the later copy's timestamp: %+v", dup)
+	}
+}
+
 func TestScanFileCacheReuse(t *testing.T) {
 	root := t.TempDir()
 	projects := filepath.Join(root, ".claude", "projects")
 	path := filepath.Join(projects, "-tmp", "sess-a.jsonl")
 	writeFile(t, path, []string{claudeAssistantLine(t, "sess-a", "m", 1, 2, 3, 4)})
-	s := &Scanner{ClaudeDir: projects, CodexDirs: []string{filepath.Join(root, "none")}, OpenCodeDB: filepath.Join(root, "none.db")}
+	s := &Scanner{ClaudeDir: projects, CodexDirs: []string{filepath.Join(root, "none")}, DevinDB: filepath.Join(root, "none-devin.db"), OpenCodeDB: filepath.Join(root, "none.db")}
 	first := s.Scan(context.Background(), nil)
 	if len(first.Rows) != 1 {
 		t.Fatalf("first scan rows=%v", first.Rows)
@@ -239,6 +319,7 @@ func TestScanMissingLedgers(t *testing.T) {
 	s := &Scanner{
 		ClaudeDir:  filepath.Join(root, "missing-claude"),
 		CodexDirs:  []string{filepath.Join(root, "missing-codex")},
+		DevinDB:    filepath.Join(root, "missing-devin.db"),
 		OpenCodeDB: filepath.Join(root, "missing.db"),
 	}
 	res := s.Scan(context.Background(), nil)

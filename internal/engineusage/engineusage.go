@@ -8,6 +8,8 @@ package engineusage
 
 import (
 	"context"
+	"database/sql"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -15,7 +17,7 @@ import (
 )
 
 // Supported is the set of engines with a readable local ledger.
-var Supported = map[string]bool{"claude": true, "codex": true, "opencode": true}
+var Supported = map[string]bool{"claude": true, "codex": true, "devin": true, "opencode": true}
 
 // Row is one usage observation in an engine-local ledger. At records the
 // observation time when the ledger carries one.
@@ -70,6 +72,7 @@ type Scanner struct {
 	HomeDir    string
 	ClaudeDir  string
 	CodexDirs  []string
+	DevinDB    string
 	OpenCodeDB string
 }
 
@@ -79,23 +82,26 @@ type cachedFile struct {
 	rows    []Row
 }
 
-func (s *Scanner) cachedRows(path string, info os.FileInfo) ([]Row, bool) {
+// cachedRows and storeRows key a ledger file's parsed rows on a caller-chosen
+// size/mtime fingerprint, so composite sources (a WAL database and its
+// sidecar) can fold extra files into the key.
+func (s *Scanner) cachedRows(path string, size int64, modTime time.Time) ([]Row, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, ok := s.files[path]
-	if !ok || f.size != info.Size() || !f.modTime.Equal(info.ModTime()) {
+	if !ok || f.size != size || !f.modTime.Equal(modTime) {
 		return nil, false
 	}
 	return f.rows, true
 }
 
-func (s *Scanner) storeRows(path string, info os.FileInfo, rows []Row) {
+func (s *Scanner) storeRows(path string, size int64, modTime time.Time, rows []Row) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.files == nil {
 		s.files = make(map[string]cachedFile)
 	}
-	s.files[path] = cachedFile{size: info.Size(), modTime: info.ModTime(), rows: rows}
+	s.files[path] = cachedFile{size: size, modTime: modTime, rows: rows}
 }
 
 func (s *Scanner) home() string {
@@ -123,11 +129,34 @@ func (s *Scanner) codexDirs() []string {
 	}
 }
 
+func (s *Scanner) devinDB() string {
+	if s.DevinDB != "" {
+		return s.DevinDB
+	}
+	return filepath.Join(s.home(), ".local", "share", "devin", "cli", "sessions.db")
+}
+
 func (s *Scanner) openCodeDB() string {
 	if s.OpenCodeDB != "" {
 		return s.OpenCodeDB
 	}
 	return filepath.Join(s.home(), ".local", "share", "opencode", "opencode.db")
+}
+
+// openLedgerDB opens a SQLite ledger read-only. query_only and a bounded busy
+// timeout keep a live writer's locks from stalling the scan.
+func openLedgerDB(path string) (*sql.DB, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	u := url.URL{Scheme: "file", Path: filepath.ToSlash(absolute)}
+	q := u.Query()
+	q.Set("mode", "ro")
+	q.Add("_pragma", "query_only(1)")
+	q.Add("_pragma", "busy_timeout(5000)")
+	u.RawQuery = q.Encode()
+	return sql.Open("sqlite", u.String())
 }
 
 // Scan reads every supported ledger. A missing directory or database is not a
@@ -152,6 +181,11 @@ func (s *Scanner) Scan(ctx context.Context, exclude ExcludeRefs) ScanResult {
 		rows, err := s.scanCodex(ctx, exclude.contains)
 		result.Rows = append(result.Rows, rows...)
 		fail("codex", err)
+	}
+	if ctx.Err() == nil {
+		rows, err := s.scanDevin(ctx)
+		result.Rows = append(result.Rows, rows...)
+		fail("devin", err)
 	}
 	if ctx.Err() == nil {
 		rows, err := s.scanOpenCode(ctx, exclude.contains)

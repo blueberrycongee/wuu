@@ -2957,9 +2957,11 @@ export type SettingsUsageMetrics = {
 // the token_usage row's At timestamp. Days are emitted in ascending
 // date order; the desktop fills in the heatmap gaps locally so the
 // backend only ships days that actually saw activity. The token fields
-// and turns/agents cover Wuu's own trail only; outside holds the same
-// day's usage the engine ledgers recorded outside Wuu, so a chart can
-// color every day the page counts without mixing the two ledgers' fields.
+// cover Wuu's own trail plus ledger usage of sessions Wuu drives on
+// engines that never report to the trail; turns/agents stay Wuu-trail
+// counts. outside holds the same day's usage the engine ledgers recorded
+// outside Wuu, so a chart can color every day the page counts without
+// mixing the two ledgers' fields.
 export type SettingsUsageDay = {
   date: string;
   input_tokens: number;
@@ -2988,11 +2990,13 @@ export type EngineUsageSum = {
   sessions: number;
 };
 
-// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums the
-// token_usage trail by each thread's bound engine. Outside reads the engine's
-// own on-disk ledger minus native sessions Wuu already claims, so the two
-// columns never count the same work twice. Outside is absent for engines
-// without a readable local ledger or whose ledger failed to scan.
+// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums
+// the token_usage trail by each thread's bound engine, plus ledger rows of
+// sessions Wuu drives on engines that never report usage to the trail (the
+// ACP family, such as Devin). Outside reads the engine's own on-disk ledger
+// minus native sessions Wuu already claims, so the two columns never count
+// the same work twice. Outside is absent for engines without a readable
+// local ledger or whose ledger failed to scan.
 export type SettingsEngineUsage = {
   engine: string;
   name: string;
