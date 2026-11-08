@@ -95,6 +95,9 @@ export function PluginConversationView({ presentation = "standard", conversation
   }, []);
   const bubbles = presentation === "bubbles";
   const gesture = useConversationBubbleGesture(bubbles, conversationId, controller.scrollRef);
+  // Keep the context value stable across the drag's per-frame renders so
+  // message consumers only re-render when the reveal actually toggles.
+  const bubbleContext = useMemo(() => ({ enabled: bubbles, revealed: gesture.revealed }), [bubbles, gesture.revealed]);
   const [composerNode, setComposerNode] = useState<HTMLDivElement | null>(null);
   const [searchFor, setSearchFor] = useState<string>();
   const searchOpen = showHistorySearch && searchFor === conversationId;
@@ -140,7 +143,7 @@ export function PluginConversationView({ presentation = "standard", conversation
         data-times-dragging={bubbles ? gesture.dragging : undefined}
         style={bubbles ? { "--bubble-time-progress": gesture.progress } as React.CSSProperties : undefined}>
         {bubbles && <button type="button" className="bubble-time-toggle" aria-pressed={gesture.revealed} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" onClick={gesture.toggle}>{t(gesture.revealed ? "message.hideTimes" : "message.showTimes")}</button>}
-        <ConversationBubbleContext.Provider value={{ enabled: bubbles, revealed: gesture.revealed }}>
+        <ConversationBubbleContext.Provider value={bubbleContext}>
         <ConversationFlow className="plugin-conversation-flow" role="log" aria-live="polite" aria-busy={loading}>{children}{sessionId && sessionScope && <PluginConversationQuestions sessionId={sessionId} scope={sessionScope} onReply={onQuestionReply} />}</ConversationFlow>
         </ConversationBubbleContext.Provider>
       </div>

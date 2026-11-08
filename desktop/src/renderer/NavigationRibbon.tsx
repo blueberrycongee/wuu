@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { closestCenter, DndContext, useSensor, useSensors } from "@dnd-kit/core";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { arrayMove, SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -170,8 +170,11 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
   }
 
   const menuWebsite = menu && websites.find((website) => website.id === menu.id);
+  // Stable across per-frame resize renders; the scope also shadows the
+  // sidebar drawer's retain so ribbon layers cannot hold it open.
+  const hoverScope = useMemo(() => ({ disabled: dragging || resizing || collapsed }), [dragging, resizing, collapsed]);
   return <>
-    <HoverRevealScopeContext.Provider value={{ disabled: dragging || resizing || collapsed, retain: () => () => {} }}>
+    <HoverRevealScopeContext.Provider value={hoverScope}>
     <nav ref={node => { navRef.current = node; if (typeof ribbonRef === "function") ribbonRef(node); else if (ribbonRef) ribbonRef.current = node; }} className="sidebar-ribbon" hidden={collapsed} data-expanded={width > RIBBON_COMPACT_WIDTH || undefined} aria-label={t("sidebar.mainNavigation")}>
       <a className="sidebar-ribbon-brand"
         href="https://github.com/blueberrycongee/wuu" target="_blank" rel="noreferrer"
