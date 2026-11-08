@@ -309,12 +309,11 @@ type Server struct {
 	pendingAgentCompletionTurns  map[string][]agentCompletionTurn
 	drainingAgentCompletionTurns map[string]bool
 
-	queuedTurnMu                sync.Mutex
-	pendingQueuedTurns          map[string][]queuedTurn
-	claimedQueuedTurns          map[string]*queuedTurnClaim
-	cancelledPendingSubmissions map[string]string
-	drainingQueuedTurns         map[string]bool
-	heldUserWorkMu              sync.Mutex
+	// schedulersMu guards only the cell registry. Per-thread turn-scheduling
+	// state (queued turns, claims, cancellation tombstones, drain markers,
+	// held-input serialization) lives inside the cells; see thread_scheduler.go.
+	schedulersMu sync.Mutex
+	schedulers   map[string]*threadScheduler
 
 	pluginClientMu       sync.Mutex
 	pluginClientRequests map[pluginClientRequestKey]*pluginClientRequest
@@ -426,10 +425,7 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 
 		pendingAgentCompletionTurns:  make(map[string][]agentCompletionTurn),
 		drainingAgentCompletionTurns: make(map[string]bool),
-		pendingQueuedTurns:           make(map[string][]queuedTurn),
-		claimedQueuedTurns:           make(map[string]*queuedTurnClaim),
-		cancelledPendingSubmissions:  make(map[string]string),
-		drainingQueuedTurns:          make(map[string]bool),
+		schedulers:                   make(map[string]*threadScheduler),
 		codexModelCache:              make(map[string]map[string]config.ProviderModelConfig),
 		inferenceMaintenanceStop:     make(chan struct{}),
 		sideTurns:                    make(map[string]*sideThreadTurn),
@@ -975,19 +971,22 @@ func (s *Server) Close() {
 		// never wedge the process on a shutdown drain.
 		s.failPendingClientCalls()
 
-		s.queuedTurnMu.Lock()
-		queuedOnClose := make(map[string][]queuedTurn, len(s.pendingQueuedTurns))
-		for threadID, entries := range s.pendingQueuedTurns {
-			queuedOnClose[threadID] = append([]queuedTurn(nil), entries...)
+		queuedOnClose := make(map[string][]queuedTurn)
+		for threadID, sched := range s.schedulersSnapshot() {
+			queue := &sched.queue
+			queue.mu.Lock()
+			if len(queue.pending) > 0 {
+				queuedOnClose[threadID] = append([]queuedTurn(nil), queue.pending...)
+				queue.pending = nil
+			}
+			// Claimed inputs belong to their drain until settlement. Preserve its
+			// commit/cancellation evidence across shutdown so an explicit dequeue
+			// cannot become a replayable shutdown discard while its receipt is
+			// still being persisted. The owning drain removes the claim.
+			clear(queue.cancelled)
+			queue.draining = false
+			queue.mu.Unlock()
 		}
-		clear(s.pendingQueuedTurns)
-		// Claimed inputs belong to their drain until settlement. Preserve its
-		// commit/cancellation evidence across shutdown so an explicit dequeue
-		// cannot become a replayable shutdown discard while its receipt is
-		// still being persisted. The owning drain removes the claim.
-		clear(s.cancelledPendingSubmissions)
-		clear(s.drainingQueuedTurns)
-		s.queuedTurnMu.Unlock()
 		for threadID, entries := range queuedOnClose {
 			th := closingThreads[threadID]
 			if th == nil || th.state == nil {

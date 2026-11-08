@@ -181,14 +181,11 @@ func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 		activeSteerDocument:   &ActiveDocument{Path: "docs/next.md"},
 	}
 	s := &Server{
-		access:              localOwnerTestAccess(),
-		rt:                  rt,
-		out:                 out,
-		threads:             map[string]*threadState{threadID: th},
-		pendingQueuedTurns:  make(map[string][]queuedTurn),
-		claimedQueuedTurns:  make(map[string]*queuedTurnClaim),
-		drainingQueuedTurns: make(map[string]bool),
-		activeRunByThread:   make(map[string]string),
+		access:            localOwnerTestAccess(),
+		rt:                rt,
+		out:               out,
+		threads:           map[string]*threadState{threadID: th},
+		activeRunByThread: make(map[string]string),
 	}
 	params, err := json.Marshal(TurnRequeueParams{ThreadID: threadID, SteerID: steerID})
 	if err != nil {
@@ -234,14 +231,10 @@ func TestTurnRequeueSupersedesStaleQueueCancellation(t *testing.T) {
 		}},
 	}
 	s := &Server{
-		rt:                          rt,
-		out:                         out,
-		threads:                     map[string]*threadState{threadID: th},
-		pendingQueuedTurns:          make(map[string][]queuedTurn),
-		claimedQueuedTurns:          make(map[string]*queuedTurnClaim),
-		cancelledPendingSubmissions: make(map[string]string),
-		drainingQueuedTurns:         make(map[string]bool),
-		activeRunByThread:           make(map[string]string),
+		rt:                rt,
+		out:               out,
+		threads:           map[string]*threadState{threadID: th},
+		activeRunByThread: make(map[string]string),
 	}
 	t.Cleanup(s.Close)
 	s.recordCancelledPendingSubmission(threadID, steerID, session.HeldUserWorkOriginQueue)
@@ -300,9 +293,7 @@ func TestPendingUserMessageSummariesIncludeLiveQueueAndSteer(t *testing.T) {
 		}},
 	}
 	s := &Server{
-		threads:            map[string]*threadState{threadID: th},
-		pendingQueuedTurns: make(map[string][]queuedTurn),
-		claimedQueuedTurns: make(map[string]*queuedTurnClaim),
+		threads: map[string]*threadState{threadID: th},
 	}
 	s.enqueueQueuedUserTurn(threadID, queuedTurn{
 		id: "queue-1", msg: providers.ChatMessage{Role: "user", Content: "Next"},
@@ -334,9 +325,10 @@ func TestEnqueueQueuedUserTurnDeduplicatesStableID(t *testing.T) {
 	if s.enqueueQueuedUserTurn("thread-1", entry) {
 		t.Fatal("duplicate enqueue was accepted")
 	}
-	s.queuedTurnMu.Lock()
-	count := len(s.pendingQueuedTurns["thread-1"])
-	s.queuedTurnMu.Unlock()
+	queue := s.peekTurnQueue("thread-1")
+	queue.mu.Lock()
+	count := len(queue.pending)
+	queue.mu.Unlock()
 	if count != 1 {
 		t.Fatalf("queued entries = %d, want 1", count)
 	}

@@ -420,11 +420,12 @@ func TestProcessCompletionDrainYieldsToQueuedUserWork(t *testing.T) {
 			threadID: {{processID: "proc-later", msg: providers.ChatMessage{Role: "user", Content: "completed"}}},
 		},
 		drainingAgentCompletionTurns: map[string]bool{threadID: true},
-		pendingQueuedTurns: map[string][]queuedTurn{
-			threadID: {{id: "user-first", msg: providers.ChatMessage{Role: "user", Content: "new instruction"}}},
-		},
-		drainingQueuedTurns: map[string]bool{threadID: true},
 	}
+	userQueue := server.turnQueue(threadID)
+	userQueue.mu.Lock()
+	userQueue.pending = []queuedTurn{{id: "user-first", msg: providers.ChatMessage{Role: "user", Content: "new instruction"}}}
+	userQueue.draining = true
+	userQueue.mu.Unlock()
 
 	binding := testRuntimeState(t, server.rt)
 	server.threads[threadID].state = binding

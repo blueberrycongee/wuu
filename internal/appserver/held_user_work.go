@@ -90,8 +90,9 @@ func (s *Server) persistUpdatedUserTurn(binding *runtime.State, threadID string,
 }
 
 func (s *Server) appendHeldUserTurns(binding *runtime.State, threadID string, turns []queuedTurn) ([]queuedTurn, error) {
-	s.heldUserWorkMu.Lock()
-	defer s.heldUserWorkMu.Unlock()
+	sched := s.schedulerFor(threadID)
+	sched.heldMu.Lock()
+	defer sched.heldMu.Unlock()
 	for _, turn := range turns {
 		// Accepted work is already durable. Do not overwrite a newer edit or
 		// resurrect an input admitted before a launcher/notification failure.
@@ -103,8 +104,9 @@ func (s *Server) appendHeldUserTurns(binding *runtime.State, threadID string, tu
 }
 
 func (s *Server) findHeldUserTurn(binding *runtime.State, threadID, id string) (queuedTurn, bool, error) {
-	s.heldUserWorkMu.Lock()
-	defer s.heldUserWorkMu.Unlock()
+	sched := s.schedulerFor(threadID)
+	sched.heldMu.Lock()
+	defer sched.heldMu.Unlock()
 	turns, err := s.loadHeldUserTurns(binding, threadID)
 	if err != nil {
 		return queuedTurn{}, false, err
@@ -118,8 +120,9 @@ func (s *Server) findHeldUserTurn(binding *runtime.State, threadID, id string) (
 }
 
 func (s *Server) updateHeldUserTurn(binding *runtime.State, threadID, id string, msg providers.ChatMessage) (queuedTurn, []queuedTurn, bool, error) {
-	s.heldUserWorkMu.Lock()
-	defer s.heldUserWorkMu.Unlock()
+	sched := s.schedulerFor(threadID)
+	sched.heldMu.Lock()
+	defer sched.heldMu.Unlock()
 	turns, err := s.loadHeldUserTurns(binding, threadID)
 	if err != nil {
 		return queuedTurn{}, nil, false, err
@@ -211,24 +214,25 @@ func (s *Server) pendingUserMessageSummaries(threadID string, timings ...*rpcReq
 		}
 	}
 	started := timing.now()
-	s.queuedTurnMu.Lock()
-	timing.span("resume_pending_queue_mutex_wait", started)
-	defer s.queuedTurnMu.Unlock()
-	claimPrefix := strings.TrimSpace(threadID) + "\x00"
-	for key, claim := range s.claimedQueuedTurns {
-		if !strings.HasPrefix(key, claimPrefix) || claim == nil || claim.cancelled || claim.committed || claim.entry.snapshot.PluginTurn != nil {
-			continue
+	if queue := s.peekTurnQueue(threadID); queue != nil {
+		queue.mu.Lock()
+		timing.span("resume_pending_queue_mutex_wait", started)
+		defer queue.mu.Unlock()
+		for _, claim := range queue.claimed {
+			if claim == nil || claim.cancelled || claim.committed || claim.entry.snapshot.PluginTurn != nil {
+				continue
+			}
+			entry := claim.entry
+			entry.origin = session.HeldUserWorkOriginQueue
+			turns = append(turns, entry)
 		}
-		entry := claim.entry
-		entry.origin = session.HeldUserWorkOriginQueue
-		turns = append(turns, entry)
-	}
-	for _, entry := range s.pendingQueuedTurns[threadID] {
-		if entry.snapshot.PluginTurn != nil {
-			continue
+		for _, entry := range queue.pending {
+			if entry.snapshot.PluginTurn != nil {
+				continue
+			}
+			entry.origin = session.HeldUserWorkOriginQueue
+			turns = append(turns, entry)
 		}
-		entry.origin = session.HeldUserWorkOriginQueue
-		turns = append(turns, entry)
 	}
 	return heldUserMessageSummaries(threadID, turns)
 }
@@ -260,13 +264,14 @@ func (s *Server) holdRejectedQueuedTurn(binding *runtime.State, threadID string,
 
 func (s *Server) acceptQueuedUserTurn(binding *runtime.State, threadID string, entry queuedTurn, hold bool, timing *rpcRequestTiming) (queuedTurn, bool, error) {
 	started := timing.now()
-	s.queuedTurnMu.Lock()
+	queue := s.turnQueue(threadID)
+	queue.mu.Lock()
 	timing.span("queue_mutex_wait", started)
-	defer s.queuedTurnMu.Unlock()
+	defer queue.mu.Unlock()
 	if s.closed.Load() {
 		return queuedTurn{}, false, errServerClosed
 	}
-	if s.isCancelledPendingSubmissionLocked(threadID, entry.id, session.HeldUserWorkOriginQueue) {
+	if queue.cancelledSubmission(entry.id, session.HeldUserWorkOriginQueue) {
 		return queuedTurn{}, false, errQueuedTurnCancelled
 	}
 	started = timing.now()
@@ -290,21 +295,22 @@ func (s *Server) acceptQueuedUserTurn(binding *runtime.State, threadID string, e
 		return queuedTurn{}, false, session.ErrHeldUserWorkSettled
 	}
 	if !hold {
-		if s.pendingQueuedTurns == nil {
-			s.pendingQueuedTurns = make(map[string][]queuedTurn)
-		}
-		s.pendingQueuedTurns[threadID] = append(s.pendingQueuedTurns[threadID], entry)
+		queue.pending = append(queue.pending, entry)
 	}
 	return entry, !hold, nil
 }
 
 func (s *Server) updateAcceptedQueuedTurn(binding *runtime.State, threadID, id string, msg providers.ChatMessage) (queuedTurn, bool, error) {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	if claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, id)]; claim != nil && !claim.cancelled {
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return queuedTurn{}, false, nil
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if claim := queue.claim(id); claim != nil && !claim.cancelled {
 		return queuedTurn{}, false, errors.New("queued input is already being admitted")
 	}
-	for index, entry := range s.pendingQueuedTurns[threadID] {
+	for index, entry := range queue.pending {
 		if entry.id != id {
 			continue
 		}
@@ -316,21 +322,22 @@ func (s *Server) updateAcceptedQueuedTurn(binding *runtime.State, threadID, id s
 				return queuedTurn{}, false, err
 			}
 		}
-		s.pendingQueuedTurns[threadID][index] = entry
+		queue.pending[index] = entry
 		return entry, true, nil
 	}
 	return queuedTurn{}, false, nil
 }
 
 func (s *Server) cancelQueuedUserTurn(binding *runtime.State, threadID, id string, persist bool) (queuedTurn, bool, error) {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, id)]
+	queue := s.turnQueue(threadID)
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	claim := queue.claim(id)
 	if claim != nil && claim.committed {
 		return queuedTurn{}, false, nil
 	}
 	var entry queuedTurn
-	for _, pending := range s.pendingQueuedTurns[threadID] {
+	for _, pending := range queue.pending {
 		if pending.id == id {
 			entry = pending
 			break
@@ -347,12 +354,12 @@ func (s *Server) cancelQueuedUserTurn(binding *runtime.State, threadID, id strin
 			return queuedTurn{}, false, err
 		}
 	}
-	pending := s.pendingQueuedTurns[threadID]
+	pending := queue.pending
 	for index, queued := range pending {
 		if queued.id != id {
 			continue
 		}
-		s.pendingQueuedTurns[threadID] = append(pending[:index], pending[index+1:]...)
+		queue.pending = append(pending[:index], pending[index+1:]...)
 		removed = true
 		break
 	}
@@ -361,12 +368,12 @@ func (s *Server) cancelQueuedUserTurn(binding *runtime.State, threadID, id strin
 		removed = true
 	}
 	// Keep the in-process admission gate for non-persistent/plugin callers too.
-	if s.cancelledPendingSubmissions == nil {
-		s.cancelledPendingSubmissions = make(map[string]string)
+	if queue.cancelled == nil {
+		queue.cancelled = make(map[string]string)
 	}
-	if len(s.cancelledPendingSubmissions) >= maxCancelledPendingSubmissions {
-		clear(s.cancelledPendingSubmissions)
+	if len(queue.cancelled) >= maxCancelledPendingSubmissions {
+		clear(queue.cancelled)
 	}
-	s.cancelledPendingSubmissions[queuedTurnClaimKey(threadID, id)] = session.HeldUserWorkOriginQueue
+	queue.cancelled[strings.TrimSpace(id)] = session.HeldUserWorkOriginQueue
 	return entry, removed, nil
 }
