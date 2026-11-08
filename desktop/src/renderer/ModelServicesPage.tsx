@@ -1,4 +1,5 @@
 import { Tooltip } from "./Tooltip";
+import { showActionErrorToast, toastErrorMessage } from "./Toast";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { ConnectionTitle } from "./ConnectionTitle";
@@ -277,7 +278,7 @@ function uniqueProviderName(base: string, providers: readonly ProviderSummary[])
 }
 
 function errorMessage(error: unknown, t: Translate): string {
-  return error instanceof Error && error.message ? error.message : t("provider.saveFailed");
+  return toastErrorMessage(error, t("provider.saveFailed"));
 }
 
 type AccountMethod = "login" | "local";
@@ -763,7 +764,12 @@ function ServiceDetail({
 
   useEffect(() => { setBusy(false); setError(""); }, [controls]);
 
-  async function run(action: () => Promise<void>): Promise<boolean> {
+  // reportFailure replaces the inline error for an action whose rejection is
+  // one-shot feedback while an open dialog already preserves the retry state.
+  async function run(
+    action: () => Promise<void>,
+    reportFailure?: (cause: unknown) => void,
+  ): Promise<boolean> {
     const signal = lifetime.current.signal;
     setError("");
     setBusy(true);
@@ -771,7 +777,10 @@ function ServiceDetail({
       await action();
       return !signal.aborted;
     } catch (saveError) {
-      if (!signal.aborted && !isPluginLifecycleCancellation(saveError)) setError(errorMessage(saveError, t));
+      if (!signal.aborted && !isPluginLifecycleCancellation(saveError)) {
+        if (reportFailure) reportFailure(saveError);
+        else setError(errorMessage(saveError, t));
+      }
       return false;
     } finally {
       if (!signal.aborted) setBusy(false);
@@ -885,9 +894,12 @@ function ServiceDetail({
               data-testid="settings-provider-remove-confirm"
               disabled={busy || lastProvider || (isDefault && !fallback)}
               onClick={() => {
-                void run(() => onRemove(isDefault && fallback
-                  ? { fallbackProvider: fallback.name, fallbackModel: fallback.model }
-                  : undefined)).then((removed) => { if (removed) setConfirmingRemove(false); });
+                void run(
+                  () => onRemove(isDefault && fallback
+                    ? { fallbackProvider: fallback.name, fallbackModel: fallback.model }
+                    : undefined),
+                  (cause) => showActionErrorToast(cause, t("provider.saveFailed")),
+                ).then((removed) => { if (removed) setConfirmingRemove(false); });
               }}
             >
               {t("provider.removeAction")}
