@@ -662,6 +662,7 @@ export class ApplicationController implements HostApplicationService {
             this.browserDockTarget = Object.freeze({ ...target });
             await this.applicationNavigation.invoke("navigation.show-native", {}, signal);
             await this.applicationPreview.invoke("preview.open-tool", { toolId: "browser" }, signal);
+            await this.applicationNavigation.invoke("navigation.reveal-region", { region: "auxiliary" }, signal);
             this.publish();
           }).catch(error => { if (!signal.aborted) this.updateState(state => ({ ...state, status: String(error) })); });
         }));
