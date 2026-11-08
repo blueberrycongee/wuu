@@ -10,7 +10,6 @@ import type {
 import { useI18n } from "./i18n";
 import { SelectMenu } from "./SelectMenu";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
-import { SettingsBadge } from "./SettingsRow";
 import { Switch } from "./ui/Switch";
 import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
 import { AlertCircle, AlertTriangle } from "./WuuIcons";
@@ -414,19 +413,15 @@ function PluginSettingControl({
       data-setting-type={setting.type}
     >
       <div className="plugin-setting-heading settings-row-label">
+        <label className="settings-row-label-title" htmlFor={controlId}>{setting.title}</label>
         {/* User scope and live apply are the defaults; only a narrower reach or a
-          * deferred effect is worth a badge. */}
+          * deferred effect is worth a line of meta. */}
         {setting.scope === "workspace" || setting.apply === "restart" ? (
-          <span className="settings-row-label-heading">
-            <label className="settings-row-label-title" htmlFor={controlId}>{setting.title}</label>
-            <span className="settings-row-badges">
-              {setting.scope === "workspace" ? <SettingsBadge>{t("skills.pluginSettingWorkspace")}</SettingsBadge> : null}
-              {setting.apply === "restart" ? <SettingsBadge>{t("skills.pluginSettingRestart")}</SettingsBadge> : null}
-            </span>
+          <span className="settings-row-label-meta">
+            {setting.scope === "workspace" ? <span>{t("skills.pluginSettingWorkspace")}</span> : null}
+            {setting.apply === "restart" ? <span>{t("skills.pluginSettingRestart")}</span> : null}
           </span>
-        ) : (
-          <label className="settings-row-label-title" htmlFor={controlId}>{setting.title}</label>
-        )}
+        ) : null}
         {showDescription ? (
           <span id={descriptionId} className="settings-row-label-description">{setting.description}</span>
         ) : null}
