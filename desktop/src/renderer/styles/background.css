@@ -75,7 +75,9 @@ html[data-focus-modality="keyboard"] .background-file-picker:has(input:focus-vis
 /* Canvas placement: the frame and ribbon keep the skin's opaque background,
    while the main pane paints base color, the window-aligned artwork canvas
    (ShellCanvasArtwork, which also draws the dot screen) and a veil whose
-   opacity follows the active destination's data-canvas. The workbench sheet
+   opacity follows the active destination's data-canvas. The conversation
+   resolves to translucent in every state, empty home included; only a plugin
+   view that declares it reaches the transparent tier. The workbench sheet
    keeps only its frame border/shadow; the sidebar paints the workbench canvas
    itself, or a frosted copy of the artwork where transparency is allowed. */
 html[data-shell-placement="canvas"],

@@ -1013,12 +1013,14 @@ export function App({ application, slots, shellPluginId }: {
     !workspaceToolsCoverConversation &&
     !settingsOpen &&
     !showingPrimaryPluginView;
-  // How much canvas-placement skin artwork shows through the main pane.
+  // How much canvas-placement skin artwork shows through the main pane. The
+  // conversation keeps the same veil from the empty home onward; the
+  // transparent tier is reserved for plugin views that declare it.
   // Non-canvas skins ignore this attribute entirely.
   const paneCanvas: "opaque" | "translucent" | "transparent" = showingPrimaryPluginView
     ? (primaryPageView.canvas ?? "opaque")
     : conversationVisible
-      ? (emptyConversation ? "transparent" : "translucent")
+      ? "translucent"
       : "opaque";
 
   useEffect(() => {
