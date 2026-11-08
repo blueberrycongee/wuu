@@ -142,11 +142,7 @@ func writeProfileMetadata(path string, metadata profileMetadata) error {
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(data, '\n'), securefs.FileMode); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return securefs.WriteFileAtomic(path, append(data, '\n'))
 }
 
 func summaryFromMetadata(meta profileMetadata, dir string) Summary {

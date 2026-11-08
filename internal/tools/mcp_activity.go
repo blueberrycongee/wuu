@@ -480,13 +480,8 @@ func (t *Toolkit) persistActivityPreview(activityID string, result toolresult.Re
 			return "", fmt.Errorf("create activity preview directory: %w", err)
 		}
 		path := filepath.Join(dir, "preview"+extension)
-		temporary := path + ".tmp"
-		if err := os.WriteFile(temporary, data, 0o600); err != nil {
+		if err := securefs.WriteFileAtomic(path, data); err != nil {
 			return "", fmt.Errorf("write activity preview: %w", err)
-		}
-		if err := os.Rename(temporary, path); err != nil {
-			_ = os.Remove(temporary)
-			return "", fmt.Errorf("publish activity preview: %w", err)
 		}
 		return (&url.URL{Scheme: "file", Path: path}).String(), nil
 	}
