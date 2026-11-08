@@ -25,8 +25,10 @@ import {
   X,
   type IconComponent
 } from "./WuuIcons";
+import { DESKTOP_AUTO_ARCHIVE_DAYS } from "../shared/protocol";
 import type {
   CodexPetSettingsUpdate,
+  DesktopAutoArchiveDays,
   DesktopFolder,
   DesktopPreferences,
   DesktopUpdateState,
@@ -1272,6 +1274,8 @@ function SettingsArchivePage({
   onRetry?: () => void;
 }): JSX.Element {
   const { t, formatDate } = useI18n();
+  const preferences = useDesktopPreferences();
+  const [autoArchiveError, setAutoArchiveError] = useState("");
   const [query, setQuery] = useState("");
   const [workspaceFilter, setWorkspaceFilter] = useState("all");
   const sortedThreads = useMemo(
@@ -1315,6 +1319,15 @@ function SettingsArchivePage({
   }, [workspaceFilter, query, sortedThreads, t]);
   const noMatches = sortedThreads.length > 0 && groups.length === 0;
 
+  async function saveAutoArchive(days: DesktopAutoArchiveDays): Promise<void> {
+    setAutoArchiveError("");
+    try {
+      await updateDesktopPreferences({ auto_archive_days: days });
+    } catch (error) {
+      setAutoArchiveError(toastErrorMessage(error, t("settings.saveFailed")));
+    }
+  }
+
   return (
     <>
       <SettingsPageHeader
@@ -1335,6 +1348,24 @@ function SettingsArchivePage({
         ) : undefined}
       />
       <div className="settings-archive-page" aria-busy={deletion?.pending || undefined}>
+        {preferences ? (
+          <SettingsGroup>
+            <SettingsRow title={t("settings.autoArchive")} hint={t("settings.autoArchiveHint")} hideDescriptionWhenNarrow error={autoArchiveError}>
+              <SelectMenu
+                triggerClassName="settings-select-trigger"
+                ariaLabel={t("settings.autoArchive")}
+                dataTestid="settings-auto-archive"
+                value={String(preferences.auto_archive_days)}
+                align="right"
+                onChange={(next) => void saveAutoArchive(Number(next) as DesktopAutoArchiveDays)}
+                options={DESKTOP_AUTO_ARCHIVE_DAYS.map((days) => ({
+                  value: String(days),
+                  label: days === 0 ? t("settings.autoArchiveOff") : t("settings.autoArchiveAfterDays", { count: days }),
+                }))}
+              />
+            </SettingsRow>
+          </SettingsGroup>
+        ) : null}
         {deletion?.result || deletion?.error ? (
           <div className="settings-archive-delete-result" role={deletion.error || deletion.result?.failed ? "alert" : "status"}>
             {deletion.result ? <p>{t("settings.deleteArchivedResult", deletion.result)}</p> : null}

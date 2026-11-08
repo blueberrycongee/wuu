@@ -14,6 +14,7 @@ import {
   isLanguagePreference,
   type CodexPetSettings,
   type CodexPetSize,
+  DESKTOP_AUTO_ARCHIVE_DAYS,
   type DesktopPreferences,
   type MessageFlowFontSize,
   type LanguagePreference,
@@ -78,6 +79,7 @@ export const DEFAULT_DESKTOP_PREFERENCES: Readonly<Omit<DesktopPreferences, "ope
   notification_sound: true,
   auto_check_updates: true,
   send_shortcut: "enter",
+  auto_archive_days: 0,
 });
 
 function readStoredPreferences(value: unknown): Omit<DesktopPreferences, "open_at_login"> {
@@ -90,6 +92,7 @@ function readStoredPreferences(value: unknown): Omit<DesktopPreferences, "open_a
     notification_sound: flag("notification_sound"),
     auto_check_updates: flag("auto_check_updates"),
     send_shortcut: record.send_shortcut === "mod_enter" ? "mod_enter" : "enter",
+    auto_archive_days: DESKTOP_AUTO_ARCHIVE_DAYS.find(days => days === record.auto_archive_days) ?? 0,
   };
 }
 
