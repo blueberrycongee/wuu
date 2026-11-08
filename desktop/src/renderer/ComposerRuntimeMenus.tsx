@@ -1684,7 +1684,7 @@ export function ComposerPlusButton({
 
 // One group of the plus menu. A command's title leads and the slash command
 // that runs it trails like a shortcut; a skill is its name, which is already
-// what one types. The longer description waits in the tooltip.
+// what one types. A disabled row shows its reason in the trailing slot.
 function PlusMenuCommands({
   label,
   commands,
@@ -1699,22 +1699,23 @@ function PlusMenuCommands({
     <>
       <div className="composer-plus-menu-section" role="presentation">{label}</div>
       {commands.map((command) => (
-        <Tooltip content={command.disabledReason ?? command.description} key={command.id}>
-          <button
-            role="menuitem"
-            type="button"
-            disabled={Boolean(command.disabledReason)}
-            onClick={() => onSelect(command)}
-          >
-            <SlashCommandIcon command={command} />
-            <span className="composer-plus-menu-item-title">
-              {command.kind === "skill" ? command.name : command.title}
-            </span>
-            {command.kind === "skill" ? null : (
-              <span className="composer-plus-menu-item-desc">/{command.name}</span>
-            )}
-          </button>
-        </Tooltip>
+        <button
+          role="menuitem"
+          type="button"
+          key={command.id}
+          disabled={Boolean(command.disabledReason)}
+          onClick={() => onSelect(command)}
+        >
+          <SlashCommandIcon command={command} />
+          <span className="composer-plus-menu-item-title">
+            {command.kind === "skill" ? command.name : command.title}
+          </span>
+          {command.disabledReason ? (
+            <span className="composer-plus-menu-item-desc">{command.disabledReason}</span>
+          ) : command.kind === "skill" ? null : (
+            <span className="composer-plus-menu-item-desc">/{command.name}</span>
+          )}
+        </button>
       ))}
     </>
   );

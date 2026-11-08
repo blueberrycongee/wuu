@@ -156,7 +156,7 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
     {entries.map(entry => {
       const secondary = entry.detail || entry.description;
       return <button type="button" role="menuitem" className="composer-plugin-row" key={entry.key} data-plugin-choice data-plugin-key={entry.key}
-        disabled={!supported} title={secondary} onClick={() => menu.choose(`@${entry.name}`, entry.plugin)}>
+        disabled={!supported} onClick={() => menu.choose(`@${entry.name}`, entry.plugin)}>
         <ComposerPluginIcon plugin={entry.plugin} server={entry.server} className="composer-plugin-mark" />
         <span className="composer-plugin-name">{entry.name}</span>
         {secondary ? <span className="composer-plugin-detail">{secondary}</span> : null}
