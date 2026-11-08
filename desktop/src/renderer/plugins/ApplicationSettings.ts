@@ -77,7 +77,7 @@ export class ApplicationSettings {
       advanced_settings: initialized.advanced_settings, general_settings: initialized.general_settings,
       features: initialized.features,
       extension_inventory: initialized.extension_inventory?.map(plugin => ({
-        id: plugin.id, name: plugin.name, description: plugin.description, kind: plugin.kind,
+        id: plugin.id, name: plugin.name, description: plugin.description, developer: plugin.developer, kind: plugin.kind,
         package_source: plugin.package_source, enabled_override: plugin.enabled_override, icon: plugin.icon,
         provenance: plugin.provenance, state: plugin.state, fingerprint: plugin.fingerprint, enabled: plugin.enabled, approval_state: plugin.approval_state,
         contributions: plugin.contributions && { settings: plugin.contributions.settings },
