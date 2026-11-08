@@ -15,15 +15,30 @@ import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import "../../src/renderer/styles.css";
 import "./fixture.css";
 
+window.addEventListener("error", (event) => {
+  document.getElementById("root")!.textContent = `module error: ${event.message} @ ${event.filename}:${event.lineno}\n${event.error?.stack ?? ""}`;
+});
+
 const params = new URLSearchParams(location.search);
+if (params.has("static")) {
+  const style = document.createElement("style");
+  style.textContent = "* { animation: none !important; transition: none !important; }";
+  document.head.append(style);
+}
 document.documentElement.dataset.theme = params.get("theme") || "light";
 startFocusModality();
 applyMessageFlowFontSize(Number(params.get("size")) || 14);
 
 const EMPTY_MODELS: CodexModelLoadState = { loading: false, error: "", models: [] };
 const noop = () => {};
-const queued: QueuedComposerMessage[] = params.has("queued")
-  ? [{ id: "queued-1", text: "等这一轮结束后，再把导出的截图整理成对比表。", images: [], files: [] }]
+const held = params.has("held");
+const queued: QueuedComposerMessage[] = params.has("queued") || held
+  ? [{ id: "queued-1", text: "等这一轮结束后，再把导出的截图整理成对比表。", images: [], files: [],
+      held: held || undefined, heldPosition: held ? 1 : undefined }]
+  : [];
+const guides: QueuedComposerMessage[] = params.has("guide")
+  ? [{ id: "guide-1", text: "换出的面板的也是一样的", images: [], files: [],
+      held: held || undefined, heldPosition: held ? 0 : undefined, origin: "steer" }]
   : [];
 
 function canvasFile(name: string, width: number, height: number): Promise<File> {
@@ -118,7 +133,11 @@ function run(task: () => Promise<void> | void): Promise<void> {
 }
 Object.assign(window, { fixtureIdle: () => queue });
 
-const application = await createFixtureApplication();
+const application = await createFixtureApplication().catch((error: unknown) => {
+  document.getElementById("root")!.textContent = `fixture failed: ${error instanceof Error ? error.stack || error.message : String(error)}`;
+  throw error;
+});
+Object.assign(window.wuu!, { initialLanguagePreference: params.get("lang") === "en" ? "en-US" : "zh-CN" });
 
 function Fixture(): JSX.Element {
   const draft = useComposerDraftState(application);
@@ -174,7 +193,7 @@ function Fixture(): JSX.Element {
             onChangeComment={setComment} onRemove={() => setQuoteVisible(false)}
           /> : undefined}
           queuedMessages={queued}
-          guideMessages={[]}
+          guideMessages={guides}
           running={false}
           runtimeControlsDisabled
           status=""
