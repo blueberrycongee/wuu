@@ -100,6 +100,9 @@ const EN_STRINGS = {
   "design.editHint": "Click to select · drag to move · double-click text to edit",
   "design.newTab.failed": "Could not open a conversation for the revision brief.",
   "design.removeComment": "Remove comment",
+  "design.retry": "Try again",
+  "design.save.failed": "The page could not be saved.",
+  "design.apply.failed": "That edit could not be applied to the page.",
 };
 
 const ZH_STRINGS = {
@@ -155,6 +158,9 @@ const ZH_STRINGS = {
   "design.editHint": "点击选中 · 拖动移动 · 双击文本直接编辑",
   "design.newTab.failed": "无法为修订说明打开对话。",
   "design.removeComment": "删除评论",
+  "design.retry": "重试",
+  "design.save.failed": "页面未能保存。",
+  "design.apply.failed": "修改未能应用到页面。",
 };
 
 function translateFrom(table, key, values) {
@@ -218,6 +224,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   const backend = useMemo(() => (devBase ? httpBackend(devBase) : runtimeBackend(api)), [api, devBase]);
 
   const [phase, setPhase] = useState("boot"); // boot | error | ready
+  const [bootNonce, setBootNonce] = useState(0);
   const [error, setError] = useState("");
   const [workspaces, setWorkspaces] = useState([]);
   const [workspaceId, setWorkspaceId] = useState(context?.workspaceId ?? "");
@@ -312,6 +319,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
           break;
         case "select": setSelected(message.element); break;
         case "metrics": setSelected((current) => current ? { ...current, rect: message.rect } : current); break;
+        case "escape": if (mode === "comment") setMode("edit"); break;
         case "deselect": setSelected(null); break;
         case "op": setOps((list) => upsertOp(list, message.op)); break;
         case "comment-draft":
@@ -405,7 +413,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
     })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [bootNonce]);
 
   // Workspace switch reloads the server session and page list.
   const chooseWorkspace = useCallback((id) => {
@@ -443,11 +451,6 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   const url = base && path ? `${base}/${path}` : "";
 
   // ---- actions ---------------------------------------------------------------
-  const recordOp = useCallback((op) => {
-    if (!command("apply", { op })) return;
-    setOps((list) => upsertOp(list, op));
-  }, [command]);
-
   const save = useCallback(async (force = false) => {
     if (!url || busy) return false;
     setBusy("save");
@@ -463,10 +466,10 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
       setConflict(null);
       return true;
     } catch (err) {
-      notify(String(err?.message ?? err), "error");
+      notify(`${t("design.save.failed")} ${String(err?.message ?? err)}`, "error");
       return false;
     } finally { setBusy(""); }
-  }, [url, busy, backend, workspace, path, sha, request, notify]);
+  }, [url, busy, backend, workspace, path, sha, request, notify, t]);
 
   const reload = useCallback(() => {
     setBusy("reload");
@@ -530,19 +533,33 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
     } finally { setBusy(""); }
   }, [comments, busy, dirty, save, path, workspace, workspaceId, api, storageGet, storageSet, notify, t]);
 
+  const recordOpAsync = useCallback((op, after) => {
+    void request("apply", { op })
+      .then((reply) => {
+        if (reply?.result?.ok === false) throw new Error(reply.result.error ?? "apply failed");
+        setOps((list) => upsertOp(list, op));
+        after?.();
+      })
+      .catch(() => notify(t("design.apply.failed"), "error"));
+  }, [request, notify, t]);
+
   const applyStyle = useCallback((prop, value) => {
     if (!selected) return;
-    recordOp({ kind: "style", selector: selected.selector, prop, value });
-    setSelected((current) => current ? { ...current, styles: { ...current.styles, [prop]: value } } : current);
-  }, [selected, recordOp]);
+    recordOpAsync({ kind: "style", selector: selected.selector, prop, value },
+      () => setSelected((current) => current ? { ...current, styles: { ...current.styles, [prop]: value } } : current));
+  }, [selected, recordOpAsync]);
 
   const applyText = useCallback(() => {
     if (!selected || textDraft === (selected.text ?? "")) return;
-    recordOp({ kind: "text", selector: selected.selector, text: textDraft });
-    setSelected((current) => current ? { ...current, text: textDraft } : current);
-  }, [selected, textDraft, recordOp]);
+    recordOpAsync({ kind: "text", selector: selected.selector, text: textDraft },
+      () => setSelected((current) => current ? { ...current, text: textDraft } : current));
+  }, [selected, textDraft, recordOpAsync]);
 
   const frameWidth = VIEWPORTS.find((item) => item.id === viewport)?.width ?? null;
+  const hintText = bridgeLost ? t("design.bridge.lost")
+    : mode === "comment" && bridgeReady ? t("design.comment.hint")
+    : mode === "edit" && !selected && bridgeReady ? t("design.editHint")
+    : null;
 
   // ---- render -----------------------------------------------------------------
   if (phase === "boot") {
@@ -551,7 +568,13 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   }
   if (phase === "error") {
     return h("div", { className: "plugin-design plugin-design-center" },
-      h(ErrorState, { title: t("design.error.title"), description: error || t("design.error.runtime") }));
+      h(ErrorState, {
+        title: t("design.error.title"), description: error || t("design.error.runtime"),
+        actions: h(Button, {
+          variant: "secondary",
+          onClick: () => { setError(""); setPhase("boot"); setBootNonce((n) => n + 1); },
+        }, t("design.retry")),
+      }));
   }
   if (workspaces.length === 0) {
     return h("div", { className: "plugin-design plugin-design-center" },
@@ -619,7 +642,6 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
       }, busy === "save" ? t("design.saving") : dirty ? `${t("design.save")} · ${ops.length}` : t("design.save"))),
     h("div", { className: "plugin-design-body" },
       h("div", { className: "plugin-design-stage", "data-mode": mode },
-        mode === "comment" ? h("div", { className: "plugin-design-hint" }, t("design.comment.hint")) : null,
         url
           ? h("div", {
               className: "plugin-design-frame",
@@ -644,8 +666,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
                 description: t("design.empty.pagesHelp"),
                 actions: h(Button, { variant: "secondary", onClick: () => void openWorkspace(workspace) }, t("design.empty.refresh")),
               })),
-        url && bridgeLost ? h("div", { className: "plugin-design-hint" }, t("design.bridge.lost")) : null,
-        url && mode === "edit" && !selected && bridgeReady ? h("div", { className: "plugin-design-hint" }, t("design.editHint")) : null,
+        url && hintText ? h("div", { className: "plugin-design-hint" }, hintText) : null,
         conflict ? h("div", { className: "plugin-design-conflict" },
           h("div", { className: "plugin-design-conflict-card" },
             h("strong", null, t("design.conflict.title")),

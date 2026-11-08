@@ -236,6 +236,7 @@
     if (event.key === "Escape") {
       if (state.editing) { endTextEdit(false); event.stopPropagation(); }
       else if (state.selected) { deselect(); event.stopPropagation(); }
+      else { post({ type: "escape" }); event.stopPropagation(); }
     }
   }, true);
   document.addEventListener("focusout", (event) => {
@@ -404,7 +405,7 @@
       case "comment-focus":
         for (const pin of pinLayer.children) {
           const focused = pin.dataset.id === message.id;
-          pin.style.transform = focused ? "translate(-50%,-130%) scale(1.28)" : "translate(-50%,-115%)";
+          pin.style.transform = focused ? "translate(-50%,-50%) scale(1.28)" : "translate(-50%,-50%)";
         }
         break;
     }
