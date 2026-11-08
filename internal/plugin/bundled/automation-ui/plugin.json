@@ -39,7 +39,7 @@
         "id": "automation",
         "title": "Automations",
         "view": "automation.catalog",
-        "icon": { "path": "icon.webp" },
+        "icon": "clock",
         "order": 40
       }
     ]
