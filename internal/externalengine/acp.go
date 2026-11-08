@@ -37,6 +37,11 @@ var (
 	// discovery budget: a slow or wedged selection only strips that model's
 	// metadata instead of starving the rest of the catalog.
 	acpModelProbeTimeout = 15 * time.Second
+	// Probing stops once the remaining budget cannot fit another probe.
+	// Large advertised catalogs (Devin's fused models exceed a hundred) must
+	// still publish: membership is authoritative even when some models are
+	// listed without their option metadata.
+	acpCatalogProbeReserve = 1 * time.Second
 )
 
 // ACP v1's prompt response owns completion for standard agents. Grok also
@@ -153,7 +158,16 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 		if _, ok := known[id]; ok {
 			continue
 		}
-		probeCtx, probeCancel := context.WithTimeout(ctx, acpModelProbeTimeout)
+		probeTimeout := acpModelProbeTimeout
+		if deadline, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(deadline) - acpCatalogProbeReserve; remaining < probeTimeout {
+				probeTimeout = remaining
+			}
+		}
+		if probeTimeout <= 0 {
+			break
+		}
+		probeCtx, probeCancel := context.WithTimeout(ctx, probeTimeout)
 		err := session.selectModel(probeCtx, r, session.ID, id)
 		probeCancel()
 		if err != nil {
