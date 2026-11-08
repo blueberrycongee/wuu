@@ -550,6 +550,7 @@
   width: 100%;
   min-width: 0;
   flex-wrap: wrap;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
 }
@@ -1013,10 +1014,22 @@
   margin: 2px 0 8px;
 }
 
-.user-message-attachments > .message-images,
-.user-message-attachments > .message-files {
-  width: 100%;
-  margin: 0;
+/* Videos join the row at the same 72px height, keeping their 16:9 shape. */
+.user-message-media-row .video-attachment {
+  width: 128px;
+  height: 72px;
+  border: 2px solid var(--hairline-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.user-message-media-row .video-attachment-play-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.user-message-media-row .video-attachment-play-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .agent-text > .message-images {
