@@ -152,10 +152,16 @@ export function observeAutoFollowResizeTargets(
   observer: ResizeObserver,
 ): void {
   observer.observe(node);
+  observeLayoutChildren(node, observer);
+}
+
+function observeLayoutChildren(node: HTMLElement, observer: ResizeObserver): void {
   for (const child of Array.from(node.children)) {
-    if (child instanceof HTMLElement) {
-      observer.observe(child);
-    }
+    if (!(child instanceof HTMLElement)) continue;
+    // A `display: contents` wrapper (e.g. a render-activity boundary) has no
+    // box of its own; its children carry the layout.
+    if (getComputedStyle(child).display === "contents") observeLayoutChildren(child, observer);
+    else observer.observe(child);
   }
 }
 
