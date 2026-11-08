@@ -2,8 +2,6 @@
 
 Manage standalone [MCP services](mcp.md) in the Plugins catalog. MCP services supplied by a plugin appear on its detail page, with their connection and login controls.
 
-For account authorization, open **Account Connectors** in the catalog. Services start disabled; choose **Connect** on Notion to authorize it in your browser. See [connect an account](mcp.md#connect-an-account).
-
 A Wuu plugin packages agent behavior, desktop UI, or other extension contributions. A package can include tools, skills, hooks, MCP servers, themes, and settings. Enable only code you trust: plugins run with your user authority and are not sandboxed by Wuu.
 
 ## Install a local package

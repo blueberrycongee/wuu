@@ -285,8 +285,6 @@ type PluginReference struct {
 	PluginID        string `json:"plugin_id,omitempty"`
 	MCPServer       string `json:"mcp_server,omitempty"`
 	ResourceURL     string `json:"resource_url,omitempty"`
-	AccountID       string `json:"account_id,omitempty"`
-	WorkspaceID     string `json:"workspace_id,omitempty"`
 }
 
 // MessageContentPart preserves the authored structure of one user message.

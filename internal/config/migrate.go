@@ -1,10 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/securefs"
 	"github.com/blueberrycongee/wuu/internal/statepath"
@@ -51,4 +53,67 @@ func migrateGlobalFile(newPath, legacyPath string, perm os.FileMode, label strin
 	// migrated credential store keeps its 0600 mode regardless of umask.
 	_ = os.Chmod(newPath, perm)
 	fmt.Fprintf(os.Stderr, "wuu: migrated %s to %s (legacy copy kept at %s)\n", label, newPath, legacyPath)
+}
+
+// Temporary compatibility workaround: the removed bundled account-connectors
+// plugin stored enable preferences under plugin-owned names. Carry an explicit
+// enable over as an ordinary global server with the same endpoint. Remove this
+// once releases that shipped account-connectors are no longer supported.
+func migrateAccountConnectorServers(path string) {
+	const prefix = "plugin.account-connectors."
+	endpoints := map[string]string{
+		"notion":    "https://mcp.notion.com/mcp",
+		"linear":    "https://mcp.linear.app/mcp",
+		"atlassian": "https://mcp.atlassian.com/v2/mcp",
+		"sentry":    "https://mcp.sentry.dev/mcp",
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var root map[string]json.RawMessage
+	if json.Unmarshal(data, &root) != nil || root["mcp_servers"] == nil {
+		return
+	}
+	var servers map[string]json.RawMessage
+	if json.Unmarshal(root["mcp_servers"], &servers) != nil {
+		return
+	}
+	changed := false
+	for name, raw := range servers {
+		local, legacy := strings.CutPrefix(name, prefix)
+		if !legacy {
+			continue
+		}
+		delete(servers, name)
+		changed = true
+		var preference struct {
+			Enabled       *bool           `json:"enabled"`
+			ToolTimeoutMS json.RawMessage `json:"tool_timeout_ms,omitempty"`
+		}
+		endpoint, known := endpoints[local]
+		if _, exists := servers[local]; exists || !known || json.Unmarshal(raw, &preference) != nil || preference.Enabled == nil || !*preference.Enabled {
+			continue
+		}
+		definition, err := json.Marshal(struct {
+			URL           string          `json:"url"`
+			Transport     string          `json:"transport"`
+			ToolTimeoutMS json.RawMessage `json:"tool_timeout_ms,omitempty"`
+		}{endpoint, "http", preference.ToolTimeoutMS})
+		if err != nil {
+			return
+		}
+		servers[local] = definition
+	}
+	if !changed {
+		return
+	}
+	if root["mcp_servers"], err = json.Marshal(servers); err != nil {
+		return
+	}
+	next, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = securefs.WriteFileAtomic(path, next)
 }

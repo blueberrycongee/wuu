@@ -13,7 +13,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/executionenv"
-	"github.com/blueberrycongee/wuu/internal/extensions"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -130,38 +129,23 @@ func (v *testUserHostIsolationVerifier) VerifyUserHostIsolation(context.Context,
 	return v.err
 }
 
-func TestUserHostConfigDoesNotInheritExecutableCodingExtensions(t *testing.T) {
+func TestUserHostConfigSharesOnlyGlobalStandaloneMCPServers(t *testing.T) {
 	enabled := true
-	cfg := config.Config{Hooks: map[string][]config.HookEntry{"x": {}}, MCPServers: map[string]config.MCPServerConfig{"coding": {URL: "https://coding.example.test/mcp"}, "plugin.connector-fixture.docs": {Enabled: &enabled}}, MCPJson: &config.MCPJsonTrust{}}
-	// Reconstruct from the persisted source, as a host restart does.
-	raw, err := json.Marshal(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var reopened config.Config
-	if err := json.Unmarshal(raw, &reopened); err != nil {
-		t.Fatal(err)
-	}
-	disabled := false
-	catalog := []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: "connector-fixture", MCPServers: map[string]config.MCPServerConfig{"docs": {URL: "https://docs.example.test/mcp", Enabled: &disabled, Connector: &config.MCPConnectorDescriptor{Title: "Documents"}}}}}}
-	codingServers := mcpServersFromConfigAndPlugins(userHostConfig(reopened, userspace.Binding{}, false), catalog)
-	if !codingServers["plugin.connector-fixture.docs"].ConnectorEnabled() {
-		t.Fatal("Coding lost saved connector preference after restart")
-	}
-	personalServers := mcpServersFromConfigAndPlugins(userHostConfig(reopened, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}, false), catalog)
-	if personalServers["plugin.connector-fixture.docs"].ConnectorEnabled() {
-		t.Fatal("Personal imported Coding connector preference after restart")
-	}
-	if _, exists := personalServers["coding"]; exists {
-		t.Fatal("Personal imported standalone Coding endpoint")
-	}
-	legacy := userHostConfig(cfg, userspace.Binding{}, false)
-	if len(legacy.Hooks) != 1 || len(legacy.MCPServers) != 2 {
+	cfg := config.Config{Hooks: map[string][]config.HookEntry{"x": {}}, MCPServers: map[string]config.MCPServerConfig{"global": {URL: "https://global.example.test/mcp"}, "plugin.fixture.docs": {Enabled: &enabled}}, MCPJson: &config.MCPJsonTrust{}}
+	coding := userHostConfig(cfg, userspace.Binding{}, false)
+	if len(coding.Hooks) != 1 || len(coding.MCPServers) != 2 || coding.MCPJson == nil {
 		t.Fatal("Coding config changed")
 	}
 	personal := userHostConfig(cfg, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}, false)
 	if personal.Hooks != nil || personal.MCPServers != nil || personal.MCPJson != nil {
-		t.Fatal("Personal inherited Coding executable extensions")
+		t.Fatal("unshared Personal inherited Coding executable extensions")
+	}
+	shared := userHostConfig(cfg, userspace.Binding{UserSpaceID: "local", ProductDomain: "personal"}, true)
+	if shared.Hooks != nil || shared.MCPJson != nil || len(shared.MCPServers) != 1 || shared.MCPServers["global"].URL == "" {
+		t.Fatalf("shared Personal MCP servers = %+v", shared.MCPServers)
+	}
+	if servers := mcpServersFromConfigAndPlugins(shared, nil); len(servers) != 1 {
+		t.Fatalf("plugin MCP crossed into Personal: %+v", servers)
 	}
 	if len(cfg.Hooks) != 1 || len(cfg.MCPServers) != 2 {
 		t.Fatal("shared config was mutated")
@@ -313,57 +297,5 @@ func TestExternalWorkspaceCatalogHonorsPinnedEnvironment(t *testing.T) {
 				t.Fatal("host capabilities must remain local")
 			}
 		})
-	}
-}
-
-// Shared connectors must be installed at user scope and explicitly declared as
-// connectors. Project servers, ordinary MCP servers, and unrelated config never
-// become executable in a user host.
-func TestSharedMCPConnectorInputsPreserveOnlyGlobalConnectorOwnership(t *testing.T) {
-	enabled, disabled := true, false
-	cfg := config.Config{MCPServers: map[string]config.MCPServerConfig{
-		"plugin.global.docs":  {Enabled: &enabled},
-		"plugin.project.docs": {Enabled: &enabled},
-		"plugin.global.plain": {Enabled: &enabled},
-		"standalone":          {URL: "https://project.invalid/mcp"},
-	}}
-	plugins := []pluginpkg.Plugin{
-		{Manifest: pluginpkg.Manifest{ID: "global", MCPServers: map[string]config.MCPServerConfig{
-			"docs":  {URL: "https://global.invalid/mcp", Enabled: &disabled, Connector: &config.MCPConnectorDescriptor{Title: "Docs"}},
-			"plain": {URL: "https://plain.invalid/mcp"},
-		}}, Source: "user"},
-		{Manifest: pluginpkg.Manifest{ID: "project", MCPServers: map[string]config.MCPServerConfig{
-			"docs": {URL: "https://project.invalid/mcp", Enabled: &disabled, Connector: &config.MCPConnectorDescriptor{Title: "Project"}},
-		}}, Source: "project", WorkspaceID: "workspace"},
-	}
-	sharedConfig, sharedPlugins := sharedConnectorInputs(cfg, plugins)
-	servers := mcpServersFromConfigAndPlugins(sharedConfig, sharedPlugins)
-	if len(servers) != 1 || !servers["plugin.global.docs"].ConnectorEnabled() || servers["plugin.global.docs"].URL != "https://global.invalid/mcp" {
-		t.Fatalf("unexpected shared server surface: %+v", servers)
-	}
-	// Filtering must not mutate the composition used by the Coding host.
-	if len(cfg.MCPServers) != 4 || len(plugins[0].MCPServers) != 2 || len(plugins[1].MCPServers) != 1 {
-		t.Fatal("filter mutated source configuration or package")
-	}
-}
-
-func TestSharedMCPConnectorAdmissionChecksLivePreferenceAndPlugin(t *testing.T) {
-	enabled, disabled := true, false
-	item := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "fixture", MCPServers: map[string]config.MCPServerConfig{
-		"docs": {URL: "https://fixture.invalid/mcp", Enabled: &disabled, Connector: &config.MCPConnectorDescriptor{Title: "Docs"}},
-	}}, Source: "bundled", Official: true, SubjectID: "fixture-subject", Fingerprint: "one"}
-	name := "plugin.fixture.docs"
-	cfg := config.Config{MCPServers: map[string]config.MCPServerConfig{name: {Enabled: &enabled}}}
-	if err := validateSharedConnectorPreference(cfg, item, name); err != nil {
-		t.Fatal(err)
-	}
-	cfg.MCPServers[name] = config.MCPServerConfig{Enabled: &disabled}
-	if err := validateSharedConnectorPreference(cfg, item, name); err == nil {
-		t.Fatal("disabled connection retained call authority")
-	}
-	cfg.MCPServers[name] = config.MCPServerConfig{Enabled: &enabled}
-	cfg.Extensions = &extensions.Settings{Disabled: map[string]bool{"fixture-subject": true}}
-	if err := validateSharedConnectorPreference(cfg, item, name); err == nil {
-		t.Fatal("disabled plugin retained call authority")
 	}
 }

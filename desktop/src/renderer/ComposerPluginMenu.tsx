@@ -10,7 +10,7 @@ import { ComposerPluginIcon } from "./ComposerPluginIcon";
 import { ScopedToast, showActionErrorToast } from "./Toast";
 import "./ComposerPluginMenu.css";
 
-// The plus menu mounts on every open. Keep the connector status beside the
+// The plus menu mounts on every open. Keep the MCP server status beside the
 // composer so reopening it never swaps a loading row for the real list.
 const pluginServers = new WeakMap<Pick<ApplicationSettingsControlsV1, "listMCPServers">, MCPServerStatus[]>();
 const pluginServerRequests = new WeakMap<Pick<ApplicationSettingsControlsV1, "listMCPServers">, Promise<MCPServerStatus[]>>();
@@ -129,17 +129,14 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
   // in the plugin catalog, reached from the last row.
   const entries = [
     ...servers.flatMap(server => {
-      const identity = server.identity;
-      const account = identity?.state === "verified" ? [identity.account?.label ?? identity.account?.email ?? identity.account?.id, identity.workspace?.label ?? identity.workspace?.id].filter(Boolean).join(" · ") : "";
-      const name = server.connector?.title ?? server.display_name ?? server.name;
-      const duplicateName = servers.some(other => other.name !== server.name && (other.connector?.title ?? other.display_name ?? other.name) === name);
+      const name = server.display_name ?? server.name;
+      const duplicateName = servers.some(other => other.name !== server.name && (other.display_name ?? other.name) === name);
       const ready = server.connected && server.configuration_enabled !== false && server.state !== "disabled" && server.plugin_active !== false && !!server.tool_names?.length;
       if (!ready) return [];
-      return [{ key: `mcp:${server.name}`, name, description: server.connector?.description ?? inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === server.plugin_id)?.description,
-        // Internal server names appear only to tell same-named connections apart.
-        detail: duplicateName ? [account, server.name].filter(Boolean).join(" · ") : "",
-        plugin: { plugin_id: server.plugin_id, mcp_server: server.name, resource_url: server.resource_url, authorization_id: server.authorization_id,
-          ...(identity?.state === "verified" ? { account_id: identity.account?.id, workspace_id: identity.workspace?.id } : {}) } as PluginReference,
+      return [{ key: `mcp:${server.name}`, name, description: inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === server.plugin_id)?.description,
+        // Internal server names appear only to tell same-named servers apart.
+        detail: duplicateName ? server.name : "",
+        plugin: { plugin_id: server.plugin_id, mcp_server: server.name, resource_url: server.resource_url, authorization_id: server.authorization_id } as PluginReference,
         server }];
     }),
     ...(services.includePluginTools === false ? [] : inventory).filter(item => item.kind === "plugin" && item.conversation_tools?.length && item.enabled !== false && item.runtime_state === "active").map(item => ({
