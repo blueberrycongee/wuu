@@ -399,6 +399,11 @@
         if (el) select(el);
         break;
       }
+      case "scroll-to": {
+        const el = document.querySelector(message.selector ?? "");
+        if (el) { el.scrollIntoView({ block: "center", behavior: "smooth" }); schedulePaint(); }
+        break;
+      }
       case "deselect": deselect(); break;
       case "comment-remove": removeComment(message.id); break;
       case "comments-restore": restoreComments(message.comments); break;

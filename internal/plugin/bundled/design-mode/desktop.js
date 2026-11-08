@@ -584,10 +584,10 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   return h("div", { className: "plugin-design" },
     h("div", { className: "plugin-design-topbar" },
       h("div", { className: "plugin-design-brand" }, h(BrandMark, { h }), h("span", { className: "plugin-design-brand-name" }, t("design.title"))),
-      h(Select, {
+      workspaces.length > 1 ? h(Select, {
         className: "plugin-design-picker", label: t("design.workspace"),
         value: workspace?.id ?? "", onChange: (event) => chooseWorkspace(event.currentTarget.value),
-      }, workspaces.map((ws) => h("option", { key: ws.id, value: ws.id }, ws.name))),
+      }, workspaces.map((ws) => h("option", { key: ws.id, value: ws.id }, ws.name))) : null,
       h(Select, {
         className: "plugin-design-picker plugin-design-page-picker", label: t("design.page"),
         value: path, disabled: pages.length === 0,
@@ -641,15 +641,15 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
         onClick: () => void save(),
       }, busy === "save" ? t("design.saving") : dirty ? `${t("design.save")} · ${ops.length}` : t("design.save"))),
     h("div", { className: "plugin-design-body" },
-      h("div", { className: "plugin-design-stage", "data-mode": mode },
+      h("div", {
+        className: "plugin-design-stage", "data-mode": mode,
+        onClick: (event) => { if (event.target === event.currentTarget && mode === "edit") command("deselect"); },
+      },
         url
           ? h("div", {
               className: "plugin-design-frame",
               style: frameWidth ? { width: `${frameWidth}px`, maxWidth: "100%" } : { width: "100%" },
             },
-              h("div", { className: "plugin-design-frame-chrome" },
-                h("span", { className: "plugin-design-frame-dot" }), h("span", { className: "plugin-design-frame-dot" }), h("span", { className: "plugin-design-frame-dot" }),
-                h("span", { className: "plugin-design-frame-url" }, path)),
               h("iframe", {
                 key: `${frameKey}:${url}`,
                 ref: frameRef,
@@ -681,9 +681,10 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
           h("section", { className: "plugin-design-section" },
             h("h2", { className: "plugin-design-section-title" }, t("design.inspector.element")),
             selected ? h("div", { className: "plugin-design-element" },
-              h("span", { className: "plugin-design-tag" }, selected.tag),
+              h("div", { className: "plugin-design-elemhead" },
+                h("span", { className: "plugin-design-tag" }, selected.tag),
+                h("span", { className: "plugin-design-rect" }, `${selected.rect.w} × ${selected.rect.h} px`)),
               h("code", { className: "plugin-design-selector", title: selected.selector }, selected.selector),
-              h("div", { className: "plugin-design-rect" }, `${selected.rect.w} × ${selected.rect.h} px`),
               (TEXTUAL.test((selected.tag ?? "").toUpperCase().split(/[.#]/)[0]) || selected.text)
                 ? h("div", { className: "plugin-design-field" },
                     h(TextArea, { label: t("design.inspector.text"), value: textDraft, rows: 3, onChange: (event) => setTextDraft(event.currentTarget.value) }),
@@ -706,6 +707,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
               key: comment.id, className: "plugin-design-comment",
               onMouseEnter: () => command("comment-focus", { id: comment.id }),
               onMouseLeave: () => command("comment-focus", { id: null }),
+              onClick: (event) => { if (event.target === event.currentTarget || event.target.closest(".plugin-design-selector")) command("scroll-to", { selector: comment.selector }); },
             },
               h("span", { className: "plugin-design-pin", "aria-hidden": true }, index + 1),
               h("div", { className: "plugin-design-comment-body" },
@@ -958,23 +960,6 @@ const DESIGN_CSS = `
   overflow: hidden;
   transition: width .28s var(--environment-panel-motion-easing, ease);
 }
-.plugin-design-frame-chrome {
-  flex: none; display: flex; align-items: center; gap: 6px;
-  height: 34px; padding-inline: 12px;
-  border-bottom: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.2)));
-  background: var(--wuu-color-surface-muted, rgba(127,127,127,.08));
-}
-.plugin-design-frame-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--wuu-border-strong, rgba(127,127,127,.4)); }
-.plugin-design-frame-dot:nth-child(1) { background: #f16f6f; }
-.plugin-design-frame-dot:nth-child(2) { background: #f2b84b; }
-.plugin-design-frame-dot:nth-child(3) { background: #57c46b; }
-.plugin-design-frame-url {
-  margin-inline-start: 8px; padding: 2px 10px; border-radius: var(--radius-pill, 999px);
-  background: var(--wuu-color-surface, rgba(255,255,255,.6));
-  border: 1px solid var(--wuu-border-subtle, transparent);
-  font-family: var(--wuu-font-family-mono, ui-monospace, monospace); font-size: .78em;
-  color: var(--ink-tertiary); max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 .plugin-design-iframe { flex: 1; width: 100%; border: 0; background: #fff; }
 .plugin-design-hint {
   position: absolute; z-index: 3; bottom: calc(var(--space-6, 24px) + 10px); left: 50%; transform: translateX(-50%);
@@ -1011,6 +996,7 @@ const DESIGN_CSS = `
   letter-spacing: .05em; text-transform: uppercase; color: var(--ink-tertiary);
 }
 .plugin-design-element { display: grid; gap: var(--space-2, 8px); }
+.plugin-design-elemhead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2, 8px); }
 .plugin-design-tag {
   display: inline-block; padding: 3px 8px; border-radius: var(--radius-xs, 6px);
   background: color-mix(in srgb, var(--wuu-color-accent, #4a63d8) 13%, transparent);
@@ -1019,8 +1005,8 @@ const DESIGN_CSS = `
   width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
 .plugin-design-selector {
-  font-family: var(--wuu-font-family-mono, ui-monospace, monospace); font-size: .78em;
-  color: var(--ink-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--wuu-font-family-mono, ui-monospace, monospace); font-size: .74em;
+  color: var(--ink-tertiary); opacity: .78; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .plugin-design-rect { font-size: .78em; color: var(--ink-faint, var(--ink-tertiary)); font-variant-numeric: tabular-nums; }
 .plugin-design-field { display: grid; gap: 4px; margin-block-start: var(--space-2, 8px); }
