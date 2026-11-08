@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { MCPServerStatus } from "../shared/protocol";
 import type { ApplicationSettingsControlsV1, MCPDefinitionResult } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { useSettingsControls } from "./SettingsControlsContext";
@@ -65,7 +65,8 @@ export function MCPServicesProvider({ children, contextKey, catalog }: { childre
     return () => { generation.current++; clearInterval(timer); unsubscribe(); remote(); };
   }, [controls, refresh]);
   const fresh = snapshot.current?.controls === controls && snapshot.current.contextKey === contextKey;
-  return <MCPContext.Provider value={{ servers: fresh ? servers : [], error, contextGeneration, catalog, refresh }}>{children}</MCPContext.Provider>;
+  const context = useMemo(() => ({ servers: fresh ? servers : [], error, contextGeneration, catalog, refresh }), [fresh, servers, error, contextGeneration, catalog, refresh]);
+  return <MCPContext.Provider value={context}>{children}</MCPContext.Provider>;
 }
 
 type MCPServicesProps = { pluginID?: string; enabled?: boolean; filter?: string; catalogView?: boolean };

@@ -129,6 +129,7 @@ export function PluginConversationView({ presentation = "standard", conversation
       observer.disconnect();
     };
   }, [composerNode, controller.scheduleScrollToBottom]);
+  const bubbleContext = useMemo(() => ({ enabled: bubbles, revealed: gesture.revealed }), [bubbles, gesture.revealed]);
   return <section ref={rootRef} className="plugin-conversation" data-conversation-id={conversationId} data-presentation={presentation}>
     <header className="titlebar plugin-conversation-titlebar" data-wuu-component="conversation-titlebar">
       <div className="title-block"><div className="conversation-title-heading">{avatar}<h1 tabIndex={-1}>{title}</h1>{subtitle && <span className="plugin-conversation-subtitle">{subtitle}</span>}</div></div>
@@ -140,7 +141,7 @@ export function PluginConversationView({ presentation = "standard", conversation
         data-times-dragging={bubbles ? gesture.dragging : undefined}
         style={bubbles ? { "--bubble-time-progress": gesture.progress } as React.CSSProperties : undefined}>
         {bubbles && <button type="button" className="bubble-time-toggle" aria-pressed={gesture.revealed} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" onClick={gesture.toggle}>{t(gesture.revealed ? "message.hideTimes" : "message.showTimes")}</button>}
-        <ConversationBubbleContext.Provider value={{ enabled: bubbles, revealed: gesture.revealed }}>
+        <ConversationBubbleContext.Provider value={bubbleContext}>
         <ConversationFlow className="plugin-conversation-flow" role="log" aria-live="polite" aria-busy={loading}>{children}{sessionId && sessionScope && <PluginConversationQuestions sessionId={sessionId} scope={sessionScope} onReply={onQuestionReply} />}</ConversationFlow>
         </ConversationBubbleContext.Provider>
       </div>

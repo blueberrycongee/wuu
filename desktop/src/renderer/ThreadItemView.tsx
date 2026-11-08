@@ -117,6 +117,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const threadId = useContext(ArtifactThreadContext);
   const text = useStreamedText(streamTextKey(props.turnID, item.id, "text"), item.text,
     props.streaming && item.status === "in_progress");
+  // Memoizing on the whole props object is deliberate: store-driven re-renders
+  // reuse the same pendingProps, so the built-in subtree is skipped per stream
+  // frame while the slot context below stays current.
   const nativeContent = useMemo(() => <BuiltInThreadItemView {...props} />, [props]);
   if (item.remote_content_ref && item.type !== "tool_call") {
     return <RemoteItemContent key={item.remote_content_ref} item={item} render={complete => <ThreadItemView {...props} item={complete} />} />;
