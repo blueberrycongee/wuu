@@ -729,7 +729,10 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
                 h("code", { className: "plugin-design-selector", title: comment.selector }, comment.tag ?? comment.selector),
                 h(TextArea, {
                   label: comment.tag ?? comment.selector, value: comment.text, rows: 2, placeholder: t("design.comment.placeholder"),
-                  onChange: (event) => setComments((list) => list.map((item) => item.id === comment.id ? { ...item, text: event.currentTarget.value } : item)),
+                  onChange: (event) => {
+                    const text = event.currentTarget.value;
+                    setComments((list) => list.map((item) => item.id === comment.id ? { ...item, text } : item));
+                  },
                 })),
               h("button", {
                 type: "button", className: "plugin-design-iconbutton", "aria-label": t("design.removeComment"),
@@ -885,7 +888,9 @@ function QuadField({ h, label, values, reset, full, onCommit }) {
 function ViewportMenu({ h, React, viewport, onPick, t }) {
   const { useState, useRef, useEffect } = React;
   const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
   const rootRef = useRef(null);
+  const triggerRef = useRef(null);
   useEffect(() => {
     if (!open) return;
     const down = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
@@ -895,18 +900,28 @@ function ViewportMenu({ h, React, viewport, onPick, t }) {
     return () => { document.removeEventListener("pointerdown", down); document.removeEventListener("keydown", key); };
   }, [open]);
   const active = VIEWPORTS.find((item) => item.id === viewport) ?? VIEWPORTS[VIEWPORTS.length - 1];
+  const toggle = () => {
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPos({ x: rect.left, y: rect.bottom + 4 });
+    }
+    setOpen((value) => !value);
+  };
   return h("div", { className: "plugin-design-viewport", ref: rootRef },
     h("button", {
       type: "button", className: "plugin-design-iconbutton plugin-design-viewport-trigger",
       "aria-haspopup": "listbox", "aria-expanded": open, "data-open": open || undefined,
       title: t(active ? `design.viewport.${active.id}` : "design.viewport.aria"),
       "aria-label": `${t("design.viewport.aria")}: ${active ? t(`design.viewport.${active.id}`) : ""}`,
-      onClick: () => setOpen((value) => !value),
+      ref: triggerRef, onClick: toggle,
     },
       h(ViewportIcon, { h, id: active.id }),
       h("span", { className: "plugin-design-viewport-name" }, t(`design.viewport.${active.id}`)),
       h(Glyph, { h, d: ICON_PATHS.chevron })),
-    open ? h("div", { className: "plugin-design-menu", role: "listbox", "aria-label": t("design.viewport.aria") },
+    open ? h("div", {
+      className: "plugin-design-menu", role: "listbox", "aria-label": t("design.viewport.aria"),
+      style: pos ? { position: "fixed", top: `${pos.y}px`, left: `${pos.x}px`, insetInlineStart: "auto" } : undefined,
+    },
       VIEWPORTS.map((item) => h("button", {
         key: item.id, type: "button", role: "option", "aria-selected": viewport === item.id,
         className: "plugin-design-menu-item", "data-active": viewport === item.id || undefined,

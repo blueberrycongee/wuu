@@ -83,7 +83,7 @@
     for (const pin of pinLayer.children) {
       const comment = state.comments.find((item) => item.id === pin.dataset.id);
       const el = comment && document.querySelector(comment.selector);
-      if (!comment || !el) { pin.style.display = "none"; continue; }
+      if (!comment || !el || state.mode !== "comment") { pin.style.display = "none"; continue; }
       const rect = el.getBoundingClientRect();
       pin.style.display = "grid";
       if (comment.anchor === "tr") {
