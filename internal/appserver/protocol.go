@@ -2899,10 +2899,11 @@ type SettingsUsageMetrics struct {
 // SettingsUsageDay is one calendar day of token activity, bucketed by the
 // token_usage row's At timestamp in the requested zone (UTC when the request
 // names none). Days are emitted in ascending date order; gaps in the visible
-// window are filled in by the desktop. The token fields and Turns/Agents
-// cover Wuu's own trail only; Outside holds the same day's usage the engine
-// ledgers recorded outside Wuu, so a chart can color every day the page
-// counts without mixing the two ledgers' fields.
+// window are filled in by the desktop. The token fields cover Wuu's own trail
+// plus ledger usage of sessions Wuu drives on engines that never report to
+// the trail; Turns/Agents stay Wuu-trail counts. Outside holds the same day's
+// usage the engine ledgers recorded outside Wuu, so a chart can color every
+// day the page counts without mixing the two ledgers' fields.
 type SettingsUsageDay struct {
 	Date                string          `json:"date"`
 	InputTokens         int             `json:"input_tokens"`
@@ -2931,11 +2932,13 @@ func (e EngineUsageSum) TotalTokens() int {
 	return e.InputTokens + e.OutputTokens + e.CacheCreationTokens + e.CacheReadTokens
 }
 
-// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums the
-// token_usage trail by each thread's bound engine. Outside reads the engine's
-// own on-disk ledger minus native sessions Wuu already claims, so the two
-// columns never count the same work twice. Outside is nil for engines without
-// a readable local ledger or whose ledger failed to scan.
+// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums
+// the token_usage trail by each thread's bound engine, plus ledger rows of
+// sessions Wuu drives on engines that never report usage to the trail (the
+// ACP family, such as Devin). Outside reads the engine's own on-disk ledger
+// minus native sessions Wuu already claims, so the two columns never count
+// the same work twice. Outside is nil for engines without a readable local
+// ledger or whose ledger failed to scan.
 type SettingsEngineUsage struct {
 	Engine  string          `json:"engine"`
 	Name    string          `json:"name"`
@@ -2948,9 +2951,10 @@ type SettingsEngineUsage struct {
 // the per-model table sorted by total context tokens descending (legacy
 // rows with empty provider+model are surfaced as "(unknown)"), and Days
 // is the calendar-day series for the heatmap (gaps filled by the
-// desktop). EngineBreakdowns attributes the same in-Wuu totals per agent
-// engine and adds the usage each engine recorded outside Wuu in its own
-// local ledger.
+// desktop). EngineBreakdowns attributes usage per agent engine — the
+// in-Wuu trail plus bound-session ledger rows on engines that never
+// report to the trail — and adds the usage each engine recorded
+// outside Wuu in its own local ledger.
 type SettingsUsageResponse struct {
 	TotalSessions    int                   `json:"total_sessions"`
 	GeneratedAt      string                `json:"generated_at"`
