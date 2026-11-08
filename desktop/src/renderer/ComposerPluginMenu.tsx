@@ -79,7 +79,9 @@ export function useComposerPluginMenu(inputRef: RefObject<ComposerInputHandle | 
     if (!open) return false;
     if (event.key === "Escape") { event.preventDefault(); setOpen(false); return true; }
     if (["ArrowDown", "ArrowUp", "Enter", "Tab"].includes(event.key)) {
-      const buttons = document.getElementById(id)?.querySelectorAll<HTMLButtonElement>("[data-plugin-choice]:not(:disabled)");
+      // Any enabled row is reachable, like the slash panel's list: plugin
+      // choices lead the menu, so arrows still land there first.
+      const buttons = document.getElementById(id)?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
       const button = event.key === "ArrowUp" ? buttons?.[buttons.length - 1] : buttons?.[0];
       if (button) {
         event.preventDefault();
@@ -150,6 +152,7 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
   }
   return <div className="composer-plugin-choices">
     {!supported ? <ScopedToast message={t("composer.pluginsEngineUnsupported")} tone="error" dedupeKey="composer-plugins-engine-unsupported" /> : null}
+    <div className="composer-plus-menu-section" role="presentation">{t("composer.plugins")}</div>
     {loading ? <p className="composer-plugin-notice" role="status">{t("composer.pluginsLoading")}</p> : null}
     {error ? <div className="composer-plugin-notice" role="alert">{t("composer.pluginsLoadFailed")} <button type="button" onClick={() => setRevision(value => value + 1)}>{t("settings.errorRetry")}</button></div> : null}
     {!loading && !error && !entries.length && !menu.query ? <p className="composer-plugin-notice">{t("composer.pluginsEmpty")}</p> : null}

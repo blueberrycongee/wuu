@@ -1,21 +1,30 @@
 .composer-plugin-choices {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
   min-width: 0;
 }
 .composer-context-menu .composer-plugin-row { width: 100%; }
-.composer-plugin-notice { margin: var(--space-2); color: var(--ink-muted); white-space: normal; }
+.composer-plugin-notice {
+  margin: 0;
+  padding: 14px 12px 15px;
+  color: var(--ink-tertiary);
+  font-size: var(--font-menu);
+  line-height: var(--line-ui);
+  text-align: center;
+  white-space: normal;
+}
 
-/* One line per choice in the menu's own type and icon column: the mark, the
- * name, then a description that gives up its width first. */
+/* One line per choice in the same anatomy as the command rows: the mark, the
+ * name that gives way first, then secondary copy pinned at the row's end. */
 .composer-context-menu .composer-plugin-row > .composer-plugin-name {
-  flex: 0 1 auto;
+  flex: 1 1 auto;
   min-width: 0;
 }
 /* Keep secondary copy readable without competing with the name. */
 .composer-context-menu .composer-plugin-row > .composer-plugin-detail {
-  flex: 1 1 0;
-  min-width: 0;
+  flex: 0 0 auto;
+  max-width: 50%;
   color: var(--ink-tertiary);
   font-weight: var(--weight-regular);
 }

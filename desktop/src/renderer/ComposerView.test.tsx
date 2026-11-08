@@ -2461,8 +2461,8 @@ describe("Composer send control", () => {
     expect(menu?.querySelector<HTMLElement>(".composer-plus-menu")?.style.getPropertyValue("--composer-menu-width"))
       .toBe(`${COMPOSER_COMMAND_MENU_WIDTH}px`);
     expect(menu?.style.left).toBe("80px");
-    expect(menu?.style.bottom).toBe(`${window.innerHeight - 400 + 4}px`);
-    expect(menu?.style.getPropertyValue("--floating-menu-available-height")).toBe("388px");
+    expect(menu?.style.bottom).toBe(`${window.innerHeight - 400 + 8}px`);
+    expect(menu?.style.getPropertyValue("--floating-menu-available-height")).toBe("384px");
     // Every command row names the slash command that runs it.
     const reviewRow = Array.from(menu?.querySelectorAll("button") ?? []).find(
       (button) => button.textContent?.includes(translateCurrent("slash.review.title")),
