@@ -12,7 +12,13 @@ import {
 } from "./ImagePreview";
 import { ConversationTurnList } from "./ConversationTurnList";
 import { TurnView } from "./TurnView";
+import { showErrorToast } from "./Toast";
 import type { Turn } from "../shared/protocol";
+
+vi.mock("./Toast", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./Toast")>(),
+  showErrorToast: vi.fn(),
+}));
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -164,7 +170,8 @@ it("shares the original image through the native host and reports a failed save"
     const button = container.querySelector<HTMLButtonElement>('.image-preview-toolbar-button')!;
     await act(async () => { button.click(); });
     expect(saveArtifactFile).toHaveBeenCalledWith("test.png","data:image/png;base64,aGVsbG8=");
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Storage full");
+    expect(vi.mocked(showErrorToast)).toHaveBeenCalledWith(expect.objectContaining({ message: "Storage full" }));
+    expect(container.textContent).not.toContain("Storage full");
   } finally { window.wuu = previous; }
 });
 
