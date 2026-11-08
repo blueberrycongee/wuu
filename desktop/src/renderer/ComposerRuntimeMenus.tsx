@@ -1600,7 +1600,7 @@ export function ComposerPlusButton({
 
   return (
     <div className="composer-plus-menu-anchor" ref={triggerRef}>
-      <Tooltip asChild content={t("composer.plusMenu")}><button
+      <button
         ref={buttonRef}
         className="composer-tool-button composer-plus-button"
         type="button"
@@ -1621,7 +1621,7 @@ export function ComposerPlusButton({
         }}
       >
         <Plus aria-hidden="true" />
-      </button></Tooltip>
+      </button>
       {open ? (
         <FloatingMenuPortal
           anchorRef={isTouchWebShell() ? triggerRef : menuAnchorRef}

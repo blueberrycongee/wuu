@@ -571,7 +571,7 @@ export function SplitPaneComposer({
                         onPickFiles={() => attachmentInputRef.current?.click()}
                       />
                     ) : (
-                      <Tooltip asChild content={t("composer.addAttachment")}><button
+                      <button
                         className="composer-tool-button composer-attach-button"
                         type="button"
                         aria-label={t("composer.addAttachment")}
@@ -579,7 +579,7 @@ export function SplitPaneComposer({
                         onClick={() => attachmentInputRef.current?.click()}
                       >
                         <Paperclip aria-hidden="true" />
-                      </button></Tooltip>
+                      </button>
                     )}
                   </div>
                   <ComposerInput
