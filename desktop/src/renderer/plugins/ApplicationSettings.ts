@@ -180,9 +180,18 @@ export class ApplicationSettings {
       case "settings.update-engine": {
         const context = this.engineContext().key;
         ++this.engineRequest;
-        const next = await window.wuu.updateEngines(input as ApplicationSettingsActionMapV1["settings.update-engine"]["input"]);
+        const next = immutable(await window.wuu.updateEngines(input as ApplicationSettingsActionMapV1["settings.update-engine"]["input"]));
         signal?.throwIfAborted();
-        result = context === this.engineContext().key ? await this.refreshEngines(signal) ?? immutable(next) : immutable(next); break;
+        result = next;
+        if (context === this.engineContext().key) {
+          // Publish the edit's own inventory first; discovery refills catalogs
+          // without holding the save that spawned agent CLI probes hostage.
+          this.engines = { context, value: next };
+          this.engineError = { context, message: "" };
+          this.host.changed();
+          void this.refreshEngines(signal).catch(() => { /* Discovery failures publish beside the engine controls. */ });
+        }
+        break;
       }
       case "settings.read-usage":
         if (!window.wuu.getSettingsUsage) throw new Error(translateCurrent("settings.usageUnsupported"));

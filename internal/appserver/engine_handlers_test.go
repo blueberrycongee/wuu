@@ -180,6 +180,48 @@ func TestEngineListCanSkipModelDiscovery(t *testing.T) {
 	}
 }
 
+// A settings mutation acknowledges the edit and the post-edit availability.
+// It must not wait on model discovery: catalog probes spawn agent processes,
+// and the handler runs on the serial dispatch loop.
+func TestEngineUpdateSkipsModelDiscovery(t *testing.T) {
+	provider := &engineRequirementFixture{value: "omitted", modelsStarted: make(chan struct{}), releaseModels: make(chan struct{})}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(provider.releaseModels) }) }
+	t.Cleanup(release)
+	factory := runtime.NativeProviderFactory{ID: provider.ID(), Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) { return provider, nil }}
+	cfg := config.Config{Composition: &composition.Config{Version: composition.Version, Profile: "headless", Patches: []composition.Patch{{Modules: map[string]bool{"wuu.engines.native": false, provider.ID(): true}, Services: []composition.Binding{{Service: "engine.wuu", Major: 1, Provider: provider.ID()}}}}}}
+	rt := newEngineAdminRuntimeAt(t, t.TempDir(), cfg, factory)
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	t.Cleanup(srv.Close)
+
+	update := make(chan error, 1)
+	go func() {
+		update <- srv.handleEngineUpdate(Request{ID: json.RawMessage(`"update"`), Params: json.RawMessage(`{"default_engine":"wuu"}`)})
+	}()
+	select {
+	case err := <-update:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-provider.modelsStarted:
+		t.Fatal("engine/update waited for model discovery")
+	case <-time.After(5 * time.Second):
+		t.Fatal("engine/update did not return")
+	}
+	response := responseByID(t, parseOutput(t, out.String()), "update")
+	if response["error"] != nil {
+		t.Fatalf("engine/update: %+v", response["error"])
+	}
+	result := remarshal[EngineListResult](t, response["result"])
+	if len(result.Engines) != 1 || !result.Engines[0].BinaryOK || result.Engines[0].ModelsStatus != "deferred" {
+		t.Fatalf("update inventory = %+v", result.Engines)
+	}
+	if rt.DefaultEngine() != agentengine.EngineWuu {
+		t.Fatalf("update did not apply the default engine: %q", rt.DefaultEngine())
+	}
+}
+
 // Disabling a selected implementation must reject admission before it creates
 // a durable thread or dispatches inference, including the native engine.
 func TestUnavailableSelectedEngineRejectsNewThreads(t *testing.T) {

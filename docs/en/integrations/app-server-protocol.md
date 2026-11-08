@@ -525,7 +525,10 @@ usage must not be carried over from an earlier request.
 `engine/update` accepts `default_engine` and per-engine objects with `enabled`
 and `binary_path`. Omitted fields remain unchanged. It persists settings, updates
 runtime registration, and returns the same shape as `engine/list`. Discover engine
-IDs from the inventory instead of hardcoding a client allowlist.
+IDs from the inventory instead of hardcoding a client allowlist. The update
+response reflects the new availability without starting native model discovery;
+every entry reports `models_status: "deferred"`. Request `engine/list` for the
+catalogs after the mutation resolves.
 
 ACP sign-in has separate explicit operations:
 

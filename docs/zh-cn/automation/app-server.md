@@ -225,6 +225,10 @@ PDF 选区增加可选的 `source.pdf` 元数据，其中 `start_page` 和 `end_
 或显式将 `default_engine` 设为可用引擎（例如 `wuu`）后，才能继续创建对话。
 已有对话保留其引擎绑定与历史，修改默认值不会迁移这些对话。
 
+`engine/update` 的响应形状与 `engine/list` 相同，但不会启动原生模型发现；
+每个条目的 `models_status` 均为 `deferred`。变更生效后如需模型目录，应单独
+调用 `engine/list`。
+
 此行为替代了原先自动回退 Wuu 的逻辑。客户端应处理默认引擎不可用的情况，
 提供显式选择，而不是自动改写默认值。
 
