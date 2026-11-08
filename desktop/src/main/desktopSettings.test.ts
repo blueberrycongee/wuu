@@ -101,6 +101,7 @@ describe("desktopSettings", () => {
       send_shortcut: "enter",
       proxy_mode: "system",
       proxy_url: "",
+      auto_archive_days: 0,
     });
     updateDesktopPreferences({ notify_questions: false }, file);
     updateDesktopPreferences({ send_shortcut: "mod_enter" }, file);
@@ -109,8 +110,8 @@ describe("desktopSettings", () => {
   });
 
   it("restores defaults for malformed desktop preference fields", async () => {
-    await writeFile(file, JSON.stringify({ preferences: { notification_sound: "no", auto_check_updates: false, send_shortcut: "alt_enter", proxy_mode: "pac", proxy_url: "ftp://127.0.0.1:21" } }));
-    expect(getDesktopPreferences(file)).toMatchObject({ notification_sound: true, auto_check_updates: false, send_shortcut: "enter", proxy_mode: "system", proxy_url: "" });
+    await writeFile(file, JSON.stringify({ preferences: { notification_sound: "no", auto_check_updates: false, send_shortcut: "alt_enter", proxy_mode: "pac", proxy_url: "ftp://127.0.0.1:21", auto_archive_days: 3 } }));
+    expect(getDesktopPreferences(file)).toMatchObject({ notification_sound: true, auto_check_updates: false, send_shortcut: "enter", proxy_mode: "system", proxy_url: "", auto_archive_days: 0 });
   });
 
   it("rejects unknown language preferences", async () => {

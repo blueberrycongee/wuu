@@ -102,6 +102,9 @@ export type DesktopSendShortcut = "enter" | "mod_enter";
 /** Desktop-only preferences persisted by the Electron main process. */
 export type DesktopProxyMode = "system" | "manual" | "none";
 
+export const DESKTOP_AUTO_ARCHIVE_DAYS = [0, 7, 14, 30, 90] as const;
+export type DesktopAutoArchiveDays = (typeof DESKTOP_AUTO_ARCHIVE_DAYS)[number];
+
 export type DesktopPreferences = {
   notify_turn_completed: boolean;
   notify_questions: boolean;
@@ -111,6 +114,8 @@ export type DesktopPreferences = {
   proxy_mode: DesktopProxyMode;
   /** Normalized address used when proxy_mode is "manual"; empty when unset. */
   proxy_url: string;
+  /** Days without activity before a conversation is archived; 0 turns it off. */
+  auto_archive_days: DesktopAutoArchiveDays;
   /** Undefined where the OS has no login-item support (Linux). */
   open_at_login?: boolean;
 };

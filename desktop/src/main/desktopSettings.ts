@@ -15,6 +15,7 @@ import {
   normalizeProxyURL,
   type CodexPetSettings,
   type CodexPetSize,
+  DESKTOP_AUTO_ARCHIVE_DAYS,
   type DesktopPreferences,
   type MessageFlowFontSize,
   type LanguagePreference,
@@ -81,6 +82,7 @@ export const DEFAULT_DESKTOP_PREFERENCES: Readonly<Omit<DesktopPreferences, "ope
   send_shortcut: "enter",
   proxy_mode: "system",
   proxy_url: "",
+  auto_archive_days: 0,
 });
 
 function readStoredPreferences(value: unknown): Omit<DesktopPreferences, "open_at_login"> {
@@ -95,6 +97,7 @@ function readStoredPreferences(value: unknown): Omit<DesktopPreferences, "open_a
     send_shortcut: record.send_shortcut === "mod_enter" ? "mod_enter" : "enter",
     proxy_mode: record.proxy_mode === "manual" || record.proxy_mode === "none" ? record.proxy_mode : "system",
     proxy_url: typeof record.proxy_url === "string" ? normalizeProxyURL(record.proxy_url) ?? "" : "",
+    auto_archive_days: DESKTOP_AUTO_ARCHIVE_DAYS.find(days => days === record.auto_archive_days) ?? 0,
   };
 }
 

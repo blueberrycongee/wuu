@@ -35,7 +35,8 @@ import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-
 import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
-import type { InitializeResult, PopOutInitResult, RestartRecoveryItem, ServerEvent, Thread } from "../../shared/protocol";
+import type { DesktopAutoArchiveDays, DesktopPreferences, InitializeResult, PopOutInitResult, RestartRecoveryItem, ServerEvent, Thread } from "../../shared/protocol";
+import { autoArchiveCandidates } from "../AutoArchive";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, threadBelongsToWorkspace, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
@@ -678,7 +679,9 @@ export class ApplicationController implements HostApplicationService {
       });
       if (restore) this.subscriptions.push(restore);
       this.applicationDesktop.syncPet();
-      void this.initialize().catch(error => this.updateState(state => ({ ...state, status: String(error instanceof Error ? error.message : error) })));
+      const autoArchive = this.startAutoArchive();
+      this.subscriptions.push(autoArchive.stop);
+      void this.initialize().then(autoArchive.sweep, error => this.updateState(state => ({ ...state, status: String(error instanceof Error ? error.message : error) })));
     }
     let stopped = false;
     return () => {
@@ -1107,6 +1110,42 @@ export class ApplicationController implements HostApplicationService {
     const message = messages?.find(message => message.id === input.messageId);
     if (!message) throw new Error("Pending message owner is unavailable");
     return message;
+  }
+
+  // Sweeps after the runtime loads, when the window changes, and hourly for
+  // long-lived sessions. Failures stay quiet: the next sweep retries.
+  private startAutoArchive(): { sweep: () => Promise<void>; stop: () => void } {
+    const api = window.wuu;
+    if (!api?.getDesktopPreferences) return { sweep: async () => {}, stop: () => {} };
+    let days: DesktopAutoArchiveDays = 0;
+    let sweeping = false;
+    const sweep = async () => {
+      const signal = this.lifetime?.signal;
+      if (days === 0 || sweeping || !this.state.activeContext || signal?.aborted) return;
+      sweeping = true;
+      try {
+        const { threads } = await api.listAllThreads();
+        const open = new Set([this.state.thread?.id, this.state.secondaryThread?.id,
+          ...this.state.sessionTabs.map(tab => tab.kind === "thread" ? tab.threadID : undefined)]);
+        for (const thread of autoArchiveCandidates(threads, days, Date.now(), open)) {
+          if (signal?.aborted) return;
+          await this.mutationActions(signal).archiveThread(summarizeThreadsForSidebar([thread])[0]);
+        }
+      } catch (error) {
+        if (!signal?.aborted) console.error("Auto-archive failed", error);
+      } finally {
+        sweeping = false;
+      }
+    };
+    const apply = (preferences: DesktopPreferences) => {
+      if (preferences.auto_archive_days === days) return;
+      days = preferences.auto_archive_days;
+      void sweep();
+    };
+    const unsubscribe = api.onDesktopPreferencesChanged?.(apply);
+    void api.getDesktopPreferences().then(apply, error => console.error("Could not read desktop preferences", error));
+    const timer = window.setInterval(() => void sweep(), 3_600_000);
+    return { sweep, stop: () => { unsubscribe?.(); window.clearInterval(timer); } };
   }
 
   private mutationActions(signal?: AbortSignal) {
