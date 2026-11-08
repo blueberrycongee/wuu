@@ -304,7 +304,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onSelectEngineModel={async (model, effort) => (await controls.chooseRuntime({ kind: "native-model", model, effort })).accepted}
       onSelectEngineEffort={async effort => (await controls.chooseRuntime({ kind: "native-effort", effort })).accepted}
       onSelectEngineModelOptions={async modelOptions => (await controls.chooseRuntime({ kind: "native-options", modelOptions })).accepted}
-      gitStatus={environment.status} branchPickerPending={branchPickerPending} branchPickerDisabled={!environment.capabilities.checkout || Boolean(presentation.threadId && environment.actionBusy && (!environmentPending || sameEnvironment))}
+      gitStatus={environment.status} branchPickerPending={branchPickerPending} branchPickerDisabled={!environment.capabilities.checkout || Boolean(presentation.threadId && (environmentPending ? settledVisual.current.environment : environment).actionBusy)}
       worktree={!presentation.threadId && runtime.worktree.available ? { enabled: runtime.worktree.enabled, startBranch: runtime.worktree.startBranch,
         onSelectStartBranch: branch => { run(controls.chooseWorktree(true, branch)); setMenu(null); } } : undefined}
       projects={projects} activeContext={context} inlineCompletionWorkspace={{ ...context, cwd: runtime.cwd }} activeWorkspace={projects.find(row => row.id === tab.workspaceId)}
