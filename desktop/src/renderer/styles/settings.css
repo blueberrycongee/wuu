@@ -8,14 +8,14 @@
   /* A card is the canvas with a hairline edge; the edge, not a tonal step,
    * carries the grouping so fields and buttons keep their own fills. */
   --settings-card-bg: var(--paper);
-  --settings-card-border: var(--hairline);
+  --settings-card-border: var(--ink-overlay-8);
   --settings-card-radius: var(--radius-md);
   --settings-card-pad-inline: var(--space-4);
   /* Rows inside a card are separated by an inset rule, lighter than the
    * card's own edge. */
   --settings-divider: var(--hairline-soft);
-  --settings-button-bg: var(--ink-overlay-6);
-  --settings-button-hover-bg: var(--ink-overlay-12);
+  --settings-button-bg: var(--control-secondary-bg);
+  --settings-button-hover-bg: var(--control-secondary-hover-bg);
   --settings-row-pad-block: var(--space-3);
   --subscription-meter: var(--wuu-accent);
   /* Usage charts and the home overview share one ramp: a single blue stepped
@@ -589,11 +589,23 @@
   gap: var(--space-2);
 }
 
-/* Text fields, pickers, and paired file actions take the page's control
- * width so their left and right edges align down a group. */
-.settings-row-control > :is(.settings-input:not(.settings-input-num-center), .select-menu) {
+/* Text fields take the page's control width so their edges align down a
+ * group. Pickers hug their value instead: a short option in a wide box reads
+ * as empty space, and the longest option still caps at the control width. */
+.settings-row-control > .settings-input:not(.settings-input-num-center, .settings-input-num) {
   width: var(--settings-control-width);
   max-width: 100%;
+}
+
+.settings-row-control > .select-menu {
+  width: auto;
+  min-width: var(--settings-number-control-width);
+  max-width: min(var(--settings-control-width), 100%);
+}
+
+.settings-row-control > .select-menu > .select-menu-trigger {
+  width: auto;
+  min-width: 100%;
 }
 
 /* File actions fill that width too, but grow past it rather than wrap a
@@ -858,7 +870,7 @@
 .settings-row .settings-select-trigger {
   min-height: var(--control-field-height);
   border: 1px solid var(--field-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-control);
   background: var(--field-bg);
   box-shadow: none;
   font-size: var(--font-ui);
@@ -907,7 +919,7 @@
   height: auto;
   line-height: 1.4;
   border: 1px solid var(--field-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-control);
   background: var(--field-bg);
   color: var(--ink);
   font-size: var(--font-ui);
@@ -921,6 +933,7 @@
 
 .settings-input:hover:not(:disabled) {
   background: var(--field-hover-bg);
+  border-color: var(--field-border-hover);
 }
 
 .settings-input:disabled {
@@ -935,8 +948,8 @@
  * of a group share their edges. */
 .settings-input-num {
   flex: 0 0 auto;
-  width: 9.5em;
-  text-align: right;
+  width: var(--settings-number-control-width);
+  text-align: start;
   font-variant-numeric: tabular-nums;
 }
 
@@ -963,9 +976,10 @@
 }
 
 /* --- Buttons (same box as fields) --------------------------------------------
- * The default button is a soft fill without an edge; a field keeps its edge,
- * so "type here" and "press this" never look alike. Primary is the one
- * filled action of a view; ghost is for quiet trailing actions.
+ * The default button is the secondary action: field material with the same
+ * edge and corner, told apart from a field by its medium weight and centered
+ * label. Primary is the one filled action of a view; ghost is for quiet
+ * trailing actions.
  * ------------------------------------------------------------------------- */
 
 .settings-button {
@@ -977,8 +991,8 @@
   justify-content: center;
   gap: var(--space-2);
   min-width: 0;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-control);
   background: var(--settings-button-bg);
   box-shadow: none;
   color: var(--ink-strong);
@@ -1001,6 +1015,7 @@
 
 .settings-button:hover:not(:disabled) {
   background: var(--settings-button-hover-bg);
+  border-color: var(--field-border-hover);
 }
 
 .settings-button:active:not(:disabled) {
@@ -1015,6 +1030,7 @@
 /* Filled action in the theme accent (ink by default). The hover mixes a
  * paper tint so it lightens in light theme and dims in dark theme. */
 .settings-button-primary {
+  border-color: transparent;
   background: var(--wuu-accent);
   color: var(--ink-on-accent);
 }
@@ -1024,16 +1040,19 @@
 }
 
 .settings-button-ghost {
+  border-color: transparent;
   background: transparent;
   color: var(--ink-soft);
 }
 
 .settings-button-ghost:hover:not(:disabled) {
-  background: var(--settings-button-bg);
+  border-color: transparent;
+  background: var(--ink-overlay-6);
   color: var(--ink-strong);
 }
 
 .settings-button-danger {
+  border-color: transparent;
   background: var(--danger-soft);
   color: var(--danger);
 }

@@ -163,9 +163,9 @@
   --shadow-pop: var(
     --wuu-elevation-overlay,
     var(--shadow-inset),
-    0 1px 2px -0.5px var(--shadow-color-strong),
-    0 4px 8px -2px var(--shadow-color-medium),
-    0 10px 24px -6px var(--shadow-color-subtle)
+    0 1px 1px var(--shadow-color-subtle),
+    0 4px 8px -4px var(--shadow-color-medium),
+    0 16px 24px -8px var(--shadow-color-strong)
   );
   --shadow-modal: var(
     --wuu-elevation-overlay,
@@ -239,7 +239,10 @@
   --control-secondary-hover-bg: var(--wuu-control-secondary-background, var(--surface-1));
   --surface-floating: color-mix(in srgb, var(--paper) 94%, transparent);
   --surface-blur: blur(18px);
-  --field-border: var(--hairline-strong);
+  /* Control edges are ink tints, not greys, so one value holds on every card
+     and theme: control edge (12%) > card edge (8%) > row divider (6%). */
+  --field-border: var(--wuu-control-field-border, var(--ink-overlay-12));
+  --field-border-hover: var(--wuu-control-field-border, var(--ink-overlay-18));
   --selection-bg: rgba(64, 133, 216, 0.3);
 
                                                                   
@@ -275,6 +278,10 @@
   /* Media keeps shallow corners to preserve image content at thumbnail sizes. */
   --radius-media: var(--radius-xs);
   --radius-sm: var(--wuu-radius-control, 10px);
+  /* Fields, buttons, and dropdown triggers: a 36px box reads as a tool at
+     6px, as a pill at 10px. Cards keep --radius-md so the inner corner stays
+     concentric with the card's corner minus its padding. */
+  --radius-control: var(--wuu-radius-control-inner, 6px);
   --radius-md: var(--wuu-radius-panel, 12px);
   --radius-lg: var(--wuu-radius-panel, 20px);
   --radius-pill: 999px;
@@ -321,7 +328,7 @@
   --line-body: var(--wuu-line-height-body, 1.55);
   --line-meta: 1.6;
   --menu-bg: var(--theme-override-color-surface-elevated, var(--surface-floating));
-  --menu-border: var(--hairline);
+  --menu-border: var(--ink-overlay-8);
   --menu-hover: var(--theme-override-color-surface-muted, var(--surface-2));
   --menu-shadow: var(--shadow-pop);
   /* --- Motion: primitives ------------------------------------------------
