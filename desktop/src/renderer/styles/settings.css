@@ -431,6 +431,23 @@
   line-height: var(--settings-title-line);
 }
 
+/* Facts about the page's subject follow the title in the quiet voice; each
+ * fact is one span, separated by a middle dot. */
+.settings-page-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.settings-page-meta > * + *::before {
+  content: "\00B7";
+  margin-inline-end: var(--space-2);
+}
+
 .settings-page-description {
   max-width: 62ch;
   margin: 0;
@@ -668,6 +685,37 @@
   color: var(--danger);
 }
 
+/* An empty list says what would appear here and offers the one step that
+ * fills it. It takes a card's padding so it reads as the card's content. */
+.settings-empty-state {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-1);
+  padding: var(--space-5) 0;
+}
+
+.settings-empty-state-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: 1.4;
+}
+
+.settings-empty-state-description {
+  max-width: 52ch;
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.settings-empty-state-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
 /* --- Row -------------------------------------------------------------------
  * Two columns: a growing label on the left, a natural-width control pinned
  * right. Every row reserves a control's height plus its padding, so rows
@@ -713,6 +761,23 @@
   font-size: var(--font-ui);
   font-weight: var(--weight-regular);
   line-height: 1.4;
+}
+
+/* Scope and apply facts under a row title: quiet meta, not labels, so the
+ * title and its control stay the loudest things in the row. */
+.settings-row-label-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-2);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.settings-row-label-meta > * + *::before {
+  content: "\00B7";
+  margin-inline-end: var(--space-2);
 }
 
 .settings-row-label-description {
@@ -2684,20 +2749,6 @@ button.settings-engine-expand:hover {
   flex: 0 0 auto;
 }
 
-/* The empty archive says what would appear here and how it gets here. */
-.settings-archive-empty {
-  flex-direction: column;
-  align-items: flex-start;
-  justify-content: center;
-  gap: var(--space-1);
-  padding-block: var(--settings-row-pad-block);
-}
-
-.settings-archive-empty-hint {
-  font-size: var(--font-sm);
-  line-height: 1.5;
-}
-
 /* --- Remote control ------------------------------------------------------------------ */
 
 .settings-remote-page {
@@ -2852,12 +2903,14 @@ button.settings-engine-expand:hover {
 /* --- Floating panel ------------------------------------------------------ */
 
 .settings-shell.settings-floating {
-  --canvas-titlebar-height: 52px;
+  /* The rail is a fixed column; the content column takes the rest. Narrow
+   * windows keep a usable content column by giving up rail width first. */
+  --settings-rail-width: 232px;
   display: grid;
   width: min(1120px, 100%);
   height: min(820px, 100%);
   max-height: 100%;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: var(--settings-rail-width) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   padding: 0;
   overflow: hidden;
@@ -2906,23 +2959,44 @@ button.settings-engine-expand:hover {
 .settings-floating .settings-main {
   grid-column: 2;
   grid-row: 1;
+  /* No window strip inside the panel: the page header is the first line. */
+  grid-template-rows: minmax(0, 1fr);
   margin: 0;
   border-radius: 0;
   background: var(--settings-canvas);
 }
 
+/* The page title is the first line of the panel; its top padding centers the
+ * title line on the close button, so the two read as one header row. */
+.settings-floating .settings-page {
+  --settings-page-top: var(--space-6);
+  padding-top: var(--settings-page-top);
+}
+
+/* Close sits on the panel corner, vertically centered on the title line. */
+.settings-floating > .settings-main > .settings-close-button {
+  position: absolute;
+  top: calc(var(--settings-page-top, var(--space-6)) + (var(--font-heading) * 1.3 - var(--control-field-height)) / 2);
+  right: var(--space-4);
+  z-index: 1;
+}
+
+/* When the content column meets the panel edge, header actions clear the
+ * close button instead of sharing its corner. */
+@container settings-page (max-width: 40em) {
+  .settings-floating .settings-page-header {
+    padding-inline-end: calc(var(--control-field-height) + var(--space-3));
+  }
+}
+
+@media (max-width: 1000px) {
+  .settings-shell.settings-floating {
+    --settings-rail-width: 200px;
+  }
+}
+
 .settings-floating .settings-main::before {
   content: none;
-}
-
-.settings-floating .settings-titlebar {
-  gap: var(--space-2);
-  padding: 0 var(--space-2) 0 var(--space-4);
-  -webkit-app-region: no-drag;
-}
-
-.settings-floating .settings-titlebar-slot {
-  flex: 1 1 auto;
 }
 
 .settings-close-button {

@@ -29,7 +29,7 @@ including its configured environment-variable reference.
 
 ## Manage providers and models
 
-Open a connected provider in **Settings → External connections**. **Add model** accepts a model ID without duplicating the provider or its credentials. The trash icon removes a model from that provider's choices. Removing the selected model asks you to choose its replacement before saving; add another model first if it is the only one.
+Open a connected provider in **Settings → Models & services**. **Add model** accepts a model ID without duplicating the provider or its credentials. The trash icon removes a model from that provider's choices. Removing the selected model asks you to choose its replacement before saving; add another model first if it is the only one.
 
 Removed choices stay removed after reloading or refreshing the catalog. You can restore them from **Removed models**. Existing conversations, model roles, and aliases keep their model selections and metadata; removing a choice does not revoke model access or erase conversation history.
 
@@ -101,9 +101,9 @@ See the official [registration and sign-in guide](https://developers.openai.com/
 
 | Connection | Setup |
 |---|---|
-| Local Codex credentials | Choose **ChatGPT → Use local sign-in** in External connections and explicitly approve reusing an existing file-backed Codex login. Wuu does not launch CLI sign-in or change its storage settings. Use the native Codex agent for keyring-only Codex logins. |
+| Local Codex credentials | Choose **ChatGPT → Use local sign-in** in Models & services and explicitly approve reusing an existing file-backed Codex login. Wuu does not launch CLI sign-in or change its storage settings. Use the native Codex agent for keyring-only Codex logins. |
 | xAI SuperGrok | Add an **xAI SuperGrok** provider and follow the browser login. For the CLI, run `wuu login xai` and select `--provider xai-subscription`. |
-| Grok Build | In desktop Settings → External connections → Grok Build, choose **Sign in**. Wuu runs the installed Grok CLI’s `grok --no-auto-update login --oauth` and shows progress, cancellation, and completion; finish authorization in the browser opened by the CLI. No CLI is installed automatically. The CLI owns its credential file, which Wuu reuses without copying tokens. On web or phone, sign in on the desktop and reopen the connection page. You can still run `grok login` yourself and select the detected provider or pass `--provider grok-build`. |
+| Grok Build | In desktop Settings → Models & services → Grok Build, choose **Sign in**. Wuu runs the installed Grok CLI’s `grok --no-auto-update login --oauth` and shows progress, cancellation, and completion; finish authorization in the browser opened by the CLI. No CLI is installed automatically. The CLI owns its credential file, which Wuu reuses without copying tokens. On web or phone, sign in on the desktop and reopen the connection page. You can still run `grok login` yourself and select the detected provider or pass `--provider grok-build`. |
 
 SuperGrok subscription login, Grok CLI login, and an `XAI_API_KEY` are separate credential sources. Use the connection that matches your account. File editing and command execution also require the selected service and model to support tool calling.
 
@@ -119,7 +119,7 @@ The existing xAI subscription route is preserved separately. xAI documents OAuth
 
 ## Check accounts and usage in the desktop app
 
-**Settings → External connections** lists configured connections once. Open a
+**Settings → Models & services** lists configured connections once. Open a
 connection's **Account and usage** section for its authentication and available
 quota details. **Local agent accounts** keeps external-agent credentials separate
 from Wuu's model connections. Different accounts and currencies are never added

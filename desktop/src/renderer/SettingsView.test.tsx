@@ -2045,7 +2045,7 @@ describe("SettingsView archive page", () => {
     });
 
     expect(container.textContent).toContain("暂无已归档的对话或群聊");
-    expect(container.querySelector(".settings-archive-empty")).not.toBeNull();
+    expect(container.querySelector(".settings-empty-state")).not.toBeNull();
     expect(container.querySelector(".settings-archive-list")).toBeNull();
   });
 

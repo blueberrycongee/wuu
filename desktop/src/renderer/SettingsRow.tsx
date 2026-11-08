@@ -33,3 +33,5 @@ export function SettingsRow({
     </div>
   );
 }
+
+/** A short fact beside a row title, such as the setting's reach or when it applies. */
