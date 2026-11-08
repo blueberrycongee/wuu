@@ -743,7 +743,7 @@ const PLUGIN_PERMISSIONS: readonly { code: string; labelKey: TranslationKey }[] 
 
 // Trust follows source identity, so the origin is the one provenance fact
 // worth surfacing in the summary line — as readable language, not a raw enum.
-function pluginSourceLabel(record: ExtensionInventoryRecord, t: ReturnType<typeof useI18n>["t"]): string {
+export function pluginSourceLabel(record: ExtensionInventoryRecord, t: ReturnType<typeof useI18n>["t"]): string {
   if (record.provenance.official) return t("skills.pluginSourceOfficial");
   switch (record.package_source) {
     case "user": return t("skills.pluginSourceUser");

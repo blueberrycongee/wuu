@@ -44,7 +44,7 @@ describe("PluginSettingsEditor", () => {
     await renderEditor(pluginRecord());
 
     expect(getPluginSetting).toHaveBeenCalledTimes(4);
-    expect(field("feature.enabled").querySelector<HTMLInputElement>('input[type="checkbox"]')?.checked).toBe(false);
+    expect(field("feature.enabled").querySelector('[role="switch"]')?.getAttribute("aria-checked")).toBe("false");
     expect(field("display.name").querySelector<HTMLInputElement>('input[type="text"]')?.value).toBe("Custom name");
     expect(field("retry.count").querySelector<HTMLInputElement>('input[type="number"]')?.value).toBe("5");
     expect(field("display.mode").querySelector(".select-menu-value")?.textContent).toBe("roomy");
@@ -52,7 +52,7 @@ describe("PluginSettingsEditor", () => {
     expect(Array.from(document.querySelectorAll(".select-menu-item-label")).map((option) => option.textContent)).toEqual(["compact", "roomy"]);
     expect(field("display.name").textContent).toContain("Shown in the header");
     // Only a setting narrower than the user's own scope says where it applies.
-    expect(field("retry.count").textContent).toContain("工作区范围");
+    expect(field("retry.count").textContent).toContain("工作区");
   });
 
   it("writes typed values and distinguishes live from restart application", async () => {
@@ -62,8 +62,8 @@ describe("PluginSettingsEditor", () => {
     installAPI({ setPluginSetting });
     await renderEditor(pluginRecord());
 
-    const checkbox = field("feature.enabled").querySelector<HTMLInputElement>("input")!;
-    await act(async () => checkbox.click());
+    const toggle = field("feature.enabled").querySelector<HTMLButtonElement>('[role="switch"]')!;
+    await act(async () => toggle.click());
     expect(setPluginSetting).toHaveBeenCalledWith({
       id: "demo.settings",
       fingerprint: "sha256:generation-1",

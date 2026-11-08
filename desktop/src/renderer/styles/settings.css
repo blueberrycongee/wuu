@@ -431,6 +431,23 @@
   line-height: var(--settings-title-line);
 }
 
+/* Facts about the page's subject follow the title in the quiet voice; each
+ * fact is one span, separated by a middle dot. */
+.settings-page-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.settings-page-meta > * + *::before {
+  content: "\00B7";
+  margin-inline-end: var(--space-2);
+}
+
 .settings-page-description {
   max-width: 62ch;
   margin: 0;
@@ -732,6 +749,23 @@
   font-size: var(--font-ui);
   font-weight: var(--weight-regular);
   line-height: 1.4;
+}
+
+/* Scope and apply facts under a row title: quiet meta, not labels, so the
+ * title and its control stay the loudest things in the row. */
+.settings-row-label-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--space-2);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.settings-row-label-meta > * + *::before {
+  content: "\00B7";
+  margin-inline-end: var(--space-2);
 }
 
 .settings-row-label-description {
