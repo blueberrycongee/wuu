@@ -453,7 +453,7 @@
 }
 
 :is(.conversation-pane, .composer-stack) {
-  --session-composer-radius: max(22px, calc((var(--conversation-reading-line-height) + 20px) / 2));
+  --session-composer-radius: max(24px, calc((var(--conversation-reading-line-height) + 24px) / 2));
 }
 
 .composer-stack {
@@ -710,7 +710,7 @@ html[data-focus-modality="keyboard"] .composer-editor > :is(textarea, .composer-
 }
 
 .composer {
-  --composer-input-min-height: max(36px, calc(var(--conversation-reading-line-height) + 3 * var(--space-1)));
+  --composer-input-min-height: max(40px, calc(var(--conversation-reading-line-height) + 4 * var(--space-1)));
   --composer-text-padding-block: calc((var(--composer-input-min-height) - var(--conversation-reading-line-height)) / 2);
   position: relative;
   display: flex;
