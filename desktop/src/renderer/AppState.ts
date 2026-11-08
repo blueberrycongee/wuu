@@ -2724,11 +2724,19 @@ function activeThreadIDForState(state: AppState): string | undefined {
   return activeThreadForState(state)?.id;
 }
 
+// Thread snapshots are immutable, so the parsed result is stable per thread
+// object; caching keeps prop identity stable for memoized side panels across
+// stream-frame publications that only appended token text.
+const latestTodoUpdateCache = new WeakMap<Thread, TodoUpdate | null>();
+
 function latestTodoUpdateForThread(
   thread: Thread | undefined,
 ): TodoUpdate | undefined {
   if (!thread) {
     return undefined;
+  }
+  if (latestTodoUpdateCache.has(thread)) {
+    return latestTodoUpdateCache.get(thread) ?? undefined;
   }
   for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex--) {
     const turn = thread.turns[turnIndex];
@@ -2739,10 +2747,12 @@ function latestTodoUpdateForThread(
       }
       const update = parseTodoUpdateArguments(item.arguments);
       if (update) {
+        latestTodoUpdateCache.set(thread, update);
         return update;
       }
     }
   }
+  latestTodoUpdateCache.set(thread, null);
   return undefined;
 }
 

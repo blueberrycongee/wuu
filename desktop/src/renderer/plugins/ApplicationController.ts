@@ -197,6 +197,10 @@ export class ApplicationController implements HostApplicationService {
   private activitySourceKey?: string;
   private activityRequest = 0;
   private browserDockTarget?: ApplicationSnapshotV1["browserDockTarget"];
+  private turnStreamStatusProjection?: {
+    source: AppState["turnStreamStatus"];
+    projected: ApplicationSnapshotV1["conversationWorkspace"]["turnStreamStatus"];
+  };
   private previewVisible = false;
   private previewVisibilityOwner?: { signal?: AbortSignal };
   private clearPreviewVisibility?: () => void;
@@ -1792,6 +1796,21 @@ export class ApplicationController implements HostApplicationService {
 
   private readonly projectConversationTurns = createConversationTurnsProjector();
 
+  // state.turnStreamStatus is replaced immutably on every change, so the
+  // frozen projection can be reused verbatim while the source record is the
+  // same object; this keeps the snapshot's deep retention on a fast === path.
+  private projectTurnStreamStatus(source: AppState["turnStreamStatus"]) {
+    if (this.turnStreamStatusProjection?.source !== source) {
+      this.turnStreamStatusProjection = {
+        source,
+        projected: Object.freeze(Object.fromEntries(
+          Object.entries(source).map(([id, status]) => [id, Object.freeze({ ...status })]),
+        )),
+      };
+    }
+    return this.turnStreamStatusProjection.projected;
+  }
+
   private project(): ApplicationSnapshotV1 {
     const state = this.state;
     const initialized = state.initialized;
@@ -1852,7 +1871,7 @@ export class ApplicationController implements HostApplicationService {
       search: this.applicationSearch.getSnapshot(),
       conversationActions,
       conversationDetails: this.conversationDetails.getSnapshot(),
-      conversationWorkspace: Object.freeze({ turnStreamStatus: Object.freeze(Object.fromEntries(Object.entries(state.turnStreamStatus).map(([id, status]) => [id, Object.freeze({ ...status })]))), primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
+      conversationWorkspace: Object.freeze({ turnStreamStatus: this.projectTurnStreamStatus(state.turnStreamStatus), primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
         threads: this.conversationThreadViews }),
       conversation: Object.freeze({ threadId: thread?.id, title: thread?.title || thread?.preview, turns: Object.freeze(turns), loading: !initialized }),
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),
