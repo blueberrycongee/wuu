@@ -18,6 +18,8 @@ export interface ApplicationSettingsConfigurationV1 {
  readonly model_aliases?: SettingsReadonly<Record<string, ApplicationSettingsModelAliasSummaryV1>>;
  readonly advanced_settings?: SettingsReadonly<ApplicationSettingsAdvancedSettingsSummaryV1>;
  readonly general_settings?: SettingsReadonly<ApplicationSettingsGeneralSettingsSummaryV1>;
+ /** Defaults applied to conversations started after a change. */
+ readonly permissions?: { readonly mode?: string; readonly approve_for_me?: boolean };
  readonly features?: { readonly browser?: boolean; readonly safe_mode?: boolean };
  readonly extension_inventory?: SettingsReadonly<ApplicationSettingsExtensionInventoryRecordV1[]>;
 }
@@ -42,7 +44,7 @@ export interface ApplicationSettingsViewV1 {
 }
 
 export interface ApplicationSettingsActionMapV1 {
-  "settings.save-provider": { input: { readonly provider: string; readonly model: string; readonly effort?: string; readonly connection?: ApplicationSettingsRuntimeConnectionUpdateV1; readonly variant?: string }; result: void };
+  "settings.save-provider": { input: { readonly provider: string; readonly model: string; readonly effort?: string; readonly connection?: ApplicationSettingsRuntimeConnectionUpdateV1; readonly variant?: string; readonly permissionMode?: string }; result: void };
   "settings.remove-provider": { input: { readonly provider: string; readonly fallbackProvider?: string; readonly fallbackModel?: string }; result: void };
   "settings.refresh-model-catalog": { input: Record<string, never>; result: { readonly modelCount: number } };
   "settings.reconcile-connections": { input: { readonly providers: SettingsReadonly<ApplicationSettingsProviderSummaryV1[]> }; result: void };
