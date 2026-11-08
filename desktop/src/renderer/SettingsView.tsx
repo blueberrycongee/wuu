@@ -25,6 +25,7 @@ import {
   X,
   type IconComponent
 } from "./WuuIcons";
+import { normalizeProxyURL } from "../shared/protocol";
 import type {
   CodexPetSettingsUpdate,
   DesktopFolder,
@@ -1011,6 +1012,7 @@ function DesktopPreferencesSections(): JSX.Element | null {
   const [updateState, setUpdateState] = useState<DesktopUpdateState>({ kind: "unsupported" });
   const [checking, setChecking] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof DesktopPreferences | "update" | DesktopFolder, string>>>({});
+  const [proxyDraft, setProxyDraft] = useState<string>();
   const isMac = navigator.platform.toLowerCase().includes("mac");
 
   useEffect(() => {
@@ -1064,6 +1066,17 @@ function DesktopPreferencesSections(): JSX.Element | null {
       />
     </SettingsRow>
   );
+  function commitProxyURL(): void {
+    if (proxyDraft === undefined || !preferences) return;
+    const url = proxyDraft.trim() ? normalizeProxyURL(proxyDraft) : "";
+    if (url === undefined) {
+      setErrors(current => ({ ...current, proxy_url: t("settings.proxyURLInvalid") }));
+      return;
+    }
+    setProxyDraft(undefined);
+    if (url !== preferences.proxy_url) void save("proxy_url", url);
+  }
+
   const updatesSupported = updateState.kind !== "unsupported";
   const updateBusy = checking || updateState.kind === "checking" || updateState.kind === "prompting";
 
@@ -1107,6 +1120,42 @@ function DesktopPreferencesSections(): JSX.Element | null {
           </SettingsGroup>
         </SettingsSection>
       )}
+      <SettingsSection title={t("settings.sectionNetwork")} testID="settings-network">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.proxy")} hint={t("settings.proxyRestartHint")} hideDescriptionWhenNarrow error={errors.proxy_mode}>
+            <SegmentedControl
+              label={t("settings.proxy")}
+              value={preferences.proxy_mode}
+              options={[
+                { value: "system", label: t("settings.proxySystem"), testID: "settings-proxy-system" },
+                { value: "manual", label: t("settings.proxyManual"), testID: "settings-proxy-manual" },
+                { value: "none", label: t("settings.proxyNone"), testID: "settings-proxy-none" },
+              ]}
+              onChange={value => void save("proxy_mode", value)}
+            />
+          </SettingsRow>
+          {preferences.proxy_mode === "manual" && (
+            <SettingsRow title={t("settings.proxyURL")} error={errors.proxy_url}>
+              <input
+                className="settings-input"
+                data-testid="settings-proxy-url"
+                aria-label={t("settings.proxyURL")}
+                value={proxyDraft ?? preferences.proxy_url}
+                placeholder="http://127.0.0.1:7890"
+                spellCheck={false}
+                autoComplete="off"
+                onChange={event => {
+                  const value = event.currentTarget.value;
+                  setProxyDraft(value);
+                  setErrors(current => ({ ...current, proxy_url: "" }));
+                }}
+                onBlur={commitProxyURL}
+                onKeyDown={event => { if (event.key === "Enter") commitProxyURL(); }}
+              />
+            </SettingsRow>
+          )}
+        </SettingsGroup>
+      </SettingsSection>
       <SettingsSection title={t("settings.sectionData")} testID="settings-data">
         <SettingsGroup>
           <SettingsRow title={t("settings.dataFolder")} hint={t("settings.dataFolderHint")} hideDescriptionWhenNarrow error={errors.data}>

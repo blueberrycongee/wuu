@@ -1,13 +1,15 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { normalizeProxyURL, type DesktopPreferences } from "../shared/protocol";
 
 const execFileAsync = promisify(execFile);
+
+const PROXY_KEYS = ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"];
 
 // Go's HTTP transport reads proxy environment variables, not macOS settings.
 // Preserve explicit launch configuration; only bridge static system settings.
 export function applySystemProxy(env: NodeJS.ProcessEnv, settings: string): void {
-  if (["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"]
-    .some((key) => env[key] !== undefined)) return;
+  if (PROXY_KEYS.some((key) => env[key] !== undefined)) return;
   const value = (key: string) => settings.match(new RegExp(`^\\s*${key} : (.+)$`, "m"))?.[1]?.trim();
   // PAC routing is destination-dependent and cannot be represented by one URL.
   if (value("ProxyAutoConfigEnable") === "1" || value("ProxyAutoDiscoveryEnable") === "1") return;
@@ -28,7 +30,27 @@ export function applySystemProxy(env: NodeJS.ProcessEnv, settings: string): void
   env.NO_PROXY = [...new Set(["localhost", "127.0.0.1", "::1", ...hosts])].join(",");
 }
 
-export async function inheritSystemProxy(): Promise<void> {
+// A choice made in Settings replaces proxies inherited from the launch
+// environment; an undefined address means connect directly.
+export function overrideProxy(env: NodeJS.ProcessEnv, url: string | undefined): void {
+  for (const key of PROXY_KEYS) delete env[key];
+  if (!url) return;
+  env.HTTP_PROXY = url;
+  env.HTTPS_PROXY = url;
+  if (env.NO_PROXY === undefined && env.no_proxy === undefined) env.NO_PROXY = "localhost,127.0.0.1,::1";
+}
+
+// Backend children inherit process.env when they spawn, so this runs once at
+// startup and a changed preference applies after a restart.
+export async function configureBackendProxy(preferences: Pick<DesktopPreferences, "proxy_mode" | "proxy_url">): Promise<void> {
+  const url = normalizeProxyURL(preferences.proxy_url);
+  if (preferences.proxy_mode === "none") return overrideProxy(process.env, undefined);
+  // Manual mode without an address keeps following the system.
+  if (preferences.proxy_mode === "manual" && url) return overrideProxy(process.env, url);
+  await inheritSystemProxy();
+}
+
+async function inheritSystemProxy(): Promise<void> {
   if (process.platform !== "darwin") return;
   try {
     const { stdout } = await execFileAsync("/usr/sbin/scutil", ["--proxy"], { timeout: 2000 });
