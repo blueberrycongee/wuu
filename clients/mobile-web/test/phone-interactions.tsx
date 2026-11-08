@@ -28,7 +28,7 @@ function NavigationFixture() {
       <button className="compact-session-switcher-backdrop" aria-label="Close navigation" onClick={() => setOpened(false)} />
       <main className="conversation-pane">
         <header className="titlebar"><div className="title-block"><button className="sidebar-toggle-button" aria-pressed={opened} onClick={() => setOpened(current => !current)}>Open</button></div>
-          <div className="title-actions"><div className="compact-conversation-actions"><button className="icon-button">More</button></div></div>
+          <div className="title-actions"><button className="icon-button">More</button></div>
         </header>
         <div className="scroll-region"><p>First message</p><textarea aria-label="Navigation draft" defaultValue="Unsent draft" /></div>
       </main>

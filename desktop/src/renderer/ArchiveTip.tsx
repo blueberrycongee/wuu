@@ -2,7 +2,7 @@ import { Archive, CircleAlert } from "./WuuIcons";
 import { useI18n } from "./i18n";
 import { TopNotice } from "./TopNotice";
 
-export type ArchiveTipProps = {
+type ArchiveTipProps = {
   threadTitle: string;
   errorMessage?: string;
   onViewArchive: () => void;
