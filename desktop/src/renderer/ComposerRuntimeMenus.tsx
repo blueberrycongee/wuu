@@ -581,7 +581,7 @@ export function RuntimePicker({
   // whichever column holds the level instead of letting "" shadow a real
   // effort.
   const currentVariant = targetVariant;
-  const placement: FloatingMenuPlacement = inToolRail ? "below" : "above";
+  const placement: FloatingMenuPlacement = inToolRail ? "middle" : "above";
   const selectedEngine = handoff ? "wuu" : activeEngine || "wuu";
   const selectedEngineInfo = engines?.find(engine => engine.id === selectedEngine);
   const externalEngine = handoff || engineRequiresHostModel(selectedEngine, selectedEngineInfo) ? "" : selectedEngine;

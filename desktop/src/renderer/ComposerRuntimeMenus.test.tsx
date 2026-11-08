@@ -42,6 +42,7 @@ describe("RuntimePicker", () => {
     anchorRef = createRef<HTMLDivElement>(),
     engineProps: Partial<Pick<
       ComponentProps<typeof RuntimePicker>,
+      | "inToolRail"
       | "engines"
       | "activeEngine"
       | "engineLocked"
@@ -982,6 +983,64 @@ describe("RuntimePicker", () => {
     expect(layer?.style.getPropertyValue("--floating-menu-available-height")).toBe(
       `${window.innerHeight - 86}px`
     );
+  });
+
+  it("centers a tool-rail model panel on its button instead of dropping below it", () => {
+    const initialized = runtimeWithEffort();
+    const anchorRef = createRef<HTMLDivElement>();
+    renderPicker(null, initialized, vi.fn(), vi.fn(), vi.fn(), anchorRef, { inToolRail: true });
+    vi.spyOn(anchorRef.current as HTMLDivElement, "getBoundingClientRect").mockReturnValue({
+      x: 940,
+      y: 400,
+      top: 400,
+      left: 940,
+      right: 968,
+      bottom: 428,
+      width: 28,
+      height: 28,
+      toJSON: () => ({}),
+    });
+
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), anchorRef, { inToolRail: true });
+
+    const layer = document.querySelector<HTMLElement>(
+      '[data-floating-menu-owner="codex-runtime"]'
+    );
+    expect(layer?.classList.contains("floating-menu-middle")).toBe(true);
+    expect(layer?.style.top).toBe("414px");
+    expect(layer?.style.transform).toBe("translateY(-50%)");
+  });
+
+  it("pulls a measured tool-rail panel back inside the viewport", async () => {
+    const initialized = runtimeWithEffort();
+    const anchorRef = createRef<HTMLDivElement>();
+    renderPicker(null, initialized, vi.fn(), vi.fn(), vi.fn(), anchorRef, { inToolRail: true });
+    vi.spyOn(anchorRef.current as HTMLDivElement, "getBoundingClientRect").mockReturnValue({
+      x: 940,
+      y: 700,
+      top: 700,
+      left: 940,
+      right: 968,
+      bottom: 728,
+      width: 28,
+      height: 28,
+      toJSON: () => ({}),
+    });
+
+    renderPicker("model", initialized, vi.fn(), vi.fn(), vi.fn(), anchorRef, { inToolRail: true });
+
+    const layer = document.querySelector<HTMLElement>(
+      '[data-floating-menu-owner="codex-runtime"]'
+    )!;
+    const panel = layer.firstElementChild as HTMLElement;
+    expect(panel).not.toBeNull();
+    Object.defineProperty(panel, "offsetHeight", { configurable: true, value: 300 });
+
+    await act(async () => {
+      await new Promise(requestAnimationFrame);
+    });
+
+    expect(layer.style.top).toBe(`${window.innerHeight - 8 - 150}px`);
   });
 
   it("keeps the dock model card above the trigger after a software keyboard lifts the composer", async () => {

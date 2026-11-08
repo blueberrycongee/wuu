@@ -1719,6 +1719,14 @@ html[data-focus-modality="keyboard"] :is(
   --menu-enter-y: -4px;
 }
 
+/* Side-anchored panels (the workspace tool rail opens these to the left of
+ * their button, centered on it) grow out of the rail edge. */
+.floating-menu-middle > :is(.composer-project-menu, .composer-context-menu, .codex-runtime-menu, .select-menu-panel) {
+  transform-origin: center right;
+  --menu-enter-x: 4px;
+  --menu-enter-y: 0;
+}
+
 .composer-project-menu {
   position: absolute;
   left: 12px;
