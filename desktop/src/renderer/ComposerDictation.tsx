@@ -98,8 +98,8 @@ export function DictationErrorToast({ message }: { message: string }): JSX.Eleme
 
 export function DictationButton({ disabled, start }: { disabled: boolean; start(): Promise<void> }): JSX.Element {
   const { t } = useI18n();
-  return <Tooltip asChild content={t("composer.voice.start")}><button type="button" className="composer-action-button composer-dictation-button"
-    data-wuu-component="composer-dictation" aria-label={t("composer.voice.start")} disabled={disabled} onClick={() => void start()}><Mic /></button></Tooltip>;
+  return <button type="button" className="composer-action-button composer-dictation-button"
+    data-wuu-component="composer-dictation" aria-label={t("composer.voice.start")} disabled={disabled} onClick={() => void start()}><Mic /></button>;
 }
 
 export function DictationRecording({ api, sessionId, phase, stop, cancel }: {
