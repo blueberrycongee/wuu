@@ -1467,8 +1467,6 @@ export const zhCN = {
   "composer.currentWorkspace": "当前工作区",
   "composer.selectWorkspace": "选择工作区",
   "composer.longText": "长文本",
-  "composer.pastedTextLines": "{count} 行",
-  "composer.pastedTextCharacters": "{count} 字符",
   "composer.imageNumber": "图片 {number}",
   "composer.pdfNumber": "PDF {number}",
   "composer.enlargeNamed": "放大查看：{name}",

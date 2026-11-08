@@ -1470,8 +1470,6 @@ export const enUS = {
   "composer.currentWorkspace": "Current workspace",
   "composer.selectWorkspace": "Select workspace",
   "composer.longText": "Long text",
-  "composer.pastedTextLines": "{count} lines",
-  "composer.pastedTextCharacters": "{count} characters",
   "composer.imageNumber": "Image {number}",
   "composer.pdfNumber": "PDF {number}",
   "composer.enlargeNamed": "Enlarge: {name}",
