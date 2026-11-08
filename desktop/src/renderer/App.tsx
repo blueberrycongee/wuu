@@ -1016,7 +1016,7 @@ export function App({ application, slots, shellPluginId }: {
   // How much canvas-placement skin artwork shows through the main pane. The
   // conversation keeps the same veil from the empty home onward; the
   // transparent tier is reserved for plugin views that declare it.
-  // Non-canvas skins ignore this attribute entirely.
+  // Frame placements collapse the see-through tiers into one material.
   const paneCanvas: "opaque" | "translucent" | "transparent" = showingPrimaryPluginView
     ? (primaryPageView.canvas ?? "opaque")
     : conversationVisible
