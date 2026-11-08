@@ -170,7 +170,12 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 		if params.Instructions != "" {
 			return pluginhost.SessionCreateResult{}, errors.New("seed initialization cannot use instructions")
 		}
-		if params.Provider == "" || params.Model == "" {
+		// Provider/model are written as a pair; omitting them is allowed only
+		// when the session inherits its selection from a parent session.
+		if (params.Provider == "") != (params.Model == "") {
+			return pluginhost.SessionCreateResult{}, errors.New("seed initialization requires provider and model together")
+		}
+		if params.Provider == "" && params.ParentSessionID == "" {
 			return pluginhost.SessionCreateResult{}, errors.New("seed initialization requires provider and model")
 		}
 	} else if params.Seed != nil {
@@ -230,6 +235,17 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 			return pluginhost.SessionCreateResult{SessionID: existing.ID, Created: false, WorkspaceRoot: existing.CWD}, nil
 		}
 		return pluginhost.SessionCreateResult{}, err
+	}
+	// Seed creation suppresses the shared thread/started notification for
+	// launch ordering; a user-visible imported conversation announces here so
+	// it appears in the workspace listing without a refresh.
+	if params.Visibility == pluginhost.SessionVisibilityUser && params.ContextSource == pluginhost.SessionContextSourceSeed {
+		th.mu.Lock()
+		thread := th.snapshotLocked()
+		th.mu.Unlock()
+		if notifyErr := s.notifyThreadStarted(binding, thread); notifyErr != nil {
+			providers.DebugLogf("notify imported thread %q: %v", th.ID, notifyErr)
+		}
 	}
 	return pluginhost.SessionCreateResult{SessionID: th.ID, Created: true, WorkspaceRoot: th.CWD}, nil
 }

@@ -1645,7 +1645,13 @@ export interface HostServiceContracts {
         version: 1;
         id?: string;
         body: string;
-        source: { session_id: string; through_seq: number };
+        source: {
+          session_id: string;
+          /** Source head covered by the snapshot. 0 marks a non-local source
+           * recorded only as provenance; requires host feature
+           * session.seed.external_source.v1. */
+          through_seq: number;
+        };
         references?: Array<{ id: string; label?: string; history: { snapshot: { session_id: string; through_seq: number }; start_seq: number; end_seq: number } }>;
         artifacts?: Array<{ id: string; label?: string }>;
         provenance: { producer: string; source_model?: string; created_at?: string };

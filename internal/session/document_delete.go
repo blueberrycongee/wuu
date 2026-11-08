@@ -52,7 +52,9 @@ func (s *documentStore) deleteSession(id string, onlyIfArchived bool) (Session, 
 			return err
 		}
 		for _, seed := range seeds {
-			if seed.Source.SessionID == id {
+			// A zero cutoff marks external provenance; it never resolves to a
+			// local session and must not be garbage-collected by an id match.
+			if seed.Source.SessionID == id && seed.Source.ThroughSeq > 0 {
 				if err := tx.Delete(documentNamespace("context_seeds"), seed.ID); err != nil {
 					return err
 				}

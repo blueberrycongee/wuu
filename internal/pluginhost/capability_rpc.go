@@ -334,8 +334,11 @@ type SessionContextSeed struct {
 }
 
 type SessionHistorySnapshot struct {
-	SessionID  string `json:"session_id"`
-	ThroughSeq int    `json:"through_seq"`
+	SessionID string `json:"session_id"`
+	// ThroughSeq is the source head covered by the snapshot. Zero marks a
+	// non-local source recorded only as provenance; see
+	// HostFeatureSessionSeedExternalSource.
+	ThroughSeq int `json:"through_seq"`
 }
 
 type SessionHistoryRef struct {
@@ -1189,9 +1192,13 @@ const HostFeatureSessionProgress = "session.progress.v1"
 // HostFeatureServiceContinuation recognizes single-use selected invocation forwarding.
 const HostFeatureServiceContinuation = "service.continuation.v1"
 
+// HostFeatureSessionSeedExternalSource recognizes context seeds whose source is
+// a non-local reference (through_seq 0) recorded only as provenance.
+const HostFeatureSessionSeedExternalSource = "session.seed.external_source.v1"
+
 // SupportedHostFeatures returns only semantics actually implemented by this host.
 func SupportedHostFeatures() []string {
-	return []string{HostFeatureDocumentAuthority, HostFeatureSessionProgress, HostFeatureServiceContinuation}
+	return []string{HostFeatureDocumentAuthority, HostFeatureSessionProgress, HostFeatureServiceContinuation, HostFeatureSessionSeedExternalSource}
 }
 
 func hostFeaturesForServices(supported []HostServiceMethod) []string {

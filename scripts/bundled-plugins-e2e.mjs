@@ -257,7 +257,8 @@ class Runtime extends EventEmitter {
     const start = this.host.calls.length;
     this.definition = await this.request('initialize', { protocol_version: 1, capability_protocol_version: 3, lifecycle_version: 2,
       plugin_id: this.id, plugin_root: join(root, 'internal/plugin/bundled', this.id), project_root: scratch,
-      workspace_id: 'fixture-workspace', workspace_state_dir: join(scratch, 'workspace-state'), wuu_home: join(scratch, 'home'), supported_host_services: services });
+      workspace_id: 'fixture-workspace', workspace_state_dir: join(scratch, 'workspace-state'), wuu_home: join(scratch, 'home'), supported_host_services: services,
+      supported_host_features: ['state.documents.authority.v1', 'session.progress.v1', 'session.seed.external_source.v1'] });
     assert.equal(this.definition.lifecycle_version, 2);
     assert.deepEqual(this.host.calls.slice(start), [], `${this.id} must only declare contracts during initialize`);
     await this.request('prepare');
@@ -293,7 +294,7 @@ async function scenario(id, name, body) {
 }
 
 try {
-  const ids = ['todo', 'ask-user', 'memory', 'subagent', 'peers', 'automation', 'goal', 'dream', 'next-message', 'monitor'];
+  const ids = ['todo', 'ask-user', 'memory', 'subagent', 'peers', 'automation', 'goal', 'dream', 'next-message', 'monitor', 'session-share'];
   for (const id of ids.filter(id => !only || id === only)) {
     const bytes = await readFile(join(root, 'internal/plugin/bundled', id, 'runtime.mjs'));
     evidence.artifacts[id] = { sha256: createHash('sha256').update(bytes).digest('hex') };
@@ -1518,6 +1519,37 @@ try {
     assert.deepEqual(await runtime.client('next-message.predict', withId('failed-turn')), { suggestion: null });
     assert.deepEqual(await runtime.client('next-message.predict', withId('failed-turn')), { suggestion: null });
     assert.equal(host.calls.filter(call => call.service === 'host.model.request').length, 3);
+    await runtime.shutdown();
+  });
+  await scenario('session-share', 'external seed import, retry dedup and contract rejection', async () => {
+    const host = new FixtureHost('session-share');
+    const runtime = await launch('session-share', host);
+    assert(runtime.definition.tools.some(tool => tool.id === 'import_shared_context'));
+    assert(runtime.definition.required_host_features?.includes('session.seed.external_source.v1'));
+    const document = { version: 1, session_id: 'remote-session', items: [
+      { id: 'm1', kind: 'message', role: 'user', text: 'shared question', at: '2026-11-09T10:00:00Z' },
+      { id: 'm2', kind: 'message', role: 'assistant', text: 'shared answer' },
+    ] };
+    const imported = resultJSON(await runtime.tool('import_shared_context', { document }));
+    assert.equal(imported.created, true);
+    const create = host.calls.find(call => call.service === 'host.session.create').params;
+    assert.equal(create.context_source, 'seed');
+    assert.equal(create.visibility, 'user');
+    assert.equal(create.parent_session_id, 'parent');
+    assert.equal(create.workspace_id, 'fixture-workspace');
+    assert.equal(create.seed.source.session_id, 'remote-session');
+    assert.equal(create.seed.source.through_seq, 0);
+    assert.ok(!('provider' in create), 'Imported sessions inherit the parent runtime selection');
+    assert.match(create.seed.body, /shared answer/);
+    const replay = resultJSON(await runtime.tool('import_shared_context', { document }));
+    assert.equal(replay.created, false);
+    assert.equal(replay.session_id, imported.session_id);
+    const changed = resultJSON(await runtime.tool('import_shared_context', { document, intent: 'continue it' }));
+    assert.notEqual(changed.session_id, imported.session_id);
+    const launched = host.calls.filter(call => call.service === 'host.session.create').at(-1).params;
+    assert.deepEqual(launched.launch, { kind: 'handoff', intent: 'continue it', prompt: 'continue it' });
+    const outOfContract = { version: 1, session_id: 'x', items: [{ id: 'a', kind: 'attachment', text: 'sneaky', attachment: { id: 'a', sha256: '0'.repeat(64), media_type: 'text/plain', bytes: 1 } }] };
+    await assert.rejects(runtime.tool('import_shared_context', { document: outOfContract }));
     await runtime.shutdown();
   });
 } catch (error) {

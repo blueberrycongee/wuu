@@ -37,8 +37,11 @@ var (
 )
 
 type HistorySnapshot struct {
-	SessionID  string `json:"session_id"`
-	ThroughSeq int    `json:"through_seq"`
+	SessionID string `json:"session_id"`
+	// ThroughSeq is the source head covered by the snapshot. Zero marks a
+	// non-local source that is only recorded as provenance: it is never
+	// resolved against local history at write or read time.
+	ThroughSeq int `json:"through_seq"`
 }
 
 type HistoryRef struct {
@@ -132,7 +135,7 @@ func ValidateContextSeed(seed ContextSeed) error {
 	if utf8.RuneCountInString(seed.Body) > maxContextSeedEstimatedTokens*4 {
 		return fmt.Errorf("%w: body exceeds estimated token budget", ErrContextSeedInvalid)
 	}
-	if strings.TrimSpace(seed.Source.SessionID) == "" || seed.Source.ThroughSeq < 1 {
+	if strings.TrimSpace(seed.Source.SessionID) == "" || seed.Source.ThroughSeq < 0 {
 		return fmt.Errorf("%w: source snapshot is required", ErrContextSeedInvalid)
 	}
 	if len(seed.References) > maxContextSeedReferences {

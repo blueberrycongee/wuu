@@ -23,15 +23,18 @@ func putContextSeedDocument(tx *persistence.Tx, seed ContextSeed) (ContextSeed, 
 	if err := ValidateContextSeed(seed); err != nil {
 		return ContextSeed{}, err
 	}
-	if _, err := requireSessionDocument(tx, seed.Source.SessionID); err != nil {
-		return ContextSeed{}, err
-	}
-	head, err := historyHeadDocument(tx, seed.Source.SessionID)
-	if err != nil {
-		return ContextSeed{}, err
-	}
-	if seed.Source.ThroughSeq > head {
-		return ContextSeed{}, fmt.Errorf("%w: source cutoff %d is beyond head %d", ErrHistorySnapshotGone, seed.Source.ThroughSeq, head)
+	// A zero cutoff marks an external source: provenance only, no local snapshot.
+	if seed.Source.ThroughSeq > 0 {
+		if _, err := requireSessionDocument(tx, seed.Source.SessionID); err != nil {
+			return ContextSeed{}, err
+		}
+		head, err := historyHeadDocument(tx, seed.Source.SessionID)
+		if err != nil {
+			return ContextSeed{}, err
+		}
+		if seed.Source.ThroughSeq > head {
+			return ContextSeed{}, fmt.Errorf("%w: source cutoff %d is beyond head %d", ErrHistorySnapshotGone, seed.Source.ThroughSeq, head)
+		}
 	}
 	var existing ContextSeed
 	found, err := tx.Get(documentNamespace("context_seeds"), seed.ID, &existing)
