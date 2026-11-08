@@ -186,6 +186,24 @@ func TestSharedGlobalMCPUserHostAdmissionAndDisable(t *testing.T) {
 	if _, err := external.ExecuteResult(context.Background(), call); err != nil {
 		t.Fatalf("selected external call: %v", err)
 	}
+	// One turn's plugin-reference admission must union with the
+	// surface-lifetime admission above, and clearing it must not remove it.
+	stillFound := func() bool {
+		for _, def := range external.ExternalCapabilityDefinitions() {
+			if def.Name == call.Name {
+				return true
+			}
+		}
+		return false
+	}
+	external.SetTurnConversationTools([]string{"turn-referenced-server"}, nil)
+	if !stillFound() {
+		t.Fatal("turn admission removed the surface-lifetime server")
+	}
+	external.SetTurnConversationTools(nil, nil)
+	if !stillFound() {
+		t.Fatal("clearing turn admission removed the surface-lifetime server")
+	}
 	ConfigureToolkitPermissions(worker, config.ResolvedPermissions{Mode: "read_only"})
 	if _, err := worker.ExecuteResult(context.Background(), call); err == nil {
 		t.Fatal("read-only worker invoked a write-capable tool")
