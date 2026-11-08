@@ -85,19 +85,25 @@ const EN_STRINGS = {
   "design.comment.empty": "Switch to Comment mode and click anywhere on the page to pin feedback for the agent.",
   "design.inspector.element": "Element",
   "design.inspector.styles": "Styles",
-  "design.inspector.empty": "Select an element on the canvas to inspect and adjust it.",
   "design.inspector.text": "Text",
-  "design.inspector.apply": "Apply",
   "design.style.color": "Color",
-  "design.style.background": "Background",
-  "design.style.fontSize": "Font size",
+  "design.style.background": "Bg",
+  "design.style.font": "Font",
+  "design.style.weight": "Weight",
+  "design.style.fontSize": "Size",
+  "design.style.leading": "Leading",
+  "design.style.tracking": "Tracking",
+  "design.style.align": "Align",
   "design.style.padding": "Padding",
   "design.style.margin": "Margin",
   "design.style.radius": "Radius",
+  "design.style.border": "Border",
+  "design.style.stroke": "Stroke",
+  "design.style.borderStyle": "Line",
   "design.style.opacity": "Opacity",
   "design.style.width": "Width",
   "design.style.height": "Height",
-  "design.editHint": "Click to select · drag to move · double-click text to edit",
+  "design.viewport.aria": "Viewport",
   "design.newTab.failed": "Could not open a conversation for the revision brief.",
   "design.removeComment": "Remove comment",
   "design.retry": "Try again",
@@ -143,19 +149,25 @@ const ZH_STRINGS = {
   "design.comment.empty": "切到评论模式，点击页面任意位置为 Agent 钉一条反馈。",
   "design.inspector.element": "元素",
   "design.inspector.styles": "样式",
-  "design.inspector.empty": "在画布上选中一个元素，即可查看并调整它。",
   "design.inspector.text": "文本",
-  "design.inspector.apply": "应用",
-  "design.style.color": "文字颜色",
-  "design.style.background": "背景",
+  "design.style.color": "颜色",
+  "design.style.background": "底色",
+  "design.style.font": "字体",
+  "design.style.weight": "字重",
   "design.style.fontSize": "字号",
-  "design.style.padding": "内边距",
-  "design.style.margin": "外边距",
+  "design.style.leading": "行高",
+  "design.style.tracking": "字距",
+  "design.style.align": "对齐",
+  "design.style.padding": "内距",
+  "design.style.margin": "外距",
   "design.style.radius": "圆角",
-  "design.style.opacity": "不透明度",
+  "design.style.border": "描边",
+  "design.style.stroke": "边色",
+  "design.style.borderStyle": "线型",
+  "design.style.opacity": "不透明",
   "design.style.width": "宽度",
   "design.style.height": "高度",
-  "design.editHint": "点击选中 · 拖动移动 · 双击文本直接编辑",
+  "design.viewport.aria": "视口",
   "design.newTab.failed": "无法为修订说明打开对话。",
   "design.removeComment": "删除评论",
   "design.retry": "重试",
@@ -549,16 +561,21 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
       () => setSelected((current) => current ? { ...current, styles: { ...current.styles, [prop]: value } } : current));
   }, [selected, recordOpAsync]);
 
-  const applyText = useCallback(() => {
-    if (!selected || textDraft === (selected.text ?? "")) return;
-    recordOpAsync({ kind: "text", selector: selected.selector, text: textDraft },
-      () => setSelected((current) => current ? { ...current, text: textDraft } : current));
-  }, [selected, textDraft, recordOpAsync]);
+  const textTimerRef = useRef(0);
+  const applyTextNow = useCallback((value) => {
+    if (!selected || value === (selected.text ?? "")) return;
+    recordOpAsync({ kind: "text", selector: selected.selector, text: value },
+      () => setSelected((current) => current ? { ...current, text: value } : current));
+  }, [selected, recordOpAsync]);
+  const changeText = useCallback((value) => {
+    setTextDraft(value);
+    clearTimeout(textTimerRef.current);
+    textTimerRef.current = setTimeout(() => applyTextNow(value), 450);
+  }, [applyTextNow]);
 
   const frameWidth = VIEWPORTS.find((item) => item.id === viewport)?.width ?? null;
   const hintText = bridgeLost ? t("design.bridge.lost")
     : mode === "comment" && bridgeReady ? t("design.comment.hint")
-    : mode === "edit" && !selected && bridgeReady ? t("design.editHint")
     : null;
 
   // ---- render -----------------------------------------------------------------
@@ -583,7 +600,6 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
 
   return h("div", { className: "plugin-design" },
     h("div", { className: "plugin-design-topbar" },
-      h("div", { className: "plugin-design-brand" }, h(BrandMark, { h }), h("span", { className: "plugin-design-brand-name" }, t("design.title"))),
       workspaces.length > 1 ? h(Select, {
         className: "plugin-design-picker", label: t("design.workspace"),
         value: workspace?.id ?? "", onChange: (event) => chooseWorkspace(event.currentTarget.value),
@@ -594,22 +610,19 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
         onChange: (event) => choosePage(event.currentTarget.value),
       }, pages.map((page) => h("option", { key: page.path, value: page.path }, page.path))),
       h("span", { className: "plugin-design-divider" }),
-      h("div", { className: "plugin-design-seg", role: "group", "aria-label": "Viewport" },
-        VIEWPORTS.map((item) => h("button", {
-          key: item.id, type: "button", "data-active": viewport === item.id || undefined,
-          title: t(`design.viewport.${item.id}`), "aria-label": t(`design.viewport.${item.id}`),
-          onClick: () => setViewport(item.id),
-        }, h(ViewportIcon, { h, id: item.id }), h("span", { className: "plugin-design-seg-label" }, t(`design.viewport.${item.id}`))))),
+      h(ViewportMenu, { h, React, viewport, onPick: setViewport, t }),
       h("span", { className: "plugin-design-divider" }),
-      h("div", { className: "plugin-design-seg", role: "group", "aria-label": "Canvas mode" },
+      h("div", { className: "plugin-design-tools", role: "group", "aria-label": "Canvas mode" },
         h("button", {
-          type: "button", "data-active": mode === "edit" || undefined,
+          type: "button", className: "plugin-design-iconbutton", "data-active": mode === "edit" || undefined,
           onClick: () => setMode("edit"), "aria-pressed": mode === "edit",
-        }, h(Glyph, { h, d: ICON_PATHS.cursor }), h("span", { className: "plugin-design-seg-label" }, t("design.mode.edit"))),
+          title: t("design.mode.edit"), "aria-label": t("design.mode.edit"),
+        }, h(Glyph, { h, d: ICON_PATHS.cursor })),
         h("button", {
-          type: "button", "data-active": mode === "comment" || undefined,
+          type: "button", className: "plugin-design-iconbutton", "data-active": mode === "comment" || undefined,
           onClick: () => setMode("comment"), "aria-pressed": mode === "comment",
-        }, h(Glyph, { h, d: ICON_PATHS.comment }), h("span", { className: "plugin-design-seg-label" }, t("design.mode.comment")))),
+          title: t("design.mode.comment"), "aria-label": t("design.mode.comment"),
+        }, h(Glyph, { h, d: ICON_PATHS.comment }), comments.length > 0 ? h("span", { className: "plugin-design-badge" }, comments.length) : null)),
       h("div", { className: "plugin-design-topbar-spacer" }),
       h("button", {
         type: "button", className: "plugin-design-iconbutton", title: t("design.reload"),
@@ -635,19 +648,20 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
       h(Button, {
         variant: "secondary", disabled: comments.length === 0 || Boolean(busy),
         onClick: () => void sendToAgent(),
-      }, h(Glyph, { h, d: ICON_PATHS.send }), " ", t("design.send"), comments.length > 0 ? h("span", { className: "plugin-design-count" }, comments.length) : null),
+      }, h(Glyph, { h, d: ICON_PATHS.send }), " ", t("design.send")),
       h(Button, {
         variant: "primary", disabled: !dirty || Boolean(busy) || !bridgeReady,
         onClick: () => void save(),
       }, busy === "save" ? t("design.saving") : dirty ? `${t("design.save")} · ${ops.length}` : t("design.save"))),
     h("div", { className: "plugin-design-body" },
       h("div", {
-        className: "plugin-design-stage", "data-mode": mode,
+        className: "plugin-design-stage", "data-mode": mode, "data-flush": frameWidth == null || undefined,
         onClick: (event) => { if (event.target === event.currentTarget && mode === "edit") command("deselect"); },
       },
         url
           ? h("div", {
               className: "plugin-design-frame",
+              "data-flush": frameWidth == null || undefined,
               style: frameWidth ? { width: `${frameWidth}px`, maxWidth: "100%" } : { width: "100%" },
             },
               h("iframe", {
@@ -675,27 +689,28 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
               h(Button, { variant: "secondary", onClick: reload }, t("design.conflict.reload")),
               h(Button, { variant: "danger", onClick: () => void save(true) }, t("design.conflict.force")))),
         ) : null),
-      h("aside", { className: "plugin-design-inspector", "data-mode": mode },
+      (mode === "comment" || selected) ? h("aside", { className: "plugin-design-inspector", "data-mode": mode },
         mode === "comment" ? commentsSection() : null,
-        h(React.Fragment, null,
+        selected ? h(React.Fragment, null,
           h("section", { className: "plugin-design-section" },
-            h("h2", { className: "plugin-design-section-title" }, t("design.inspector.element")),
-            selected ? h("div", { className: "plugin-design-element" },
-              h("div", { className: "plugin-design-elemhead" },
-                h("span", { className: "plugin-design-tag" }, selected.tag),
-                h("span", { className: "plugin-design-rect" }, `${selected.rect.w} × ${selected.rect.h} px`)),
-              h("code", { className: "plugin-design-selector", title: selected.selector }, selected.selector),
-              (TEXTUAL.test((selected.tag ?? "").toUpperCase().split(/[.#]/)[0]) || selected.text)
-                ? h("div", { className: "plugin-design-field" },
-                    h(TextArea, { label: t("design.inspector.text"), value: textDraft, rows: 3, onChange: (event) => setTextDraft(event.currentTarget.value) }),
-                    h("div", null, h(Button, { variant: "secondary", disabled: textDraft === (selected.text ?? ""), onClick: applyText }, t("design.inspector.apply"))))
-                : null,
-            ) : h("p", { className: "plugin-design-muted" }, t("design.inspector.empty"))),
-          selected ? h("section", { className: "plugin-design-section" },
+            h("div", { className: "plugin-design-elemhead" },
+              h("span", { className: "plugin-design-tag" }, selected.tag),
+              h("span", { className: "plugin-design-rect" }, `${selected.rect.w} × ${selected.rect.h} px`)),
+            h("code", { className: "plugin-design-selector", title: selected.selector }, selected.selector),
+            (TEXTUAL.test((selected.tag ?? "").toUpperCase().split(/[.#]/)[0]) || selected.text)
+              ? h("div", { className: "plugin-design-field" },
+                  h(TextArea, {
+                    label: t("design.inspector.text"), value: textDraft, rows: 3,
+                    onChange: (event) => changeText(event.currentTarget.value),
+                    onBlur: () => { clearTimeout(textTimerRef.current); applyTextNow(textDraft); },
+                  }))
+              : null,
+          ),
+          h("section", { className: "plugin-design-section" },
             h("h2", { className: "plugin-design-section-title" }, t("design.inspector.styles")),
-            h(StyleRows, { h, t, selected, onApply: applyStyle })) : null,
-        ),
-        mode === "comment" ? null : commentsSection())));
+            h(StyleRows, { h, React, t, selected, onApply: applyStyle })),
+        ) : null,
+        mode === "comment" ? null : commentsSection()) : null));
 
   function commentsSection() {
     return h("section", { className: "plugin-design-section plugin-design-comments" },
@@ -727,62 +742,179 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
 // Inspector style controls
 // ---------------------------------------------------------------------------
 
-function StyleRows({ h, t, selected, onApply }) {
+const FONT_STACKS = [
+  { label: "Inter", value: "Inter, system-ui, sans-serif" },
+  { label: "Space Grotesk", value: "\"Space Grotesk\", Inter, system-ui, sans-serif" },
+  { label: "Serif", value: "Georgia, \"Times New Roman\", serif" },
+  { label: "Mono", value: "ui-monospace, SFMono-Regular, Consolas, monospace" },
+];
+const WEIGHT_OPTIONS = ["", "300", "400", "500", "600", "700", "800"];
+const BORDER_STYLES = ["", "solid", "dashed", "dotted", "none"];
+const ALIGN_OPTIONS = [
+  { value: "left", icon: "alignLeft" },
+  { value: "center", icon: "alignCenter" },
+  { value: "right", icon: "alignRight" },
+  { value: "justify", icon: "alignJustify" },
+];
+const QUAD_AXES = ["Top", "Right", "Bottom", "Left"];
+
+function StyleRows({ h, React, t, selected, onApply }) {
   const styles = selected.styles ?? {};
   const numeric = (value) => String(value ?? "").replace(/px$/, "");
   // Uncontrolled fields remount per element so stale drafts never leak across selections.
   const field = { reset: selected.selector, h };
+  const key = (prop) => `${selected.selector}:${prop}`;
+  const pxCommit = (prop) => (value) => onApply(prop, value ? `${value}px` : "");
+  const fontOptions = [...FONT_STACKS];
+  if (styles.fontFamily && !fontOptions.some((item) => item.value === styles.fontFamily)) {
+    fontOptions.unshift({ label: String(styles.fontFamily).split(",")[0].replace(/["']/g, "").trim() || t("design.style.font"), value: styles.fontFamily });
+  }
   return h("div", { className: "plugin-design-stylegrid" },
-    h(ColorField, { ...field, key: `${selected.selector}:color`, label: t("design.style.color"), value: styles.color, onCommit: (value) => onApply("color", value) }),
-    h(ColorField, { ...field, key: `${selected.selector}:background`, label: t("design.style.background"), value: styles.backgroundColor, onCommit: (value) => onApply("background-color", value) }),
-    h(Field, { ...field, key: `${selected.selector}:fontSize`, label: t("design.style.fontSize"), value: numeric(styles.fontSize), suffix: "px", onCommit: (value) => onApply("font-size", value ? `${value}px` : "") }),
-    h(Field, { ...field, key: `${selected.selector}:padding`, label: t("design.style.padding"), value: styles.padding, placeholder: "8 8 8 8", onCommit: (value) => onApply("padding", shorthand(value)) }),
-    h(Field, { ...field, key: `${selected.selector}:margin`, label: t("design.style.margin"), value: styles.margin, placeholder: "0 0 0 0", onCommit: (value) => onApply("margin", shorthand(value)) }),
-    h(Field, { ...field, key: `${selected.selector}:radius`, label: t("design.style.radius"), value: numeric(styles.borderRadius), suffix: "px", onCommit: (value) => onApply("border-radius", value ? `${value}px` : "") }),
-    h(Field, { ...field, key: `${selected.selector}:width`, label: t("design.style.width"), value: styles.width, onCommit: (value) => onApply("width", value) }),
-    h(Field, { ...field, key: `${selected.selector}:height`, label: t("design.style.height"), value: styles.height, onCommit: (value) => onApply("height", value) }),
-    h("div", { className: "plugin-design-field plugin-design-opacity" },
-      h("div", { className: "plugin-design-opacity-head" },
-        h("label", null, t("design.style.opacity")),
-        h("span", { className: "plugin-design-opacity-value" }, `${Math.round((parseFloat(styles.opacity ?? "1") || 0) * 100)}%`)),
-      h("input", {
-        type: "range", min: "0", max: "1", step: "0.05",
-        value: String(parseFloat(styles.opacity ?? "1") || 0),
-        onChange: (event) => onApply("opacity", event.currentTarget.value),
-      })));
+    h(ColorField, { ...field, key: key("color"), label: t("design.style.color"), value: styles.color, onCommit: (value) => onApply("color", value) }),
+    h(ColorField, { ...field, key: key("background"), label: t("design.style.background"), value: styles.backgroundColor, onCommit: (value) => onApply("background-color", value) }),
+    h(SelectField, {
+      ...field, key: key("font"), label: t("design.style.font"), full: true,
+      value: styles.fontFamily ?? "", options: fontOptions, onCommit: (value) => onApply("font-family", value),
+    }),
+    h(Field, { ...field, key: key("fontSize"), label: t("design.style.fontSize"), value: numeric(styles.fontSize), suffix: "px", onCommit: pxCommit("font-size") }),
+    h(SelectField, {
+      ...field, key: key("weight"), label: t("design.style.weight"),
+      value: styles.fontWeight ?? "", options: WEIGHT_OPTIONS.map((w) => ({ label: w || "—", value: w })),
+      onCommit: (value) => onApply("font-weight", value),
+    }),
+    h(Field, { ...field, key: key("lineHeight"), label: t("design.style.leading"), value: styles.lineHeight, placeholder: "1.5", onCommit: (value) => onApply("line-height", value) }),
+    h(Field, { ...field, key: key("letterSpacing"), label: t("design.style.tracking"), value: numeric(styles.letterSpacing), suffix: "px", onCommit: pxCommit("letter-spacing") }),
+    h(Field, { ...field, key: key("radius"), label: t("design.style.radius"), value: numeric(styles.borderRadius), suffix: "px", onCommit: pxCommit("border-radius") }),
+    h(Field, { ...field, key: key("borderWidth"), label: t("design.style.border"), value: numeric(styles.borderWidth), suffix: "px", onCommit: pxCommit("border-width") }),
+    h(ColorField, { ...field, key: key("stroke"), label: t("design.style.stroke"), value: styles.borderColor, onCommit: (value) => onApply("border-color", value) }),
+    h(SelectField, {
+      ...field, key: key("borderStyle"), label: t("design.style.borderStyle"),
+      value: styles.borderStyle ?? "", options: BORDER_STYLES.map((s) => ({ label: s || "—", value: s })),
+      onCommit: (value) => onApply("border-style", value),
+    }),
+    h(Field, { ...field, key: key("width"), label: t("design.style.width"), value: styles.width, placeholder: `${Math.round(selected.rect?.w ?? 0)}px`, onCommit: (value) => onApply("width", value) }),
+    h(Field, { ...field, key: key("height"), label: t("design.style.height"), value: styles.height, placeholder: `${Math.round(selected.rect?.h ?? 0)}px`, onCommit: (value) => onApply("height", value) }),
+    h(QuadField, {
+      ...field, key: key("padding"), label: t("design.style.padding"), full: true,
+      values: { Top: styles.paddingTop, Right: styles.paddingRight, Bottom: styles.paddingBottom, Left: styles.paddingLeft },
+      onCommit: (axis, value) => onApply(`padding-${axis.toLowerCase()}`, value ? `${value}px` : ""),
+    }),
+    h(QuadField, {
+      ...field, key: key("margin"), label: t("design.style.margin"), full: true,
+      values: { Top: styles.marginTop, Right: styles.marginRight, Bottom: styles.marginBottom, Left: styles.marginLeft },
+      onCommit: (axis, value) => onApply(`margin-${axis.toLowerCase()}`, value ? `${value}px` : ""),
+    }),
+    h("div", { className: "plugin-design-row plugin-design-row-full" },
+      h("span", { className: "plugin-design-row-label" }, t("design.style.align")),
+      h("span", { className: "plugin-design-row-value plugin-design-align" },
+        ALIGN_OPTIONS.map((item) => h("button", {
+          key: item.value, type: "button", className: "plugin-design-align-button",
+          "data-active": (styles.textAlign ?? "").startsWith(item.value) || undefined,
+          title: item.value, "aria-label": `Align ${item.value}`, "aria-pressed": (styles.textAlign ?? "").startsWith(item.value),
+          onClick: () => onApply("text-align", (styles.textAlign ?? "").startsWith(item.value) ? "" : item.value),
+        }, h(Glyph, { h, d: ICON_PATHS[item.icon] }))))),
+    h("div", { className: "plugin-design-row plugin-design-row-full plugin-design-opacity" },
+      h("span", { className: "plugin-design-row-label" }, t("design.style.opacity")),
+      h("span", { className: "plugin-design-row-value" },
+        h("input", {
+          type: "range", min: "0", max: "1", step: "0.05",
+          value: String(parseFloat(styles.opacity ?? "1") || 0), "aria-label": t("design.style.opacity"),
+          onChange: (event) => onApply("opacity", event.currentTarget.value),
+        }),
+        h("span", { className: "plugin-design-opacity-value" }, `${Math.round((parseFloat(styles.opacity ?? "1") || 0) * 100)}%`))));
 }
 
-/** Uncontrolled field: commits on blur or Enter; remounts when `reset` changes. */
-function Field({ h, label, value, placeholder, suffix, reset, onCommit }) {
-  return h("div", { className: "plugin-design-field", "data-reset": reset },
-    h("label", null, label),
-    h("div", { className: "plugin-design-input-wrap" },
-      h("input", {
-        defaultValue: value ?? "", placeholder,
-        onBlur: (event) => { if (event.currentTarget.value.trim() !== String(value ?? "")) onCommit(event.currentTarget.value.trim()); },
-        onKeyDown: (event) => { if (event.key === "Enter") event.currentTarget.blur(); },
-      }),
-      suffix ? h("span", { className: "plugin-design-suffix" }, suffix) : null));
+/** Single 34px field row: muted label left, right-aligned value — the cc-row idiom. */
+function Row({ h, label, full, reset, children }) {
+  return h("div", { className: `plugin-design-row${full ? " plugin-design-row-full" : ""}`, "data-reset": reset },
+    h("span", { className: "plugin-design-row-label" }, label),
+    h("span", { className: "plugin-design-row-value" }, children));
 }
 
-function ColorField({ h, label, value, reset, onCommit }) {
+/** Uncontrolled text field: commits on blur or Enter; remounts when `reset` changes. */
+function Field({ h, label, value, placeholder, suffix, reset, full, onCommit }) {
+  return h(Row, { h, label, full, reset },
+    h("input", {
+      defaultValue: value ?? "", placeholder,
+      onBlur: (event) => { if (event.currentTarget.value.trim() !== String(value ?? "")) onCommit(event.currentTarget.value.trim()); },
+      onKeyDown: (event) => { if (event.key === "Enter") event.currentTarget.blur(); },
+    }),
+    suffix ? h("span", { className: "plugin-design-suffix" }, suffix) : null);
+}
+
+function SelectField({ h, label, value, options, reset, full, onCommit }) {
+  return h(Row, { h, label, full, reset },
+    h("select", {
+      value: value ?? "", onChange: (event) => onCommit(event.currentTarget.value),
+    }, options.map((option) => h("option", { key: option.value, value: option.value }, option.label))));
+}
+
+function ColorField({ h, label, value, reset, full, onCommit }) {
   const empty = !value || value === "transparent" || /^rgba\(0,\s*0,\s*0,\s*0\)$/.test(value);
   const hex = empty ? null : toHex(value);
-  return h("div", { className: "plugin-design-field", "data-reset": reset },
-    h("label", null, label),
-    h("div", { className: "plugin-design-input-wrap plugin-design-color" },
-      h("span", {
-        className: "plugin-design-swatch", "data-empty": empty || undefined,
-        style: hex ? { background: hex } : undefined,
-      }, h("input", {
-        type: "color", value: hex ?? "#000000", "aria-label": label,
-        onChange: (event) => onCommit(event.currentTarget.value),
-      })),
-      h("input", {
-        defaultValue: empty ? "" : String(value), placeholder: "—",
-        onBlur: (event) => { if (event.currentTarget.value.trim() !== String(empty ? "" : value ?? "")) onCommit(event.currentTarget.value.trim()); },
-        onKeyDown: (event) => { if (event.key === "Enter") event.currentTarget.blur(); },
-      })));
+  return h(Row, { h, label, full, reset },
+    h("span", {
+      className: "plugin-design-swatch", "data-empty": empty || undefined,
+      style: hex ? { background: hex } : undefined,
+    }, h("input", {
+      type: "color", value: hex ?? "#000000", "aria-label": label,
+      onChange: (event) => onCommit(event.currentTarget.value),
+    })),
+    h("input", {
+      defaultValue: empty ? "" : String(value), placeholder: "—",
+      onBlur: (event) => { if (event.currentTarget.value.trim() !== String(empty ? "" : value ?? "")) onCommit(event.currentTarget.value.trim()); },
+      onKeyDown: (event) => { if (event.key === "Enter") event.currentTarget.blur(); },
+    }));
+}
+
+/** Four numeric cells (T/R/B/L) sharing one row; each commits its own axis. */
+function QuadField({ h, label, values, reset, full, onCommit }) {
+  return h("div", { className: `plugin-design-row${full ? " plugin-design-row-full" : ""} plugin-design-quad`, "data-reset": reset },
+    h("span", { className: "plugin-design-row-label" }, label),
+    h("span", { className: "plugin-design-quad-cells" },
+      QUAD_AXES.map((axis) => h("label", { key: axis, className: "plugin-design-quad-cell", title: axis },
+        h("i", { "aria-hidden": true }, axis[0].toLowerCase()),
+        h("input", {
+          defaultValue: values?.[axis] ?? "", "aria-label": `${label} ${axis}`,
+          onBlur: (event) => { const next = event.currentTarget.value.trim(); if (next !== String(values?.[axis] ?? "")) onCommit(axis, next); },
+          onKeyDown: (event) => { if (event.key === "Enter") event.currentTarget.blur(); },
+        })))));
+}
+
+/** Viewport picker: one trigger showing the active device, menu for the rest. */
+function ViewportMenu({ h, React, viewport, onPick, t }) {
+  const { useState, useRef, useEffect } = React;
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
+    const key = (event) => { if (event.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", down);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("pointerdown", down); document.removeEventListener("keydown", key); };
+  }, [open]);
+  const active = VIEWPORTS.find((item) => item.id === viewport) ?? VIEWPORTS[VIEWPORTS.length - 1];
+  return h("div", { className: "plugin-design-viewport", ref: rootRef },
+    h("button", {
+      type: "button", className: "plugin-design-iconbutton plugin-design-viewport-trigger",
+      "aria-haspopup": "listbox", "aria-expanded": open, "data-open": open || undefined,
+      title: t(active ? `design.viewport.${active.id}` : "design.viewport.aria"),
+      "aria-label": `${t("design.viewport.aria")}: ${active ? t(`design.viewport.${active.id}`) : ""}`,
+      onClick: () => setOpen((value) => !value),
+    },
+      h(ViewportIcon, { h, id: active.id }),
+      h("span", { className: "plugin-design-viewport-name" }, t(`design.viewport.${active.id}`)),
+      h(Glyph, { h, d: ICON_PATHS.chevron })),
+    open ? h("div", { className: "plugin-design-menu", role: "listbox", "aria-label": t("design.viewport.aria") },
+      VIEWPORTS.map((item) => h("button", {
+        key: item.id, type: "button", role: "option", "aria-selected": viewport === item.id,
+        className: "plugin-design-menu-item", "data-active": viewport === item.id || undefined,
+        onClick: () => { onPick(item.id); setOpen(false); },
+      },
+        h(ViewportIcon, { h, id: item.id }),
+        h("span", null, t(`design.viewport.${item.id}`)),
+        viewport === item.id ? h(Glyph, { h, d: ICON_PATHS.check }) : null))) : null);
 }
 
 // ---------------------------------------------------------------------------
@@ -806,12 +938,6 @@ function truncate(text, limit) {
   return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
 }
 
-function shorthand(value) {
-  const parts = String(value ?? "").trim().split(/[\s,]+/).filter(Boolean);
-  if (!parts.length) return "";
-  return parts.map((part) => (/^-?\d+(\.\d+)?$/.test(part) ? `${part}px` : part)).join(" ");
-}
-
 function toHex(color) {
   const text = String(color ?? "").trim();
   const short = /^#([0-9a-f]{6})$/i.exec(text);
@@ -819,13 +945,6 @@ function toHex(color) {
   const rgb = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/.exec(text);
   if (rgb) return `#${[rgb[1], rgb[2], rgb[3]].map((v) => Number(v).toString(16).padStart(2, "0")).join("")}`;
   return null;
-}
-
-function BrandMark({ h }) {
-  return h("span", { className: "plugin-design-mark", "aria-hidden": true },
-    h("svg", { viewBox: "0 0 24 24", fill: "none" },
-      h("path", { d: "M12 3l1.9 5.6L19.5 10l-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.4L12 3z", fill: "currentColor", opacity: ".95" }),
-      h("path", { d: "M18.5 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9.9-2.6z", fill: "currentColor", opacity: ".7" })));
 }
 
 function ViewportIcon({ h, id }) {
@@ -852,6 +971,12 @@ const ICON_PATHS = {
   external: "M14 4.5h5.5V10M19.5 4.5L11 13M9 6H6.5A2.5 2.5 0 0 0 4 8.5v9A2.5 2.5 0 0 0 6.5 20h9a2.5 2.5 0 0 0 2.5-2.5V15",
   send: "M4.5 11.5L20 4l-4.5 16-3.4-6.6L4.5 11.5zM12.1 13.4L20 4",
   trash: "M4.5 6.5h15M9.5 6V4.5A1.5 1.5 0 0 1 11 3h2a1.5 1.5 0 0 1 1.5 1.5V6m3 0l-.8 12.2a2 2 0 0 1-2 1.8H9.3a2 2 0 0 1-2-1.8L6.5 6.5M10 10.5v6M14 10.5v6",
+  chevron: "M7 10l5 5 5-5",
+  check: "M5 12.5l4.5 4.5L19 7.5",
+  alignLeft: "M4.5 6h15M4.5 10.5h9M4.5 15h15M4.5 19.5h9",
+  alignCenter: "M4.5 6h15M7.5 10.5h9M4.5 15h15M7.5 19.5h9",
+  alignRight: "M4.5 6h15M10.5 10.5h9M4.5 15h15M10.5 19.5h9",
+  alignJustify: "M4.5 6h15M4.5 10.5h15M4.5 15h15M4.5 19.5h15",
 };
 
 function Glyph({ h, d }) {
@@ -878,61 +1003,64 @@ const DESIGN_CSS = `
 /* -- top bar -- */
 .plugin-design-topbar {
   flex: none; display: flex; align-items: center; gap: var(--space-2, 8px);
-  min-height: 52px; padding-block: 6px; padding-inline: var(--pane-inset, var(--space-3, 12px));
-  border-bottom: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.2)));
+  min-height: 44px; padding-block: 4px; padding-inline: var(--pane-inset, var(--space-3, 12px));
   background: var(--wuu-color-surface, transparent);
   overflow-x: auto; scrollbar-width: none;
+  container-type: inline-size;
 }
 .plugin-design-topbar::-webkit-scrollbar { display: none; }
-.plugin-design-brand { flex: none; display: flex; align-items: center; gap: var(--space-2, 8px); margin-inline-end: var(--space-1, 4px); }
-.plugin-design-brand-name { font-weight: 650; letter-spacing: .01em; }
-.plugin-design-mark {
-  display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px;
-  color: var(--wuu-color-on-accent, #fff);
-  background: linear-gradient(145deg, var(--wuu-accent, #6b8afd), var(--wuu-accent-press, #4a63d8));
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.25), 0 1px 4px rgba(40,60,160,.3);
-}
-.plugin-design-mark svg { width: 16px; height: 16px; }
 /* The class lands on the <select> itself; hide its sibling field label so the
  * pickers stay topbar-compact in both the host and preview kits. */
 .plugin-design-topbar label:has(> .plugin-design-picker) { display: inline-flex; align-items: center; margin: 0; font-size: 0; }
 .plugin-design-picker { font-size: var(--wuu-font-size-ui, 15px); max-width: 190px; min-width: 0; }
 .plugin-design-page-picker { max-width: 230px; }
-.plugin-design-divider { flex: none; width: 1px; height: 22px; background: var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.2))); margin-inline: var(--space-1, 4px); }
+.plugin-design-divider { flex: none; width: 1px; height: 18px; background: var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.25))); margin-inline: var(--space-1, 4px); }
 .plugin-design-topbar-spacer { flex: 1; min-width: 8px; }
+.plugin-design-tools { flex: none; display: inline-flex; align-items: center; gap: 2px; }
 
-.plugin-design-seg {
-  flex: none; display: inline-flex; align-items: center; gap: 2px; padding: 2px;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--wuu-color-surface-muted, rgba(127,127,127,.12));
-}
-.plugin-design-seg button {
-  display: inline-flex; align-items: center; gap: 6px;
-  border: 0; border-radius: var(--radius-pill, 999px); padding: 4px 10px;
-  background: transparent; color: var(--ink-soft); font: inherit; font-size: .88em;
-  cursor: pointer; white-space: nowrap;
-}
-.plugin-design-seg button svg { width: 15px; height: 15px; }
-.plugin-design-seg button:hover { color: var(--ink); }
-.plugin-design-seg button[data-active] {
-  background: var(--wuu-color-surface-elevated, var(--paper, #fff));
-  color: var(--wuu-color-accent, var(--ink));
-  box-shadow: 0 1px 3px rgba(0,0,0,.16);
-}
 .plugin-design-iconbutton {
-  flex: none; display: inline-grid; place-items: center; width: 30px; height: 30px;
+  position: relative; flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px;
   border: 0; border-radius: var(--radius-sm, 8px); background: transparent;
-  color: var(--ink-soft); cursor: pointer;
+  color: var(--ink-tertiary); cursor: pointer;
 }
 .plugin-design-iconbutton:hover:not([disabled]) { background: var(--wuu-nav-item-hover-background, rgba(127,127,127,.14)); color: var(--ink); }
+.plugin-design-iconbutton[data-active] { background: var(--wuu-color-surface-muted, rgba(127,127,127,.16)); color: var(--ink); }
 .plugin-design-iconbutton[disabled] { opacity: .45; cursor: default; }
-.plugin-design-iconbutton svg { width: 16px; height: 16px; }
+.plugin-design-iconbutton svg { width: 15px; height: 15px; }
 .plugin-design-count {
   display: inline-grid; place-items: center; min-width: 18px; height: 18px;
   padding-inline: 5px; margin-inline-start: 4px; border-radius: 9px;
-  background: var(--wuu-color-accent, #4a63d8); color: var(--wuu-color-on-accent, #fff);
+  background: var(--wuu-color-surface-muted, rgba(127,127,127,.2)); color: var(--ink-soft);
   font-size: .78em; font-weight: 650;
 }
+.plugin-design-badge {
+  position: absolute; top: -2px; right: -4px;
+  display: inline-grid; place-items: center; min-width: 15px; height: 15px;
+  padding-inline: 4px; border-radius: 8px;
+  background: var(--ink, #26272b); color: var(--wuu-color-canvas, var(--paper, #fff));
+  font-size: 10px; font-weight: 650; line-height: 1;
+}
+.plugin-design-viewport { position: relative; flex: none; }
+.plugin-design-viewport-trigger { display: inline-flex; align-items: center; width: auto; padding-inline: 7px; gap: 5px; font: inherit; font-size: .85em; }
+.plugin-design-viewport-trigger .plugin-design-viewport-name { color: var(--ink-soft); }
+.plugin-design-viewport-trigger svg:last-child { width: 12px; height: 12px; opacity: .7; }
+.plugin-design-menu {
+  position: absolute; z-index: 40; top: calc(100% + 4px); inset-inline-start: 0; min-width: 148px;
+  padding: 4px; border-radius: var(--wuu-radius-menu, 10px);
+  background: var(--wuu-color-surface-elevated, var(--paper, #fff));
+  border: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.2)));
+  box-shadow: 0 12px 32px rgba(15,23,42,.16), 0 2px 6px rgba(15,23,42,.08);
+}
+.plugin-design-menu-item {
+  display: flex; align-items: center; gap: 8px; width: 100%; height: 30px;
+  padding-inline: 8px; border: 0; border-radius: 6px; background: transparent;
+  color: var(--ink-soft); font: inherit; font-size: .85em; cursor: pointer; text-align: start;
+}
+.plugin-design-menu-item svg { width: 15px; height: 15px; flex: none; }
+.plugin-design-menu-item:hover { background: var(--wuu-nav-item-hover-background, rgba(127,127,127,.12)); color: var(--ink); }
+.plugin-design-menu-item[data-active] { color: var(--ink); font-weight: 550; }
+.plugin-design-menu-item svg:last-child { margin-inline-start: auto; width: 13px; height: 13px; }
+.plugin-design-menu-item span { flex: 1; }
 .plugin-design-topbar .plugin-ui-button svg,
 .plugin-design-topbar button[data-variant] svg { width: 15px; height: 15px; flex: none; }
 .plugin-design-topbar button[data-variant] { display: inline-flex; align-items: center; gap: 6px; }
@@ -951,6 +1079,7 @@ const DESIGN_CSS = `
   background-size: 22px 22px;
 }
 .plugin-design-stage[data-mode="comment"] { cursor: crosshair; }
+.plugin-design-stage[data-flush] { padding: 0; }
 .plugin-design-frame {
   display: flex; flex-direction: column; height: 100%; max-height: 100%;
   border-radius: var(--wuu-radius-panel, var(--radius-md, 12px));
@@ -960,6 +1089,7 @@ const DESIGN_CSS = `
   overflow: hidden;
   transition: width .28s var(--environment-panel-motion-easing, ease);
 }
+.plugin-design-frame[data-flush] { border: 0; border-radius: 0; box-shadow: none; }
 .plugin-design-iframe { flex: 1; width: 100%; border: 0; background: #fff; }
 .plugin-design-hint {
   position: absolute; z-index: 3; bottom: calc(var(--space-6, 24px) + 10px); left: 50%; transform: translateX(-50%);
@@ -985,47 +1115,62 @@ const DESIGN_CSS = `
 
 /* -- inspector -- */
 .plugin-design-inspector {
-  flex: none; width: 292px; min-height: 0; overflow-y: auto;
+  flex: none; width: 288px; min-height: 0; overflow-y: auto;
   border-left: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.2)));
   background: var(--wuu-color-surface, transparent);
 }
-.plugin-design-section { padding: var(--space-4, 16px); border-bottom: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.2))); }
+.plugin-design-section { padding: var(--space-4, 16px) var(--space-3, 12px); }
+.plugin-design-section + .plugin-design-section { padding-top: var(--space-2, 8px); }
 .plugin-design-section-title {
   display: flex; align-items: center; gap: var(--space-2, 8px);
-  margin: 0 0 var(--space-3, 12px); font-size: .78em; font-weight: 650;
-  letter-spacing: .05em; text-transform: uppercase; color: var(--ink-tertiary);
+  margin: 0 0 var(--space-2, 8px); font-size: .74em; font-weight: 650;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--ink-tertiary);
 }
-.plugin-design-element { display: grid; gap: var(--space-2, 8px); }
-.plugin-design-elemhead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2, 8px); }
+.plugin-design-elemhead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2, 8px); margin-block-end: 4px; }
 .plugin-design-tag {
   display: inline-block; padding: 3px 8px; border-radius: var(--radius-xs, 6px);
-  background: color-mix(in srgb, var(--wuu-color-accent, #4a63d8) 13%, transparent);
-  color: var(--wuu-color-accent, #4a63d8);
+  background: var(--wuu-color-surface-muted, rgba(127,127,127,.14));
+  color: var(--ink-soft);
   font-family: var(--wuu-font-family-mono, ui-monospace, monospace); font-size: .8em; font-weight: 600;
   width: fit-content; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
 }
 .plugin-design-selector {
-  font-family: var(--wuu-font-family-mono, ui-monospace, monospace); font-size: .74em;
+  display: block; font-family: var(--wuu-font-family-mono, ui-monospace, monospace); font-size: .74em;
   color: var(--ink-tertiary); opacity: .78; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .plugin-design-rect { font-size: .78em; color: var(--ink-faint, var(--ink-tertiary)); font-variant-numeric: tabular-nums; }
 .plugin-design-field { display: grid; gap: 4px; margin-block-start: var(--space-2, 8px); }
-.plugin-design-field > label { font-size: .78em; color: var(--ink-tertiary); font-weight: 550; }
 .plugin-design-field textarea { font-size: .9em; }
-.plugin-design-input-wrap { position: relative; display: flex; align-items: center; }
-.plugin-design-input-wrap input {
-  width: 100%; height: 28px; padding: 0 var(--space-2, 8px);
-  border: 1px solid var(--wuu-border-subtle, var(--control-boundary, rgba(127,127,127,.3)));
-  border-radius: var(--wuu-radius-control, var(--radius-sm, 8px));
+
+/* Inspector fields are single rows — muted label inside-left, value right. */
+.plugin-design-stylegrid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2, 8px); }
+.plugin-design-row {
+  display: flex; align-items: center; gap: 6px; height: 34px; min-width: 0;
+  padding: 0 8px 0 10px; border-radius: var(--wuu-radius-control, var(--radius-sm, 8px));
+  border: 1px solid var(--wuu-border-subtle, var(--control-boundary, rgba(127,127,127,.28)));
   background: var(--wuu-control-field-background, var(--wuu-color-surface, transparent));
-  color: var(--wuu-color-text, var(--ink)); font: inherit; font-size: .85em;
+  transition: border-color .12s ease;
 }
-.plugin-design-input-wrap input:focus-visible { outline: 2px solid var(--wuu-color-focus, var(--focus-ring, #4a63d8)); outline-offset: 1px; }
-.plugin-design-suffix { position: absolute; right: 10px; font-size: .75em; color: var(--ink-faint, var(--ink-tertiary)); pointer-events: none; }
-.plugin-design-stylegrid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3, 12px); }
-.plugin-design-stylegrid .plugin-design-field { margin: 0; }
+.plugin-design-row:hover { border-color: var(--wuu-border-strong, rgba(127,127,127,.45)); }
+.plugin-design-row:focus-within { border-color: var(--wuu-color-accent, #4a63d8); }
+.plugin-design-row-full { grid-column: 1 / -1; }
+.plugin-design-row-label {
+  flex: none; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--ink-tertiary); font-size: .78em; font-weight: 600;
+}
+.plugin-design-row-value {
+  flex: 1; display: flex; align-items: center; justify-content: flex-end; gap: 4px; min-width: 0; height: 100%;
+}
+.plugin-design-row-value input,
+.plugin-design-row-value select {
+  flex: 1; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent;
+  color: var(--ink); font: inherit; font-size: .84em; text-align: end; outline: none;
+}
+.plugin-design-row-value select { cursor: pointer; }
+.plugin-design-row-value input[type="range"] { cursor: default; }
+.plugin-design-suffix { flex: none; font-size: .75em; color: var(--ink-faint, var(--ink-tertiary)); }
 .plugin-design-swatch {
-  position: relative; flex: none; width: 26px; height: 26px; margin-inline-end: var(--space-2, 8px);
+  position: relative; flex: none; width: 18px; height: 18px;
   border-radius: 50%; overflow: hidden;
   border: 1px solid var(--wuu-border-subtle, var(--control-boundary, rgba(127,127,127,.3)));
 }
@@ -1033,13 +1178,26 @@ const DESIGN_CSS = `
   background: conic-gradient(#bbb 0 25%, #fff 0 50%, #bbb 0 75%, #fff 0) 0 0/8px 8px;
 }
 .plugin-design-swatch input[type="color"] {
-  position: absolute; inset: -8px; width: 42px; height: 42px; padding: 0;
+  position: absolute; inset: -10px; width: 40px; height: 40px; padding: 0;
   opacity: 0; cursor: pointer;
 }
-.plugin-design-opacity { grid-column: span 2; }
-.plugin-design-opacity-head { display: flex; align-items: baseline; justify-content: space-between; }
-.plugin-design-opacity input[type="range"] { width: 100%; accent-color: var(--wuu-color-accent, #4a63d8); }
-.plugin-design-opacity-value { font-size: .8em; color: var(--ink-tertiary); font-variant-numeric: tabular-nums; }
+.plugin-design-quad-cells { flex: 1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 2px; min-width: 0; }
+.plugin-design-quad-cell { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.plugin-design-quad-cell i { flex: none; font-style: normal; font-size: .66em; color: var(--ink-faint, var(--ink-tertiary)); }
+.plugin-design-quad-cell input {
+  width: 100%; min-width: 0; height: 100%; padding: 0; border: 0; background: transparent;
+  color: var(--ink); font: inherit; font-size: .82em; text-align: end; outline: none; font-variant-numeric: tabular-nums;
+}
+.plugin-design-align { gap: 2px; }
+.plugin-design-align-button {
+  display: inline-grid; place-items: center; width: 24px; height: 24px;
+  border: 0; border-radius: 5px; background: transparent; color: var(--ink-tertiary); cursor: pointer;
+}
+.plugin-design-align-button:hover { color: var(--ink); }
+.plugin-design-align-button[data-active] { background: var(--wuu-color-surface-muted, rgba(127,127,127,.18)); color: var(--ink); }
+.plugin-design-align-button svg { width: 13px; height: 13px; }
+.plugin-design-opacity input[type="range"] { flex: 1; accent-color: var(--wuu-color-accent, #4a63d8); }
+.plugin-design-opacity-value { flex: none; min-width: 34px; text-align: end; font-size: .8em; color: var(--ink-tertiary); font-variant-numeric: tabular-nums; }
 
 /* -- comments -- */
 .plugin-design-comment-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-3, 12px); }
@@ -1057,9 +1215,8 @@ const DESIGN_CSS = `
 .plugin-design-field .plugin-ui-textarea { min-height: 64px; }
 
 @container (max-width: 960px) {
-  .plugin-design-seg-label { display: none; }
-  .plugin-design-seg button { padding: 5px 8px; }
   .plugin-design-page-picker { max-width: 170px; }
+  .plugin-design-viewport-name { display: none; }
   .plugin-design-inspector { width: 252px; }
 }
 @container (max-width: 720px) {
