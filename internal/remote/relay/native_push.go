@@ -28,6 +28,12 @@ import (
 	"github.com/blueberrycongee/wuu/internal/remote/wire"
 )
 
+var (
+	apnsTopicPattern       = regexp.MustCompile(`^[A-Za-z0-9.-]+$`)
+	fcmProjectIDPattern    = regexp.MustCompile(`^[a-z0-9-]+$`)
+	apnsDeviceTokenPattern = regexp.MustCompile(`^[a-fA-F0-9]{32,512}$`)
+)
+
 // NativePushConfig belongs to the deployment operator, never a phone or host.
 // Provider secrets are loaded from files and are not exposed by account APIs.
 type NativePushConfig struct {
@@ -69,7 +75,7 @@ func NewNativePusher(path string, store *account.Store, logf func(string, ...any
 		return nil, err
 	}
 	if c := p.config.APNs; c != nil {
-		if c.KeyID == "" || c.TeamID == "" || !regexp.MustCompile(`^[A-Za-z0-9.-]+$`).MatchString(c.Topic) {
+		if c.KeyID == "" || c.TeamID == "" || !apnsTopicPattern.MatchString(c.Topic) {
 			return nil, errors.New("invalid APNs configuration")
 		}
 		key, err := loadPushKey(c.KeyFile)
@@ -95,7 +101,7 @@ func NewNativePusher(path string, store *account.Store, logf func(string, ...any
 		if err = json.Unmarshal(data, &service); err != nil {
 			return nil, err
 		}
-		if service.ClientEmail == "" || !regexp.MustCompile(`^[a-z0-9-]+$`).MatchString(service.ProjectID) {
+		if service.ClientEmail == "" || !fcmProjectIDPattern.MatchString(service.ProjectID) {
 			return nil, errors.New("invalid FCM service account")
 		}
 		key, err := parsePushKey([]byte(service.PrivateKey))
@@ -269,7 +275,7 @@ func (p *NativePusher) deliver(ctx context.Context, event PushEvent, registratio
 	var endpoint string
 	var payload any
 	if registration.Platform == "ios" {
-		if !regexp.MustCompile(`^[a-fA-F0-9]{32,512}$`).MatchString(registration.Token) {
+		if !apnsDeviceTokenPattern.MatchString(registration.Token) {
 			return errors.New("invalid APNs device token")
 		}
 		endpoint = "https://api.push.apple.com/3/device/" + registration.Token

@@ -12,7 +12,6 @@ import (
 )
 
 const ServiceName = "resource.authorization"
-const ServiceMajor = 1
 const NativeModule = "wuu.resource-policy.default"
 const ConsumerModule = "wuu.resource-access"
 
