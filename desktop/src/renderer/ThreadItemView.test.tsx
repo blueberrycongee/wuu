@@ -552,12 +552,13 @@ describe("ThreadItemView", () => {
     expect(attachments?.nextElementSibling).toBe(textBubble);
     expect(textBubble?.querySelector(".user-message-pasted-text")).toBeNull();
     expect(container?.querySelector(".user-message-long-card")).toBeNull();
-    expect(container?.querySelector(".user-message-pasted-text")?.textContent).toContain("Pasted notes");
+    const thumb = attachments?.querySelector<HTMLButtonElement>(".user-message-pasted-thumb");
+    expect(thumb?.getAttribute("aria-expanded")).toBe("false");
+    expect(container?.querySelector(".user-message-pasted-text")).toBeNull();
     expect(container?.textContent).toContain("Follow-up question.");
 
-    act(() => {
-      container?.querySelector<HTMLButtonElement>(".user-message-pasted-text-toggle")?.click();
-    });
+    act(() => thumb?.click());
+    expect(container?.querySelector(".user-message-pasted-text")?.textContent).toContain("Pasted notes");
     expect(container?.querySelector(".user-message-pasted-text-content")?.textContent).toBe(pastedText);
   });
 
@@ -583,7 +584,7 @@ describe("ThreadItemView", () => {
     expect(toggle?.getAttribute("aria-expanded")).toBe("false");
     expect(bubble?.textContent).toContain("段落 1：");
     expect(bubble?.textContent).not.toContain("段落 16：");
-    expect(container?.querySelector(".user-message-pasted-text")).not.toBeNull();
+    expect(container?.querySelector(".user-message-pasted-thumb")).not.toBeNull();
     expect(bubble?.textContent).not.toContain("separate attachment");
 
     act(() => toggle?.click());

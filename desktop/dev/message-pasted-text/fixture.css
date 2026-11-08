@@ -1,0 +1,113 @@
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--paper); color: var(--ink); font-family: var(--font-family-ui, system-ui); }
+* { box-sizing: border-box; }
+
+.fixture-top { position: sticky; top: 0; z-index: 10; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 16px; border-bottom: 1px solid var(--hairline); background: color-mix(in srgb, var(--paper) 90%, transparent); backdrop-filter: blur(10px); font-size: 12px; }
+.fixture-title { margin-right: 8px; font-size: 13px; }
+.fixture-top nav { display: flex; flex-wrap: wrap; gap: 4px; }
+.fixture-top a { padding: 4px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-pill); background: var(--surface-1); color: var(--ink); text-decoration: none; }
+.fixture-top a:hover { background: var(--surface-2); }
+.fixture-spacer { flex: 1; }
+
+.fixture-body { padding: 32px 24px 96px; }
+.fixture-section { max-width: 980px; margin: 0 auto 64px; scroll-margin-top: 64px; }
+.fixture-section > h2 { margin: 0 0 6px; font-size: 15px; font-weight: var(--weight-semibold); }
+.fixture-desc { margin: 0 0 22px; max-width: 720px; color: var(--ink-soft); font-size: 12.5px; line-height: 1.65; }
+.fixture-scenario { margin: 0 0 28px; }
+.fixture-label { margin: 0 0 8px; color: var(--ink-tertiary); font-size: 11.5px; }
+
+/* The conversation-pane scoped tokens the message chrome reads. */
+.fixture-column {
+  display: flex;
+  flex-direction: column;
+  width: min(var(--fixture-w, 920px), 100%);
+  margin: 0 auto;
+  --conversation-message-max-width: var(--session-composer-width);
+  --conversation-message-max-inline: 90%;
+  --conversation-user-message-trailing-gap: var(--space-2);
+}
+.fixture-turn { display: flex; flex-direction: column; gap: var(--conversation-turn-item-gap); font-family: var(--conversation-message-font-family); font-weight: var(--conversation-message-font-weight); }
+
+/* ——— 方案 A：紧凑 chip ——— */
+.mpt-chip-row { display: flex; width: 100%; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.mpt-chip { display: inline-flex; max-width: min(320px, 100%); min-height: 34px; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--message-file-bg); color: var(--message-file-fg); cursor: pointer; font-size: var(--font-ui); font-weight: var(--weight-medium); line-height: var(--line-ui); transition: background-color var(--motion-fast) var(--ease-out); }
+.mpt-chip:hover { background: var(--surface-2); }
+.mpt-chip:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.mpt-chip-icon { flex: none; width: 15px; height: 15px; color: var(--ink-muted); }
+.mpt-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mpt-chip-chevron { flex: none; width: 13px; height: 13px; color: var(--ink-tertiary); }
+
+/* ——— 方案 B：页面预览卡 ——— */
+.mpt-page { position: relative; width: 100%; min-width: 0; overflow: hidden; border: 1px solid var(--hairline); border-radius: var(--radius-sm); background: var(--paper); }
+.mpt-page-main { display: block; width: 100%; padding: 10px 40px 12px 12px; border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; }
+.mpt-page-main:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.mpt-page-name { display: block; margin-bottom: 5px; overflow: hidden; color: var(--ink-tertiary); font-size: var(--font-xs); font-weight: var(--weight-semibold); text-overflow: ellipsis; white-space: nowrap; }
+.mpt-page-firstline { display: block; overflow: hidden; color: var(--ink); font-size: var(--font-ui); font-weight: var(--weight-medium); text-overflow: ellipsis; white-space: nowrap; }
+.mpt-page-preview { display: block; color: var(--ink-soft); font-size: var(--font-sm); line-height: 1.65; }
+.mpt-page-preview > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mpt-page-faded { -webkit-mask-image: linear-gradient(to bottom, #000 52%, transparent 98%); mask-image: linear-gradient(to bottom, #000 52%, transparent 98%); }
+.mpt-page-chevron { position: absolute; right: 8px; bottom: 8px; display: grid; width: 20px; height: 20px; place-items: center; border-radius: var(--radius-pill); background: var(--surface-2); color: var(--ink-tertiary); transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+.mpt-page-chevron svg { width: 13px; height: 13px; }
+.mpt-page-main:hover .mpt-page-chevron { background: var(--surface-3); color: var(--ink); }
+
+/* ——— 方案 C：气泡内引用块 ——— */
+.mpt-quote-bubble { display: grid; gap: 8px; }
+.mpt-quote { position: relative; padding: 7px 10px 6px 12px; border-radius: var(--radius-xs); background: color-mix(in srgb, var(--paper) 72%, transparent); }
+.mpt-quote::before { content: ""; position: absolute; top: 7px; bottom: 7px; left: 4px; width: 2px; border-radius: 2px; background: var(--hairline-strong); }
+.mpt-quote-name { margin-bottom: 3px; color: var(--ink-tertiary); font-size: var(--font-xs); font-weight: var(--weight-semibold); }
+.mpt-quote-text { overflow-wrap: anywhere; color: var(--ink-soft); font-size: var(--font-sm); line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.mpt-quote-text:not(.expanded) { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.mpt-quote-text.expanded { max-height: min(320px, 42vh); overflow: auto; }
+.mpt-quote .user-message-expand-toggle { margin-top: 7px; }
+
+/* ——— 方案 D：页面缩略图 ——— */
+.mpt-media-row { display: flex; width: 100%; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.mpt-media-row .message-image { display: block; }
+.mpt-thumb { display: block; width: 74px; height: 96px; padding: 8px 7px 0; overflow: hidden; border: 2px solid var(--hairline-strong); border-radius: var(--radius-media); background: var(--paper); box-shadow: var(--shadow-card); cursor: pointer; text-align: left; transition: border-color var(--motion-fast) var(--ease-out); }
+.mpt-thumb:hover { border-color: var(--ink-faint); }
+.mpt-thumb:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.mpt-thumb-lines { display: block; }
+.mpt-thumb-lines > span { display: block; overflow: hidden; color: var(--ink-tertiary); font-size: 6px; line-height: 1.8; white-space: nowrap; }
+
+/* ——— 方案 D+：统一 72px 媒体行（图片 96×72 / 页面 56×72 / 文件同高） ——— */
+.mpt-thumb-page { width: 56px; height: 72px; padding: 7px 6px 0; }
+.mpt-thumb-page .mpt-thumb-lines > span { font-size: 5px; line-height: 1.9; }
+.mpt-file-tile {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: 168px;
+  max-width: 100%;
+  height: 72px;
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 2px solid var(--hairline-strong);
+  border-radius: var(--radius-media);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+}
+.mpt-file-tile-icon { flex: none; width: 18px; height: 18px; color: var(--ink-muted); }
+.mpt-file-tile .message-file-name { font-size: var(--font-ui); font-weight: var(--weight-medium); line-height: var(--line-ui); }
+
+/* F1 · 横向卡：宽度随内容收缩，密度向图片行靠拢 */
+.mpt-file-h { width: auto; min-width: 148px; max-width: 220px; }
+.mpt-file-h .mpt-file-tile-icon { width: 16px; height: 16px; }
+.mpt-file-h .message-file-name { font-size: var(--font-sm); }
+.mpt-file-h .message-file-meta { font-size: var(--font-xs); }
+
+/* F2 · 竖版文档卡：居中类型徽标 + 底部名称两行 */
+.mpt-file-v { display: grid; width: 104px; height: 72px; padding: 7px 8px 6px; grid-template-rows: 1fr auto auto; justify-items: start; gap: 1px; }
+.mpt-file-v-badge { align-self: start; padding: 0 5px; border-radius: var(--radius-xs); background: var(--ink-overlay-6); color: var(--ink-muted); font-size: 8px; font-weight: var(--weight-semibold); letter-spacing: 0.04em; line-height: 13px; }
+.mpt-file-v-name { display: flex; max-width: 100%; overflow: hidden; color: var(--ink); font-size: var(--font-xs); font-weight: var(--weight-medium); white-space: nowrap; }
+.mpt-file-v-stem { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mpt-file-v-meta { overflow: hidden; color: var(--ink-tertiary); font-size: 9px; white-space: nowrap; }
+
+/* F3 · 页面剪影：与粘贴页同族的文档页，扩展名 + 底部截断文件名 */
+.mpt-file-p { position: relative; display: flex; width: 72px; height: 72px; padding: 7px 8px 6px; flex-direction: column; gap: 0; }
+.mpt-file-p::after { position: absolute; top: 0; right: 0; width: 12px; height: 12px; border-bottom-left-radius: 3px; background: linear-gradient(135deg, transparent 50%, var(--ink-overlay-8) 50%); content: ""; }
+.mpt-file-p-kind { display: block; margin-top: 5px; color: var(--ink-muted); font-size: 9px; font-weight: var(--weight-semibold); letter-spacing: 0.05em; text-align: center; }
+.mpt-file-p-rule { display: block; height: 3px; margin-top: 9px; border-radius: 2px; background: var(--hairline-strong); }
+.mpt-file-p-rule.short { width: 60%; margin-top: 4px; }
+.mpt-file-p-name { display: flex; margin-top: auto; overflow: hidden; color: var(--ink-soft); font-size: 9px; line-height: 1.4; white-space: nowrap; }
+.mpt-file-p-stem { min-width: 0; overflow: hidden; text-overflow: ellipsis; }

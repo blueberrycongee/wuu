@@ -539,6 +539,27 @@
   gap: 8px;
 }
 
+/*
+ * Images, pasted-text pages, and file pages share one 72px-tall media row.
+ * The message-images/message-files wrappers dissolve so their children sit
+ * side by side in document order; anything wider (expanded paste card,
+ * selection cards) wraps onto its own line.
+ */
+.user-message-media-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.user-message-media-row > .message-images,
+.user-message-media-row > .message-files {
+  display: contents;
+}
+
 .user-message-content-parts {
   display: grid;
   min-width: 0;
@@ -561,6 +582,44 @@
   width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/*
+ * The collapsed paste is a page thumbnail in the media row — same 72px row
+ * height as image and file pages, same border/radius/shadow family. Its
+ * opening lines double as the preview, like the composer's folded prompt
+ * card.
+ */
+.user-message-pasted-thumb {
+  display: block;
+  width: 56px;
+  height: 72px;
+  padding: 7px 6px 0;
+  overflow: hidden;
+  border: 2px solid var(--hairline-strong);
+  border-radius: var(--radius-media);
+  background: var(--paper);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.user-message-pasted-thumb:hover {
+  border-color: var(--ink-faint);
+}
+
+.user-message-pasted-thumb:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.user-message-pasted-thumb-lines > span {
+  display: block;
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-size: 5px;
+  line-height: 1.9;
+  white-space: nowrap;
 }
 
 .user-message-pasted-text {
@@ -955,10 +1014,22 @@
   margin: 2px 0 8px;
 }
 
-.user-message-attachments > .message-images,
-.user-message-attachments > .message-files {
-  width: 100%;
-  margin: 0;
+/* Videos join the row at the same 72px height, keeping their 16:9 shape. */
+.user-message-media-row .video-attachment {
+  width: 128px;
+  height: 72px;
+  border: 2px solid var(--hairline-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.user-message-media-row .video-attachment-play-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.user-message-media-row .video-attachment-play-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .agent-text > .message-images {
@@ -1060,6 +1131,76 @@
   font-weight: var(--weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * File page tile (sent user messages): a folded-corner page the size of the
+ * pasted-text page — 72x72 in the shared media row. The kind/size line sits
+ * under the fold, two rules stand in for content, and the filename's first
+ * line is pinned to the foot with the extension kept visible.
+ */
+.message-files-tile .message-file {
+  position: relative;
+  display: flex;
+  width: 72px;
+  height: 72px;
+  max-width: none;
+  padding: 7px 8px 5px;
+  flex-direction: column;
+  gap: 0;
+  border: 2px solid var(--hairline-strong);
+  border-radius: var(--radius-media);
+  background:
+    linear-gradient(135deg, transparent 50%, var(--ink-overlay-8) 50%) right 2px top 2px / 12px 12px no-repeat,
+    var(--paper);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.message-files-tile .message-file::before,
+.message-files-tile .message-file::after {
+  position: absolute;
+  left: 9px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--hairline-strong);
+  content: "";
+}
+
+.message-files-tile .message-file::before {
+  top: 29px;
+  right: 9px;
+}
+
+.message-files-tile .message-file::after {
+  top: 38px;
+  width: 60%;
+  right: auto;
+}
+
+.message-files-tile .message-file > .icon {
+  display: none;
+}
+
+.message-files-tile .message-file-details {
+  display: contents;
+}
+
+.message-files-tile .message-file-meta {
+  order: -1;
+  align-self: center;
+  margin-top: 4px;
+  color: var(--ink-muted);
+  font-size: 9px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+}
+
+.message-files-tile .message-file-name {
+  margin-top: auto;
+  color: var(--ink-soft);
+  font-size: 9px;
+  line-height: 1.4;
 }
 
 .message-attachment-more,
@@ -6210,6 +6351,10 @@ button.turn-edit-summary-overview:focus-visible {
 
 :root[data-message-style="im"] .user-message-attachments {
   justify-items: start;
+}
+
+:root[data-message-style="im"] .user-message-media-row {
+  justify-content: flex-start;
 }
 
 :root[data-message-style="im"] .user-message-block :is(.message-images, .message-files) {
