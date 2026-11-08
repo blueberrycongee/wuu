@@ -655,11 +655,15 @@ export class ApplicationController implements HostApplicationService {
         }), this.browser.onDock(target => {
           if ([target.thread_id, target.workdir, target.tabID].some(value => !value?.trim())) return;
           const signal = this.lifetime!.signal;
-          const navigation = this.invoke("thread.activate", { threadId: target.thread_id }, { signal });
+          // Activate directly: routing through the "thread.activate" action
+          // also emits a "primary" reveal, which reselects the conversation in
+          // globalized layout and would hide the page this dock is mounting.
+          const navigation = this.navigationActions(signal).threads.activateThread(target.thread_id);
           const revision = this.navigationRequest;
           void navigation.then(async () => {
             if (signal.aborted || revision !== this.navigationRequest || activeThreadIDForState(this.state) !== target.thread_id || this.state.activeContext?.cwd !== target.workdir) return;
             this.browserDockTarget = Object.freeze({ ...target });
+            this.setSettings(false);
             await this.applicationNavigation.invoke("navigation.show-native", {}, signal);
             await this.applicationPreview.invoke("preview.open-tool", { toolId: "browser" }, signal);
             await this.applicationNavigation.invoke("navigation.reveal-region", { region: "auxiliary" }, signal);

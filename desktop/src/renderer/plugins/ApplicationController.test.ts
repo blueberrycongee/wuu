@@ -73,13 +73,22 @@ describe("shared application state", () => {
       listEngines: vi.fn().mockResolvedValue({ engines: [], settings: {} }) } as unknown as WuuDesktopApi;
     const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread, threads: [thread],
       activeSessionTabID: "thread:thread", sessionTabs: [{ id: "thread:thread", kind: "thread", threadID: "thread", context, title: "", prompt: "", images: [], files: [] }] });
+    let lastRequestId = 0;
+    const regionRequests: string[] = [];
+    const offPublish = controller.subscribe(() => {
+      const request = controller.getSnapshot().navigationWorkspace.regionVisibilityRequest;
+      if (request && request.id !== lastRequestId) { lastRequestId = request.id; regionRequests.push(request.region); }
+    });
     const stop = controller.start();
     try {
       dock({ thread_id: "thread", workdir: "/fixture", tabID: "tab-1" });
       await vi.waitFor(() => expect(controller.getSnapshot().navigationWorkspace.regionVisibilityRequest?.region).toBe("auxiliary"));
+      // A "primary" request would reselect the conversation under globalized
+      // layout and hide the freshly docked page again.
+      expect(regionRequests).toEqual(["auxiliary"]);
       expect(controller.getSnapshot().previewWorkspace.activeTabId).toBe("browser");
       expect(controller.getSnapshot().previewWorkspace.browserDockTarget).toMatchObject({ thread_id: "thread", workdir: "/fixture", tabID: "tab-1" });
-    } finally { stop(); }
+    } finally { offPublish(); stop(); }
   });
 
   it("retains the first draft and rejects repeated submissions while its conversation is being created", async () => {
