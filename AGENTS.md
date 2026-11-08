@@ -88,7 +88,10 @@ reusable agent workflows belong under `.agents/skills/`.
 - Prefer end-to-end tests as the primary testing mechanism. Use them to verify
   complex features work end to end. At the end of an E2E run, produce a
   verifiable and repeatable artifact (logs, screenshots, recordings, or other
-  evidence a reviewer can re-check).
+  evidence a reviewer can re-check). Binary-level verification evidence must
+  identify the tested build — record the binary hash and source commit with the
+  artifact. A check that did not run, a skipped case, or a run against a
+  different build is not a pass.
 - Never write unit tests after the implementation. If a system must be tested in
   isolation, first enumerate the ways it could fail, then write the code against
   those failure cases.
@@ -128,6 +131,11 @@ reusable agent workflows belong under `.agents/skills/`.
   interaction, and motion contracts; and
   [desktop i18n maintenance](desktop/src/renderer/i18n/README.md) for UI copy,
   locale formatting, and voice.
+- Add a user-facing string in every shipped locale in the same change: the same
+  `domain.camelCase` key and position in `zh-CN.ts` and `en-US.ts`, with
+  identical placeholders. Render through `useI18n().t`, `translateCurrent`, or
+  `localizedText` and the i18n number/date helpers — never `toLocaleString` or
+  literal copy in components.
 - Use shared components and design variables for equivalent controls. Preserve
   consistent typography, icon treatment, spacing, corners, and interaction states.
 - Use one UI font-size baseline for sidebars, prose, menus, settings, and controls.
@@ -215,6 +223,9 @@ reusable agent workflows belong under `.agents/skills/`.
   `docs/releases/<version>.md` before `make release-prepare` (it requires the
   notes file), land through a release PR, and tag the merged commit with
   `make tag-release`. Push only the tag.
+- Ordinary changes do not update `CHANGELOG.md` or add release-note files;
+  maintainers collect `docs/releases/<version>.md` in the release PR. Describe
+  user-visible impact and migration requirements in the PR body instead.
 - Product versions express release recency. Check and document Extension API,
   protocol, storage, and migration compatibility separately. `minimum_wuu_version`
   accepts the same CalVer values as the product version.
@@ -286,6 +297,9 @@ reusable agent workflows belong under `.agents/skills/`.
 - Keep sensitive research, private reference material, and unpublished plans out
   of tracked public files. Use the maintainer-designated private documentation
   location when available; public contributors must not depend on that checkout.
+- Quote no evaluation or benchmark result in docs, release notes, or READMEs
+  unless the supporting record is committed under `evals/results/` and passes
+  `make eval-check`. Keep exploratory runs in the ignored `bench/` directory.
 - Write plainly and lead with the result or main point. Give each paragraph one
   purpose; use lists and tables for genuinely parallel or comparative information.
   Explain necessary technical terms and avoid filler, repeated conclusions, and
