@@ -6,7 +6,7 @@ import { createUpdateController, type UpdateState } from "./desktopUpdates";
 import { mainTranslate as t } from "./i18n";
 import { productionApplicationMenuTemplate } from "./appShellGuards";
 
-export function installDesktopUpdates(shutdown: () => Promise<void>, changed: (state: UpdateState) => void, recoveryItem?: MenuItemConstructorOptions) {
+export function installDesktopUpdates(shutdown: () => Promise<void>, changed: (state: UpdateState) => void, autoCheck: () => boolean, recoveryItem?: MenuItemConstructorOptions) {
   // Development/ad-hoc builds never carry the release update configuration.
   const supportedPackage = process.platform === "darwin" ||
     (process.platform === "linux" && process.arch === "x64" && Boolean(process.env.APPIMAGE) &&
@@ -48,12 +48,14 @@ export function installDesktopUpdates(shutdown: () => Promise<void>, changed: (s
   Menu.setApplicationMenu(Menu.buildFromTemplate(productionApplicationMenuTemplate(process.platform, {
     id: "check-for-updates", label: t("updateCheck"), click: () => { void controller.check(true); },
   }, recoveryItem)));
-  const initial = setTimeout(() => { void controller.check(false); }, 30_000);
-  const periodic = setInterval(() => { void controller.check(false); }, 6 * 60 * 60_000);
+  const backgroundCheck = () => { if (autoCheck()) void controller.check(false); };
+  const initial = setTimeout(backgroundCheck, 30_000);
+  const periodic = setInterval(backgroundCheck, 6 * 60 * 60_000);
   initial.unref();
   periodic.unref();
   return {
     get state() { return controller.state; },
+    check: () => controller.check(true),
     download: controller.download,
     restart: controller.restart,
     refresh,

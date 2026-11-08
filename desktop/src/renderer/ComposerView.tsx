@@ -122,6 +122,7 @@ import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
+import { useDesktopPreferences } from "./desktopPreferences";
 import type { TurnContextUsage } from "./AppState";
 import type { ComposerInlineCompletionContext, ComposerSubmissionModeV1 } from "../shared/workbench";
 
@@ -404,6 +405,7 @@ export function Composer({
   const readOnly = sessionReadOnly || interactionDisabled;
   const { locale, t } = useI18n();
   const workbenchConnected = useWorkbenchConnected();
+  const sendShortcut = useDesktopPreferences()?.send_shortcut ?? "enter";
   const disconnected = !workbenchConnected;
   // A disconnected remote workbench keeps every composer draft editable (the
   // textarea stays enabled and focused), but sending and runtime controls must
@@ -1181,8 +1183,10 @@ export function Composer({
       return;
     }
     // Cmd/Ctrl+Enter queues a follow-up while a turn runs; otherwise it sends
-    // the draft instead of acting as an inert key combination.
-    if (event.key === "Enter" && !event.shiftKey && (!primaryModifier || !running)) {
+    // the draft instead of acting as an inert key combination. With the
+    // modifier shortcut, a plain Enter falls through to insert a newline.
+    const sendKeys = sendShortcut === "mod_enter" ? primaryModifier : true;
+    if (event.key === "Enter" && !event.shiftKey && sendKeys && (!primaryModifier || !running)) {
       event.preventDefault();
       submitDraft(currentPrompt);
     }

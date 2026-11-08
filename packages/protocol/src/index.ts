@@ -93,7 +93,24 @@ export type UserQuestionResolveResult = {
 export type SystemNotificationParams = {
   title: string;
   body: string;
+  /** Events the user can silence from Settings; uncategorized notices always show. */
+  category?: "turn_completed" | "question";
 };
+
+export type DesktopSendShortcut = "enter" | "mod_enter";
+
+/** Desktop-only preferences persisted by the Electron main process. */
+export type DesktopPreferences = {
+  notify_turn_completed: boolean;
+  notify_questions: boolean;
+  notification_sound: boolean;
+  auto_check_updates: boolean;
+  send_shortcut: DesktopSendShortcut;
+  /** Undefined where the OS has no login-item support (Linux). */
+  open_at_login?: boolean;
+};
+
+export type DesktopFolder = "data" | "logs";
 
 export type SystemNotificationResult = {
   shown: boolean;
@@ -3280,6 +3297,12 @@ export type WuuDesktopApi = {
   onDesktopUpdateChanged?: (handler: (state: DesktopUpdateState) => void) => () => void;
   downloadDesktopUpdate?: () => Promise<void>;
   restartDesktopUpdate?: () => Promise<void>;
+  /** Manual update check; the result is reported through the update dialogs. */
+  checkDesktopUpdate?: () => Promise<void>;
+  getDesktopPreferences?: () => Promise<DesktopPreferences>;
+  updateDesktopPreferences?: (patch: Partial<DesktopPreferences>) => Promise<DesktopPreferences>;
+  onDesktopPreferencesChanged?: (handler: (preferences: DesktopPreferences) => void) => () => void;
+  openDesktopFolder?: (folder: DesktopFolder) => Promise<void>;
   getSystemPermissions?: () => Promise<SystemPermissionsState>;
   requestSystemPermission?: (permission: SystemPermission, presentation?: SystemPermissionPresentation) => Promise<void>;
   updateSystemPermissionGuide?: (presentation: SystemPermissionPresentation) => void;

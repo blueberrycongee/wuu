@@ -14,6 +14,7 @@ import {
   isLanguagePreference,
   type CodexPetSettings,
   type CodexPetSize,
+  type DesktopPreferences,
   type MessageFlowFontSize,
   type LanguagePreference,
   type PluginConflictPreferences,
@@ -67,7 +68,30 @@ export type DesktopSettings = {
   // extension choices. A version keeps future onboarding changes explicit
   // without making normal upgrades repeat the current flow.
   onboarding_version?: number;
+  // Login-item state belongs to the OS and is read from there.
+  preferences?: Omit<DesktopPreferences, "open_at_login">;
 };
+
+export const DEFAULT_DESKTOP_PREFERENCES: Readonly<Omit<DesktopPreferences, "open_at_login">> = Object.freeze({
+  notify_turn_completed: true,
+  notify_questions: true,
+  notification_sound: true,
+  auto_check_updates: true,
+  send_shortcut: "enter",
+});
+
+function readStoredPreferences(value: unknown): Omit<DesktopPreferences, "open_at_login"> {
+  const record = typeof value === "object" && value !== null && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  const flag = (key: "notify_turn_completed" | "notify_questions" | "notification_sound" | "auto_check_updates") =>
+    typeof record[key] === "boolean" ? record[key] as boolean : DEFAULT_DESKTOP_PREFERENCES[key];
+  return {
+    notify_turn_completed: flag("notify_turn_completed"),
+    notify_questions: flag("notify_questions"),
+    notification_sound: flag("notification_sound"),
+    auto_check_updates: flag("auto_check_updates"),
+    send_shortcut: record.send_shortcut === "mod_enter" ? "mod_enter" : "enter",
+  };
+}
 
 export const CURRENT_ONBOARDING_VERSION = 1;
 
@@ -159,6 +183,9 @@ export function readDesktopSettings(filePath: string = desktopSettingsPath()): D
       record.onboarding_version > 0
     ) {
       settings.onboarding_version = record.onboarding_version;
+    }
+    if (record.preferences !== undefined) {
+      settings.preferences = readStoredPreferences(record.preferences);
     }
     return settings;
   } catch {
@@ -308,4 +335,18 @@ export function setMainWindowBounds(bounds: WindowBounds, filePath?: string): vo
     { ...settings, main_window_bounds: { ...bounds } },
     filePath,
   );
+}
+
+export function getDesktopPreferences(filePath?: string): Omit<DesktopPreferences, "open_at_login"> {
+  return readStoredPreferences(readDesktopSettings(filePath).preferences);
+}
+
+export function updateDesktopPreferences(
+  patch: Partial<Omit<DesktopPreferences, "open_at_login">>,
+  filePath?: string,
+): Omit<DesktopPreferences, "open_at_login"> {
+  const settings = readDesktopSettings(filePath);
+  const preferences = readStoredPreferences({ ...getDesktopPreferences(filePath), ...patch });
+  writeDesktopSettings({ ...settings, preferences }, filePath);
+  return preferences;
 }
