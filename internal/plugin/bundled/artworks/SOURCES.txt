@@ -3,6 +3,10 @@ Retrieved 2026-11-08 from Artvee (https://artvee.com), which distributes
 high-resolution reproductions of public-domain art. Source page for each
 file: https://artvee.com/dl/<slug>/
 
+Note: title cartouches, calligraphy, publisher/artist seals, and museum
+collection stamps were retouched out where they read as overlaid text,
+so the images work as backgrounds.
+
   nihonbashi-snow.webp         Clearing Weather after Snow (Nihonbashi Yukibare)
                                Utagawa Hiroshige (1797–1858)
                                slug: clearing-water-after-snow
