@@ -18,6 +18,10 @@ export function useAssistantTurnPresentation(
   const revealSnap = useConversationRevealSnap();
   const [presented, setPresented] = useState(display);
   const turnIDRef = useRef(turnID);
+  // The display object whose entries produced the presented signatures. Item
+  // references survive unchanged publications, so an all-identical input pass
+  // proves the signatures unchanged without rebuilding them per publication.
+  const presentedDisplayRef = useRef(display);
   const presentedStructureRef = useRef(displayStructureSignature(display));
   const presentedContentRef = useRef(displayContentSignature(display));
   const presentedStreamingRef = useRef(displayHasStreamingEntry(display));
@@ -34,6 +38,7 @@ export function useAssistantTurnPresentation(
   };
 
   const publish = (nextDisplay: AssistantTurnDisplay | undefined): void => {
+    presentedDisplayRef.current = nextDisplay;
     presentedStructureRef.current = displayStructureSignature(nextDisplay);
     presentedContentRef.current = displayContentSignature(nextDisplay);
     presentedStreamingRef.current = displayHasStreamingEntry(nextDisplay);
@@ -46,7 +51,7 @@ export function useAssistantTurnPresentation(
   // Publish during render so the scroll restore that follows this commit
   // measures the live structure. A layout-effect publish lands one flush
   // later, and the viewport has already anchored to the frozen height.
-  if (renderActive && (revealSnap || becameRenderActive) && display) {
+  if (renderActive && (revealSnap || becameRenderActive) && display && !displaySignatureInputsEqual(presentedDisplayRef.current, display)) {
     const nextStructure = displayStructureSignature(display);
     const nextContent = displayContentSignature(display);
     if (
@@ -54,6 +59,7 @@ export function useAssistantTurnPresentation(
       nextContent !== presentedContentRef.current
     ) {
       clearPending();
+      presentedDisplayRef.current = display;
       presentedStructureRef.current = nextStructure;
       presentedContentRef.current = nextContent;
       presentedStreamingRef.current = displayHasStreamingEntry(display);
@@ -65,9 +71,6 @@ export function useAssistantTurnPresentation(
   }
 
   useLayoutEffect(() => {
-    const nextStructure = displayStructureSignature(display);
-    const nextContent = displayContentSignature(display);
-
     if (turnIDRef.current !== turnID || !display) {
       turnIDRef.current = turnID;
       clearPending();
@@ -82,6 +85,16 @@ export function useAssistantTurnPresentation(
       clearPending();
       return;
     }
+
+    // Identical signature inputs prove the signatures unchanged — skip the
+    // O(turn text) comparison-string rebuild on unchanged publications.
+    if (displaySignatureInputsEqual(presentedDisplayRef.current, display)) {
+      clearPending();
+      return;
+    }
+
+    const nextStructure = displayStructureSignature(display);
+    const nextContent = displayContentSignature(display);
     // The first visible commit after a session switch must publish the live
     // structure immediately, or the 120ms buffer paints a stale process row
     // and then jumps when the aggregated toolcall / mascot layout finally lands.
@@ -139,6 +152,7 @@ export function useAssistantTurnPresentation(
     }
     timerRef.current = window.setTimeout(() => {
       timerRef.current = undefined;
+      presentedDisplayRef.current = pendingDisplayRef.current;
       presentedStructureRef.current = pendingStructureRef.current;
       presentedContentRef.current = pendingContentRef.current;
       presentedStreamingRef.current = displayHasStreamingEntry(
@@ -159,6 +173,52 @@ function displayHasStreamingEntry(
   display: AssistantTurnDisplay | undefined,
 ): boolean {
   return display?.entries.some((entry) => entry.streaming) ?? false;
+}
+
+// Reference-level equality over every value the signatures read. Equal inputs
+// guarantee equal signatures; unequal inputs fall back to computing them, so
+// this never changes outcomes — it only skips throwaway string building.
+function displaySignatureInputsEqual(
+  previous: AssistantTurnDisplay | undefined,
+  next: AssistantTurnDisplay | undefined,
+): boolean {
+  if (previous === next) return true;
+  if (!previous || !next) return false;
+  if (previous.hasAnswer !== next.hasAnswer) return false;
+  const prevPreview = previous.latestProcessPreview;
+  const nextPreview = next.latestProcessPreview;
+  if (
+    prevPreview !== nextPreview &&
+    (prevPreview?.kind !== nextPreview?.kind || prevPreview?.text !== nextPreview?.text)
+  ) {
+    return false;
+  }
+  if (previous.entries.length !== next.entries.length) return false;
+  for (let i = 0; i < previous.entries.length; i += 1) {
+    if (!entrySignatureInputsEqual(previous.entries[i], next.entries[i])) return false;
+  }
+  return true;
+}
+
+function entrySignatureInputsEqual(previous: TurnEntry, next: TurnEntry): boolean {
+  if (previous === next) return true;
+  if (
+    previous.key !== next.key ||
+    previous.position !== next.position ||
+    previous.kind !== next.kind ||
+    previous.settled !== next.settled ||
+    previous.streaming !== next.streaming ||
+    previous.count !== next.count
+  ) {
+    return false;
+  }
+  const previousItems = previous.items ?? (previous.item ? [previous.item] : []);
+  const nextItems = next.items ?? (next.item ? [next.item] : []);
+  if (previousItems.length !== nextItems.length) return false;
+  for (let i = 0; i < previousItems.length; i += 1) {
+    if (previousItems[i] !== nextItems[i]) return false;
+  }
+  return true;
 }
 
 function displayStructureSignature(
