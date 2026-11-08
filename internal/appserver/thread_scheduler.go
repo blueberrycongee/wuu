@@ -5,6 +5,25 @@ import (
 	"sync"
 )
 
+// Lock-order contract for per-thread scheduling:
+//
+//	s.mu → th.streamMu → th.mu → {queue.mu, completions.mu, sideMu}
+//
+// Server.runMu is acquired together with schedulersMu for the activeRunID
+// field and never nests inside a cell mutex. schedulersMu guards only the
+// cell registry and is never held across a cell mutex by the registry
+// helpers themselves; schedulersSnapshot exists for walkers.
+//
+// Cell mutexes are leaf locks: no code may acquire s.mu or th.mu while
+// holding one. Durable held-input I/O inside queue.mu serializes only this
+// thread by construction.
+//
+// The cell locks cannot merge into th.mu: the cell intentionally outlives
+// the threadState projection (admission swaps s.threads[id] for a fresh
+// projection with a different mu, and the cache evicts idle projections),
+// so a stale th and its replacement would gate the same queue behind two
+// different mutexes.
+
 // threadTurnQueue owns one thread's queued user-turn pipeline: the pending
 // entries, the in-flight admission claim, cancelled-submission tombstones,
 // and the single-drain marker.

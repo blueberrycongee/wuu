@@ -137,6 +137,10 @@ type threadState struct {
 
 	// streamMu keeps a live snapshot and its response ordered with stream
 	// mutations and notifications. Acquire it before mu when both are needed.
+	// Per-thread scheduling state (queued turns, completion wakeups, side
+	// turn) lives on the threadScheduler cell — it outlives this projection,
+	// so it is guarded by the cell's own leaf mutexes below mu; see
+	// thread_scheduler.go for the lock-order contract.
 	streamMu              sync.Mutex
 	mu                    sync.Mutex
 	running               bool
