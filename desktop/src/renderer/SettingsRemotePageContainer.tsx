@@ -6,6 +6,7 @@ import { SettingsFailure } from "./SettingsFailure";
 import { SettingsRemotePage } from "./SettingsRemotePage";
 import { useI18n } from "./i18n";
 import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
+import { showActionErrorToast } from "./Toast";
 
 const REMOTE_SNAPSHOT_DATA = "remote.snapshot";
 
@@ -17,7 +18,6 @@ export function SettingsRemotePageContainer(): JSX.Element {
   const [snapshot, setSnapshot] = useState<RemoteControlSnapshot | null>(() => retainedSnapshot ?? null);
   const [snapshotControls, setSnapshotControls] = useState(() => retainedSnapshot ? controls : undefined);
   const [readError, setReadError] = useState("");
-  const [actionError, setActionError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const authority = useMemo(() => ({ active: true }), [controls]);
@@ -43,7 +43,7 @@ export function SettingsRemotePageContainer(): JSX.Element {
     const retained = readRetainedSettingsData<RemoteControlSnapshot>(controls, REMOTE_SNAPSHOT_DATA);
     setSnapshot(retained ?? null);
     setSnapshotControls(retained ? controls : undefined);
-    setReadError(""); setActionError(""); setBusy(false);
+    setReadError(""); setBusy(false);
     void refresh();
     const off = controls.subscribeRemote(() => { void refresh(); });
     return () => { authority.active = false; off(); };
@@ -52,7 +52,7 @@ export function SettingsRemotePageContainer(): JSX.Element {
     if (!authority.active) return;
     // Reads started before this mutation must not restore the old switch state.
     ++revision.current;
-    setLoading(false); setBusy(true); setActionError("");
+    setLoading(false); setBusy(true);
     try {
       const next = await action();
       if (authority.active) {
@@ -62,7 +62,7 @@ export function SettingsRemotePageContainer(): JSX.Element {
         setReadError("");
       }
     } catch (error) {
-      if (authority.active && !isPluginLifecycleCancellation(error)) setActionError(error instanceof Error ? error.message : String(error));
+      if (authority.active) showActionErrorToast(error);
     } finally {
       if (authority.active) setBusy(false);
     }
@@ -71,7 +71,7 @@ export function SettingsRemotePageContainer(): JSX.Element {
   const failure = readError ? <SettingsFailure message={t("remote.readFailed")} diagnostic={readError}
     onRetry={() => { void refresh(); }} retrying={loading} /> : null;
   if (!currentSnapshot) return failure ?? <p role="status">{t("settings.loading")}</p>;
-  return <>{failure}<SettingsRemotePage status={currentSnapshot.status ?? null} statusError={actionError || currentSnapshot.status_error || ""}
+  return <>{failure}<SettingsRemotePage status={currentSnapshot.status ?? null} statusError={currentSnapshot.status_error || ""}
     hostRunning={currentSnapshot.host_running ?? false} hostEnabled={currentSnapshot.host_enabled ?? currentSnapshot.host_running ?? false}
     pairUri={currentSnapshot.pair_uri ?? null} webUrl={currentSnapshot.web_url ?? null} busy={busy}
     onToggleHost={enabled => { void run(() => controls.setRemoteHostEnabled(enabled)); }}

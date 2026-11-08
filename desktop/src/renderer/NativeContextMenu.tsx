@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { ApplicationDesktopContextMenuV1, ApplicationDesktopMenuItemV1 } from "../../../packages/plugin-sdk/src/ui-desktop";
 import { useActiveContextMenu } from "./ActiveContextMenu";
+import { showErrorToast } from "./Toast";
 
 export type NativeContextMenuItem = ApplicationDesktopMenuItemV1 & { onSelect?: () => void | Promise<void> };
 
@@ -29,7 +30,10 @@ export function NativeContextMenu({ api, x, y, items, onClose }: {
         if (action && !("separator" in action) && !action.disabled) void action.onSelect?.();
       }, error => {
         if (!active) return;
+        // show() resolves null on dismissal — a rejection means the menu the
+        // user asked for never appeared, which needs a visible failure.
         console.error("[desktop] context menu failed", error);
+        showErrorToast(error);
         latest.current.onClose();
       });
     }, 0);
