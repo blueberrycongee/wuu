@@ -11,11 +11,12 @@ it("exposes independent recovery only on failure, without requiring a plugin sur
   try {
     await act(async () => root.render(<RuntimeLoading status="connecting" onRecovery={recover} />));
     expect(container.querySelector("button")).toBeNull();
-    await act(async () => root.render(<RuntimeLoading status="Application unavailable" onRecovery={recover} />));
+    await act(async () => root.render(<RuntimeLoading status="failed" detail="Application unavailable" onRecovery={recover} />));
     const button = container.querySelector("button")!;
     expect(button.textContent).toBe("loading.openRecovery");
+    expect(container.querySelector(".wuu-launch-error")?.textContent).toBe("Application unavailable");
     await act(async () => button.click()); expect(recover).toHaveBeenCalledTimes(1);
-    await act(async () => root.render(<RuntimeLoading status="Application unavailable" />));
+    await act(async () => root.render(<RuntimeLoading status="failed" />));
     expect(container.querySelector("button")).toBeNull();
   } finally { await act(async () => root.unmount()); }
 });

@@ -6,13 +6,16 @@ import { useI18n } from "./i18n";
 import { WuuMascot, type WuuMascotActivity } from "./WuuMascot";
 
 export function RuntimeLoading({
-  status, fullscreen = false, recovering = false, onRetry, onRecovery,
+  status, fullscreen = false, recovering = false, onRetry, onRecovery, detail,
 }: {
+  /** Only discriminates the state: a starting verb or any failure value; never rendered. */
   status: string;
   fullscreen?: boolean;
   recovering?: boolean;
   onRetry?: () => void;
   onRecovery?: () => void;
+  /** Optional failure detail under the title; absent leaves title and actions. */
+  detail?: string;
 }): JSX.Element {
   const { t } = useI18n();
   const isStarting = status === "connecting" || status === "opening";
@@ -28,7 +31,7 @@ export function RuntimeLoading({
     <div className={`project-empty-pane${fullscreen ? " application-recovery" : ""}`} data-wuu-component="launch-view">
       <div className="wuu-launch" role={isStarting ? "status" : "alert"}
         aria-label={t(isStarting ? "loading.starting" : "loading.failed")}
-        aria-describedby={!isStarting || recovering || slow ? descriptionId : undefined}>
+        aria-describedby={(isStarting ? (recovering || slow) : Boolean(detail)) ? descriptionId : undefined}>
         {!(isStarting && recovering) && <div className="wuu-launch-mark" aria-hidden="true">
           <div className="wuu-launch-glass">
             <WuuIconMascot className="wuu-launch-mascot" />
@@ -40,9 +43,9 @@ export function RuntimeLoading({
           {isStarting ? <>
             {!recovering && <div className="loading-rail" aria-hidden="true" />}
             <p id={descriptionId} className="wuu-launch-description" aria-hidden={!recovering && !slow}>{recovering || slow ? t("loading.slow") : "\u00a0"}</p>
-          </> : (
-            <p id={descriptionId} className="wuu-launch-error">{status}</p>
-          )}
+          </> : detail ? (
+            <p id={descriptionId} className="wuu-launch-error">{detail}</p>
+          ) : null}
           {(!isStarting || recovering) && (onRecovery || onRetry) && <div className="wuu-launch-actions">
             {onRecovery && <button type="button" className={`settings-button${onRetry ? "" : " settings-button-primary"}`} onClick={onRecovery}>{t("loading.openRecovery")}</button>}
             {onRetry && <button type="button" className="settings-button settings-button-primary" onClick={onRetry}>{t("loading.reconnect")}</button>}
