@@ -4005,17 +4005,23 @@ func TestServerConfigProviderRemoveAllowsUnusedProviderWithRunningThread(t *test
 	}
 }
 
-func TestServerConfigProviderRemoveRejectsOAuth(t *testing.T) {
+func TestServerConfigProviderRemoveKeepsCodexOAuth(t *testing.T) {
 	rt := newTestRuntime(t, &fakeClient{})
 	if err := os.WriteFile(rt.ConfigPath, []byte(`{
-  "default_provider": "real",
+  "default_provider": "openai-codex",
   "providers": {
     "real": {
       "type": "openai-compatible",
       "base_url": "https://real.example.test/v1",
+      "api_key": "real-key",
       "model": "real-model"
     },
-    "codex": {
+    "openai-codex": {
+      "type": "openai-codex",
+      "base_url": "https://chatgpt.example.test/backend-api/codex",
+      "model": "codex-model"
+    },
+    "codex-work": {
       "type": "openai-codex",
       "base_url": "https://chatgpt.example.test/backend-api/codex",
       "model": "codex-model"
@@ -4024,29 +4030,45 @@ func TestServerConfigProviderRemoveRejectsOAuth(t *testing.T) {
 }`), 0644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
+	rt.ProviderName, rt.Model = "openai-codex", "codex-model"
 	out := &lockedBuffer{}
 	rt = newSettingsRefreshRuntime(t, rt)
+	store := selectedAuthFixture(t, rt)
+	if err := store.Set(codex.AuthProviderID, authstorage.Credentials{Type: "oauth", AccessToken: "account-token", RefreshToken: "refresh-token"}); err != nil {
+		t.Fatal(err)
+	}
 	srv := New(rt, out)
 	t.Cleanup(srv.Close)
 
-	req := `{"id":"1","method":"config/provider/remove","params":{"provider":"codex"}}`
+	// Removing the default Codex connection swaps to the fallback, while the
+	// account-level sign-in stored under the type key survives.
+	req := `{"id":"default","method":"config/provider/remove","params":{"provider":"openai-codex","fallback_provider":"real","fallback_model":"real-model"}}`
 	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
 		t.Fatalf("config/provider/remove: %v", err)
 	}
+	if responseByID(t, parseOutput(t, out.String()), "default")["error"] != nil {
+		t.Fatalf("default Codex removal failed: %s", out.String())
+	}
 
-	response := responseByID(t, parseOutput(t, out.String()), "1")
-	if response["error"] == nil {
-		t.Fatal("expected OAuth removal to fail, got success")
+	// A second Codex connection shares the same account sign-in.
+	req = `{"id":"second","method":"config/provider/remove","params":{"provider":"codex-work"}}`
+	if err := srv.handleLine(context.Background(), []byte(req)); err != nil {
+		t.Fatalf("config/provider/remove: %v", err)
 	}
-	if !strings.Contains(fmt.Sprint(response["error"]), "OAuth") {
-		t.Fatalf("expected OAuth error, got %+v", response["error"])
+	if responseByID(t, parseOutput(t, out.String()), "second")["error"] != nil {
+		t.Fatalf("Codex removal failed: %s", out.String())
 	}
+
 	data, err := os.ReadFile(rt.ConfigPath)
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(data), `"codex"`) {
-		t.Fatalf("OAuth provider was removed despite rejection: %s", data)
+	if strings.Contains(string(data), `"openai-codex"`) || strings.Contains(string(data), `"codex-work"`) {
+		t.Fatalf("Codex connections were not removed: %s", data)
+	}
+	credentials, err := store.Get(codex.AuthProviderID)
+	if err != nil || credentials.AccessToken != "account-token" {
+		t.Fatalf("removing Codex connections signed out the account: %+v %v", credentials, err)
 	}
 }
 

@@ -33,7 +33,7 @@ Open a connected provider in **Settings → Models & services**. **Add model** a
 
 Removed choices stay removed after reloading or refreshing the catalog. You can restore them from **Removed models**. Existing conversations, model roles, and aliases keep their model selections and metadata; removing a choice does not revoke model access or erase conversation history.
 
-Use the provider's **… → Delete provider** action to remove the entire connection and its provider-specific saved key. Shared subscription sign-ins are kept. Removing the default provider asks you to choose another default. Existing conversations remain and switch from the removed provider to the current default on their next turn. Roles that used it return to inherited defaults, and its aliases are removed. Add another provider before deleting the last configured provider. Automatically discovered services and legacy Codex OAuth connections cannot be removed here; their authentication remains managed by the original sign-in flow.
+Use the provider's **… → Delete provider** action to remove the entire connection and its provider-specific saved key. Shared subscription sign-ins are kept. Removing the default provider asks you to choose another default. Existing conversations remain and switch from the removed provider to the current default on their next turn. Roles that used it return to inherited defaults, and its aliases are removed. Add another provider before deleting the last configured provider. Automatically discovered services cannot be removed here; their authentication remains managed by the original sign-in flow. Removing a Codex connection keeps the shared ChatGPT sign-in, so other Codex connections stay signed in.
 
 ## Current OpenAI and Anthropic models
 
