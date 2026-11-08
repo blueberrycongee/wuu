@@ -75,6 +75,12 @@ type personalCoordinatorBridge struct {
 func newPersonalCoordinatorBridge() *personalCoordinatorBridge {
 	return &personalCoordinatorBridge{providers: map[*personalCoordinationProvider]bool{}}
 }
+func (b *personalCoordinatorBridge) isClosed() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.closed
+}
+
 func (b *personalCoordinatorBridge) acquire(ctx context.Context, p *personalCoordinationProvider, scope *personalCoordinationScope) (*personalActions, error) {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -83,6 +89,13 @@ func (b *personalCoordinatorBridge) acquire(ctx context.Context, p *personalCoor
 		b.mu.Lock()
 		if b.closed {
 			b.mu.Unlock()
+			// A late call from a closed host must not leave its bridge bound
+			// for the next host that reuses this provider.
+			p.mu.Lock()
+			if p.bridge == b {
+				p.bridge = nil
+			}
+			p.mu.Unlock()
 			return nil, errors.New("Personal host is closed")
 		}
 		core := b.core
@@ -286,10 +299,16 @@ func (p *personalCoordinationProvider) InvokeService(ctx context.Context, call p
 		}
 		p.retirementRegistered = true
 	}
-	if p.bridge == nil {
-		p.bridge = scope.server.personalCoordination
+	current := scope.server.personalCoordination
+	// A provider survives host restarts. Once its previous host is closed,
+	// that bridge can no longer own the provider, so a new host may bind it.
+	if p.bridge != nil && p.bridge != current && p.bridge.isClosed() {
+		p.bridge = nil
 	}
-	if p.bridge != scope.server.personalCoordination {
+	if p.bridge == nil {
+		p.bridge = current
+	}
+	if p.bridge != current {
 		p.mu.Unlock()
 		return nil, errors.New("Personal coordinator belongs to another runtime")
 	}
