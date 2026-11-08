@@ -1850,7 +1850,7 @@ var personalDesktop = (() => {
         } catch (cause) {
           setSelectedModel(modelKey(model));
           const message = String(cause);
-          setModelError(message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message);
+          api.showNotice({ message: message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message, tone: "error", key: `personal-model-${Date.now()}` });
         } finally {
           setModelSaving(false);
         }
