@@ -772,8 +772,8 @@ func TestACPHelper(t *testing.T) {
 			if scenario == "version" {
 				version = 2
 			}
-			caps := map[string]any{"loadSession": scenario != "no-load"}
-			if scenario == "fork" {
+			caps := map[string]any{"loadSession": scenario != "no-load" && scenario != "fork-no-load"}
+			if scenario == "fork" || scenario == "fork-no-load" {
 				caps["sessionCapabilities"] = map[string]any{"fork": map[string]any{}, "close": map[string]any{}}
 			}
 			if scenario == "host-mcp-http" {

@@ -135,7 +135,9 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 		cwd, _ = os.Getwd()
 	}
 	session := acpSession{asyncConfiguration: e.entry.ID == "devin"}
-	defer func() { err = errors.Join(err, r.closeACPSession(init, session.ID), r.deleteACPSession(init, session.ID)) }()
+	defer func() {
+		err = errors.Join(err, r.closeACPSession(init, session.ID), r.deleteACPSession(init, session.ID))
+	}()
 	if err := r.session(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &session); err != nil {
 		// Settings surfaces this as the engine's model error, which is where a
 		// user discovers that the agent needs configuration of its own.
@@ -645,7 +647,9 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, init acpInitial
 		// Loaded sessions retain previous overrides. A fresh, unprompted session
 		// supplies native defaults, including options dependent on the model.
 		selected = acpSession{asyncConfiguration: s.engine.entry.ID == "devin"}
-		defer func() { err = errors.Join(err, r.closeACPSession(init, selected.ID), r.deleteACPSession(init, selected.ID)) }()
+		defer func() {
+			err = errors.Join(err, r.closeACPSession(init, selected.ID), r.deleteACPSession(init, selected.ID))
+		}()
 		if err := r.session(ctx, "session/new", map[string]any{"cwd": s.binding.RootDir, "mcpServers": []any{}}, &selected); err != nil {
 			return fmt.Errorf("read configured model defaults: %w", err)
 		}

@@ -2,6 +2,8 @@ package externalengine
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,15 +19,15 @@ import (
 // the source session. OpenCode exposes a message-level cutoff; ACP agents
 // that advertise sessionCapabilities.fork copy the whole session and are
 // therefore only safe at the end boundary.
-func (e *Engine) ForkHistory(ctx context.Context, ref, cwd string, retained, removed []providers.ChatMessage, wholeTurn, endBoundary bool) (string, error) {
+func (e *Engine) ForkHistory(ctx context.Context, ref, cwd string, retained, removed []providers.ChatMessage, boundary agentengine.HistoryForkBoundary) (string, error) {
 	if e == nil || strings.TrimSpace(ref) == "" {
 		return "", errors.New("external engine history has no native session reference; its context cannot be safely forked")
 	}
 	switch e.entry.Protocol {
 	case "opencode":
-		return e.forkOpenCodeHistory(ctx, ref, cwd, retained, removed, wholeTurn)
+		return e.forkOpenCodeHistory(ctx, ref, cwd, retained, removed, boundary.TurnBoundary)
 	case "acp":
-		return e.forkACPHistory(ctx, ref, cwd, removed, endBoundary)
+		return e.forkACPHistory(ctx, ref, cwd, removed, boundary.EndBoundary)
 	default:
 		return "", fmt.Errorf("%s does not expose a verified native history cutoff; original history is unchanged", e.entry.Name)
 	}
@@ -33,9 +35,10 @@ func (e *Engine) ForkHistory(ctx context.Context, ref, cwd string, retained, rem
 
 // forkOpenCodeHistory forks through POST /session/{id}/fork, which keeps the
 // messages before an optional messageID cutoff. Wuu and the agent share no
-// persisted message identity, so the retained prefix is matched to native
-// user messages by position and prompt text before a cutoff is chosen.
-func (e *Engine) forkOpenCodeHistory(ctx context.Context, ref, cwd string, retained, removed []providers.ChatMessage, wholeTurn bool) (string, error) {
+// persisted message identity, so each retained prompt's content digest is
+// verified against the native user message at the same position before a
+// cutoff is chosen.
+func (e *Engine) forkOpenCodeHistory(ctx context.Context, ref, cwd string, retained, removed []providers.ChatMessage, turnBoundary bool) (string, error) {
 	if cwd == "" {
 		cwd = e.root
 	}
@@ -56,7 +59,7 @@ func (e *Engine) forkOpenCodeHistory(ctx context.Context, ref, cwd string, retai
 		if err := c.call(ctx, "GET", "/session/"+url.PathEscape(ref)+"/message", nil, &messages); err != nil {
 			return err
 		}
-		cutoff, err := openCodeForkCutoff(messages, retained, removed, wholeTurn)
+		cutoff, err := openCodeForkCutoff(messages, retained, removed, turnBoundary)
 		if err != nil {
 			return err
 		}
@@ -86,7 +89,7 @@ func (e *Engine) forkOpenCodeHistory(ctx context.Context, ref, cwd string, retai
 // be copied, or "" when the retained prefix spans the entire session. The
 // cutoff only exists at user-prompt and turn boundaries; a mid-turn item
 // cannot be isolated because OpenCode stores a turn's output in one message.
-func openCodeForkCutoff(native []openCodeMessage, retained, removed []providers.ChatMessage, wholeTurn bool) (string, error) {
+func openCodeForkCutoff(native []openCodeMessage, retained, removed []providers.ChatMessage, turnBoundary bool) (string, error) {
 	var users []int
 	for i, message := range native {
 		if message.Info.Role == "user" {
@@ -107,7 +110,10 @@ func openCodeForkCutoff(native []openCodeMessage, retained, removed []providers.
 		return "", errors.New("visible history is longer than native history; cannot safely copy its context")
 	}
 	for i, prompt := range prompts {
-		if openCodeUserText(native[users[i]]) != prompt.Content {
+		if prompt.ContentSHA256 == "" {
+			return "", errors.New("visible history carries no prompt digest; cannot verify the native boundary")
+		}
+		if openCodeUserDigest(native[users[i]]) != prompt.ContentSHA256 {
 			return "", errors.New("visible and native history have different turn prefixes; cannot safely copy the context")
 		}
 	}
@@ -119,12 +125,18 @@ func openCodeForkCutoff(native []openCodeMessage, retained, removed []providers.
 				break
 			}
 		}
-		if first == nil || len(prompts) >= len(users) || openCodeUserText(native[users[len(prompts)]]) != first.Content {
+		if first == nil || len(prompts) >= len(users) {
+			return "", errors.New("the edited prompt does not match the next native turn")
+		}
+		if first.ContentSHA256 == "" {
+			return "", errors.New("visible history carries no prompt digest; cannot verify the native boundary")
+		}
+		if openCodeUserDigest(native[users[len(prompts)]]) != first.ContentSHA256 {
 			return "", errors.New("the edited prompt does not match the next native turn")
 		}
 		return native[users[len(prompts)]].Info.ID, nil
 	}
-	if wholeTurn {
+	if turnBoundary {
 		if len(prompts) == len(users) {
 			return "", nil
 		}
@@ -136,7 +148,11 @@ func openCodeForkCutoff(native []openCodeMessage, retained, removed []providers.
 		}
 		return "", errors.New("empty visible history does not describe the existing native context")
 	}
-	if last := retained[len(retained)-1]; last.Role == "user" && !last.Steered {
+	last := len(retained) - 1
+	for last >= 0 && (retained[last].Role == "system" || retained[last].Role == "meta") {
+		last--
+	}
+	if last >= 0 && retained[last].Role == "user" && !retained[last].Steered {
 		if users[len(prompts)-1]+1 < len(native) {
 			return native[users[len(prompts)-1]+1].Info.ID, nil
 		}
@@ -145,22 +161,27 @@ func openCodeForkCutoff(native []openCodeMessage, retained, removed []providers.
 	return "", errors.New("OpenCode can fork only at a user message or a completed turn; choose the turn's final reply")
 }
 
-// openCodeUserText is the text a user prompt carried into native history.
-// Wuu sends exactly one text part per prompt; any additional text parts a
-// client added are joined so a multi-part prompt cannot match only a prefix.
-func openCodeUserText(message openCodeMessage) string {
+// openCodeUserDigest is the sha256 of the text a user prompt carried into
+// native history, matching the wire digest computed over the visible
+// message's content. Wuu sends one text part per prompt; additional text
+// parts a client added are joined so a multi-part prompt cannot match only
+// a prefix.
+func openCodeUserDigest(message openCodeMessage) string {
 	var text strings.Builder
 	for _, part := range message.Parts {
 		if part.Type == "text" {
 			text.WriteString(part.Text)
 		}
 	}
-	return text.String()
+	sum := sha256.Sum256([]byte(text.String()))
+	return hex.EncodeToString(sum[:])
 }
 
 // forkACPHistory uses the unstable ACP session/fork method. It copies the
 // whole native session, so the retained prefix must reach the session's
-// current end; anything shorter would silently widen the copied context.
+// current end; anything shorter would silently widen the copied context. The
+// agent must also be able to reload the copy, or the child would resume into
+// an empty native context.
 func (e *Engine) forkACPHistory(ctx context.Context, ref, cwd string, removed []providers.ChatMessage, endBoundary bool) (string, error) {
 	if removed != nil || !endBoundary {
 		return "", fmt.Errorf("%s cannot verify a partial native history boundary; choose the end of the session", e.entry.Name)
@@ -192,16 +213,19 @@ func (e *Engine) forkACPHistory(ctx context.Context, ref, cwd string, removed []
 	if init.Capabilities.Session.Fork == nil {
 		return "", fmt.Errorf("%s does not expose a verified native history cutoff; original history is unchanged", e.entry.Name)
 	}
+	if !init.Capabilities.Load && init.Capabilities.Session.Resume == nil {
+		return "", fmt.Errorf("%s cannot reload a forked session; original history is unchanged", e.entry.Name)
+	}
 	var forked acpSession
 	if err := r.session(ctx, "session/fork", map[string]any{"sessionId": ref, "cwd": cwd, "mcpServers": []any{}}, &forked); err != nil {
 		return "", fmt.Errorf("session/fork: %w", err)
 	}
-	// The forked session is the product of this call: release the agent's
-	// lock on it when possible, but never delete it.
-	_ = r.closeACPSession(init, forked.ID)
 	forked.ID = strings.TrimSpace(forked.ID)
 	if forked.ID == "" || forked.ID == ref {
 		return "", fmt.Errorf("%s did not create an independent native history", e.entry.Name)
 	}
+	// The forked session is the product of this call: release the agent's
+	// lock on it when possible, but never delete it.
+	_ = r.closeACPSession(init, forked.ID)
 	return forked.ID, nil
 }

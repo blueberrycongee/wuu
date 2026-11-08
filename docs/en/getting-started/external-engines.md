@@ -117,15 +117,17 @@ or one tool result, are refused; choose the turn's final reply instead. Older
 Wuu conversations need a matching native output identity to establish the cut.
 
 For OpenCode, fork at a user message or a completed turn's final reply. Wuu
-checks the visible prompts against the session's native user messages before
-calling `session/{id}/fork` with the next prompt's message ID, so a diverged
-transcript fails instead of guessing a cutoff. Editing a user message keeps
-the conversation before that prompt. Cuts inside a native turn are refused:
-OpenCode stores a turn's output in one message, so choose the final reply.
+verifies each visible prompt's digest against the session's native user
+messages before calling `session/{id}/fork` with the next prompt's message
+ID, so a diverged transcript fails instead of guessing a cutoff. Editing a
+user message keeps the conversation before that prompt. Cuts inside a native
+turn are refused: OpenCode stores a turn's output in one message, so choose
+the final reply.
 
-ACP agents that advertise `sessionCapabilities.fork` can fork a complete
-session at its current end; the method copies the whole native session, so
-partial boundaries are refused. Agents without that advertisement — Devin,
+ACP agents that advertise `sessionCapabilities.fork` and can reload sessions
+can fork a complete session at its current end; the method copies the whole
+native session, so partial boundaries are refused. Agents without that
+advertisement — Devin,
 Claude Code, and the rest — do not yet expose a verified native history
 cutoff through Wuu. Their nonempty histories remain readable and
 resumable, but fork/edit requests fail before changing them. A failed turn offers

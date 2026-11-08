@@ -774,6 +774,7 @@ type forkSourceThread struct {
 	permissionMode string
 	approveForMe   bool
 	cwd            string
+	engineRef      string
 	thread         Thread
 }
 
@@ -973,7 +974,7 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		}
 	}
 
-	nativeRef, err := s.forkNativeHistory(ctx, binding, source.thread.EngineID, metadata.EngineRef, forkCWD, history, nil, turnBoundary, endBoundary)
+	nativeRef, err := s.forkNativeHistory(ctx, binding, source.thread.EngineID, firstNonEmpty(metadata.EngineRef, source.engineRef), forkCWD, history, nil, agentengine.HistoryForkBoundary{WholeTurn: params.ItemID == "", TurnBoundary: turnBoundary, EndBoundary: endBoundary})
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -1145,7 +1146,7 @@ func (s *Server) handleThreadEditMessageForState(binding *runtime.State, ctx con
 	// canonical-history engine. Fence mutation without holding the dispatch lock.
 	th.nativeHistoryMutation = true
 	th.mu.Unlock()
-	nativeRef, err := s.forkNativeHistory(ctx, binding, engineID, oldNativeRef, cwd, nextHistory, removedHistory, true, false)
+	nativeRef, err := s.forkNativeHistory(ctx, binding, engineID, oldNativeRef, cwd, nextHistory, removedHistory, agentengine.HistoryForkBoundary{WholeTurn: true, TurnBoundary: true})
 	th.mu.Lock()
 	th.nativeHistoryMutation = false
 	if err == nil {
@@ -1246,6 +1247,7 @@ func (s *Server) loadForkSourceThread(binding *runtime.State, id string, now tim
 			permissionMode: th.PermissionMode,
 			approveForMe:   th.ApproveForMe,
 			cwd:            th.CWD,
+			engineRef:      th.EngineRef,
 			thread:         th.snapshotLocked(),
 		}
 		if th.PersistHistory {
@@ -1319,6 +1321,7 @@ func (s *Server) loadForkSourceThread(binding *runtime.State, id string, now tim
 		permissionMode: th.PermissionMode,
 		approveForMe:   th.ApproveForMe,
 		cwd:            th.CWD,
+		engineRef:      th.EngineRef,
 		thread:         thread,
 	}, nil
 }

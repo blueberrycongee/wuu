@@ -402,6 +402,9 @@ type ChatMessage struct {
 	ProviderItems    []ProviderItem
 	Images           []InputImage
 	Files            []InputFile
+	// ContentSHA256 carries a digest of Content as identity evidence across
+	// engine-boundary transports that deliberately withhold replayable text.
+	ContentSHA256 string `json:"-"`
 	// ContentParts is durable presentation metadata; provider adapters ignore it.
 	ContentParts []MessageContentPart `json:"content_parts,omitempty"`
 	ToolCallID   string

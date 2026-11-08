@@ -313,6 +313,7 @@ func TestForkBoundaryAfter(t *testing.T) {
 	assistant := providers.ChatMessage{Role: "assistant"}
 	tool := providers.ChatMessage{Role: "tool"}
 	meta := providers.ChatMessage{Role: "meta"}
+	system := providers.ChatMessage{Role: "system"}
 	for _, test := range []struct {
 		name                      string
 		rest                      []providers.ChatMessage
@@ -320,8 +321,10 @@ func TestForkBoundaryAfter(t *testing.T) {
 	}{
 		{"session end", nil, true, true},
 		{"meta tail still reaches the end", []providers.ChatMessage{meta}, true, true},
+		{"system tail still reaches the end", []providers.ChatMessage{system}, true, true},
 		{"next prompt is a turn boundary", []providers.ChatMessage{user, assistant}, true, false},
 		{"meta before the next prompt stays a boundary", []providers.ChatMessage{meta, user}, true, false},
+		{"system record before the next prompt stays a boundary", []providers.ChatMessage{system, user}, true, false},
 		{"steered input is inside its turn", []providers.ChatMessage{steered, assistant}, false, false},
 		{"mid-turn output is not a boundary", []providers.ChatMessage{assistant, tool, user}, false, false},
 	} {

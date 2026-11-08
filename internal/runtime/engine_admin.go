@@ -147,12 +147,12 @@ func (s *nativeEngineAdmin) Invoke(ctx context.Context, method string, raw json.
 			}
 			out := make([]providers.ChatMessage, len(messages))
 			for i, message := range messages {
-				out[i] = providers.ChatMessage{Role: message.Role, EngineTurnID: message.EngineTurnID, ProviderItemID: message.ProviderItemID, Steered: message.Steered}
+				out[i] = providers.ChatMessage{Role: message.Role, EngineTurnID: message.EngineTurnID, ProviderItemID: message.ProviderItemID, Steered: message.Steered, ContentSHA256: message.ContentSHA256}
 			}
 			return out
 		}
 		retained, removed := convert(req.Retained), convert(req.Removed)
-		ref, err := forker.ForkHistory(ctx, req.Ref, req.CWD, retained, removed, req.WholeTurn, req.EndBoundary)
+		ref, err := forker.ForkHistory(ctx, req.Ref, req.CWD, retained, removed, agentengine.HistoryForkBoundary{WholeTurn: req.WholeTurn, TurnBoundary: req.TurnBoundary, EndBoundary: req.EndBoundary})
 		if err != nil {
 			return nil, err
 		}

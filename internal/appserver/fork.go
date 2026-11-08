@@ -73,7 +73,7 @@ func forkPersistedPrefixAtTarget(history []persistedMessage, sourceThreadID stri
 func forkBoundaryAfter[T any](rest []T, classify func(T) (role string, steered bool)) (turnBoundary, endBoundary bool) {
 	for _, element := range rest {
 		role, steered := classify(element)
-		if role == "meta" {
+		if role == "meta" || role == "system" {
 			continue
 		}
 		return role == "user" && !steered, false
