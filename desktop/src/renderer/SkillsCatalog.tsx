@@ -905,10 +905,12 @@ function PluginDetailPage({
     session: "skills.grantScopeSession",
     action: "skills.grantScopeAction",
   };
-  const detailRows: { key: string; title: string; value: string; mono?: boolean }[] = [
-    { key: "id", title: "ID", value: record.provenance.plugin_id ?? record.id, mono: true },
-  ];
-  if (record.provenance.path) {
+  // Reference facts stay user-level: where a self-installed plugin lives, how
+  // far its grant reaches, and which plugins it needs or clashes with. The
+  // bundled cache path is packaging internals, and a card of IDs alone is
+  // noise — so the section only renders when a real fact exists.
+  const detailRows: { key: string; title: string; value: string; mono?: boolean }[] = [];
+  if (record.provenance.path && record.package_source !== "bundled") {
     detailRows.push({ key: "path", title: t("skills.pluginDetailLocation"), value: record.provenance.path, mono: true });
   }
   if (record.grant_scope) {
@@ -925,6 +927,9 @@ function PluginDetailPage({
   const conflictNames = [...new Set([...(record.conflicts ?? []), ...(record.breaks ?? [])])].map(relatedPluginName);
   if (conflictNames.length > 0) {
     detailRows.push({ key: "conflicts", title: t("skills.pluginConflicts"), value: conflictNames.join(" · ") });
+  }
+  if (detailRows.length > 0) {
+    detailRows.unshift({ key: "id", title: "ID", value: record.provenance.plugin_id ?? record.id, mono: true });
   }
 
   return (
@@ -1012,6 +1017,12 @@ function PluginDetailPage({
         </SettingsSection>
       ) : null}
 
+      {record.long_description ? (
+        <SettingsSection title={t("skills.pluginAbout")}>
+          <p className="plugin-page-about">{record.long_description}</p>
+        </SettingsSection>
+      ) : null}
+
       {contributions.length > 0 ? (
         <SettingsSection title={t("skills.pluginAdds")}>
           <ul className="plugin-contributions">
@@ -1040,29 +1051,25 @@ function PluginDetailPage({
         </SettingsSection>
       ) : null}
 
-      {record.long_description ? (
-        <SettingsSection title={t("skills.pluginAbout")}>
-          <p className="plugin-page-about">{record.long_description}</p>
-        </SettingsSection>
-      ) : null}
-
       <PluginSettingsEditor plugin={record} title={t("skills.pluginSettingsLabel")} />
       <MCPServices pluginID={record.provenance.plugin_id ?? record.id} enabled={toggle.on && !deciding} />
 
-      <SettingsSection title={t("skills.pluginDetails")}>
-        <SettingsGroup>
-          {detailRows.map((row) => (
-            <div key={row.key} className="settings-row plugin-detail-row">
-              <div className="settings-row-label">
-                <span className="settings-row-label-title">{row.title}</span>
+      {detailRows.length > 0 ? (
+        <SettingsSection title={t("skills.pluginDetails")}>
+          <SettingsGroup>
+            {detailRows.map((row) => (
+              <div key={row.key} className="settings-row plugin-detail-row">
+                <div className="settings-row-label">
+                  <span className="settings-row-label-title">{row.title}</span>
+                </div>
+                <div className="settings-row-control">
+                  <span className={`plugin-detail-value${row.mono ? " is-mono" : ""}`}>{row.value}</span>
+                </div>
               </div>
-              <div className="settings-row-control">
-                <span className={`plugin-detail-value${row.mono ? " is-mono" : ""}`}>{row.value}</span>
-              </div>
-            </div>
-          ))}
-        </SettingsGroup>
-      </SettingsSection>
+            ))}
+          </SettingsGroup>
+        </SettingsSection>
+      ) : null}
     </>
   );
 }

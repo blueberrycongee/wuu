@@ -27,11 +27,13 @@ const plugin: ExtensionInventoryRecord = {
   description: minimal ? undefined : "收集阅读资料，整理重点，让每一次阅读都有所积累。",
   long_description: minimal ? undefined : "将对话中的阅读材料整理为笔记，保留关键观点与原文链接，方便回顾和继续讨论。\n可以通过侧栏查看阅读清单，也可以使用命令快速整理当前内容。",
   developer: minimal ? undefined : "Wuu Preview",
-  icon: { name: "book-open" }, package_source: "user", fingerprint: "preview",
-  provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "preview.reading", path: "~/.wuu/plugins/reading-companion" },
+  icon: { name: "book-open" }, package_source: minimal ? "bundled" : "user", fingerprint: "preview",
+  provenance: minimal
+    ? { kind: "plugin", source: "bundled", scope: "user", plugin_id: "preview.reading", official: true, path: "/cache/bundled-generations/ab12cd34ef/preview/plugin.json" }
+    : { kind: "plugin", source: "user", scope: "user", plugin_id: "preview.reading", path: "~/.wuu/plugins/reading-companion" },
   state: scenario === "approval" ? "pending" : "granted",
   approval_state: scenario === "approval" ? "pending" : "granted",
-  grant_scope: scenario === "approval" ? undefined : "user",
+  grant_scope: scenario === "approval" || minimal ? undefined : "user",
   enabled: scenario !== "off", runtime_state: scenario === "failed" ? "failed" : blockingDependency ? "inactive" : "active",
   activation_issues: issueKind ? [{ kind: issueKind, related_plugin_id: long ? "research-library-provider-with-a-long-package-identifier" : "reading-library" }] : [],
   last_error: scenario === "failed" ? "The reading service could not connect. Check the connection and try again." : undefined,
