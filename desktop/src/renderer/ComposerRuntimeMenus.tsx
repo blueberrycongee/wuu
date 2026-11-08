@@ -1526,6 +1526,7 @@ function defaultVariantForRuntimeModel(
 // (built-in actions, prompts, skills, and conversation plugins).
 // The @ trigger shares this panel and inserts at the active reference range.
 export function ComposerPlusButton({
+  variant,
   disabled,
   commands,
   pluginMenu,
@@ -1628,7 +1629,7 @@ export function ComposerPlusButton({
           owner="composer-plus"
           placement="above"
           align="left"
-          offset={4}
+          offset={variant === "hero" ? 10 : 8}
           width={menuWidth}
           matchAnchorWidth
           mobileSheet={{ label: t("composer.plusMenu"), onClose: () => setOpen(false) }}
@@ -1682,9 +1683,8 @@ export function ComposerPlusButton({
   );
 }
 
-// One group of the plus menu. A command's title leads and the slash command
-// that runs it trails like a shortcut; a skill is its name, which is already
-// what one types. A disabled row shows its reason in the trailing slot.
+// One group of the plus menu. Rows come from the same ComposerCommandRow as
+// the "/" panel so a command reads identically on both surfaces.
 function PlusMenuCommands({
   label,
   commands,
@@ -1699,25 +1699,64 @@ function PlusMenuCommands({
     <>
       <div className="composer-plus-menu-section" role="presentation">{label}</div>
       {commands.map((command) => (
-        <button
-          role="menuitem"
-          type="button"
-          key={command.id}
-          disabled={Boolean(command.disabledReason)}
-          onClick={() => onSelect(command)}
-        >
-          <SlashCommandIcon command={command} />
-          <span className="composer-plus-menu-item-title">
-            {command.kind === "skill" ? command.name : command.title}
-          </span>
-          {command.disabledReason ? (
-            <span className="composer-plus-menu-item-desc">{command.disabledReason}</span>
-          ) : command.kind === "skill" ? null : (
-            <span className="composer-plus-menu-item-desc">/{command.name}</span>
-          )}
-        </button>
+        <ComposerCommandRow key={command.id} command={command} role="menuitem" onSelect={onSelect} />
       ))}
     </>
+  );
+}
+
+// One command row, shared by the "/" suggestion panel and the "+"/"@" menu so
+// the same command reads identically on both surfaces: the icon, the title (or
+// the skill's name, which is what one types), and secondary copy trailing at
+// the row's end like a shortcut — the slash command, the skill's summary, or
+// the reason the row is disabled.
+export function ComposerCommandRow({
+  command,
+  id,
+  role,
+  className,
+  selected,
+  onHover,
+  onSelect
+}: {
+  command: ComposerSlashCommand;
+  id?: string;
+  role: "option" | "menuitem";
+  className?: string;
+  selected?: boolean;
+  onHover?(): void;
+  onSelect(command: ComposerSlashCommand): void;
+}): JSX.Element {
+  return (
+    <button
+      className={className}
+      data-command-name={command.name}
+      id={id}
+      role={role}
+      type="button"
+      aria-selected={role === "option" ? selected : undefined}
+      disabled={Boolean(command.disabledReason)}
+      onMouseEnter={command.disabledReason ? undefined : onHover}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={() => onSelect(command)}
+    >
+      <SlashCommandIcon command={command} />
+      <span className="composer-plus-menu-item-title slash-command-title">
+        {command.kind === "skill" ? command.name : command.title}
+      </span>
+      <span
+        className={`composer-plus-menu-item-desc ${
+          command.disabledReason
+            ? "slash-command-meta"
+            : command.kind === "skill"
+              ? "slash-command-summary"
+              : "slash-command-command"
+        }`}
+      >
+        {command.disabledReason ??
+          (command.kind === "skill" ? command.description : `/${command.name}`)}
+      </span>
+    </button>
   );
 }
 
