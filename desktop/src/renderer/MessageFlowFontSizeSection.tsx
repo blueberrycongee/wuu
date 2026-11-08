@@ -2,22 +2,16 @@ import { useSettingsControls } from "./SettingsControlsContext";
 import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
 import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
+  clampMessageFlowFontSize,
   type MessageFlowFontSize,
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import { SettingsStepper } from "./ui/SettingsStepper";
 
-const { min, max, step, default: defaultSize } = MESSAGE_FLOW_FONT_SIZE_RANGE;
-
-function clampSize(value: unknown): MessageFlowFontSize {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return defaultSize;
-  }
-  return Math.min(max, Math.max(min, value));
-}
+const { min, max, step } = MESSAGE_FLOW_FONT_SIZE_RANGE;
 
 function snapSize(value: unknown): MessageFlowFontSize {
-  const clamped = clampSize(value);
+  const clamped = clampMessageFlowFontSize(value);
   return Math.round(clamped / step) * step;
 }
 
@@ -34,7 +28,7 @@ function formatSize(size: number): string {
  * shape — caller-friendly side-effect helper.
  */
 export function applyMessageFlowFontSize(size: MessageFlowFontSize): void {
-  const clamped = clampSize(size);
+  const clamped = clampMessageFlowFontSize(size);
   try {
     document.documentElement.style.setProperty(
       "--conversation-message-font-size",
@@ -57,7 +51,7 @@ export function MessageFlowFontSizeControl(): JSX.Element {
   const settingsControls = useSettingsControls();
   const { t } = useI18n();
   const [size, setSize] = useState<MessageFlowFontSize>(() =>
-    clampSize(settingsControls.initialMessageFlowFontSize),
+    clampMessageFlowFontSize(settingsControls.initialMessageFlowFontSize),
   );
   const [draft, setDraft] = useState(() => formatSize(size));
   const draftEdited = useRef(false);
@@ -70,7 +64,7 @@ export function MessageFlowFontSizeControl(): JSX.Element {
         if (cancelled) {
           return;
         }
-        const next = clampSize(stored);
+        const next = clampMessageFlowFontSize(stored);
         setSize(next);
         if (!draftEdited.current) setDraft(formatSize(next));
       })
