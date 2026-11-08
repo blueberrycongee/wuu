@@ -298,6 +298,7 @@ export function EngineSettingsSection({
                     <span className="connection-summary-meta" id={`${usageID}-${engine.id}`}>{quota?.plan?.trim()}</span>
                   </span>
                   <span className="connection-summary-secondary">
+                    <span className="connection-state-dot" data-tone={state ? "warn" : "ok"} aria-hidden="true" />
                     {state ? <span id={`${usageID}-${engine.id}-status`} className="connection-summary-status">{state}</span> : null}
                     <ConnectionUsageSummary compact id={`${usageID}-${engine.id}-quota`} quota={quota} now={quotaNow} />
                   </span>

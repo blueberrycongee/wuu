@@ -9,7 +9,7 @@
    * carries the grouping so fields and buttons keep their own fills. */
   --settings-card-bg: var(--paper);
   --settings-card-border: var(--ink-overlay-8);
-  --settings-card-radius: var(--radius-md);
+  --settings-card-radius: 14px;
   --settings-card-pad-inline: var(--space-4);
   /* Rows inside a card are separated by an inset rule, lighter than the
    * card's own edge. */
@@ -142,8 +142,8 @@
 .settings-search input {
   width: 100%;
   min-height: var(--sidebar-row-height);
-  border: 1px solid transparent;
-  border-radius: var(--radius-pill);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
   background: var(--ink-overlay-6);
   box-shadow: none;
   color: var(--ink);
@@ -344,7 +344,7 @@
    * hundreds of px of slack left in the column. */
   container-name: settings-page;
   container-type: inline-size;
-  --settings-column-width: calc(var(--font-ui) * 46);
+  --settings-column-width: calc(var(--font-ui) * 56);
   /* Every picker and text field on a page shares one width, so trailing
    * controls start on one edge down a group instead of following their
    * current value's length. */
@@ -401,6 +401,28 @@
   white-space: nowrap;
   margin: 0 0 0 auto;
   -webkit-app-region: no-drag;
+}
+
+/* The titlebar carries the two-level location: the shell name, then the
+ * active page, set quiet like the conversation title. */
+.settings-crumb {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-body);
+}
+
+.settings-crumb-root { color: var(--ink-tertiary); }
+.settings-crumb-sep { color: var(--ink-faint); }
+
+.settings-crumb-page {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* --- Page header ----------------------------------------------------------
@@ -547,7 +569,7 @@
  * title. */
 .settings-section-title {
   margin: 0;
-  color: var(--ink-strong);
+  color: var(--ink-soft);
   font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
   line-height: 1.4;
