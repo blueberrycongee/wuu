@@ -27,6 +27,7 @@ import { MessageFlowFontSizeControl } from "../MessageFlowFontSizeSection";
 import { AppearanceTypography } from "../AppearanceTypography";
 import { AppContextSettingsSection } from "../AppContextSettingsSection";
 import { ShellSkinSettings } from "../background/ShellSkinSettings";
+import { clearToasts, ToastViewport } from "../Toast";
 
 function fixture(options: Partial<PluginHostOptions> = {}) {
   const listeners = new Set<() => void>();
@@ -203,7 +204,7 @@ describe("application shell assembly", () => {
     const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
     const render = (controls: typeof old.controls) => root.render(<SettingsControlsProvider controls={controls}>
       <ContentThemeControl /><ThemePreferenceControl /><MessageFlowFontSizeControl />
-      <AppearanceTypography section="motion" /><AppContextSettingsSection /><ShellSkinSettings />
+      <AppearanceTypography section="motion" /><AppContextSettingsSection /><ShellSkinSettings /><ToastViewport />
     </SettingsControlsProvider>);
     try {
       await act(async () => render(old.controls));
@@ -232,7 +233,7 @@ describe("application shell assembly", () => {
       expect(container.querySelector('[data-testid="settings-motion"] [role="switch"]')?.getAttribute("aria-checked")).toBe("true");
       next.source.setAppContextShortcutRecording.mockRejectedValueOnce(new Error("native recording failed"));
       await act(async () => window.dispatchEvent(new Event("blur")));
-      expect(container.querySelector('[role="alert"]')?.textContent).toBe("native recording failed");
+      expect(document.body.querySelector('[data-wuu-component="notice"] [role="alert"], [data-wuu-component="notice"]')?.textContent).toContain("native recording failed");
       await act(async () => {
         Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(font, "1");
         font.dispatchEvent(new Event("input", { bubbles: true }));
@@ -243,7 +244,7 @@ describe("application shell assembly", () => {
       for (const subscription of next.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
       expect(third.source.getMessageFlowFontSize).toHaveBeenCalledOnce();
       expect(font.value).toBe("1");
-    } finally { act(() => root.unmount()); next.lifetime.abort(); third.lifetime.abort(); container.remove(); }
+    } finally { act(() => root.unmount()); next.lifetime.abort(); third.lifetime.abort(); container.remove(); clearToasts(); }
     for (const generation of [old, next, third]) {
       for (const subscription of generation.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
     }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import type { ProviderSummary } from "../shared/protocol";
 import { ChatGPTLogin } from "./ChatGPTLogin";
 import { SettingsRow } from "./SettingsRow";
+import { showActionErrorToast } from "./Toast";
 import { useI18n } from "./i18n";
 
 export function ChatGPTAccountRows({ provider, disabled, onProvidersChanged, onRefresh, onBusyChange }: {
@@ -42,7 +43,7 @@ export function ChatGPTAccountRows({ provider, disabled, onProvidersChanged, onR
       if (!scope.active || signingOut.current !== operation) return;
       onProvidersChanged?.(result.providers);
       setNotice(t(result.revocation_confirmed ? "provider.chatgptSignedOut" : "provider.chatgptLocalSignOut"));
-    } catch (cause) { if (scope.active && !isPluginLifecycleCancellation(cause)) setError(String(cause)); }
+    } catch (cause) { if (scope.active) showActionErrorToast(cause); }
     finally { if (scope.active && signingOut.current === operation) { signingOut.current = undefined; setBusy(false); } }
   }
   return <>
@@ -50,7 +51,7 @@ export function ChatGPTAccountRows({ provider, disabled, onProvidersChanged, onR
     <ChatGPTLogin onAdvisory={setNotice} accountId={accountId} enablePlanUsage={provider.auth_status === "permission_required"} disabled={disabled || busy} onBusyChange={setBusy} onProvidersChanged={onProvidersChanged} onAuthenticated={() => { setNotice(""); onRefresh(); }} />
     <SettingsRow title={t("provider.chatgptAccountId")}><span className="settings-row-control-value model-service-value">{accountId}</span></SettingsRow>
     <SettingsRow title={t("provider.modelsSection")}><button type="button" className="settings-button" disabled={disabled || busy || provider.auth_status !== "connected"} onClick={onRefresh}>{t("provider.chatgptRefreshModels")}</button></SettingsRow>
-    <SettingsRow title={t("provider.accountUsage")} description={t("provider.chatgptUsageHint")}><button type="button" className="settings-button" onClick={() => void settingsControls.openExternal("https://chatgpt.com/settings/usage").catch(cause => { if (scope.active && !isPluginLifecycleCancellation(cause)) setError(String(cause)); })}>{t("provider.chatgptManageUsage")}</button></SettingsRow>
+    <SettingsRow title={t("provider.accountUsage")} description={t("provider.chatgptUsageHint")}><button type="button" className="settings-button" onClick={() => void settingsControls.openExternal("https://chatgpt.com/settings/usage").catch(cause => { if (scope.active) showActionErrorToast(cause); })}>{t("provider.chatgptManageUsage")}</button></SettingsRow>
     <SettingsRow title={t("provider.chatgptSignOut")}><button type="button" className="settings-button" disabled={disabled || busy || !accountId} onClick={() => void signOut()}>{t("provider.chatgptSignOut")}</button></SettingsRow>
     {notice ? <p className="settings-muted-line" role="status">{notice}</p> : null}
     {error ? <p className="settings-error" role="alert">{error}</p> : null}

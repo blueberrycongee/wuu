@@ -12,6 +12,7 @@ import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSize
 import { applyMeasuredScrollbarWidth } from "../../src/renderer/ScrollbarMetrics";
 import { applyAppearance, appearanceDefaults } from "../../src/renderer/AppearancePreferences";
 import { ImagePreviewProvider } from "../../src/renderer/ImagePreview";
+import { ToastViewport } from "../../src/renderer/Toast";
 import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
 import { BackgroundSettings } from "../../src/renderer/background/BackgroundSettings";
 import { EmptyConversationHome } from "../../src/renderer/LoadingViews";
@@ -128,6 +129,7 @@ function Fixture() {
       <WorkspaceRightPanel application={application} slots={fixtureSlots} pane="primary"
         open={rightOpen} present={rightOpen} globalized={globalized} onToggleGlobalize={() => setGlobalized(value => !value)}/>
     </div>
+    <ToastViewport />
   </ImagePreviewProvider></FixtureServices></WuuUIRoot>;
 }
 
