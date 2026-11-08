@@ -435,7 +435,8 @@ describe("application shell assembly", () => {
       await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "user:custom-shell", generation: "one", id: "shell" }} />));
       expect(container.textContent).toBe("Installed shell body");
       await act(async () => host.unload("user:custom-shell"));
-      expect(container.textContent).toContain(translateCurrent("plugins.applicationUnavailable"));
+      expect(container.textContent).toContain(translateCurrent("loading.failed"));
+      expect(container.textContent).toContain(translateCurrent("loading.reconnect"));
     } finally { act(() => root.unmount()); host.unload("body"); host.unload("user:custom-shell"); }
   });
 
@@ -622,7 +623,8 @@ describe("application shell assembly", () => {
     expect(container.querySelector('[role="status"]')).not.toBeNull();
     expect(container.textContent).not.toContain("Implicit default");
     act(() => host.unload("shell"));
-    expect(container.textContent).toContain(translateCurrent("plugins.applicationUnavailable"));
+    expect(container.textContent).toContain(translateCurrent("loading.failed"));
+    expect(container.textContent).toContain(translateCurrent("loading.reconnect"));
     act(() => root.unmount());
   });
 
