@@ -22,7 +22,6 @@ import {
   Settings,
   Smartphone,
   Trash2,
-  X,
   type IconComponent
 } from "./WuuIcons";
 import { DESKTOP_AUTO_ARCHIVE_DAYS, normalizeProxyURL } from "../shared/protocol";
@@ -768,16 +767,7 @@ function SettingsViewContent({
       )}
       <main className="settings-main" data-wuu-component="settings-content">
         <SettingsTitlebarSlot.Provider value={titlebarSlot}>
-          {floating ? (
-            <button
-              type="button"
-              className="icon-button settings-close-button"
-              aria-label={t("settings.close")}
-              onClick={onBack}
-            >
-              <X className="icon-lg" />
-            </button>
-          ) : <div className="settings-titlebar">
+          {floating ? null : <div className="settings-titlebar">
             {isTouchWebShell() && !floating && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
             {/* Match the main shell's docked/collapsed slots. Keep the collapsed
              * toggle inside the drag strip so native hit testing honors no-drag. */}
