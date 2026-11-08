@@ -87,6 +87,9 @@ type ToolOverride struct {
 	ReadOnly        *bool                 `json:"read_only,omitempty"`
 	ConcurrencySafe *bool                 `json:"concurrency_safe,omitempty"`
 	Capability      capability.Capability `json:"capability,omitempty"`
+	// Guidance is the agent-facing usage contract exposed on host-capability
+	// surfaces. It overrides the server's handshake instructions.
+	Guidance string `json:"guidance,omitempty"`
 }
 
 // Client is a connected MCP server session.
@@ -106,6 +109,7 @@ type Client struct {
 	onConnectionClosed       func(error)
 	connectionErr            error
 	connectionClosedNotified bool
+	instructions             string
 	closed                   bool
 	retired                  bool
 	activeCalls              int
@@ -146,6 +150,7 @@ func connect(ctx context.Context, name string, t Transport, tryModern bool) (*Cl
 			var discovered DiscoverResult
 			if err := json.Unmarshal(discoverBytes, &discovered); err == nil && containsString(discovered.SupportedVersions, PreferredProtocolVersion) {
 				c.protocolVersion = PreferredProtocolVersion
+				c.instructions = discovered.Instructions
 				return c, nil
 			}
 		}
@@ -178,6 +183,7 @@ func connect(ctx context.Context, name string, t Transport, tryModern bool) (*Cl
 		return nil, fmt.Errorf("mcp initialize compatibility: protocol %s does not use initialize", result.ProtocolVersion)
 	}
 	c.protocolVersion = result.ProtocolVersion
+	c.instructions = result.Instructions
 
 	// A failed initialized notification leaves the server and client with
 	// different session state, so treat it as a failed handshake.
@@ -336,6 +342,11 @@ func (c *Client) Name() string { return c.name }
 // ConnectionID identifies this immutable connection incarnation. Reconnecting
 // the same configured server creates a different local resource owner.
 func (c *Client) ConnectionID() string { return c.connectionID }
+
+// Instructions returns the server-provided usage text captured during the
+// handshake (initialize or server/discover). It is untrusted metadata: the
+// server authored it, Wuu only relays it.
+func (c *Client) Instructions() string { return c.instructions }
 
 // DiscoverTools fetches the tool list from the server and caches it.
 func (c *Client) DiscoverTools(ctx context.Context) ([]Tool, error) {

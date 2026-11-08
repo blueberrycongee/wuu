@@ -1170,7 +1170,7 @@ export type MCPServerConfig = {
   oauth?: { client_id?: string; client_secret?: string; scopes?: string[]; redirect_uri?: string };
   enabled?: boolean;
   tool_timeout_ms?: number;
-  tool_overrides?: Record<string, { read_only?: boolean; concurrency_safe?: boolean; capability?: string }>;
+  tool_overrides?: Record<string, { read_only?: boolean; concurrency_safe?: boolean; capability?: string; guidance?: string }>;
 };
 export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
 export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };

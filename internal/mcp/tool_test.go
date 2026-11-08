@@ -196,6 +196,41 @@ func TestMCPTool_DeclaredCapabilityComesFromOverride(t *testing.T) {
 	}
 }
 
+func TestMCPTool_DefinitionGuidance(t *testing.T) {
+	t.Run("empty without contract or instructions", func(t *testing.T) {
+		tool := NewMCPTool(&Client{name: "server"}, Tool{Name: "inspect"})
+		if got := tool.Definition().Guidance; got != "" {
+			t.Fatalf("Guidance = %q, want empty", got)
+		}
+	})
+
+	t.Run("server instructions framed as untrusted text", func(t *testing.T) {
+		tool := NewMCPTool(&Client{name: "docs", instructions: "use search before answering"}, Tool{Name: "search"})
+		got := tool.Definition().Guidance
+		if !strings.Contains(got, "docs") || !strings.Contains(got, "server-authored") || !strings.Contains(got, "use search before answering") {
+			t.Fatalf("Guidance = %q, want framed server instructions", got)
+		}
+	})
+
+	t.Run("local override wins over server instructions", func(t *testing.T) {
+		client := &Client{name: "server", instructions: "server text"}
+		client.SetToolOverrides(map[string]ToolOverride{"tool": {Guidance: "local contract"}})
+		tool := NewMCPTool(client, Tool{Name: "tool"})
+		if got := tool.Definition().Guidance; got != "local contract" {
+			t.Fatalf("Guidance = %q, want local override", got)
+		}
+	})
+
+	t.Run("override alone applies", func(t *testing.T) {
+		client := &Client{name: "server"}
+		client.SetToolOverrides(map[string]ToolOverride{"tool": {Guidance: "  local contract  "}})
+		tool := NewMCPTool(client, Tool{Name: "tool"})
+		if got := tool.Definition().Guidance; got != "local contract" {
+			t.Fatalf("Guidance = %q, want trimmed override", got)
+		}
+	})
+}
+
 func TestMCPToolNameKeepsCleanNamesCompatible(t *testing.T) {
 	tool := NewMCPTool(&Client{name: "eval"}, Tool{Name: "slow_a"})
 

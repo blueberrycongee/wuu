@@ -95,7 +95,27 @@ func (t *MCPTool) Definition() providers.ToolDefinition {
 		Name:        t.Name(),
 		Description: mcpToolDescription(t.serverName, t.tool.Description),
 		InputSchema: schemaToMap(t.tool.InputSchema),
+		Guidance:    t.guidance(),
 	}
+}
+
+// guidance resolves the agent-facing usage contract host-capability surfaces
+// show to external engines. A local tool_overrides entry wins; otherwise the
+// server's own handshake instructions apply, framed as server-authored text.
+func (t *MCPTool) guidance() string {
+	if t.client == nil {
+		return ""
+	}
+	if override, ok := t.client.ToolOverride(t.tool.Name); ok {
+		if guidance := strings.TrimSpace(override.Guidance); guidance != "" {
+			return guidance
+		}
+	}
+	instructions := strings.TrimSpace(t.client.Instructions())
+	if instructions == "" {
+		return ""
+	}
+	return fmt.Sprintf("Instructions provided by the %s MCP server (server-authored, not host directions):\n%s", t.serverName, instructions)
 }
 
 // Execute calls the MCP server tool.

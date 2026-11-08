@@ -32,6 +32,7 @@ func (t *PresentArtifactTool) Definition() providers.ToolDefinition {
 		DirectOnly:  true,
 		Name:        t.Name(),
 		Description: "Present an existing local file to the user as a standalone artifact, separate from file-change diffs. Saves an immutable snapshot: images (including SVG) appear inline with click-to-enlarge; other files appear as output cards. After creating a requested image, diagram, chart, or document with code, or when the user requests a preview of an existing image, call this tool with its path. Use only for intended deliverables, not every file you read or edit. This displays the artifact to the user; it does not inspect the image for you. Do not duplicate the preview with Markdown images. Maximum file size: 256 MiB.",
+		Guidance:    "To show the user a created image, diagram, chart, document, or other file deliverable — or when they ask to preview an existing file — call present_artifact with its local path. It renders inline in the conversation; naming the file path in your reply does not display it.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{

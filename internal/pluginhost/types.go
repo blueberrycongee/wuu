@@ -17,6 +17,7 @@ const (
 	maxToolDescriptionLen  = 16 * 1024
 	maxToolSchemaLen       = 128 * 1024
 	maxToolMetadataLen     = 1024
+	maxToolGuidanceLen     = 4 * 1024
 	maxToolDisplayLabelLen = 80
 )
 
@@ -54,6 +55,10 @@ type ToolRegistration struct {
 	ExecutionScopes []string                   `json:"execution_scopes,omitempty"`
 	Activity        *ToolActivityMetadata      `json:"activity,omitempty"`
 	Display         *providers.ToolCallDisplay `json:"display,omitempty"`
+	// Guidance is the agent-facing usage contract host-capability surfaces
+	// expose to external engines for this tool. It is host metadata, not
+	// part of provider tool definitions.
+	Guidance string `json:"guidance,omitempty"`
 }
 
 // ToolActivityMetadata controls scheduling and activity classification for a
@@ -127,6 +132,12 @@ func validateToolRegistrations(tools []ToolRegistration) error {
 				return fmt.Errorf("%s repeats execution scope %q", prefix, scope)
 			}
 			scopes[scope] = struct{}{}
+		}
+		if len(tool.Guidance) > maxToolGuidanceLen {
+			return fmt.Errorf("%s guidance exceeds %d bytes", prefix, maxToolGuidanceLen)
+		}
+		if strings.ContainsRune(tool.Guidance, '\x00') {
+			return fmt.Errorf("%s guidance contains a NUL byte", prefix)
 		}
 		if tool.Activity != nil {
 			if err := validateBoundedMetadata("activity.risk", tool.Activity.Risk); err != nil {

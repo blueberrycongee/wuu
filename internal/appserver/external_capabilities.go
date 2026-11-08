@@ -38,6 +38,7 @@ type externalCapabilities struct {
 	serial          chan struct{}
 	binding         *runtime.State
 	journal         providers.InferenceJournal
+	guidance        string
 	publishArtifact func(context.Context, providers.ToolCall, toolresult.Result) error
 
 	mu       sync.Mutex
@@ -95,6 +96,7 @@ func startExternalCapabilities(ctx context.Context, binding *runtime.State, thre
 		executor: thread.CapabilityTools, allowed: make(map[string]bool, len(definitions)),
 		serial: make(chan struct{}, 1), requests: make(map[string]context.CancelFunc),
 		binding: binding, journal: binding.InferenceJournalRuntime.ForOwner(ownerID),
+		guidance: externalCapabilityInstructions(definitions),
 	}
 	for _, definition := range definitions {
 		schema, err := json.Marshal(definition.InputSchema)
@@ -229,7 +231,7 @@ func (b *externalCapabilities) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		result = map[string]any{
 			"protocolVersion": version, "capabilities": map[string]any{"tools": map[string]any{}},
 			"serverInfo":   map[string]string{"name": "wuu-host-capabilities", "version": "1"},
-			"instructions": "These Wuu workspace discovery, browser and computer tools are bound to this conversation and turn. User takeover or stop revokes control. Use their native image results to inspect screenshots.",
+			"instructions": b.instructions(),
 		}
 	case "ping":
 		result = map[string]any{}
@@ -376,26 +378,34 @@ func writeCapabilityRPC(w http.ResponseWriter, id json.RawMessage, result any, r
 	_ = json.NewEncoder(w).Encode(response)
 }
 
-// externalCapabilityInstructions hands external engines the usage contract for
-// capability tools whose cross-call semantics the tool schema cannot express.
+// instructions composes the MCP initialize guidance the bridge reports to the
+// engine: the binding contract plus every usage contract the exposed tools
+// declared on their definitions.
+func (b *externalCapabilities) instructions() string {
+	text := "These Wuu host capability tools are bound to this conversation and turn. User takeover or stop revokes control. Use their native image results to inspect screenshots."
+	if b.guidance != "" {
+		text += "\n\n" + b.guidance
+	}
+	return text
+}
+
+// externalCapabilityInstructions collects the agent-facing usage contracts the
+// capability surface declared for itself. Each tool owns its contract: built-in
+// tools carry it on their definition, plugins declare it in tool registrations
+// or .mcp.json tool_overrides, and self-describing MCP servers supply it in
+// their handshake instructions (already framed as server-authored text).
 // Internal agents learn the same rules from bundled plugin skills, which the
 // per-turn MCP bridge does not deliver.
 func externalCapabilityInstructions(definitions []providers.ToolDefinition) string {
+	seen := make(map[string]bool, len(definitions))
+	var parts []string
 	for _, definition := range definitions {
-		// control_epoch marks the CUA input protocol: the host injects the
-		// lease token and the helper consumes one snapshot_id per input.
-		properties, _ := definition.InputSchema["properties"].(map[string]any)
-		if _, ok := properties["control_epoch"]; ok {
-			return fmt.Sprintf(externalCUAInstructions, definition.Name)
+		guidance := strings.TrimSpace(definition.Guidance)
+		if guidance == "" || seen[guidance] {
+			continue
 		}
+		seen[guidance] = true
+		parts = append(parts, guidance)
 	}
-	return ""
+	return strings.Join(parts, "\n\n")
 }
-
-const externalCUAInstructions = `%s drives macOS apps through Accessibility, screenshots, and synthesized input:
-- Find the target with list_apps, then copy the exact Target app="..." value into app. Give every call a short display_title; it names the visible activity.
-- observe returns a snapshot_id. element_id values and coordinates are valid only against the latest snapshot, and each input consumes it. On stale_snapshot, call observe once and retry with the fresh ids; do not replay the failed call.
-- Prefer snapshot-free actions (activate_control, press_key/press_keys, type_text, paste); they survive UI changes.
-- Use sequence for multi-step input: every step needs risk, and non-safe steps need confirmed=true only after explicit user confirmation.
-- Set after to "ax" or "both" to return a fresh observation with the input result instead of a separate observe call.
-- Apps that mirror your own live output change constantly; prefer non-snapshot actions there.`

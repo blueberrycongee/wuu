@@ -46,6 +46,18 @@ func TestConnectRollsBackWhenInitializedNotificationFails(t *testing.T) {
 	}
 }
 
+func TestConnectCapturesServerInstructions(t *testing.T) {
+	transport := &handshakeTransport{scriptedTransport: newScriptedTransport(), instructions: "server-authored usage contract"}
+	client, err := Connect(context.Background(), "docs", transport)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+	if got := client.Instructions(); got != "server-authored usage contract" {
+		t.Fatalf("Instructions() = %q, want handshake text", got)
+	}
+}
+
 func TestCallSendsCancelledNotificationOnContextCancel(t *testing.T) {
 	transport := newScriptedTransport()
 	f := newInFlight()
@@ -248,6 +260,7 @@ type scriptedTransport struct {
 type handshakeTransport struct {
 	*scriptedTransport
 	initializedErr error
+	instructions   string
 }
 
 func newHandshakeTransport(initializedErr error) *handshakeTransport {
@@ -266,7 +279,7 @@ func (t *handshakeTransport) Send(ctx context.Context, req Request) error {
 		t.mu.Lock()
 		t.sent = append(t.sent, req)
 		t.mu.Unlock()
-		result, _ := json.Marshal(InitializeResult{ProtocolVersion: PreferredLegacyProtocolVersion})
+		result, _ := json.Marshal(InitializeResult{ProtocolVersion: PreferredLegacyProtocolVersion, Instructions: t.instructions})
 		t.inbox <- Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 		return nil
 	}
