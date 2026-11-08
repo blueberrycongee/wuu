@@ -192,6 +192,10 @@ async function run() {
     await geometry();
     if (await evaluate(() => document.querySelector('.app-shell').classList.contains('right-panel-open'))) await click('[data-wuu-component="right-sidebar-toggle"]');
     await capture(`${theme}-wide-panel-closed`, 'wide'); await typeDraft(`${theme}-wide`);
+    await toggleRail(`${theme}-expand`);
+    await capture(`${theme}-wide-rail-expanded`, 'rail'); await typeDraft(`${theme}-rail`);
+    await toggleRail(`${theme}-collapse`);
+    await capture(`${theme}-wide-rail-recollapsed`, 'footer'); await typeDraft(`${theme}-recollapsed`);
     await click('[data-wuu-component="right-sidebar-toggle"]');
     await until(() => evaluate(() => Boolean(document.querySelector('.workspace-right-panel-resizer:not([inert])'))), 'docked right panel');
     // Stay just above the product's automatic full-panel threshold while
@@ -207,10 +211,6 @@ async function run() {
     const narrow = await geometry();
     assert.ok(narrow.shell.width <= 320 && narrow.shell.width >= 240, `fixture must reproduce the narrow pane, got ${narrow.shell.width}`);
     await capture(`${theme}-narrow-panel-open`, 'footer'); await typeDraft(`${theme}-narrow`);
-    await toggleRail(`${theme}-expand`);
-    await capture(`${theme}-narrow-rail-expanded`, 'rail'); await typeDraft(`${theme}-rail`);
-    await toggleRail(`${theme}-collapse`);
-    await capture(`${theme}-narrow-rail-recollapsed`, 'footer'); await typeDraft(`${theme}-recollapsed`);
   }
   report.clicks = await evaluate(() => window.footerNativeClicks || []);
   assert.ok(report.clicks.length > 0 && report.clicks.every(click => click.trusted), 'all control clicks are native trusted input');
