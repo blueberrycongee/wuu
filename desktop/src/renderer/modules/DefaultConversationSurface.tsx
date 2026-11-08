@@ -195,11 +195,14 @@ function SplitConversation({ pane, thread, application, registerComposerFocusTar
 }): JSX.Element {
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const editing = view.conversationActions.editing?.threadId === thread.id ? view.conversationActions.editing : undefined;
+  // Keep the object identity stable so the per-turn memo boundary in
+  // ConversationSplitPane is not defeated by a fresh wrapper each render.
+  const editingMessage = useMemo(() => editing ? { turnID: editing.turnId, itemID: editing.itemId, submitting: editing.submitting } : undefined, [editing]);
   const question = view.conversationActions.questions.find(row => row.thread_id === thread.id && row.mode !== "offer");
   return <><ConversationSplitPane pane={pane} thread={thread} active={view.conversationWorkspace.activePane === pane}
     registerComposerFocusTarget={registerComposerFocusTarget} ownerTabId={view.drafts[pane].ownerTabId} activeContextCwd={view.workspaces.activeRoot}
     streamStatus={view.conversationWorkspace.turnStreamStatus[thread.turns.at(-1)?.id ?? ""]}
-    editingMessage={editing ? { turnID: editing.turnId, itemID: editing.itemId, submitting: editing.submitting } : undefined}
+    editingMessage={editingMessage}
     onActivate={() => { if (application.getSnapshot().conversationWorkspace.activePane !== pane) void application.invoke("conversation.activate-pane", { pane }).catch(showApplicationActionError); }}
     onClose={() => { void application.invoke("conversation.close-pane", { pane }).catch(showApplicationActionError); }} onBodyRef={onBodyRef} onScroll={onScroll ?? noop}
     onForkMessage={(turnId, itemId) => fork(thread, turnId, itemId)} onOpenFile={path => openFile(thread, path)} onOpenURL={openURL} onOpenAgent={id => openAgent({ id })}
