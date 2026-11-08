@@ -546,6 +546,29 @@ it("keeps runtime control appearance while blocking interactions during navigati
   expect(document.querySelector("[data-floating-menu-owner=codex-runtime]")).not.toBeNull();
 });
 
+it("keeps a busy conversation's branch picker disabled while a moved workspace rechecks busy", async () => {
+  const fixture = setup();
+  const initialEnvironment = fixture.application.environment.getSnapshot();
+  let environment = { ...initialEnvironment, contextKey: "source", root: "/source", actionBusy: true, actionBusyPending: false, capabilities: { ...initialEnvironment.capabilities, checkout: true },
+    status: { is_repo: true, branch: "main", branches: ["main"], dirty_count: 0 } as typeof initialEnvironment.status };
+  vi.spyOn(fixture.application.environment, "getSnapshot").mockImplementation(() => environment);
+  const rail = document.createElement("nav"); container.append(rail);
+  await fixture.render({ runtimeControlsTarget: rail });
+  container.append(rail);
+  const branch = rail.querySelector<HTMLButtonElement>(".composer-git-controls button")!;
+  expect(branch.disabled).toBe(true);
+  environment = { ...environment, contextKey: "worktree", root: "/source-worktree", actionBusyPending: true };
+  await fixture.update(view => ({ ...view }));
+  expect(rail.querySelector(".composer-git-controls button")).toBe(branch);
+  expect(branch.disabled).toBe(true);
+  environment = { ...environment, actionBusyPending: false };
+  await fixture.update(view => ({ ...view }));
+  expect(branch.disabled).toBe(true);
+  environment = { ...environment, actionBusy: false };
+  await fixture.update(view => ({ ...view }));
+  expect(branch.disabled).toBe(false);
+});
+
 it.each([false, true])("locks navigation without changing the session's readonly semantics (split=%s)", async split => {
   const fixture = setup();
   if (split) await fixture.update(view => ({ ...view, drafts: { ...view.drafts, split: true } }));
