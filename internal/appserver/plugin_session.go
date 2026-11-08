@@ -236,6 +236,17 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 		}
 		return pluginhost.SessionCreateResult{}, err
 	}
+	// Seed creation suppresses the shared thread/started notification for
+	// launch ordering; a user-visible imported conversation announces here so
+	// it appears in the workspace listing without a refresh.
+	if params.Visibility == pluginhost.SessionVisibilityUser && params.ContextSource == pluginhost.SessionContextSourceSeed {
+		th.mu.Lock()
+		thread := th.snapshotLocked()
+		th.mu.Unlock()
+		if notifyErr := s.notifyThreadStarted(binding, thread); notifyErr != nil {
+			providers.DebugLogf("notify imported thread %q: %v", th.ID, notifyErr)
+		}
+	}
 	return pluginhost.SessionCreateResult{SessionID: th.ID, Created: true, WorkspaceRoot: th.CWD}, nil
 }
 

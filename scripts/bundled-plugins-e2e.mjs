@@ -1546,6 +1546,8 @@ try {
     assert.equal(replay.session_id, imported.session_id);
     const changed = resultJSON(await runtime.tool('import_shared_context', { document, intent: 'continue it' }));
     assert.notEqual(changed.session_id, imported.session_id);
+    const launched = host.calls.filter(call => call.service === 'host.session.create').at(-1).params;
+    assert.deepEqual(launched.launch, { kind: 'handoff', intent: 'continue it', prompt: 'continue it' });
     const outOfContract = { version: 1, session_id: 'x', items: [{ id: 'a', kind: 'attachment', text: 'sneaky', attachment: { id: 'a', sha256: '0'.repeat(64), media_type: 'text/plain', bytes: 1 } }] };
     await assert.rejects(runtime.tool('import_shared_context', { document: outOfContract }));
     await runtime.shutdown();

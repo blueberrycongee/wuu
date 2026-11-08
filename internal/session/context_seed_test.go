@@ -95,6 +95,17 @@ func TestCreateInitializedWithLaunchPersistsSeedWithExternalSource(t *testing.T)
 		if len(page.Records) != 1 || page.Records[0].Name != "context_seed" || page.Records[0].RelatedSessionID != "remote-session" {
 			t.Fatalf("target history = %+v", page.Records)
 		}
+		// Deleting a local session that shares the external source id must not
+		// garbage-collect provenance-only seeds.
+		if _, err := store.CreateWithMetadata("remote-session", t.TempDir()); err != nil {
+			t.Fatalf("create same-named session: %v", err)
+		}
+		if _, err := store.Delete("remote-session"); err != nil {
+			t.Fatalf("delete same-named session: %v", err)
+		}
+		if _, found, err := store.LoadContextSeed(created.SeedID); err != nil || !found {
+			t.Fatalf("external seed collected by id match: found=%v err=%v", found, err)
+		}
 	})
 }
 
