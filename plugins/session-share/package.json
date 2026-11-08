@@ -1,0 +1,19 @@
+{
+  "name": "@wuu/session-share-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=session-share"
+  },
+  "wuu": {
+    "dev": {
+      "watch": [
+        "../../packages/plugin-sdk/src",
+        "../../scripts/build-bundled-plugins.mjs",
+        "../../internal/plugin/bundled/session-share/plugin.json",
+        "../../internal/plugin/bundled/session-share/prompts"
+      ]
+    }
+  }
+}

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "session-share",
+  "name": "Session Share",
+  "description": "Import a reviewed Wuu shared-session document as the context seed of a new conversation.",
+  "icon": "users",
+  "version": "0.1.0",
+  "defaultEnabled": true,
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "0.1.0",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
+  "contributes": {
+    "commands": [
+      {
+        "id": "import-share",
+        "title": "Import shared session context",
+        "description": "Seed a new conversation from a reviewed shared-session document.",
+        "kind": "prompt_template",
+        "prompt": "./prompts/import-share.md",
+        "aliases": ["share"],
+        "keywords": ["session", "share", "import", "context", "会话", "共享", "导入"]
+      }
+    ]
+  },
+  "interface": { "displayName": "Session Share", "shortDescription": "Import shared session context.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
+}

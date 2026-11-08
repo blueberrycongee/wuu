@@ -71,6 +71,15 @@ wuu session-share revoke '{"thread_id":"THREAD","share_id":"SHARE"}'
 会话输入或执行权限。其他选定授权策略必须明确授予相应发送或执行操作，评论不会隐含执行权。
 默认分享实现不提供评论或执行功能。
 
+## 导入共享文档
+
+下载得到的 `version:1` 文档是独立副本：过期、撤销与 live 更新不再对其生效。
+内置 `session-share` 插件通过 `host.session.create`（`context_source:"seed"`）
+把这样的文档作为新用户可见会话的上下文种子导入。`import_shared_context`
+工具校验文档，并在上下文种子预算内保留最新的条目，被省略的条目会写进
+seed 正文；`/import-share` 命令引导代理走通这个流程。插件只导入用户提供的
+文档——创建和读取授权仍然需要经过认证的 `session/share/*` 方法。
+
 ## 替换提供者
 
 [`examples/plugins/restricted-session-sharing.ts`](../../../examples/plugins/restricted-session-sharing.ts)

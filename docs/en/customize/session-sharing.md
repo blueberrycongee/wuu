@@ -93,6 +93,17 @@ or execution. A different selected authorization policy must explicitly grant
 any separate send or execute action; no comment-to-execute implication exists.
 The default sharing implementation does not implement commenting or execution.
 
+## Import a shared document
+
+A downloaded `version:1` document is an independent copy: it no longer honors
+expiry, revocation, or live updates. The bundled `session-share` plugin seeds a
+new user-visible conversation from such a document through `host.session.create`
+(`context_source:"seed"`). Its `import_shared_context` tool validates the
+document and keeps the newest items within the context-seed budget, reporting
+omitted items in the seed body; the `/import-share` command walks the agent
+through that flow. The plugin imports only documents the user supplies — creating
+and reading grants still require the authenticated `session/share/*` methods.
+
 ## Replace the provider
 
 [`examples/plugins/restricted-session-sharing.ts`](../../../examples/plugins/restricted-session-sharing.ts)
