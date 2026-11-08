@@ -93,6 +93,7 @@ import { RibbonVisibilityToggle } from "./RibbonVisibilityToggle";
 import {
   pullRequestUnavailableReason
 } from "./RuntimeHelpers";
+import { submittedThreadRuntime } from "./SessionRuntimeState";
 import type { SettingsPage } from "./SettingsView";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
@@ -200,6 +201,7 @@ export function App({ application, slots, shellPluginId }: {
   const conversationActions = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationActions);
   const submissionView = useSyncExternalStore(application.subscribe, () => application.getSnapshot().submission);
   const conversationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationWorkspace);
+  const composerRuntime = useSyncExternalStore(application.subscribe, () => application.getSnapshot().composerRuntime);
   const primarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.primaryThreadId);
   const secondarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.secondaryThreadId);
   // These display helpers read frozen snapshots; mutations use application actions.
@@ -685,6 +687,12 @@ export function App({ application, slots, shellPluginId }: {
   );
 
   const mascotProviderNames = useMemo(() => configuration?.providers?.map(provider => provider.name), [configuration?.providers]);
+  // On a draft tab the mascot previews the runtime the submitted thread will
+  // pin, so its hue and accessory stay put across the first send.
+  const mascotRuntime = useMemo(() => {
+    const owner = composerRuntime.owners.find(owner => owner.ownerTabId === composerRuntime.activeOwnerTabId);
+    return submittedThreadRuntime(owner?.selection, owner?.engines, configuration ?? {});
+  }, [composerRuntime, configuration]);
   const {
     conversationSearch,
     conversationSearchResults,
@@ -1584,9 +1592,9 @@ export function App({ application, slots, shellPluginId }: {
 
   return (
     <WuuMascotRuntimeProvider
-      provider={activeThread?.model_provider || configuration?.provider}
+      provider={activeThread?.model_provider || mascotRuntime.provider || configuration?.provider}
       providers={mascotProviderNames}
-      model={activeThread?.model || configuration?.model}
+      model={activeThread?.model ?? mascotRuntime.model ?? configuration?.model}
     >
       <SideConversationAvailableContext.Provider value={sideConversationAvailable}>
       <FileSelectionProvider application={application} source={{ ownerTabId: application.getSnapshot().drafts.split

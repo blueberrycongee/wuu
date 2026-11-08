@@ -653,6 +653,8 @@ function EntryRenderer({
         activeGray={activeGray}
         turnID={turn.id}
         turnStatus={turn.status}
+        turnProvider={turn.model_provider}
+        turnModel={turn.model}
         cwd={cwd}
         onOpenFile={onOpenFile}
         onOpenAgent={onOpenAgent}
@@ -698,6 +700,8 @@ function ReasoningFold({
   activeGray,
   turnID,
   turnStatus,
+  turnProvider,
+  turnModel,
   cwd,
   onOpenFile,
   onOpenAgent,
@@ -709,6 +713,8 @@ function ReasoningFold({
   activeGray?: boolean;
   turnID: string;
   turnStatus: Turn["status"];
+  turnProvider?: string;
+  turnModel?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
   onOpenAgent?: (agentID: string) => void;
@@ -745,6 +751,8 @@ function ReasoningFold({
         <ProcessSurfaceMascot
           active={Boolean(activeGray)}
           activity="thinking"
+          provider={turnProvider}
+          model={turnModel}
         />
         <ProcessLabel
           className={textClass}
