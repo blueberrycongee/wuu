@@ -249,7 +249,7 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	}
 	if g.runner.ModelInputReceiptStore != nil {
 		_, sections := g.modelRunner().systemPromptSnapshot()
-		receipt := modelInputReceipt(request, loopdriver.ExecutionContextFromContext(g.ctx), g.descriptor, sections, g.historyRewritten)
+		receipt := modelInputReceipt(request, hashToolsForRequestShape(request.Tools), loopdriver.ExecutionContextFromContext(g.ctx), g.descriptor, sections, g.historyRewritten)
 		if err := g.runner.ModelInputReceiptStore.SaveModelInputReceipt(ctx, receipt); err != nil {
 			return round, fmt.Errorf("persist model input receipt: %w", err)
 		}
