@@ -289,7 +289,7 @@ headers, body }, { signal })`。凭据键只能指向本插件声明的秘密设
 
 ## 工具和能力
 
-模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root` 或 `child` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。这些声明属于可信扩展契约，不是沙箱。
+模型工具注册在初始化结果的 `tools` 数组中，每个工具需要 `id`、`description` 和对象类型的 `input_schema`，宿主会生成带命名空间的公开名称。`execution_scopes` 可限制工具在 `root` 或 `child` 中可用；`activity` 描述只读性、并发安全、风险和是否编排子工具。应如实声明副作用，不要把写入工具标成只读来绕过调度或权限检查。这些声明属于可信扩展契约，不是沙箱。可选的 `guidance` 字符串是面向 agent 的工具使用契约：当工具通过宿主能力面暴露给外部引擎时，宿主会把收集到的 guidance 连同自身绑定说明一并展示给引擎。
 
 TypeScript 运行时适配器按 `activity.concurrency_safe: true` 调度工具。相邻的显式安全工具可以重叠运行，每个运行时最多同时执行八个工具处理函数。省略或设为 false 的工具、未知工具 ID，以及普通能力和服务回调，仍按 FIFO 顺序独占执行；仅声明 `read_only` 不会启用并发。这些屏障同时适用于共享或不同的 execution ID。initialize、prepare、activate 和 shutdown 还会等待此前已接收的可重入回调结束。
 

@@ -2962,6 +2962,7 @@ func mcpToolOverrides(in map[string]config.MCPToolOverride) map[string]mcp.ToolO
 			ReadOnly:        override.ReadOnly,
 			ConcurrencySafe: override.ConcurrencySafe,
 			Capability:      override.Capability,
+			Guidance:        override.Guidance,
 		}
 	}
 	return out

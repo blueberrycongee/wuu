@@ -298,7 +298,7 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 		definitions := executor.Definitions()
 		view := ListResult{Tools: make([]Definition, 0, len(definitions)), Catalog: []tools.DeferredToolCatalogEntry{}}
 		for _, d := range definitions {
-			view.Tools = append(view.Tools, Definition{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema, Freeform: d.Freeform, DirectOnly: d.DirectOnly, DeferLoading: d.DeferLoading, CacheStable: d.CacheStable})
+			view.Tools = append(view.Tools, Definition{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema, Freeform: d.Freeform, DirectOnly: d.DirectOnly, DeferLoading: d.DeferLoading, CacheStable: d.CacheStable, Guidance: d.Guidance})
 		}
 		if kit := backend.Toolkit; kit != nil {
 			view.Catalog = kit.DeferredToolCatalogEntries()

@@ -2906,16 +2906,12 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		sessionInstructions = metadata.Instructions
 	}
 	var additionalDirectories []string
-	if turnKit != nil && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+	externalEngine := turnKit != nil && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu
+	if externalEngine {
 		catalog := turnKit.RegisteredWorkspaces()
 		additionalDirectories = workspaces.Roots(catalog)
 		if guidance := workspaces.Instructions(catalog); guidance != "" {
 			sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
-		}
-		if threadRuntime != nil && threadRuntime.CapabilityTools != nil {
-			if guidance := externalCapabilityInstructions(threadRuntime.CapabilityTools.Definitions()); guidance != "" {
-				sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
-			}
 		}
 	}
 	capabilityErr := instructionsErr
@@ -2954,6 +2950,14 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			} else {
 				pluginGuidance, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
 			}
+		}
+	}
+	// Collect capability usage contracts only after conversation references have
+	// admitted their servers and plugin tools, so their declared guidance
+	// reaches the engine alongside the built-in contracts.
+	if capabilityErr == nil && externalEngine && threadRuntime != nil && threadRuntime.CapabilityTools != nil {
+		if guidance := externalCapabilityInstructions(threadRuntime.CapabilityTools.Definitions()); guidance != "" {
+			sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
 		}
 	}
 	// Plugin-client submissions preserve literal text. Supply resolved tool and
