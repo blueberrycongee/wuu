@@ -25,27 +25,41 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 const cycle = (time: number, seconds: number, offset = 0) => (time / seconds + offset) % 1;
 const bell = (phase: number) => Math.sin(clamp(phase) * Math.PI);
 
+function resetScene(s: Scene): Scene {
+  const c = s.core;
+  c.x = 50; c.y = 50; c.sx = 1; c.sy = 1; c.angle = 0; c.alpha = 1; c.face = 1; c.pencil = 0; c.fluid = 0;
+  for (const p of s.particles) { p.x = 50; p.y = 50; p.r = 0; p.alpha = 0; }
+  for (const r of s.rings) { r.x = 50; r.y = 50; r.radius = 15; r.start = -90; r.sweep = 0; r.width = 2; r.alpha = 0; }
+  for (const b of s.bars) { b.x = 50; b.y = 50; b.width = 0; b.height = 0; b.angle = 0; b.alpha = 0; }
+  for (const b of s.ink) { b.x = 50; b.y = 50; b.width = 0; b.height = 0; b.angle = 0; b.alpha = 0; }
+  return s;
+}
+
 function scene(): Scene {
-  return {
-    core: { x: 50, y: 50, sx: 1, sy: 1, angle: 0, alpha: 1, face: 1, pencil: 0, fluid: 0 },
-    particles: Array.from({ length: 8 }, () => ({ x: 50, y: 50, r: 0, alpha: 0 })),
-    rings: Array.from({ length: 5 }, () => ({ x: 50, y: 50, radius: 15, start: -90, sweep: 0, width: 2, alpha: 0 })),
-    bars: Array.from({ length: 5 }, () => ({ x: 50, y: 50, width: 0, height: 0, angle: 0, alpha: 0 })),
-    ink: Array.from({ length: 3 }, () => ({ x: 50, y: 50, width: 0, height: 0, angle: 0, alpha: 0 })),
-  };
+  return resetScene({
+    core: { x: 0, y: 0, sx: 0, sy: 0, angle: 0, alpha: 0, face: 0, pencil: 0, fluid: 0 },
+    particles: Array.from({ length: 8 }, () => ({ x: 0, y: 0, r: 0, alpha: 0 })),
+    rings: Array.from({ length: 5 }, () => ({ x: 0, y: 0, radius: 0, start: 0, sweep: 0, width: 0, alpha: 0 })),
+    bars: Array.from({ length: 5 }, () => ({ x: 0, y: 0, width: 0, height: 0, angle: 0, alpha: 0 })),
+    ink: Array.from({ length: 3 }, () => ({ x: 0, y: 0, width: 0, height: 0, angle: 0, alpha: 0 })),
+  });
 }
 
 // One numeric scene lets rapid selections retarget from the currently painted
 // shape. Nothing remounts or snaps back to a neutral icon between two morphs.
-export function targetScene(mode: MascotMorph, time: number): Scene {
-  const s = scene(), c = s.core;
+// The frame loop passes a scratch `out` so a settled morph does not allocate
+// twenty-two objects per paint.
+export function targetScene(mode: MascotMorph, time: number, out: Scene = scene()): Scene {
+  const s = resetScene(out), c = s.core;
   const shrink = (scale: number) => { c.sx = c.sy = scale; c.face = 0; };
-  const dot = (i: number, x: number, y: number, r: number, alpha = 1) => { s.particles[i] = { x, y, r, alpha }; };
+  const dot = (i: number, x: number, y: number, r: number, alpha = 1) => {
+    const p = s.particles[i]!; p.x = x; p.y = y; p.r = r; p.alpha = alpha;
+  };
   const ring = (i: number, radius: number, sweep: number, start = -90, width = 2.4, alpha = 1) => {
-    s.rings[i] = { x: 50, y: 50, radius, sweep, start, width, alpha };
+    const r = s.rings[i]!; r.x = 50; r.y = 50; r.radius = radius; r.sweep = sweep; r.start = start; r.width = width; r.alpha = alpha;
   };
   const bar = (i: number, x: number, y: number, width: number, height: number, angle = 0, alpha = 1) => {
-    s.bars[i] = { x, y, width, height, angle, alpha };
+    const b = s.bars[i]!; b.x = x; b.y = y; b.width = width; b.height = height; b.angle = angle; b.alpha = alpha;
   };
   switch (mode) {
     case "dots": {
@@ -137,8 +151,11 @@ export function targetScene(mode: MascotMorph, time: number): Scene {
       shrink(.75); c.pencil = 1; c.angle = 28 + Math.sin(time * 5) * 3;
       c.x = 42 + p * 16; c.y = 43 + Math.sin(time * 8) * 2;
       // The cut and nib move with the body, using the identity's eye colour.
-      s.ink[0] = { x: 50, y: 28, width: 16, height: 3, angle: 0, alpha: 1 };
-      s.ink[1] = { x: 50, y: 70, width: 12, height: 2.4, angle: 0, alpha: 1 };
+      const ink = (i: number, x: number, y: number, width: number, height: number) => {
+        const b = s.ink[i]!; b.x = x; b.y = y; b.width = width; b.height = height; b.angle = 0; b.alpha = 1;
+      };
+      ink(0, 50, 28, 16, 3);
+      ink(1, 50, 70, 12, 2.4);
       bar(0, 48, 84, 12 + p * 22, 2, 0, .35);
       break;
     }
@@ -227,14 +244,48 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
     const ink = [...host.querySelectorAll<SVGRectElement>("[data-morph-ink]")];
     let reduced = prefersReducedMotion();
     const current = scene();
+    const scratch = scene();
     let frame = 0, previous = performance.now(), time = 0, lastMode = props.current.mode, lastReplay = props.current.replay;
     let inView = true, settledFor = 0;
-    const setBar = (node: SVGRectElement, b: Bar) => {
-      node.setAttribute("x", `${b.x - b.width / 2}`); node.setAttribute("y", `${b.y - b.height / 2}`);
-      node.setAttribute("width", `${Math.max(0, b.width)}`); node.setAttribute("height", `${Math.max(0, b.height)}`);
+    // Attribute writes are the expensive part of this loop, so every pooled
+    // node keeps the values it was last painted with and identical frames cost
+    // a string compare instead of a DOM mutation. Nodes that are and remain
+    // invisible stop being written at all — most morphs touch only a slice of
+    // the pooled particles/rings/bars/ink.
+    const HIDDEN = 0.004;
+    const last = {
+      coreTransform: "", coreOpacity: -1, faceTransform: "", faceOpacity: -1,
+      coreD: "", filter: "",
+      particles: Array<string>(8).fill(""), rings: Array<string>(5).fill(""),
+      bars: Array<string>(5).fill(""), ink: Array<string>(3).fill(""),
+    };
+    const writeDot = (node: SVGCircleElement, p: Particle, i: number) => {
+      const cx = `${p.x}`, cy = `${p.y}`, r = `${p.r}`, alpha = `${p.alpha}`;
+      const key = `${cx}|${cy}|${r}|${alpha}`;
+      if (key === last.particles[i]) return;
+      last.particles[i] = key;
+      node.setAttribute("cx", cx); node.setAttribute("cy", cy);
+      node.setAttribute("r", r); node.setAttribute("opacity", alpha);
+    };
+    const writeRing = (node: SVGPathElement, r: Ring, i: number) => {
+      const d = arc(r), width = `${r.width}`, alpha = `${r.alpha}`;
+      const key = `${d}|${width}|${alpha}`;
+      if (key === last.rings[i]) return;
+      last.rings[i] = key;
+      node.setAttribute("d", d); node.setAttribute("stroke-width", width); node.setAttribute("opacity", alpha);
+    };
+    const writeBar = (node: SVGRectElement, b: Bar, slot: string[], i: number) => {
+      const x = `${b.x - b.width / 2}`, y = `${b.y - b.height / 2}`;
+      const width = `${Math.max(0, b.width)}`, height = `${Math.max(0, b.height)}`;
+      const key = `${x}|${y}|${width}|${height}|${b.angle}|${b.alpha}`;
+      if (key === slot[i]) return;
+      slot[i] = key;
+      node.setAttribute("x", x); node.setAttribute("y", y);
+      node.setAttribute("width", width); node.setAttribute("height", height);
       node.setAttribute("rx", `${Math.min(b.width, b.height) / 2}`); node.setAttribute("opacity", `${b.alpha}`);
       node.setAttribute("transform", `rotate(${b.angle} ${b.x} ${b.y})`);
     };
+    original.style.transformOrigin = "0 0";
     const draw = (now: number) => {
       frame = 0;
       const { mode: nextMode, paused: stopped, replay: nextReplay } = props.current;
@@ -261,33 +312,76 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
       }
       if (!stopped && !reduced) time += dt / 1000;
       settledFor += dt;
-      const target = targetScene(nextMode, reduced ? 1.1 : time);
+      const target = targetScene(nextMode, reduced ? 1.1 : time, scratch);
       const speed = reduced ? 1 : 1 - Math.exp(-dt / 95);
       blend(current.core, target.core, speed);
       current.particles.forEach((p, i) => blend(p, target.particles[i], speed));
       current.rings.forEach((p, i) => blend(p, target.rings[i], speed));
       current.bars.forEach((p, i) => blend(p, target.bars[i], speed));
       current.ink.forEach((p, i) => blend(p, target.ink[i], speed));
-      const c = current.core;
+      const c = current.core, tc = target.core;
       const transform = `translate(${c.x} ${c.y}) rotate(${c.angle}) scale(${c.sx} ${c.sy}) translate(-50 -50)`;
-      coreGroup.setAttribute("transform", transform);
-      coreGroup.setAttribute("opacity", `${c.alpha * (1 - c.face)}`);
-      original.style.transformOrigin = "0 0";
-      original.style.transform = `translate(${c.x}px, ${c.y}px) rotate(${c.angle}deg) scale(${c.sx}, ${c.sy}) translate(-50px, -50px)`;
-      original.style.opacity = `${c.face * c.alpha}`;
+      if (transform !== last.coreTransform) {
+        last.coreTransform = transform;
+        coreGroup.setAttribute("transform", transform);
+      }
+      const coreOpacity = c.alpha * (1 - c.face);
+      if (coreOpacity !== last.coreOpacity) {
+        last.coreOpacity = coreOpacity;
+        coreGroup.setAttribute("opacity", `${coreOpacity}`);
+      }
+      // While a morph owns the canvas the authored face is painted at zero
+      // opacity; its style writes cost a style update per frame for nothing.
+      // Reading `tc` too keeps the gate open when the face is on its way back,
+      // so it never lags a frame behind the blend.
+      const face = c.face * c.alpha;
+      if (face > HIDDEN || tc.face * tc.alpha > HIDDEN) {
+        const pxTransform = `translate(${c.x}px, ${c.y}px) rotate(${c.angle}deg) scale(${c.sx}, ${c.sy}) translate(-50px, -50px)`;
+        if (pxTransform !== last.faceTransform) {
+          last.faceTransform = pxTransform;
+          original.style.transform = pxTransform;
+        }
+        if (face !== last.faceOpacity) {
+          last.faceOpacity = face;
+          original.style.opacity = `${face}`;
+        }
+      }
       if (c.fluid > .001 || c.pencil > .001) {
         const coords = points.map((p, i) => {
           const a = Math.atan2(p.y - 50, p.x - 50), wobble = 1 + .10 * Math.sin(time * 3.1 + a * 2);
           const x = lerp(p.x, 50 + Math.cos(a) * 39 * wobble, c.fluid), y = lerp(p.y, 50 + Math.sin(a) * 39 / wobble, c.fluid);
           return `${lerp(x, pencil[i].x, c.pencil)},${lerp(y, pencil[i].y, c.pencil)}`;
         });
-        core.setAttribute("d", `M${coords.join(" L")}Z`);
-      } else core.setAttribute("d", originalPath);
-      fluidGroup.setAttribute("filter", c.fluid > .02 ? `url(#${id})` : "none");
-      particles.forEach((node, i) => { const p = current.particles[i]; node.setAttribute("cx", `${p.x}`); node.setAttribute("cy", `${p.y}`); node.setAttribute("r", `${p.r}`); node.setAttribute("opacity", `${p.alpha}`); });
-      rings.forEach((node, i) => { const r = current.rings[i]; node.setAttribute("d", arc(r)); node.setAttribute("stroke-width", `${r.width}`); node.setAttribute("opacity", `${r.alpha}`); });
-      bars.forEach((node, i) => setBar(node, current.bars[i]));
-      ink.forEach((node, i) => setBar(node, current.ink[i]));
+        const d = `M${coords.join(" L")}Z`;
+        if (d !== last.coreD) {
+          last.coreD = d;
+          core.setAttribute("d", d);
+        }
+      } else if (last.coreD !== originalPath) {
+        last.coreD = originalPath;
+        core.setAttribute("d", originalPath);
+      }
+      const filter = c.fluid > .02 ? `url(#${id})` : "none";
+      if (filter !== last.filter) {
+        last.filter = filter;
+        fluidGroup.setAttribute("filter", filter);
+      }
+      particles.forEach((node, i) => {
+        const p = current.particles[i]!, t = target.particles[i]!;
+        if (p.alpha > HIDDEN || t.alpha > HIDDEN) writeDot(node, p, i);
+      });
+      rings.forEach((node, i) => {
+        const r = current.rings[i]!, t = target.rings[i]!;
+        if (r.alpha > HIDDEN || t.alpha > HIDDEN) writeRing(node, r, i);
+      });
+      bars.forEach((node, i) => {
+        const b = current.bars[i]!, t = target.bars[i]!;
+        if (b.alpha > HIDDEN || t.alpha > HIDDEN) writeBar(node, b, last.bars, i);
+      });
+      ink.forEach((node, i) => {
+        const b = current.ink[i]!, t = target.ink[i]!;
+        if (b.alpha > HIDDEN || t.alpha > HIDDEN) writeBar(node, b, last.ink, i);
+      });
       if (!document.hidden && inView && paintable() && !reduced && (settledFor < 1200 || (!stopped && !STATIC_MORPHS.has(nextMode)))) frame = requestAnimationFrame(draw);
     };
     const paintable = () => !host.closest('[data-renderer-hidden], .cached-conversation-pane[data-active="false"]');
