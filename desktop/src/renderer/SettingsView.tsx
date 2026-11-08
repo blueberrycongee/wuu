@@ -27,6 +27,9 @@ import {
 } from "./WuuIcons";
 import type {
   CodexPetSettingsUpdate,
+  DesktopFolder,
+  DesktopPreferences,
+  DesktopUpdateState,
   EngineListResult,
   ExtensionInventoryRecord,
   EngineUpdateParams,
@@ -81,6 +84,8 @@ import { SettingsEmptyState, SettingsGroup, SettingsPageHeader, SettingsSection,
 import { pluginSourceLabel } from "./SkillsCatalog";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
 import { Switch } from "./ui/Switch";
+import { SegmentedControl } from "./ui/SegmentedControl";
+import { updateDesktopPreferences, useDesktopPreferences } from "./desktopPreferences";
 import { BrowserSettingsSection } from "./BrowserSettingsSection";
 import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import { SystemPermissionsSection } from "./SystemPermissions";
@@ -978,6 +983,7 @@ function SettingsGeneralPage({
         </SettingsGroup>
       </SettingsSection>
 
+      <DesktopPreferencesSections />
       {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
       <SystemPermissionsSection stateCache={permissionStateCache} />
       <NewThreadDefaultsSection initialized={initialized} onSave={onSave} />
@@ -1068,6 +1074,126 @@ function NewThreadDefaultsSection({ initialized, onSave }: {
         )}
       </SettingsGroup>
     </SettingsSection>
+  );
+}
+
+function DesktopPreferencesSections(): JSX.Element | null {
+  const { t } = useI18n();
+  const preferences = useDesktopPreferences();
+  const [updateState, setUpdateState] = useState<DesktopUpdateState>({ kind: "unsupported" });
+  const [checking, setChecking] = useState(false);
+  const [errors, setErrors] = useState<Partial<Record<keyof DesktopPreferences | "update" | DesktopFolder, string>>>({});
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+
+  useEffect(() => {
+    const api = window.wuu;
+    if (!api?.getDesktopUpdateState) return;
+    let active = true;
+    const unsubscribe = api.onDesktopUpdateChanged?.(next => { if (active) setUpdateState(next); });
+    void api.getDesktopUpdateState().then(next => { if (active) setUpdateState(next); }, () => {});
+    return () => { active = false; unsubscribe?.(); };
+  }, []);
+
+  if (!preferences) return null;
+
+  async function save<K extends keyof DesktopPreferences>(key: K, value: DesktopPreferences[K]): Promise<void> {
+    setErrors(current => ({ ...current, [key]: "" }));
+    try {
+      await updateDesktopPreferences({ [key]: value });
+    } catch (error) {
+      setErrors(current => ({ ...current, [key]: toastErrorMessage(error, t("settings.saveFailed")) }));
+    }
+  }
+
+  async function checkForUpdates(): Promise<void> {
+    setChecking(true);
+    setErrors(current => ({ ...current, update: "" }));
+    try {
+      await window.wuu.checkDesktopUpdate?.();
+    } catch (error) {
+      setErrors(current => ({ ...current, update: toastErrorMessage(error, t("desktopUpdate.failed")) }));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function openFolder(folder: DesktopFolder): Promise<void> {
+    setErrors(current => ({ ...current, [folder]: "" }));
+    try {
+      await window.wuu.openDesktopFolder?.(folder);
+    } catch (error) {
+      setErrors(current => ({ ...current, [folder]: toastErrorMessage(error, t("settings.openFolderFailed")) }));
+    }
+  }
+
+  const toggle = (key: "notify_turn_completed" | "notify_questions" | "notification_sound" | "auto_check_updates" | "open_at_login", title: string, hint?: string) => (
+    <SettingsRow title={title} hint={hint} hideDescriptionWhenNarrow error={errors[key]}>
+      <Switch
+        checked={preferences[key] === true}
+        data-testid={`settings-${key.replaceAll("_", "-")}`}
+        onClick={() => void save(key, !preferences[key])}
+        label={title}
+      />
+    </SettingsRow>
+  );
+  const updatesSupported = updateState.kind !== "unsupported";
+  const updateBusy = checking || updateState.kind === "checking" || updateState.kind === "prompting";
+
+  return (
+    <>
+      <SettingsSection title={t("settings.sectionNotifications")} testID="settings-notifications">
+        <SettingsGroup>
+          {toggle("notify_turn_completed", t("settings.notifyTurnCompleted"), t("settings.notificationsBackgroundHint"))}
+          {toggle("notify_questions", t("settings.notifyQuestions"))}
+          {toggle("notification_sound", t("settings.notificationSound"))}
+        </SettingsGroup>
+      </SettingsSection>
+      <SettingsSection title={t("settings.sectionInput")} testID="settings-input">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.sendShortcut")} hint={t("settings.sendShortcutHint")} hideDescriptionWhenNarrow error={errors.send_shortcut}>
+            <SegmentedControl
+              label={t("settings.sendShortcut")}
+              value={preferences.send_shortcut}
+              options={[
+                { value: "enter", label: "Enter", testID: "settings-send-shortcut-enter" },
+                { value: "mod_enter", label: isMac ? "⌘ Enter" : "Ctrl+Enter", testID: "settings-send-shortcut-mod-enter" },
+              ]}
+              onChange={value => void save("send_shortcut", value)}
+            />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+      {(preferences.open_at_login !== undefined || updatesSupported) && (
+        <SettingsSection title={t("settings.sectionStartupUpdates")} testID="settings-startup-updates">
+          <SettingsGroup>
+            {preferences.open_at_login !== undefined && toggle("open_at_login", t("settings.openAtLogin"))}
+            {updatesSupported && toggle("auto_check_updates", t("settings.autoCheckUpdates"))}
+            {updatesSupported && (
+              <SettingsRow title={t("settings.checkUpdates")} error={errors.update}>
+                <button className="settings-button" type="button" data-testid="settings-check-updates"
+                  disabled={updateBusy} onClick={() => void checkForUpdates()}>
+                  {updateBusy ? t("settings.checkingUpdates") : t("settings.checkNow")}
+                </button>
+              </SettingsRow>
+            )}
+          </SettingsGroup>
+        </SettingsSection>
+      )}
+      <SettingsSection title={t("settings.sectionData")} testID="settings-data">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.dataFolder")} hint={t("settings.dataFolderHint")} hideDescriptionWhenNarrow error={errors.data}>
+            <button className="settings-button" type="button" data-testid="settings-open-data-folder" onClick={() => void openFolder("data")}>
+              {t("settings.openFolder")}
+            </button>
+          </SettingsRow>
+          <SettingsRow title={t("settings.logFolder")} error={errors.logs}>
+            <button className="settings-button" type="button" data-testid="settings-open-log-folder" onClick={() => void openFolder("logs")}>
+              {t("settings.openFolder")}
+            </button>
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+    </>
   );
 }
 

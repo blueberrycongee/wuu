@@ -21,7 +21,6 @@ import { ENABLE_REMOTE_CONTROL } from "../FeatureFlags";
 export function createApplicationSettingsControls(options: {
   host?: PluginHost;
   controller?: WorkbenchController;
-  connectorLogin?: { request(name: string): Promise<void>; getPending(): string | undefined; take(): Promise<import("../../shared/protocol").MCPServerStatus | undefined>; cancel(): void; start(): Promise<import("../../shared/protocol").MCPLoginStartResult>; poll(): Promise<import("../../shared/protocol").MCPLoginPollResult>; retry(): Promise<void> };
 } = {}): ApplicationSettingsControlsV1 {
   let skinSource: ReturnType<typeof getShellSkins> | undefined;
   let skinView: ReturnType<ApplicationSettingsControlsV1["getShellSkins"]>;
@@ -29,15 +28,6 @@ export function createApplicationSettingsControls(options: {
   const controller = () => { if (!options.controller) throw new Error("Application workbench provider is unavailable"); return options.controller; };
   const diagnostics = new WeakMap<readonly unknown[], readonly SettingsControlsDiagnosticV1[]>();
   return {
-    ...(options.connectorLogin ? {
-      requestMCPConnectorLogin: (name: string) => options.connectorLogin!.request(name),
-      getPendingMCPConnectorLogin: () => options.connectorLogin!.getPending(),
-      takeMCPConnectorLogin: () => options.connectorLogin!.take(),
-      cancelMCPConnectorLogin: () => options.connectorLogin!.cancel(),
-      startMCPConnectorLogin: () => options.connectorLogin!.start(),
-      pollMCPConnectorLogin: () => options.connectorLogin!.poll(),
-      retryMCPConnectorLogin: () => options.connectorLogin!.retry(),
-    } : {}),
     capabilities: Object.freeze({
       systemPermissions: window.wuu?.platform === "darwin" && typeof window.wuu?.getSystemPermissions === "function",
       permissionGuide: typeof window.wuu?.onSystemPermissionGuideChanged === "function",
@@ -315,10 +305,6 @@ export function createApplicationSettingsControls(options: {
     getMCPAuthStatus: async (...args) => {
       if (typeof window.wuu?.getMCPAuthStatus !== "function") throw new Error("Settings operation unavailable: getMCPAuthStatus");
       return window.wuu.getMCPAuthStatus(...args);
-    },
-    refreshMCPIdentity: async (...args) => {
-      if (typeof window.wuu?.refreshMCPIdentity !== "function") throw new Error("Settings operation unavailable: refreshMCPIdentity");
-      return window.wuu.refreshMCPIdentity(...args);
     },
     finishMCPAuth: async (...args) => {
       if (typeof window.wuu?.finishMCPAuth !== "function") throw new Error("Settings operation unavailable: finishMCPAuth");

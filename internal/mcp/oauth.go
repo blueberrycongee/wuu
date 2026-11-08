@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,12 +94,11 @@ type OAuthFinishOptions struct {
 }
 
 type OAuthStatus struct {
-	AuthorizationID string          `json:"authorization_id,omitempty"`
-	Identity        *IdentityStatus `json:"identity,omitempty"`
-	ServerID        string          `json:"server_id"`
-	Authenticated   bool            `json:"authenticated"`
-	ExpiresAt       time.Time       `json:"expires_at,omitempty"`
-	Scopes          []string        `json:"scopes,omitempty"`
+	AuthorizationID string    `json:"authorization_id,omitempty"`
+	ServerID        string    `json:"server_id"`
+	Authenticated   bool      `json:"authenticated"`
+	ExpiresAt       time.Time `json:"expires_at,omitempty"`
+	Scopes          []string  `json:"scopes,omitempty"`
 }
 
 type protectedResourceMetadata struct {
@@ -135,7 +135,6 @@ type pendingOAuth struct {
 type storedOAuthToken struct {
 	Refresh           *oauthRefreshAttempt `json:"refresh,omitempty"`
 	GrantID           string               `json:"grant_id,omitempty"`
-	Identity          *storedIdentity      `json:"identity,omitempty"`
 	LoginGeneration   string               `json:"login_generation,omitempty"`
 	CredentialVersion string               `json:"credential_version,omitempty"`
 	AccessToken       string               `json:"access_token,omitempty"`
@@ -195,7 +194,6 @@ func (m *OAuthManager) Start(ctx context.Context, options OAuthStartOptions) (OA
 				}
 			}
 			token.LoginGeneration = generation
-			token.Identity = nil
 			return json.Marshal(token)
 		})
 	})
@@ -1121,4 +1119,20 @@ func randomURLToken(size int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+func (m *OAuthManager) tokenStatus(ctx context.Context, cfg ServerConfig) (OAuthStatus, error) {
+	token, err := m.loadResourceToken(ctx, cfg.Name, cfg.URL)
+	if errors.Is(err, credentialstore.ErrNotFound) || errors.Is(err, ErrOAuthResourceMismatch) {
+		return OAuthStatus{ServerID: cfg.Name}, nil
+	}
+	if err != nil {
+		return OAuthStatus{}, err
+	}
+	status := oauthStatus(cfg.Name, token)
+	if token.GrantID != "" {
+		sum := sha256.Sum256([]byte(token.GrantID))
+		status.AuthorizationID = hex.EncodeToString(sum[:])
+	}
+	return status, nil
 }

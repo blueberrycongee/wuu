@@ -1698,8 +1698,6 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.dispatchOffIngress(ctx, req, func() error { return s.handleMCPRefresh(ctx, req) })
 	case MethodMCPAuthStart:
 		return s.dispatchOffIngress(ctx, req, func() error { return s.handleMCPAuthStart(ctx, req) })
-	case MethodMCPIdentityRefresh:
-		return s.dispatchOffIngress(ctx, req, func() error { return s.handleMCPIdentityRefresh(ctx, req) })
 	case MethodMCPAuthStatus:
 		return s.handleMCPAuthStatus(ctx, req)
 	case MethodMCPAuthFinish:

@@ -23,7 +23,7 @@ process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP = "1";
 delete process.env.ELECTRON_RENDERER_URL;
 fs.writeFileSync(path.join(home, "config.json"), JSON.stringify({
   default_provider: "fixture",
-  composition: { version: 3, profile: "desktop", patches: [{ modules: { "wuu.credentials.os": false, "wuu.credentials.file": true, "account-connectors": true } }], services: [{ service: "state.credentials", major: 1, provider: "wuu.credentials.file" }] },
+  composition: { version: 3, profile: "desktop", patches: [{ modules: { "wuu.credentials.os": false, "wuu.credentials.file": true } }], services: [{ service: "state.credentials", major: 1, provider: "wuu.credentials.file" }] },
   providers: { fixture: { type: "openai-compatible", base_url: "http://127.0.0.1:9/v1", api_key: "fixture-only", model: "fixture" } },
   engines: Object.fromEntries(["codex", "claude", "cursor", "devin", "dsh", "grok", "hermes", "pi", "opencode", "antigravity"].map(id => [id, { enabled: false }])),
 }));

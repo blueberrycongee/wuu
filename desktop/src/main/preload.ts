@@ -159,6 +159,15 @@ const api: WuuDesktopApi = {
   getDesktopUpdateState: () => ipcRenderer.invoke("wuu:desktop-update-state"),
   downloadDesktopUpdate: () => ipcRenderer.invoke("wuu:desktop-update-download"),
   restartDesktopUpdate: () => ipcRenderer.invoke("wuu:desktop-update-restart"),
+  checkDesktopUpdate: () => ipcRenderer.invoke("wuu:desktop-update-check"),
+  getDesktopPreferences: () => ipcRenderer.invoke("wuu:desktop-preferences-get"),
+  updateDesktopPreferences: patch => ipcRenderer.invoke("wuu:desktop-preferences-update", patch),
+  onDesktopPreferencesChanged: handler => {
+    const listener = (_event: Electron.IpcRendererEvent, preferences: Parameters<typeof handler>[0]) => handler(preferences);
+    ipcRenderer.on("wuu:desktop-preferences-changed", listener);
+    return () => ipcRenderer.removeListener("wuu:desktop-preferences-changed", listener);
+  },
+  openDesktopFolder: folder => ipcRenderer.invoke("wuu:desktop-folder-open", folder),
   onDesktopUpdateChanged: handler => {
     const listener = (_event: Electron.IpcRendererEvent, state: Parameters<typeof handler>[0]) => handler(state);
     ipcRenderer.on("wuu:desktop-update-changed", listener);
@@ -388,7 +397,6 @@ const api: WuuDesktopApi = {
   refreshMCPServer: (name: string) => ipcRenderer.invoke("wuu:mcp-refresh", name),
   startMCPAuth: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-start", name),
   getMCPAuthStatus: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-status", name),
-  refreshMCPIdentity: (name: string) => ipcRenderer.invoke("wuu:mcp-identity-refresh", name),
   finishMCPAuth: (name: string, state: string, code: string) =>
     ipcRenderer.invoke("wuu:mcp-auth-finish", name, state, code),
   removeMCPAuth: (name: string) => ipcRenderer.invoke("wuu:mcp-auth-remove", name),

@@ -1714,6 +1714,32 @@ describe("Composer send control", () => {
     expect(onSend).toHaveBeenLastCalledWith("send with ctrl");
   });
 
+  it("keeps plain Enter for new lines when the send shortcut is Cmd/Ctrl+Enter", async () => {
+    const preferences = { notify_turn_completed: true, notify_questions: true, notification_sound: true, auto_check_updates: true, send_shortcut: "mod_enter" as const };
+    let publish: ((next: typeof preferences | (Omit<typeof preferences, "send_shortcut"> & { send_shortcut: "enter" })) => void) | undefined;
+    window.wuu = {
+      ...window.wuu,
+      getDesktopPreferences: async () => preferences,
+      onDesktopPreferencesChanged: handler => { publish = handler; return () => {}; },
+    };
+    const onSend = vi.fn();
+    renderComposer({ prompt: "draft", onSend });
+    await act(async () => { await Promise.resolve(); });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+
+    act(() => {
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(onSend).not.toHaveBeenCalled();
+
+    act(() => {
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    act(() => publish?.({ ...preferences, send_shortcut: "enter" }));
+  });
+
   it("does not queue with Cmd/Ctrl+Enter when there is no running draft", () => {
     const onQueue = vi.fn();
     renderComposer({ prompt: "", running: true, onQueue });
