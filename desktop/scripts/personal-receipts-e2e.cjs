@@ -166,12 +166,12 @@ app.whenReady().then(async () => {
     await win.loadFile(path.resolve(__dirname, "../out/personal-fixture/index.html"), { query: { mcp: "1", sendScenario: "retry-same-id", theme, font } });
     await until(() => document.querySelector('.mosaic-main .composer-plus-button'));
     await evaluate(() => document.querySelector('.mosaic-main .composer-plus-button').click());
-    await until(() => document.querySelector('[data-plugin-key="mcp:plugin.account-connectors.notion"]'));
-    assert.equal(await evaluate(() => document.querySelector('.composer-plugin-choices')?.textContent.includes('Coding private connection') ?? false), false);
+    await until(() => document.querySelector('[data-plugin-key="mcp:shared-docs"]'));
+    assert.equal(await evaluate(() => document.querySelector('.composer-plugin-choices')?.textContent.includes('coding-private-server') ?? false), false);
     const scope = await evaluate(() => window.__mcpFixture.contexts);
     assert(scope.some(context => context?.kind === 'user' && context.user_space_id === 'local' && context.product_domain === 'personal'));
     await capture(`mcp-${appearance}-menu`);
-    await evaluate(() => document.querySelector('[data-plugin-key="mcp:plugin.account-connectors.notion"]').click());
+    await evaluate(() => document.querySelector('[data-plugin-key="mcp:shared-docs"]').click());
     await until(() => document.querySelector('.mosaic-main [data-plugin-token]'));
     await capture(`mcp-${appearance}-draft`);
     await evaluate(() => document.querySelector('.mosaic-main .composer-send-button').click());

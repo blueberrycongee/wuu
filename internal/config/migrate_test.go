@@ -183,7 +183,7 @@ func TestLoadFrom_MigratesUnderWuuHomeOverride(t *testing.T) {
 // explicit enable is carried over; user definitions and other fields win.
 func TestMigrateAccountConnectorServers(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	source := `{"default_provider":"main","mcp_servers":{
+	source := `{"default_provider":"main","composition":{"version":3,"patches":[{"modules":{"account-connectors":true,"other":true}}],"modules":["account-connectors","base"]},"mcp_servers":{
 		"plugin.account-connectors.notion":{"enabled":true,"tool_timeout_ms":90000},
 		"plugin.account-connectors.linear":{"enabled":false},
 		"plugin.account-connectors.sentry":{"enabled":true},
@@ -200,6 +200,9 @@ func TestMigrateAccountConnectorServers(t *testing.T) {
 	}
 	if cfg.DefaultProvider != "main" {
 		t.Fatal("unrelated settings changed")
+	}
+	if patch := cfg.Composition.Patches[0].Modules; len(patch) != 1 || !patch["other"] || cfg.Composition.Modules == nil || len(*cfg.Composition.Modules) != 1 || (*cfg.Composition.Modules)[0] != "base" {
+		t.Fatalf("removed package still selected: %+v", cfg.Composition)
 	}
 	if got := cfg.MCPServers["notion"]; got.URL != "https://mcp.notion.com/mcp" || got.Transport != "http" || got.ToolTimeoutMS != 90000 || got.Enabled != nil {
 		t.Fatalf("notion = %+v", got)
