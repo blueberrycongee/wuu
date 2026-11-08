@@ -18,7 +18,7 @@ export async function activate(api) {
     id: "design.studio",
     title: "Design",
     icon: "layout-grid",
-    defaultRegion: "primary",
+    defaultRegion: "auxiliary",
     persistence: "durable",
     render: (props) => api.react.createElement(Studio, { api, ...props }),
   });
@@ -106,6 +106,8 @@ const EN_STRINGS = {
   "design.viewport.aria": "Viewport",
   "design.newTab.failed": "Could not open a conversation for the revision brief.",
   "design.removeComment": "Remove comment",
+  "design.sheet.close": "Close panel",
+  "design.sheet.collapse": "Collapse panel",
   "design.retry": "Try again",
   "design.save.failed": "The page could not be saved.",
   "design.apply.failed": "That edit could not be applied to the page.",
@@ -170,6 +172,8 @@ const ZH_STRINGS = {
   "design.viewport.aria": "视口",
   "design.newTab.failed": "无法为修订说明打开对话。",
   "design.removeComment": "删除评论",
+  "design.sheet.close": "关闭面板",
+  "design.sheet.collapse": "收起面板",
   "design.retry": "重试",
   "design.save.failed": "页面未能保存。",
   "design.apply.failed": "修改未能应用到页面。",
@@ -257,6 +261,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   const [bridgeLost, setBridgeLost] = useState(false);
   const [revertArmed, setRevertArmed] = useState(false);
   const [frameKey, setFrameKey] = useState(0);
+  const [collapsed, setCollapsed] = useState(false);
 
   const frameRef = useRef(null);
   const bridgeRef = useRef({ nonce: "", ready: false, pending: new Map(), seq: 0 });
@@ -459,6 +464,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   }, [comments, storageSet, command]);
 
   useEffect(() => { setTextDraft(selected?.text ?? ""); }, [selected?.selector]);
+  useEffect(() => { setCollapsed(false); }, [mode, selected?.selector]);
 
   const url = base && path ? `${base}/${path}` : "";
 
@@ -574,8 +580,9 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   }, [applyTextNow]);
 
   const frameWidth = VIEWPORTS.find((item) => item.id === viewport)?.width ?? null;
+  const sheetOpen = Boolean(selected) || (mode === "comment" && comments.length > 0);
   const hintText = bridgeLost ? t("design.bridge.lost")
-    : mode === "comment" && bridgeReady ? t("design.comment.hint")
+    : mode === "comment" && bridgeReady && !sheetOpen ? t("design.comment.hint")
     : null;
 
   // ---- render -----------------------------------------------------------------
@@ -609,9 +616,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
         value: path, disabled: pages.length === 0,
         onChange: (event) => choosePage(event.currentTarget.value),
       }, pages.map((page) => h("option", { key: page.path, value: page.path }, page.path))),
-      h("span", { className: "plugin-design-divider" }),
       h(ViewportMenu, { h, React, viewport, onPick: setViewport, t }),
-      h("span", { className: "plugin-design-divider" }),
       h("div", { className: "plugin-design-tools", role: "group", "aria-label": "Canvas mode" },
         h("button", {
           type: "button", className: "plugin-design-iconbutton", "data-active": mode === "edit" || undefined,
@@ -637,18 +642,6 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
             .catch(() => window.open(url, "_blank", "noopener"));
         },
       }, h(Glyph, { h, d: ICON_PATHS.external })),
-      h(Button, {
-        variant: "ghost", disabled: (!dirty && !conflict) || Boolean(busy),
-        "data-armed": revertArmed || undefined,
-        onClick: () => {
-          if (!revertArmed) { setRevertArmed(true); setTimeout(() => setRevertArmed(false), 2600); return; }
-          reload();
-        },
-      }, revertArmed ? t("design.revert.confirm") : t("design.revert")),
-      h(Button, {
-        variant: "secondary", disabled: comments.length === 0 || Boolean(busy),
-        onClick: () => void sendToAgent(),
-      }, h(Glyph, { h, d: ICON_PATHS.send }), " ", t("design.send")),
       h(Button, {
         variant: "primary", disabled: !dirty || Boolean(busy) || !bridgeReady,
         onClick: () => void save(),
@@ -689,32 +682,58 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
               h(Button, { variant: "secondary", onClick: reload }, t("design.conflict.reload")),
               h(Button, { variant: "danger", onClick: () => void save(true) }, t("design.conflict.force")))),
         ) : null),
-      (mode === "comment" || selected) ? h("aside", { className: "plugin-design-inspector", "data-mode": mode },
-        mode === "comment" ? commentsSection() : null,
-        selected ? h(React.Fragment, null,
-          h("section", { className: "plugin-design-section" },
-            h("div", { className: "plugin-design-elemhead" },
-              h("span", { className: "plugin-design-tag" }, selected.tag),
-              h("span", { className: "plugin-design-rect" }, `${selected.rect.w} × ${selected.rect.h} px`)),
-            h("code", { className: "plugin-design-selector", title: selected.selector }, selected.selector),
-            (TEXTUAL.test((selected.tag ?? "").toUpperCase().split(/[.#]/)[0]) || selected.text)
-              ? h("div", { className: "plugin-design-field" },
-                  h(TextArea, {
-                    label: t("design.inspector.text"), value: textDraft, rows: 3,
-                    onChange: (event) => changeText(event.currentTarget.value),
-                    onBlur: () => { clearTimeout(textTimerRef.current); applyTextNow(textDraft); },
-                  }))
-              : null,
-          ),
-          h("section", { className: "plugin-design-section" },
-            h("h2", { className: "plugin-design-section-title" }, t("design.inspector.styles")),
-            h(StyleRows, { h, React, t, selected, onApply: applyStyle })),
-        ) : null,
-        mode === "comment" ? null : commentsSection()) : null));
+      sheetOpen ? h("section", { className: "plugin-design-sheet", "data-collapsed": collapsed || undefined },
+        h("header", { className: "plugin-design-sheet-head" },
+          mode === "comment"
+            ? h("span", { className: "plugin-design-sheet-title" }, t("design.comment.title"),
+                comments.length ? h("span", { className: "plugin-design-count" }, comments.length) : null)
+            : h(React.Fragment, null,
+                h("span", { className: "plugin-design-tag" }, selected.tag),
+                h("span", { className: "plugin-design-rect" }, `${selected.rect.w} × ${selected.rect.h}`)),
+          h("button", {
+            type: "button", className: "plugin-design-iconbutton", "aria-expanded": !collapsed,
+            title: t("design.sheet.collapse"), "aria-label": t("design.sheet.collapse"),
+            onClick: () => setCollapsed((value) => !value),
+          }, h(Glyph, { h, d: ICON_PATHS.chevron })),
+          h("button", {
+            type: "button", className: "plugin-design-iconbutton",
+            title: t("design.sheet.close"), "aria-label": t("design.sheet.close"),
+            onClick: () => { if (mode === "comment") setMode("edit"); else command("deselect"); },
+          }, h(Glyph, { h, d: ICON_PATHS.x }))),
+        collapsed ? null : h("div", { className: "plugin-design-sheet-body" },
+          mode === "comment" ? commentsSection()
+            : h(React.Fragment, null,
+                h("section", { className: "plugin-design-section" },
+                  h("code", { className: "plugin-design-selector", title: selected.selector }, selected.selector),
+                  (TEXTUAL.test((selected.tag ?? "").toUpperCase().split(/[.#]/)[0]) || selected.text)
+                    ? h("div", { className: "plugin-design-field" },
+                        h(TextArea, {
+                          label: t("design.inspector.text"), value: textDraft, rows: 3,
+                          onChange: (event) => changeText(event.currentTarget.value),
+                          onBlur: () => { clearTimeout(textTimerRef.current); applyTextNow(textDraft); },
+                        }))
+                    : null,
+                ),
+                h("section", { className: "plugin-design-section" },
+                  h("h2", { className: "plugin-design-section-title" }, t("design.inspector.styles")),
+                  h(StyleRows, { h, React, t, selected, onApply: applyStyle })))),
+        collapsed || (ops.length === 0 && comments.length === 0) ? null : h("footer", { className: "plugin-design-sheet-foot" },
+          ops.length > 0 || conflict ? h(Button, {
+            variant: "ghost", disabled: (!dirty && !conflict) || Boolean(busy),
+            "data-armed": revertArmed || undefined,
+            onClick: () => {
+              if (!revertArmed) { setRevertArmed(true); setTimeout(() => setRevertArmed(false), 2600); return; }
+              reload();
+            },
+          }, revertArmed ? t("design.revert.confirm") : t("design.revert")) : null,
+          h("span", { className: "plugin-design-sheet-spacer" }),
+          comments.length > 0 ? h(Button, {
+            variant: "secondary", disabled: comments.length === 0 || Boolean(busy),
+            onClick: () => void sendToAgent(),
+          }, h(Glyph, { h, d: ICON_PATHS.send }), " ", t("design.send")) : null)) : null));
 
   function commentsSection() {
     return h("section", { className: "plugin-design-section plugin-design-comments" },
-      h("h2", { className: "plugin-design-section-title" }, t("design.comment.title"), comments.length ? h("span", { className: "plugin-design-count" }, comments.length) : null),
       comments.length === 0
         ? h("p", { className: "plugin-design-muted" }, t("design.comment.empty"))
         : h("ol", { className: "plugin-design-comment-list" },
@@ -987,6 +1006,7 @@ const ICON_PATHS = {
   send: "M4.5 11.5L20 4l-4.5 16-3.4-6.6L4.5 11.5zM12.1 13.4L20 4",
   trash: "M4.5 6.5h15M9.5 6V4.5A1.5 1.5 0 0 1 11 3h2a1.5 1.5 0 0 1 1.5 1.5V6m3 0l-.8 12.2a2 2 0 0 1-2 1.8H9.3a2 2 0 0 1-2-1.8L6.5 6.5M10 10.5v6M14 10.5v6",
   chevron: "M7 10l5 5 5-5",
+  x: "M6 6l12 12M18 6L6 18",
   check: "M5 12.5l4.5 4.5L19 7.5",
   alignLeft: "M4.5 6h15M4.5 10.5h9M4.5 15h15M4.5 19.5h9",
   alignCenter: "M4.5 6h15M7.5 10.5h9M4.5 15h15M7.5 19.5h9",
@@ -1029,7 +1049,7 @@ const DESIGN_CSS = `
 .plugin-design-topbar label:has(> .plugin-design-picker) { display: inline-flex; align-items: center; margin: 0; font-size: 0; }
 .plugin-design-picker { font-size: var(--wuu-font-size-ui, 15px); max-width: 190px; min-width: 0; }
 .plugin-design-page-picker { max-width: 230px; }
-.plugin-design-divider { flex: none; width: 1px; height: 18px; background: var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.25))); margin-inline: var(--space-1, 4px); }
+
 .plugin-design-topbar-spacer { flex: 1; min-width: 8px; }
 .plugin-design-tools { flex: none; display: inline-flex; align-items: center; gap: 2px; }
 
@@ -1076,10 +1096,10 @@ const DESIGN_CSS = `
 .plugin-design-menu-item[data-active] { color: var(--ink); font-weight: 550; }
 .plugin-design-menu-item svg:last-child { margin-inline-start: auto; width: 13px; height: 13px; }
 .plugin-design-menu-item span { flex: 1; }
-.plugin-design-topbar .plugin-ui-button svg,
-.plugin-design-topbar button[data-variant] svg { width: 15px; height: 15px; flex: none; }
-.plugin-design-topbar button[data-variant] { display: inline-flex; align-items: center; gap: 6px; }
-.plugin-design-topbar [data-armed] { color: var(--wuu-color-danger, #c33); }
+.plugin-design .plugin-ui-button svg,
+.plugin-design button[data-variant] svg { width: 15px; height: 15px; flex: none; }
+.plugin-design button[data-variant] { display: inline-flex; align-items: center; gap: 6px; }
+.plugin-design [data-armed] { color: var(--wuu-color-danger, #c33); }
 .plugin-design button[disabled] { opacity: .4; filter: saturate(.2); }
 
 /* -- body -- */
@@ -1128,12 +1148,36 @@ const DESIGN_CSS = `
 .plugin-design-conflict-card p { color: var(--ink-soft); font-size: .92em; line-height: 1.55; margin: var(--space-2, 8px) 0 var(--space-4, 16px); }
 .plugin-design-conflict-actions { display: flex; gap: var(--space-2, 8px); justify-content: flex-end; }
 
-/* -- inspector -- */
-.plugin-design-inspector {
-  flex: none; width: 288px; min-height: 0; overflow-y: auto;
-  border-left: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.2)));
-  background: var(--wuu-color-surface, transparent);
+/* -- floating sheet -- */
+.plugin-design-sheet {
+  position: absolute; z-index: 6; left: 10px; right: 10px; bottom: 10px;
+  display: flex; flex-direction: column; max-height: min(64%, 560px);
+  border-radius: 14px;
+  border: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.22)));
+  background: color-mix(in srgb, var(--wuu-color-surface-elevated, var(--paper, #fff)) 92%, transparent);
+  backdrop-filter: blur(16px) saturate(1.15);
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  box-shadow: 0 18px 48px -14px rgba(15,23,42,.28), 0 3px 12px rgba(15,23,42,.08);
+  overflow: hidden;
 }
+.plugin-design-sheet-head {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  min-height: 40px; padding: 0 6px 0 12px;
+}
+.plugin-design-sheet-head [aria-expanded] { margin-inline-start: auto; }
+.plugin-design-sheet-head [aria-expanded] svg { transition: transform .16s ease; }
+.plugin-design-sheet-head [aria-expanded="true"] svg { transform: rotate(180deg); }
+.plugin-design-sheet-title {
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+  font-size: .8em; font-weight: 650; letter-spacing: .02em; color: var(--ink-soft);
+}
+.plugin-design-sheet-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.plugin-design-sheet-foot {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 2px 10px 10px;
+}
+.plugin-design-sheet-spacer { flex: 1; }
+.plugin-design-sheet-foot button { font-size: .85em; }
 .plugin-design-section { padding: var(--space-4, 16px) var(--space-3, 12px); }
 .plugin-design-section + .plugin-design-section { padding-top: var(--space-2, 8px); }
 .plugin-design-section-title {
@@ -1141,7 +1185,6 @@ const DESIGN_CSS = `
   margin: 0 0 var(--space-2, 8px); font-size: .74em; font-weight: 650;
   letter-spacing: .07em; text-transform: uppercase; color: var(--ink-tertiary);
 }
-.plugin-design-elemhead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2, 8px); margin-block-end: 4px; }
 .plugin-design-tag {
   display: inline-block; padding: 3px 8px; border-radius: var(--radius-xs, 6px);
   background: var(--wuu-color-surface-muted, rgba(127,127,127,.14));
@@ -1232,13 +1275,12 @@ const DESIGN_CSS = `
 @container (max-width: 960px) {
   .plugin-design-page-picker { max-width: 170px; }
   .plugin-design-viewport-name { display: none; }
-  .plugin-design-inspector { width: 252px; }
 }
-@container (max-width: 720px) {
-  .plugin-design-inspector {
-    position: absolute; right: 0; top: 0; bottom: 0; z-index: 5;
-    width: 280px; box-shadow: -16px 0 40px rgba(0,0,0,.18);
-    background: var(--wuu-color-surface-elevated, var(--paper, #fff));
-  }
+@container (max-width: 560px) {
+  .plugin-design-topbar { gap: 5px; padding-inline: 8px; }
+  .plugin-design-picker { max-width: 132px; }
+  .plugin-design-page-picker { max-width: 118px; }
+  .plugin-design-stage { padding: var(--space-3, 12px); }
+  .plugin-design-stage[data-flush] { padding: 0; }
 }
 `;
