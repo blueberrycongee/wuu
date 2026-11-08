@@ -4338,6 +4338,14 @@
   opacity: 1;
 }
 
+/* A paused closed body may never have computed a style to transition from. */
+@starting-style {
+  .turn-reasoning-fold[open] > .turn-reasoning-body {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
 .turn-reasoning-body-inner {
   min-height: 0;
   overflow: hidden;
