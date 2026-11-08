@@ -1135,9 +1135,9 @@
 
 /*
  * File page tile (sent user messages): a folded-corner page the size of the
- * pasted-text page — 72x72 in the shared media row. The kind/size line sits
- * under the fold, two rules stand in for content, and the filename's first
- * line is pinned to the foot with the extension kept visible.
+ * pasted-text page — 72x72 in the shared media row. The filename itself is
+ * the page's content, wrapped in small type across up to three lines; the
+ * kind/size line stays out of the tile and lives on the title tooltip.
  */
 .message-files-tile .message-file {
   position: relative;
@@ -1145,7 +1145,7 @@
   width: 72px;
   height: 72px;
   max-width: none;
-  padding: 7px 8px 5px;
+  padding: 10px 9px 7px;
   flex-direction: column;
   gap: 0;
   border: 2px solid var(--hairline-strong);
@@ -1157,28 +1157,8 @@
   overflow: hidden;
 }
 
-.message-files-tile .message-file::before,
-.message-files-tile .message-file::after {
-  position: absolute;
-  left: 9px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--hairline-strong);
-  content: "";
-}
-
-.message-files-tile .message-file::before {
-  top: 29px;
-  right: 9px;
-}
-
-.message-files-tile .message-file::after {
-  top: 38px;
-  width: 60%;
-  right: auto;
-}
-
-.message-files-tile .message-file > .icon {
+.message-files-tile .message-file > .icon,
+.message-files-tile .message-file-meta {
   display: none;
 }
 
@@ -1186,21 +1166,23 @@
   display: contents;
 }
 
-.message-files-tile .message-file-meta {
-  order: -1;
-  align-self: center;
-  margin-top: 4px;
-  color: var(--ink-muted);
-  font-size: 9px;
-  font-weight: var(--weight-semibold);
-  letter-spacing: 0.04em;
-}
-
 .message-files-tile .message-file-name {
-  margin-top: auto;
+  display: -webkit-box;
+  overflow: hidden;
   color: var(--ink-soft);
   font-size: 9px;
-  line-height: 1.4;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.message-files-tile .message-file-name-stem,
+.message-files-tile .message-file-name-extension {
+  display: inline;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .message-attachment-more,
