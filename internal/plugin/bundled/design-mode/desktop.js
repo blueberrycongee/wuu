@@ -19,7 +19,6 @@ export async function activate(api) {
     title: "Design",
     icon: "layout-grid",
     defaultRegion: "auxiliary",
-    persistence: "durable",
     render: (props) => api.react.createElement(Studio, { api, ...props }),
   });
 }
