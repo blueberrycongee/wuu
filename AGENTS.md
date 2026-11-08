@@ -56,6 +56,9 @@ machine-specific setup in user-level configuration.
 - Base repository claims on inspected code, tests, configuration, and history.
   For third-party behavior, prefer official sources matching the relevant version.
   Identify uncertainty and conflicts rather than presenting assumptions as facts.
+- Bound probes, discovery scans, and catalog refreshes, and dispose of their
+  temporary sessions, so a slow or stalled provider cannot hold up unrelated
+  work or block admission.
 - Review the relevant scope systematically. Report concrete bugs, security issues,
   and logic errors with their impact and evidence. Do not invent findings or
   substitute cosmetic suggestions for defects. Say "no issues found" when appropriate.
@@ -105,7 +108,9 @@ machine-specific setup in user-level configuration.
 ## UI design and visual acceptance
 
 - Use the [design system](docs/en/project/design-system.md) for color, type,
-  spacing, radius, and elevation roles. Use
+  spacing, radius, and elevation roles; the
+  [desktop UI maintenance](docs/en/project/desktop-ui.md) guide for surface,
+  interaction, and motion contracts; and
   [desktop i18n maintenance](desktop/src/renderer/i18n/README.md) for UI copy,
   locale formatting, and voice.
 - Use shared components and design variables for equivalent controls. Preserve
@@ -152,6 +157,9 @@ machine-specific setup in user-level configuration.
   for the same failure. Follow the [error feedback contract](docs/en/customize/ui-sdk.md#error-feedback).
 - Motion explains changes and provides feedback. Keep frequent actions responsive,
   avoid layout jumps and moving click targets, and respect reduced-motion settings.
+- Reopening or refreshing a rendered view restores its settled state —
+  reading position, folds, and follow mode — without replayed entrances,
+  placeholder flicker, or a cleared-and-reloaded list.
 - Before declaring a UI change complete, walk the primary task as a first-time
   user, using only what the interface shows. Fix blockers, unclear next steps,
   and broken handoffs between screens; add a hint only where the interface
