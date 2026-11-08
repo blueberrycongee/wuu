@@ -170,7 +170,12 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 		if params.Instructions != "" {
 			return pluginhost.SessionCreateResult{}, errors.New("seed initialization cannot use instructions")
 		}
-		if params.Provider == "" || params.Model == "" {
+		// Provider/model are written as a pair; omitting them is allowed only
+		// when the session inherits its selection from a parent session.
+		if (params.Provider == "") != (params.Model == "") {
+			return pluginhost.SessionCreateResult{}, errors.New("seed initialization requires provider and model together")
+		}
+		if params.Provider == "" && params.ParentSessionID == "" {
 			return pluginhost.SessionCreateResult{}, errors.New("seed initialization requires provider and model")
 		}
 	} else if params.Seed != nil {

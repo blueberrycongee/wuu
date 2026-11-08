@@ -1628,3 +1628,58 @@ func TestPluginClientSelectionSuppliesExactToolGuidance(t *testing.T) {
 		t.Fatal("selected tool identity absent from model context")
 	}
 }
+
+func TestPluginSessionSeedCreateWithExternalSourceInheritsParentRuntime(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse("done")})
+	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	if _, err := rt.Sessions.CreateWithMetadata("parent", rt.RootDir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.SetRuntimeSelection("parent", session.RuntimeSelection{Provider: "inherited-provider", Model: "inherited-model"}); err != nil {
+		t.Fatal(err)
+	}
+	seed := &pluginhost.SessionContextSeed{Version: 1, Body: "imported shared context", Source: pluginhost.SessionHistorySnapshot{SessionID: "remote-source", ThroughSeq: 0}, Provenance: pluginhost.SessionSeedProvenance{Producer: "plugin:session-share"}}
+	ctx := pluginInvocationContext(t, rt, context.Background())
+	create := pluginhost.SessionCreateParams{RequestID: "share-import:abc", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextSourceSeed, ParentSessionID: "parent", Seed: seed}
+	created, err := srv.createPluginSession(ctx, "session-share", create)
+	if err != nil {
+		t.Fatalf("external-source seed create: %v", err)
+	}
+	saved, found, err := rt.Sessions.Find(created.SessionID)
+	if err != nil || !found {
+		t.Fatalf("find imported session: found=%v err=%v", found, err)
+	}
+	if saved.Provider != "inherited-provider" || saved.Model != "inherited-model" {
+		t.Fatalf("imported session selection = provider %q model %q", saved.Provider, saved.Model)
+	}
+	page, err := rt.Sessions.ReadHistoryPage(created.SessionID, 1, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Records) != 1 || page.Records[0].Name != "context_seed" || page.Records[0].RelatedSessionID != "remote-source" {
+		t.Fatalf("imported history = %+v", page.Records)
+	}
+	again, err := srv.createPluginSession(pluginInvocationContext(t, rt, context.Background()), "session-share", create)
+	if err != nil || again.Created || again.SessionID != created.SessionID {
+		t.Fatalf("replayed import = %+v, %v", again, err)
+	}
+}
+
+func TestPluginSessionSeedCreateSelectionAdmission(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse("done")})
+	rt.PluginSessionRouter = runtime.NewPluginSessionRouter()
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	seed := &pluginhost.SessionContextSeed{Version: 1, Body: "imported shared context", Source: pluginhost.SessionHistorySnapshot{SessionID: "remote-source", ThroughSeq: 0}, Provenance: pluginhost.SessionSeedProvenance{Producer: "plugin:session-share"}}
+	ctx := pluginInvocationContext(t, rt, context.Background())
+	_, err := srv.createPluginSession(ctx, "session-share", pluginhost.SessionCreateParams{RequestID: "seed-orphan", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextSourceSeed, Seed: seed})
+	if err == nil || !strings.Contains(err.Error(), "requires provider and model") {
+		t.Fatalf("orphan seed error = %v", err)
+	}
+	_, err = srv.createPluginSession(ctx, "session-share", pluginhost.SessionCreateParams{RequestID: "seed-half", Visibility: pluginhost.SessionVisibilityUser, ContextSource: pluginhost.SessionContextSourceSeed, Provider: "only-provider", Seed: seed})
+	if err == nil || !strings.Contains(err.Error(), "provider and model together") {
+		t.Fatalf("half pair error = %v", err)
+	}
+}

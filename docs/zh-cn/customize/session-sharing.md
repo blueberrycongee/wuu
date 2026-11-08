@@ -77,8 +77,11 @@ wuu session-share revoke '{"thread_id":"THREAD","share_id":"SHARE"}'
 内置 `session-share` 插件通过 `host.session.create`（`context_source:"seed"`）
 把这样的文档作为新用户可见会话的上下文种子导入。`import_shared_context`
 工具校验文档，并在上下文种子预算内保留最新的条目，被省略的条目会写进
-seed 正文；`/import-share` 命令引导代理走通这个流程。插件只导入用户提供的
-文档——创建和读取授权仍然需要经过认证的 `session/share/*` 方法。
+seed 正文；`/import-share` 命令引导代理走通这个流程。创建的会话是调用
+会话的子会话，继承其 provider 和 model；来源会话仅作为外部 provenance
+记录（`through_seq:0`），不会在本机的历史记录中解析。重复相同的导入会
+复用已创建的会话。插件只导入用户提供的文档——创建和读取授权仍然需要
+经过认证的 `session/share/*` 方法。
 
 ## 替换提供者
 

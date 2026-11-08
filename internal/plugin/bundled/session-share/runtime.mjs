@@ -839,14 +839,25 @@ function isRuntimeRequest(value) {
 
 // plugins/session-share/src/index.ts
 var promptCapability = "agent.system_prompt.section";
+var externalSeedFeature = "session.seed.external_source.v1";
 var maxSeedBodyBytes = 23 * 1024;
 var maxDocumentItems = 2e3;
-var maxDocumentBytes = 4 * 1024 * 1024;
+var maxProjectionBytes = 2 * 1024 * 1024;
+var maxAttachmentBytes = 8 * 1024 * 1024;
+var maxDocumentInputBytes = 18 * 1024 * 1024;
 var maxNameBytes = 120;
+var maxIntentBytes = 4 * 1024;
+var maxSourceSessionBytes = 256;
 var digest = (value) => createHash("sha256").update(value).digest("hex");
 var textResult = (value) => ({ result: { content: [{ type: "text", text: JSON.stringify(value) }] } });
 var objectSchema = (properties = {}, ...required) => ({ type: "object", properties, required });
 var stringField = (description) => ({ type: "string", description });
+var str = (value) => typeof value === "string" ? value.trim() : "";
+var argString = (value, field) => {
+  if (value === void 0 || value === null) return "";
+  if (typeof value !== "string") throw new Error(`${field} must be a string`);
+  return value.trim();
+};
 var truncateUTF8 = (value, bytes) => {
   if (Buffer.byteLength(value) <= bytes) return value;
   let out = "";
@@ -856,10 +867,18 @@ var truncateUTF8 = (value, bytes) => {
   }
   return out;
 };
+var canonicalize = (value) => {
+  if (Array.isArray(value)) return `[${value.map(canonicalize).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value).filter(([, field]) => field !== void 0).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0);
+    return `{${entries.map(([key, field]) => `${JSON.stringify(key)}:${canonicalize(field)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+};
 function parseDocument(raw) {
   let value = raw;
   if (typeof value === "string") {
-    if (Buffer.byteLength(value) > maxDocumentBytes * 2) throw new Error("shared document exceeds the session-share protocol limit");
+    if (Buffer.byteLength(value) > maxDocumentInputBytes) throw new Error("shared document JSON text exceeds the 18 MiB import limit");
     try {
       value = JSON.parse(value);
     } catch {
@@ -871,6 +890,7 @@ function parseDocument(raw) {
   if (document.version !== 1 || typeof document.session_id !== "string" || !document.session_id.trim()) {
     throw new Error("document must be version 1 with a session_id");
   }
+  if (Buffer.byteLength(document.session_id) > maxSourceSessionBytes) throw new Error("document session_id exceeds 256 bytes");
   if (!Array.isArray(document.items) || !document.items.length) throw new Error("shared document contains no items");
   if (document.items.length > maxDocumentItems) throw new Error(`shared document exceeds the ${maxDocumentItems}-item protocol limit`);
   const seen = /* @__PURE__ */ new Set();
@@ -889,14 +909,18 @@ function parseDocument(raw) {
         break;
       case "attachment": {
         const attachment = item.attachment;
-        if (!attachment || attachment.id !== item.id || typeof attachment.media_type !== "string" || typeof attachment.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(attachment.sha256) || typeof attachment.bytes !== "number" || attachment.bytes < 0) {
+        if (!attachment || attachment.id !== item.id || typeof attachment.media_type !== "string" || typeof attachment.sha256 !== "string" || !/^[0-9a-f]{64}$/.test(attachment.sha256) || typeof attachment.bytes !== "number" || attachment.bytes < 0 || attachment.bytes > maxAttachmentBytes) {
           throw new Error("shared attachment has invalid metadata");
         }
+        if (typeof item.text === "string" && item.text !== "") throw new Error("shared attachment cannot contain text");
         break;
       }
       default:
         throw new Error(`unsupported shared item kind ${JSON.stringify(item.kind)}`);
     }
+  }
+  if (Buffer.byteLength(JSON.stringify(document)) > maxProjectionBytes) {
+    throw new Error("shared document projection exceeds the 2 MiB protocol limit");
   }
   return document;
 }
@@ -951,10 +975,13 @@ var promptSection = [
 ].join("\n");
 var SessionSharePlugin = class {
   concurrentCapabilities = [promptCapability];
-  initialize(_params) {
-    const services = ["host.session.create", "host.session.model"];
+  workspaceID = "";
+  initialize(params) {
+    this.workspaceID = str(params.workspace_id);
+    const services = ["host.session.create"];
     return {
       protocol_version: 3,
+      required_host_features: [externalSeedFeature],
       tools: [
         {
           id: "import_shared_context",
@@ -964,8 +991,8 @@ var SessionSharePlugin = class {
             document: { description: "The SharedDocument v1 object, or its JSON text." },
             name: stringField("Title for the imported conversation."),
             intent: stringField("Optional first instruction sent in the imported conversation, for example what to continue working on."),
-            provider: stringField("Provider for the imported conversation; defaults to this session's provider."),
-            model: stringField("Model for the imported conversation; defaults to this session's model.")
+            provider: stringField("Provider for the imported conversation; defaults to the provider this session inherited."),
+            model: stringField("Model for the imported conversation; required with provider, defaults to the model this session inherited.")
           }, "document"),
           execution_scopes: ["root"]
         }
@@ -976,38 +1003,43 @@ var SessionSharePlugin = class {
   }
   async executeTool(call, host) {
     if (call.tool_id !== "import_shared_context") throw new Error(`unknown session-share tool ${JSON.stringify(call.tool_id)}`);
-    const args = call.arguments;
-    const document = parseDocument(args?.document);
-    const sourceID = call.session_id?.trim() ?? "";
-    let provider = args.provider?.trim() ?? "";
-    let model = args.model?.trim() ?? "";
-    if ((!provider || !model) && sourceID) {
-      const current = await host.call("host.session.model", { session_id: sourceID });
-      provider ||= current.provider?.trim() ?? "";
-      model ||= current.model?.trim() ?? "";
+    const args = call.arguments ?? {};
+    const document = parseDocument(args.document);
+    const name = argString(args.name, "name");
+    const intent = argString(args.intent, "intent");
+    const provider = argString(args.provider, "provider");
+    const model = argString(args.model, "model");
+    if (Buffer.byteLength(intent) > maxIntentBytes) throw new Error(`intent exceeds ${maxIntentBytes} bytes`);
+    if (provider === "" !== (model === "")) throw new Error("provider and model must be set together");
+    const sourceID = str(call.session_id);
+    if (!sourceID && !provider) {
+      throw new Error("provider and model are required when the import is not attached to a session it can inherit them from");
     }
-    if (!provider || !model) throw new Error("provider and model are required when the calling session has none");
     const { body, included, omitted } = renderSeedBody(document);
-    const intent = args.intent?.trim() ?? "";
     const result = await host.call("host.session.create", {
-      // The document digest deduplicates retries and repeated imports of the
-      // same share; a new document always produces a distinct request.
-      request_id: `share-import:${digest(JSON.stringify(document))}`,
-      name: truncateUTF8(args.name?.trim() || `Shared context ${document.session_id.slice(0, 8)}`, maxNameBytes),
+      // The request scopes to the calling workspace and digests the document
+      // plus the mutable arguments: retries of the same import deduplicate to
+      // the created session, while a different document, name, intent, or
+      // model choice intentionally produces a distinct conversation.
+      request_id: `share-import:${digest(canonicalize({ cwd: str(call.cwd), workspace: this.workspaceID, document, name, intent, provider, model }))}`,
+      name: truncateUTF8(name || `Shared context ${document.session_id.slice(0, 8)}`, maxNameBytes),
       visibility: "user",
       context_source: "seed",
       ...sourceID ? { parent_session_id: sourceID } : {},
-      provider,
-      model,
+      ...provider ? { provider, model } : {},
+      // Bind by id only; the host resolves the registered workspace root.
+      ...this.workspaceID ? { workspace_id: this.workspaceID } : {},
       seed: {
         version: 1,
         body,
+        // through_seq 0 records the source session as external provenance;
+        // it is never resolved against local history on this host.
         source: { session_id: document.session_id, through_seq: 0 },
         provenance: { producer: "plugin:session-share", created_at: (/* @__PURE__ */ new Date()).toISOString() }
       },
       ...intent ? { launch: { kind: "handoff", intent, prompt: intent } } : {}
     });
-    return textResult({ session_id: result.session_id, created: result.created, imported_items: included, omitted_items: omitted, seed_body_bytes: Buffer.byteLength(body) });
+    return textResult({ session_id: result.session_id, created: result.created, workspace_root: result.workspace_root, imported_items: included, omitted_items: omitted, seed_body_bytes: Buffer.byteLength(body) });
   }
   async invokeCapability(call) {
     if (call.capability !== promptCapability) throw new Error(`unknown session-share capability ${JSON.stringify(call.capability)}`);

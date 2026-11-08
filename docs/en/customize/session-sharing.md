@@ -101,8 +101,12 @@ new user-visible conversation from such a document through `host.session.create`
 (`context_source:"seed"`). Its `import_shared_context` tool validates the
 document and keeps the newest items within the context-seed budget, reporting
 omitted items in the seed body; the `/import-share` command walks the agent
-through that flow. The plugin imports only documents the user supplies — creating
-and reading grants still require the authenticated `session/share/*` methods.
+through that flow. The created conversation is a child of the calling session,
+so it inherits that session's provider and model; the source session is recorded
+as external provenance only (`through_seq:0`) and is never resolved against
+local history. Repeating the same import reuses the conversation it created.
+The plugin imports only documents the user supplies — creating and reading
+grants still require the authenticated `session/share/*` methods.
 
 ## Replace the provider
 
