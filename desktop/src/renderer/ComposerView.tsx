@@ -750,9 +750,13 @@ export function Composer({
     setPrompt,
     textareaRef
   });
+  // The command list is rebuilt every render, so reset selection on the
+  // list's content — otherwise every stream event would snap the highlight
+  // back to the first row while the menu is open.
+  const slashSelectionKey = JSON.stringify(visibleSlashCommands.map(command => [command.id, command.disabledReason]));
   useEffect(() => {
     setSelectedSlashIndex(firstEnabledSlashCommandIndex(visibleSlashCommands));
-  }, [visibleSlashCommands]);
+  }, [slashQuery, slashSelectionKey]);
 
   useEffect(() => {
     if (!slashRuntimeReady || readOnly || textOnly) {

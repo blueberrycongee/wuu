@@ -2,7 +2,7 @@ import type { Thread } from "../../shared/protocol";
 import { externalAgentActivityStatusSource, externalAgentActivityStore } from "../ExternalAgentActivityStore";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initialState, type AppState } from "../AppState";
+import { initialState, reduceServerEvent, type AppState } from "../AppState";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
 import { PluginHost } from "./PluginHost";
 import { ApplicationComposerPresentation } from "./ApplicationComposerPresentation";
@@ -114,6 +114,14 @@ describe("composer presentation host boundary", () => {
     const rebuilt = f.service.getSnapshot("thread-tab");
     expect(rebuilt).not.toBe(first);
     expect(rebuilt.configuration).toBe(first.configuration);
+
+    // A committed inventory generation bumps the skill revision so the
+    // composer refetches its slash catalog, even when the inventory records
+    // themselves are byte-identical.
+    f.set(reduceServerEvent(f.get(), { kind: "notification", workdir: "/one",
+      message: { method: "plugin/inventory/changed", params: { epoch: 2, extension_inventory: [], skills: [] } } }));
+    const afterInventory = f.service.getSnapshot("thread-tab");
+    expect(afterInventory.skillRevision).not.toBe(rebuilt.skillRevision);
     f.helper.dispose();
   });
   it("memoizes query history by turn identity and freezes the result", () => {

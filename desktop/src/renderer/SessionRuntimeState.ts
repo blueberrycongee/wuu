@@ -10,8 +10,10 @@ import { engineRequiresHostModel } from "./RuntimeHelpers";
 // projected objects must stay identity-stable while the runtime fields they
 // read are unchanged, or downstream caches keyed on the projection (frozen
 // configuration copies, composer effect deps) churn on every stream event.
+// Cached projections share nested objects with the source state, so callers
+// must treat the returned view as read-only.
 const sessionViewCache = new WeakMap<InitializeResult, Map<string, InitializeResult>>();
-const conversationViewCache = new WeakMap<InitializeResult, { provider: string | undefined; model: string | undefined; value: InitializeResult }>();
+const conversationViewCache = new WeakMap<InitializeResult, Map<string, InitializeResult>>();
 
 export function runtimeViewForSession(
   initialized: InitializeResult | undefined,
@@ -65,16 +67,22 @@ export function runtimeViewForConversation(
   }
   const provider = turn.model_provider || session.provider;
   const model = turn.model || session.model;
-  const cached = conversationViewCache.get(session);
-  if (cached && cached.provider === provider && cached.model === model) {
-    return cached.value;
+  const key = JSON.stringify([provider, model]);
+  let entries = conversationViewCache.get(session);
+  const cached = entries?.get(key);
+  if (cached) {
+    return cached;
   }
   const value = {
     ...session,
     provider,
     model,
   };
-  conversationViewCache.set(session, { provider, model, value });
+  if (!entries) {
+    entries = new Map();
+    conversationViewCache.set(session, entries);
+  }
+  entries.set(key, value);
   return value;
 }
 

@@ -35,7 +35,7 @@ export class ApplicationComposerPresentation {
   // View snapshots are shared by all scopes so each consumer does not pay the
   // recomputation cost separately on every state notification.
   private readonly views = new Map<string, { state: AppState; key: string; heavy: readonly unknown[]; value: ApplicationComposerPresentationViewV1 }>();
-  private skillRevisionCache: { inventory: unknown; count: unknown; value: string } | undefined;
+  private skillRevisionCache: { inventory: unknown; count: unknown; epoch: number; value: string } | undefined;
   // The runtime projection is identity-stable across unrelated state updates,
   // so the published configuration keeps one frozen wrapper per projection and
   // consumers can memoize heavy clones (structuredClone, effect deps) on it.
@@ -186,10 +186,13 @@ export class ApplicationComposerPresentation {
     const configuration = initialized && this.configurationFor(initialized);
     const skillsCount = initialized?.extension_trust?.main_session?.skills?.count;
     const inventory = initialized?.extension_inventory;
+    // A committed inventory generation may carry a new skills payload with
+    // byte-identical inventory records, so the epoch is part of the key.
+    const epoch = state.extensionEpoch ?? 0;
     const revision = this.skillRevisionCache;
-    const skillRevision = revision && revision.inventory === inventory && revision.count === skillsCount
+    const skillRevision = revision && revision.inventory === inventory && revision.count === skillsCount && revision.epoch === epoch
       ? revision.value
-      : (this.skillRevisionCache = { inventory, count: skillsCount, value: JSON.stringify([skillsCount, inventory]) }).value;
+      : (this.skillRevisionCache = { inventory, count: skillsCount, epoch, value: JSON.stringify([skillsCount, epoch, inventory]) }).value;
     // Turn updates replace the turns array, so the cached query list comes back
     // with a new identity carrying the same entries. Reuse the published array
     // while the texts match or unrelated item traffic would rebuild the view.
