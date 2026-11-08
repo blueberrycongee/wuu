@@ -5,6 +5,7 @@ import {
   type MessageFlowFontSize,
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
+import { SettingsStepper } from "./ui/SettingsStepper";
 
 const { min, max, step, default: defaultSize } = MESSAGE_FLOW_FONT_SIZE_RANGE;
 
@@ -118,19 +119,28 @@ export function MessageFlowFontSizeControl(): JSX.Element {
     }
   }
 
+  function stepBy(direction: -1 | 1): void {
+    draftEdited.current = false;
+    const next = snapSize(size + direction * step);
+    setDraft(formatSize(next));
+    persist(next);
+  }
+
   return (
-    <input
-      className="settings-input settings-input-num settings-input-num-center"
-      type="number"
-      min={min}
-      max={max}
-      step={step}
-      value={draft}
-      onChange={onChange}
-      onBlur={(event) => commit(event.currentTarget.value)}
-      onKeyDown={onKeyDown}
-      aria-label={t("settings.uiSize")}
-      data-testid="settings-message-flow-font-size-input"
-    />
+    <SettingsStepper onStep={stepBy} atMin={size <= min} atMax={size >= max}>
+      <input
+        className="settings-input settings-stepper-input"
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={draft}
+        onChange={onChange}
+        onBlur={(event) => commit(event.currentTarget.value)}
+        onKeyDown={onKeyDown}
+        aria-label={t("settings.uiSize")}
+        data-testid="settings-message-flow-font-size-input"
+      />
+    </SettingsStepper>
   );
 }

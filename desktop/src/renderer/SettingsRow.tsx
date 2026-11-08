@@ -24,8 +24,8 @@ export function SettingsRow({
     <div className={`settings-row${block ? " settings-row-block" : ""}`} data-wuu-component="settings-row" data-hide-description-when-narrow={hideDescriptionWhenNarrow || undefined}>
       <div className="settings-row-label">
         <span className="settings-row-label-title">{title}</span>
-        {description ? <span className="settings-row-label-description">{description}</span> : null}
-        {hint && !isTouchWebShell() ? <span className="settings-row-label-description">{hint}</span> : null}
+        {description ? <span className="settings-row-label-description" title={typeof description === "string" ? description : undefined}>{description}</span> : null}
+        {hint && !isTouchWebShell() ? <span className="settings-row-label-description" title={hint}>{hint}</span> : null}
       </div>
       <div className={block ? "settings-row-control-block" : "settings-row-control"}>{children}</div>
       {error ? <div className="settings-row-error settings-error" role="alert">{error}</div> : null}
@@ -33,5 +33,3 @@ export function SettingsRow({
     </div>
   );
 }
-
-/** A short fact beside a row title, such as the setting's reach or when it applies. */

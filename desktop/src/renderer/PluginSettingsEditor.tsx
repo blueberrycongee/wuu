@@ -257,15 +257,17 @@ function PluginSecretControl({ pluginId, fingerprint, setting, workspaceRoot }: 
   }
 
   const statusId = `${controlId}-status`;
+  // One line of help: the plugin's own description, then where the value goes.
+  const secretHelp = [
+    setting.description,
+    t("skills.pluginSecretStorage"),
+    setting.credential_origins?.length ? t("skills.pluginSecretOrigins", { origins: setting.credential_origins.join(", ") }) : null,
+  ].filter(Boolean).join(" · ");
   return (
     <div className="settings-row settings-row-block" data-wuu-component="settings-row" data-setting-key={setting.id} data-setting-type="secret">
       <div className="plugin-setting-heading settings-row-label">
         <label className="settings-row-label-title" htmlFor={controlId}>{setting.title}</label>
-        {setting.description ? <span className="settings-row-label-description">{setting.description}</span> : null}
-        <span className="settings-row-label-description">
-          {t("skills.pluginSecretStorage")}
-          {setting.credential_origins?.length ? ` ${t("skills.pluginSecretOrigins", { origins: setting.credential_origins.join(", ") })}` : null}
-        </span>
+        <span className="settings-row-label-description" title={secretHelp}>{secretHelp}</span>
       </div>
       <div className="plugin-setting-control settings-row-control settings-row-control-block">
         <input id={controlId} className="settings-input" type="password" autoComplete="new-password" autoCapitalize="none" spellCheck={false} maxLength={16 * 1024}

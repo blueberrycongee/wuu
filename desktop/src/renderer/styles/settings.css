@@ -589,23 +589,11 @@
   gap: var(--space-2);
 }
 
-/* Text fields take the page's control width so their edges align down a
- * group. Pickers hug their value instead: a short option in a wide box reads
- * as empty space, and the longest option still caps at the control width. */
-.settings-row-control > .settings-input:not(.settings-input-num-center, .settings-input-num) {
+/* Every control in the right-hand column takes the page's control width, so
+ * the column reads as one aligned decision area down the whole group. */
+.settings-row-control > :is(.settings-input:not(.settings-stepper-input), .select-menu) {
   width: var(--settings-control-width);
   max-width: 100%;
-}
-
-.settings-row-control > .select-menu {
-  width: auto;
-  min-width: var(--settings-number-control-width);
-  max-width: min(var(--settings-control-width), 100%);
-}
-
-.settings-row-control > .select-menu > .select-menu-trigger {
-  width: auto;
-  min-width: 100%;
 }
 
 /* File actions fill that width too, but grow past it rather than wrap a
@@ -780,14 +768,18 @@
   margin-inline-end: var(--space-2);
 }
 
+/* One line of help per row. Copy is written to fit; anything longer ends in
+ * an ellipsis and the full text is on the title tooltip. */
 .settings-row-label-description {
+  display: block;
   color: var(--ink-soft);
   font-size: var(--font-sm);
   font-weight: var(--weight-regular);
   line-height: 1.5;
   max-width: 58ch;
-  /* Descriptions can quote paths, which have no spaces to break at. */
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .settings-row-control {
@@ -948,29 +940,66 @@
  * of a group share their edges. */
 .settings-input-num {
   flex: 0 0 auto;
-  width: var(--settings-number-control-width);
   text-align: start;
   font-variant-numeric: tabular-nums;
 }
 
-/* A short number beside a picker (a font size). The width fits a decimal
- * value plus the native stepper, which stays available on hover and focus. */
-.settings-input-num-center {
-  width: 4.75em;
-  padding-inline: var(--space-2) var(--space-1);
-  text-align: center;
+/* A number with explicit step buttons: one field box at the control width,
+ * buttons at the field height on both ends, the value centered between. The
+ * field inside gives up its own edge; the box carries it. */
+.settings-stepper {
+  display: grid;
+  grid-template-columns: var(--control-field-height) minmax(0, 1fr) var(--control-field-height);
+  align-items: stretch;
+  width: var(--settings-control-width);
+  max-width: 100%;
+  min-height: var(--control-field-height);
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-control);
+  background: var(--field-bg);
+  transition: border-color var(--motion-fast) var(--ease-out);
 }
-
-.settings-input-num-center::-webkit-inner-spin-button {
-  opacity: 0;
+.settings-stepper:hover {
+  border-color: var(--field-border-hover);
+}
+.settings-stepper-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: calc(var(--radius-control) - 1px);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.settings-stepper-button:hover:not(:disabled) {
+  background: var(--ink-overlay-6);
+  color: var(--ink-strong);
+}
+.settings-stepper-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.settings-input.settings-stepper-input {
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  padding-inline: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.settings-input.settings-stepper-input:hover:not(:disabled) {
+  background: transparent;
+}
+.settings-stepper-input::-webkit-inner-spin-button,
+.settings-stepper-input::-webkit-outer-spin-button {
+  appearance: none;
   margin: 0;
 }
-
-.settings-input-num-center:hover::-webkit-inner-spin-button,
-.settings-input-num-center:focus::-webkit-inner-spin-button {
-  opacity: 1;
-}
-
 .settings-spin {
   animation: wuu-spin var(--motion-spin) linear infinite;
 }
@@ -2837,7 +2866,7 @@ button.settings-engine-expand:hover {
   }
 
   /* Stacked fields and pickers span the row. */
-  .settings-row-control > :is(.settings-input:not(.settings-input-num), .select-menu) {
+  .settings-row-control > :is(.settings-input:not(.settings-stepper-input), .select-menu, .settings-stepper) {
     width: 100%;
   }
 }
