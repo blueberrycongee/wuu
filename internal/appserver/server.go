@@ -305,13 +305,10 @@ type Server struct {
 	agentTerminalFinalizationMu sync.Mutex
 	agentTerminalFinalizations  map[agentTerminalFinalizationKey]struct{}
 
-	agentCompletionMu            sync.Mutex
-	pendingAgentCompletionTurns  map[string][]agentCompletionTurn
-	drainingAgentCompletionTurns map[string]bool
-
 	// schedulersMu guards only the cell registry. Per-thread turn-scheduling
 	// state (queued turns, claims, cancellation tombstones, drain markers,
-	// held-input serialization) lives inside the cells; see thread_scheduler.go.
+	// pending agent-completion wakeups, held-input serialization) lives
+	// inside the cells; see thread_scheduler.go.
 	schedulersMu sync.Mutex
 	schedulers   map[string]*threadScheduler
 
@@ -423,17 +420,15 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		out:     out,
 		threads: make(map[string]*threadState),
 
-		pendingAgentCompletionTurns:  make(map[string][]agentCompletionTurn),
-		drainingAgentCompletionTurns: make(map[string]bool),
-		schedulers:                   make(map[string]*threadScheduler),
-		codexModelCache:              make(map[string]map[string]config.ProviderModelConfig),
-		inferenceMaintenanceStop:     make(chan struct{}),
-		sideTurns:                    make(map[string]*sideThreadTurn),
-		clientCalls:                  make(map[string]chan clientResponse),
-		clientMethods:                make(map[string]struct{}),
-		runs:                         make(map[string]*runTracker),
-		activeRunByThread:            make(map[string]string),
-		modelCatalogHTTPClient:       http.DefaultClient,
+		schedulers:               make(map[string]*threadScheduler),
+		codexModelCache:          make(map[string]map[string]config.ProviderModelConfig),
+		inferenceMaintenanceStop: make(chan struct{}),
+		sideTurns:                make(map[string]*sideThreadTurn),
+		clientCalls:              make(map[string]chan clientResponse),
+		clientMethods:            make(map[string]struct{}),
+		runs:                     make(map[string]*runTracker),
+		activeRunByThread:        make(map[string]string),
+		modelCatalogHTTPClient:   http.DefaultClient,
 	}
 	for _, option := range options {
 		if err := option(s); err != nil {
@@ -997,10 +992,13 @@ func (s *Server) Close() {
 				s.notifyPluginTurnDiscardedWithRetry(th.state, threadID, entry, "app-server closed before queued turn started", true)
 			}
 		}
-		s.agentCompletionMu.Lock()
-		clear(s.pendingAgentCompletionTurns)
-		clear(s.drainingAgentCompletionTurns)
-		s.agentCompletionMu.Unlock()
+		for _, sched := range s.schedulersSnapshot() {
+			completions := &sched.completions
+			completions.mu.Lock()
+			completions.pending = nil
+			completions.draining = false
+			completions.mu.Unlock()
+		}
 		s.waitForOwnedShutdown(threads, controls, stops)
 		s.interruptAttachedRunsOnClose()
 		for _, th := range threads {

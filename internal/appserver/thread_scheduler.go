@@ -21,13 +21,26 @@ type threadTurnQueue struct {
 	draining  bool
 }
 
+// threadCompletionQueue owns one thread's pending agent/process completion
+// wakeups and the single-drain marker for the synthetic turns they become.
+//
+// completions.mu is a leaf mutex with the same order as queue.mu
+// (s.mu → th.streamMu → th.mu → completions.mu); nothing inside the
+// critical section acquires s.mu or th.mu.
+type threadCompletionQueue struct {
+	mu       sync.Mutex
+	pending  []agentCompletionTurn
+	draining bool
+}
+
 // threadScheduler is the per-thread cell for in-memory turn scheduling.
 // It is deliberately not part of threadState: admission replaces and the
 // thread cache evicts projections while queued work, claims, and drain
 // markers must keep their identity across those swaps. Cells therefore live
 // in the Server registry until Close.
 type threadScheduler struct {
-	queue threadTurnQueue
+	queue       threadTurnQueue
+	completions threadCompletionQueue
 	// heldMu serializes the read-modify-write compounds against this
 	// thread's durable held-input rows (appendHeldUserTurns, findHeldUserTurn,
 	// updateHeldUserTurn). It is independent of queue.mu; the two are never
@@ -68,6 +81,17 @@ func (s *Server) turnQueue(threadID string) *threadTurnQueue {
 func (s *Server) peekTurnQueue(threadID string) *threadTurnQueue {
 	if sched := s.peekScheduler(threadID); sched != nil {
 		return &sched.queue
+	}
+	return nil
+}
+
+func (s *Server) completionQueue(threadID string) *threadCompletionQueue {
+	return &s.schedulerFor(threadID).completions
+}
+
+func (s *Server) peekCompletionQueue(threadID string) *threadCompletionQueue {
+	if sched := s.peekScheduler(threadID); sched != nil {
+		return &sched.completions
 	}
 	return nil
 }

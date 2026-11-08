@@ -33,12 +33,14 @@ func (s *Server) handleProcessList(req Request) error {
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	s.agentCompletionMu.Lock()
 	queued := make(map[string]bool)
-	for _, entry := range s.pendingAgentCompletionTurns[threadID] {
-		queued[entry.processID] = true
+	if completions := s.peekCompletionQueue(threadID); completions != nil {
+		completions.mu.Lock()
+		for _, entry := range completions.pending {
+			queued[entry.processID] = true
+		}
+		completions.mu.Unlock()
 	}
-	s.agentCompletionMu.Unlock()
 	summaries := make([]ManagedProcessSummary, 0, len(processes))
 	for _, p := range processes {
 		if !s.processBelongsToThread(threadID, p) {
@@ -170,16 +172,18 @@ func (s *Server) handleProcessCancelNotifications(req Request) error {
 	}
 	// Admission rechecks persisted state as well, including events already
 	// taken by the drain when this cancellation arrives.
-	s.agentCompletionMu.Lock()
-	pending := s.pendingAgentCompletionTurns[strings.TrimSpace(params.ThreadID)]
-	kept := pending[:0]
-	for _, entry := range pending {
-		if entry.processID != p.ID {
-			kept = append(kept, entry)
+	if completions := s.peekCompletionQueue(strings.TrimSpace(params.ThreadID)); completions != nil {
+		completions.mu.Lock()
+		pending := completions.pending
+		kept := pending[:0]
+		for _, entry := range pending {
+			if entry.processID != p.ID {
+				kept = append(kept, entry)
+			}
 		}
+		completions.pending = kept
+		completions.mu.Unlock()
 	}
-	s.pendingAgentCompletionTurns[strings.TrimSpace(params.ThreadID)] = kept
-	s.agentCompletionMu.Unlock()
 	return s.writeResponse(req.ID, ProcessStopResult{Process: managedProcessSummaryForManager(manager, *cancelled)}, nil)
 }
 
