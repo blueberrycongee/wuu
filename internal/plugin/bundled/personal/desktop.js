@@ -225,6 +225,12 @@ var personalDesktop = (() => {
     if (["bash", "process_start"].includes(rule.operation)) return rule.decision === "ask" ? "\u5728\u76F8\u540C\u4F4D\u7F6E\u91CD\u590D\u8FD9\u6761\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\u524D\uFF0C\u6BCF\u6B21\u5148\u95EE\u6211\u3002" : "\u4EE5\u540E\u5141\u8BB8\u5728\u76F8\u540C\u4F4D\u7F6E\uFF0C\u4F7F\u7528\u76F8\u540C\u6743\u9650\u91CD\u590D\u8FD9\u6761\u5B8C\u5168\u76F8\u540C\u7684\u64CD\u4F5C\u3002";
     return rule.description;
   }
+  function ruleSubject(rule, locale) {
+    const zh = locale.startsWith("zh");
+    if (rule.operation === "write_file" || rule.operation === "edit_file") return `${zh ? "\u4FEE\u6539" : "Edit"} ${rule.target.split(/[\\/]/).pop()}`;
+    if (zh && ["bash", "process_start"].includes(rule.operation)) return "\u5728\u76F8\u540C\u4F4D\u7F6E\u91CD\u590D\u8FD9\u6761\u64CD\u4F5C";
+    return rule.description;
+  }
   var systemReasonsZH = {
     "Review what will happen before allowing this action": "\u8BF7\u786E\u8BA4\u8FD9\u9879\u64CD\u4F5C\u548C\u4F60\u60F3\u505A\u7684\u4E00\u81F4\u3002",
     "Original authenticated user request is unavailable; confirm this exact action manually": "\u6682\u65F6\u65E0\u6CD5\u6838\u5BF9\u4F60\u6700\u521D\u7684\u8981\u6C42\uFF0C\u8BF7\u786E\u8BA4\u8FD9\u9879\u5177\u4F53\u64CD\u4F5C\u3002",
@@ -270,24 +276,10 @@ var personalDesktop = (() => {
   }
   var copy = {
     en: {
-      title: "Approvals and rules",
-      description: "Choose what Personal can do for you.",
-      mode: "Automatic review",
-      scope: "Applies to this Personal space, including its background tasks.",
-      enabled: "On",
-      disabled: "Off",
-      enable: "Turn on automatic review",
-      disable: "Turn off automatic review",
-      manual: "Actions without a saved permission ask you first.",
-      coverage: "Covered actions",
-      fileWrite: "Create or replace a Personal file",
-      fileEdit: "Edit a Personal file",
-      excluded: "Account connections and new permissions still need their own confirmation.",
-      noCoverage: "No action handlers registered",
-      policy: "Policy version",
+      mode: "Auto Review",
+      modeHelp: "Actions that match your request run without asking.",
       receipt: "Execution receipt",
       recentResults: "Recent action results",
-      automatic: "Actions covered by a current, specific instruction can proceed after review. Missing or unclear authorization asks you first.",
       pending: "Waiting for you",
       recent: "Recent activity",
       refresh: "Refresh",
@@ -302,13 +294,9 @@ var personalDesktop = (() => {
       parameters: "Technical details",
       expires: "Expires",
       digest: "Action digest",
-      noActions: "No actions to review",
-      noActionsBody: "Actions needing your decision will appear here.",
-      unavailable: "Not connected",
       working: "Saving\u2026",
       failed: "Could not save. Refresh to check the current state.",
       invalidData: "Action data could not be verified. Refresh to check the saved state.",
-      single: "Allow once applies only to the action shown. Saved rules can be changed or removed here.",
       remember: "Handle this automatically\u2026",
       ruleTitle: "Remember this permission?",
       ruleScope: "This exact scope applies to future tasks in this Personal space.",
@@ -317,14 +305,10 @@ var personalDesktop = (() => {
       ruleSaved: "Rule saved. This action still needs your decision.",
       ruleSaveFailed: "The rule save could not be confirmed. Refresh to check it; you can then allow just this action.",
       rules: "Saved rules",
-      noRules: "No saved rules yet.",
       askRule: "Always ask first",
       allowRule: "Allow automatically",
-      pauseRule: "Pause",
-      resumeRule: "Enable",
       deleteRule: "Remove",
       pausedRule: "Paused",
-      rulesPriority: "\u201CAlways ask first\u201D takes priority over automatic review and other permissions.",
       changes: "View changes",
       before: "Before",
       after: "After",
@@ -345,24 +329,10 @@ var personalDesktop = (() => {
       effects: { internal_bookkeeping: "Internal bookkeeping", read_only: "Read only", data_write: "Changes data", external_write: "Sends outside twin", sensitive_authority: "Account or lasting authority", unknown: "Unknown effect" }
     },
     zh: {
-      title: "\u5BA1\u6279\u4E0E\u89C4\u5219",
-      description: "\u51B3\u5B9A Personal \u53EF\u4EE5\u66FF\u4F60\u505A\u54EA\u4E9B\u4E8B\u3002",
       mode: "\u81EA\u52A8\u5BA1\u6838",
-      scope: "\u9002\u7528\u4E8E\u5F53\u524D Personal \u7A7A\u95F4\uFF0C\u5305\u62EC\u540E\u53F0\u4EFB\u52A1\u3002",
-      enabled: "\u5DF2\u5F00\u542F",
-      disabled: "\u672A\u5F00\u542F",
-      enable: "\u5F00\u542F\u81EA\u52A8\u5BA1\u6838",
-      disable: "\u5173\u95ED\u81EA\u52A8\u5BA1\u6838",
-      manual: "\u6CA1\u6709\u5DF2\u4FDD\u5B58\u8BB8\u53EF\u7684\u64CD\u4F5C\uFF0C\u4F1A\u5148\u8BF7\u4F60\u786E\u8BA4\u3002",
-      coverage: "\u8986\u76D6\u52A8\u4F5C",
-      fileWrite: "\u521B\u5EFA\u6216\u66FF\u6362 Personal \u6587\u4EF6",
-      fileEdit: "\u4FEE\u6539 Personal \u6587\u4EF6",
-      excluded: "\u8FDE\u63A5\u8D26\u53F7\u4E0E\u65B0\u589E\u6743\u9650\u4ECD\u9700\u5355\u72EC\u786E\u8BA4\u3002",
-      noCoverage: "\u5C1A\u672A\u6CE8\u518C\u52A8\u4F5C\u6267\u884C\u5668",
-      policy: "\u7B56\u7565\u7248\u672C",
+      modeHelp: "\u7B26\u5408\u4F60\u8981\u6C42\u7684\u64CD\u4F5C\u76F4\u63A5\u6267\u884C\uFF0C\u4E0D\u518D\u9010\u4E00\u8BE2\u95EE\u3002",
       receipt: "\u6267\u884C\u56DE\u6267",
       recentResults: "\u6700\u8FD1\u52A8\u4F5C\u7ED3\u679C",
-      automatic: "\u5DF2\u6709\u660E\u786E\u4E14\u6709\u6548\u6388\u6743\u7684\u52A8\u4F5C\uFF0C\u7ECF\u5BA1\u6838\u540E\u7EE7\u7EED\u3002\u6388\u6743\u7F3A\u5931\u6216\u4E0D\u6E05\u695A\u65F6\uFF0C\u518D\u8BF7\u4F60\u786E\u8BA4\u3002",
       pending: "\u7B49\u4F60\u51B3\u5B9A",
       recent: "\u6700\u8FD1\u8BB0\u5F55",
       refresh: "\u5237\u65B0",
@@ -377,13 +347,9 @@ var personalDesktop = (() => {
       parameters: "\u6280\u672F\u8BE6\u60C5",
       expires: "\u6709\u6548\u671F\u81F3",
       digest: "\u52A8\u4F5C\u6458\u8981",
-      noActions: "\u6CA1\u6709\u5F85\u5BA1\u6279\u52A8\u4F5C",
-      noActionsBody: "\u9700\u8981\u4F60\u51B3\u5B9A\u7684\u52A8\u4F5C\u4F1A\u663E\u793A\u5728\u8FD9\u91CC\u3002",
-      unavailable: "\u5C1A\u672A\u63A5\u5165",
       working: "\u6B63\u5728\u4FDD\u5B58\u2026",
       failed: "\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u5237\u65B0\u6838\u5BF9\u5F53\u524D\u72B6\u6001\u3002",
       invalidData: "\u52A8\u4F5C\u6570\u636E\u683C\u5F0F\u65E0\u6CD5\u9A8C\u8BC1\uFF0C\u8BF7\u5237\u65B0\u6838\u5BF9\u4FDD\u5B58\u72B6\u6001\u3002",
-      single: "\u201C\u5141\u8BB8\u8FD9\u6B21\u201D\u53EA\u9002\u7528\u4E8E\u773C\u524D\u7684\u64CD\u4F5C\u3002\u4FDD\u5B58\u7684\u89C4\u5219\u53EF\u4EE5\u968F\u65F6\u5728\u8FD9\u91CC\u4FEE\u6539\u6216\u79FB\u9664\u3002",
       remember: "\u4EE5\u540E\u81EA\u52A8\u5904\u7406\u2026",
       ruleTitle: "\u8BB0\u4F4F\u8FD9\u9879\u8BB8\u53EF\uFF1F",
       ruleScope: "\u4EC5\u5BF9\u4E0B\u5217\u8303\u56F4\u751F\u6548\uFF0C\u9002\u7528\u4E8E\u6B64 Personal \u7A7A\u95F4\u4ECA\u540E\u7684\u4EFB\u52A1\u3002",
@@ -392,14 +358,10 @@ var personalDesktop = (() => {
       ruleSaved: "\u89C4\u5219\u5DF2\u4FDD\u5B58\uFF1B\u8FD9\u6B21\u64CD\u4F5C\u4ECD\u9700\u8981\u4F60\u7684\u51B3\u5B9A\u3002",
       ruleSaveFailed: "\u672A\u80FD\u786E\u8BA4\u89C4\u5219\u662F\u5426\u4FDD\u5B58\u3002\u8BF7\u5237\u65B0\u6838\u5BF9\uFF0C\u4E4B\u540E\u4E5F\u53EF\u4EE5\u53EA\u5141\u8BB8\u8FD9\u6B21\u64CD\u4F5C\u3002",
       rules: "\u5DF2\u4FDD\u5B58\u7684\u89C4\u5219",
-      noRules: "\u8FD8\u6CA1\u6709\u4FDD\u5B58\u89C4\u5219\u3002",
       askRule: "\u6BCF\u6B21\u5148\u95EE\u6211",
       allowRule: "\u81EA\u52A8\u5141\u8BB8",
-      pauseRule: "\u6682\u505C",
-      resumeRule: "\u542F\u7528",
       deleteRule: "\u79FB\u9664",
       pausedRule: "\u5DF2\u6682\u505C",
-      rulesPriority: "\u201C\u6BCF\u6B21\u5148\u95EE\u6211\u201D\u4F18\u5148\u4E8E\u81EA\u52A8\u5BA1\u6838\u548C\u5176\u4ED6\u8BB8\u53EF\u3002",
       changes: "\u67E5\u770B\u4FEE\u6539\u5185\u5BB9",
       before: "\u4FEE\u6539\u524D",
       after: "\u4FEE\u6539\u540E",
@@ -423,7 +385,6 @@ var personalDesktop = (() => {
   var personalReviewStyles = `
 .personal-review { font:inherit;color:var(--ink);min-width:0; }
 .personal-review p { margin:0;line-height:1.6; }
-.personal-review-overview { display:grid;gap:var(--space-3);padding-bottom:var(--space-5); }
 .personal-review-heading { display:flex;align-items:center;justify-content:space-between;gap:var(--space-4); }
 .personal-review-heading h3 { margin:0;font:inherit;font-weight:600; }
 .personal-review-muted { color:var(--ink-muted); }
@@ -440,25 +401,30 @@ var personalDesktop = (() => {
 .personal-review-parameters pre { white-space:pre-wrap;overflow-wrap:anywhere;font:var(--font-code,13px)/1.6 var(--font-mono,monospace);padding:var(--space-3);background:var(--surface-2);border-radius:var(--radius-sm,6px); }
 .personal-review-actions { display:flex;gap:var(--space-3);flex-wrap:wrap;margin-top:var(--space-4); }
 .personal-review-error { color:var(--danger-text,var(--ink));margin-top:var(--space-3)!important; }
-.personal-review-conversation .personal-review-overview { padding-bottom:0; }
 .personal-review-conversation { margin:var(--space-5) 0; }
 .personal-review-history { margin-top:var(--space-5); }
 .personal-review-history>summary { cursor:pointer;color:var(--ink-muted); }
-.personal-review-coverage { margin:0;padding-inline-start:1.3em;overflow-wrap:anywhere; }
 .personal-review-consequence { margin-top:var(--space-3)!important;overflow-wrap:anywhere; }
 .personal-review-rule-preview { margin-top:var(--space-4);padding:var(--space-4);background:var(--surface-2);border-radius:var(--radius-md,8px); }
 .personal-review-rule-preview h5 { margin:0 0 var(--space-3);font:inherit;font-weight:600; }
-.personal-review-rules { margin:var(--space-5) 0; }
-.personal-review-rules h3 { font:inherit;font-weight:600; }
-.personal-review-rule { padding:var(--space-4) 0;border-bottom:1px solid var(--hairline);overflow-wrap:anywhere; }
+.personal-review-settings { display:flex;flex-direction:column; }
+.personal-review-settings>.plugin-ui-section { margin-top:var(--settings-gap,var(--space-8)); }
+.personal-review-settings .plugin-ui-card>p[role="alert"] { padding-block:var(--settings-row-pad-block,var(--space-3));color:var(--danger-text,var(--ink));font-size:var(--font-sm); }
+.personal-review-settings .plugin-ui-card>.personal-review-item { padding:var(--space-1) 0;border-top:0; }
+.personal-review-settings .personal-review-parameters summary { color:var(--ink-soft);font-size:var(--font-sm); }
+.personal-review-rule { display:flex;flex-wrap:wrap;align-items:center;gap:0 var(--space-2); }
+.personal-review-rule>.plugin-ui-field { flex:1 1 10em;min-width:0; }
+.personal-review-rule .plugin-ui-field-label { overflow-wrap:anywhere; }
+.personal-review-failure { display:flex;align-items:center;justify-content:space-between;gap:var(--space-4);margin-top:var(--space-3); }
+.personal-review-failure .personal-review-error { margin-top:0!important; }
+.personal-review-notice { margin-top:var(--space-3)!important;color:var(--ink-muted); }
 .personal-review-diff { display:grid;gap:var(--space-3); }
 .personal-review-diff pre { margin:0; }
-.personal-review-footnote { margin-top:var(--space-5)!important;color:var(--ink-muted); }
 @media(max-width:480px){.personal-review-fields { grid-template-columns:1fr;gap:var(--space-1); }.personal-review-fields dd { margin-bottom:var(--space-2); }.personal-review-actions>* { flex:0 1 auto;white-space:nowrap; }}
 `;
   function createPersonalReviewPanel(react, ui) {
     const h = react.createElement;
-    return function PersonalReviewPanel({ service, locale = "en", variant = "settings" }) {
+    return function PersonalReviewPanel({ service, locale = "en", variant = "settings", leading }) {
       const conversation = variant === "conversation";
       const words = locale.startsWith("zh") ? copy.zh : copy.en;
       const hadActions = react.useRef(false);
@@ -713,56 +679,51 @@ var personalDesktop = (() => {
       const history = records.filter((record) => !pending.includes(record)).sort((a, b) => (b.action.expires_at === null ? 0 : Date.parse(b.action.expires_at)) - (a.action.expires_at === null ? 0 : Date.parse(a.action.expires_at)));
       const settings = snapshot?.kind === "ready" ? snapshot.settings : void 0;
       if (conversation && !pending.length && (!error || !hadActions.current)) return null;
-      const showOverview = !conversation || pending.length > 0 || Boolean(error) || unverified;
+      const failureRow = error && h("div", { className: "personal-review-failure" }, h("p", { role: "alert", className: "personal-review-error" }, error), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), "data-review-refresh": true, onClick: () => void refresh() }, words.refresh));
+      if (conversation) {
+        const awaiting = pending.filter((record) => record.status === "awaiting_confirmation").length;
+        return h(
+          "div",
+          { className: "personal-review personal-review-conversation", "data-personal-action-review": true, "data-review-variant": variant },
+          h("style", null, personalReviewStyles),
+          h("div", { className: "personal-review-heading" }, h("h3", null, awaiting ? `${awaiting} ${words.pendingCount}` : words.recentResults), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), "data-review-refresh": true, onClick: () => void refresh() }, words.refresh)),
+          notice && h("p", { role: "status" }, notice),
+          error && h("p", { role: "alert", className: "personal-review-error" }, error),
+          pending.length > 0 && h("section", { className: "personal-review-list", "aria-label": words.pending }, pending.map(renderRecord))
+        );
+      }
+      const ruleChoice = (rule) => !rule.enabled ? "paused" : rule.decision;
+      const changeRuleChoice = (rule, choice) => rules && void changeRule({ action: "update", expected_revision: rules.revision, id: rule.id, decision: choice === "paused" ? rule.decision : choice === "ask" ? "ask" : "allow", enabled: choice !== "paused" });
       return h(
         "div",
-        { className: `personal-review${conversation ? " personal-review-conversation" : ""}`, "data-personal-action-review": true, "data-review-variant": variant },
+        { className: "personal-review personal-review-settings", "data-personal-action-review": true, "data-review-variant": variant },
         h("style", null, personalReviewStyles),
         h(
-          ui.Section,
-          { title: conversation ? void 0 : words.title, description: conversation ? void 0 : words.description },
-          showOverview && h(
+          ui.Card,
+          null,
+          leading,
+          settings && service.settings ? h(ui.Checkbox, { label: words.mode, description: words.modeHelp, role: "switch", "aria-checked": settings.auto_review_enabled, checked: settings.auto_review_enabled, disabled: Boolean(busy) || unverified || !settings.auto_review_enabled && settings.scope.length === 0, onChange: () => void changeSettings() }) : h(ui.Checkbox, { label: words.mode, description: snapshot?.kind === "unavailable" ? snapshot.reason : void 0, checked: false, disabled: true })
+        ),
+        failureRow,
+        notice && h("p", { role: "status", className: "personal-review-notice" }, notice),
+        rules && rules.rules.length > 0 && h(ui.Section, { title: words.rules, "aria-label": words.rules }, h(
+          ui.Card,
+          null,
+          rules.rules.map((rule) => h(
             "div",
-            { className: "personal-review-overview" },
-            h("div", { className: "personal-review-heading" }, h("h3", null, conversation ? pending.some((record) => record.status === "awaiting_confirmation") ? `${pending.filter((record) => record.status === "awaiting_confirmation").length} ${words.pendingCount}` : words.recentResults : words.mode), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), "data-review-refresh": true, onClick: () => void refresh() }, words.refresh)),
-            !conversation && h(
-              react.Fragment,
-              null,
-              h("p", { className: "personal-review-muted" }, words.scope),
-              settings && h(
-                react.Fragment,
-                null,
-                service.settings && h(ui.Button, { variant: "secondary", role: "switch", "aria-checked": settings.auto_review_enabled, "aria-label": words.mode, disabled: Boolean(busy) || unverified || !settings.auto_review_enabled && settings.scope.length === 0, onClick: () => void changeSettings() }, busy === "settings" ? words.working : settings.auto_review_enabled ? words.disable : words.enable),
-                h("p", { role: "status" }, `${words.mode}: ${settings.auto_review_enabled ? words.enabled : words.disabled}`),
-                h("p", { className: "personal-review-muted" }, settings.auto_review_enabled ? words.automatic : words.manual),
-                h("details", null, h("summary", null, words.coverage), settings.scope.length ? h("ul", { className: "personal-review-coverage" }, settings.scope.map((operation) => h("li", { key: operation }, operation === "write_file" ? words.fileWrite : operation === "edit_file" ? words.fileEdit : operation))) : h("p", null, words.noCoverage), h("p", { className: "personal-review-muted" }, words.excluded), h("p", { className: "personal-review-muted" }, `${words.policy}: ${settings.policy_version}`))
-              )
-            )
-          ),
-          notice && h("p", { role: "status" }, notice),
-          !conversation && rules && h(
-            "section",
-            { className: "personal-review-rules", "aria-label": words.rules },
-            h("h3", null, words.rules),
-            h("p", { className: "personal-review-muted" }, words.rulesPriority),
-            !rules.rules.length && h("p", { className: "personal-review-muted" }, words.noRules),
-            rules.rules.map((rule) => h(
-              "div",
-              { key: rule.id, className: "personal-review-rule", "data-review-rule": rule.id },
-              h("p", null, ruleDescription(rule, locale)),
-              h("details", { className: "personal-review-parameters" }, h("summary", null, words.ruleDetails), h("p", null, rule.target), h("p", null, rule.description)),
-              h("p", { className: "personal-review-muted" }, !rule.enabled ? words.pausedRule : rule.decision === "ask" ? words.askRule : words.allowRule),
-              h("div", { className: "personal-review-actions" }, h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || unverified, "data-review-rule-ask": rule.id, onClick: () => void changeRule({ action: "update", expected_revision: rules.revision, id: rule.id, decision: rule.decision === "ask" ? "allow" : "ask", enabled: rule.enabled }) }, rule.decision === "ask" ? words.allowRule : words.askRule), h(ui.Button, { variant: "ghost", disabled: Boolean(busy) || unverified, onClick: () => void changeRule({ action: "update", expected_revision: rules.revision, id: rule.id, decision: rule.decision, enabled: !rule.enabled }) }, rule.enabled ? words.pauseRule : words.resumeRule), h(ui.Button, { variant: "ghost", disabled: Boolean(busy) || unverified, "data-review-rule-delete": rule.id, onClick: () => void changeRule({ action: "delete", expected_revision: rules.revision, id: rule.id }) }, words.deleteRule))
-            ))
-          ),
-          error && h("p", { role: "alert", className: "personal-review-error" }, error),
-          !snapshot && !error && h("p", { role: "status" }, "\u2026"),
-          !conversation && snapshot?.kind === "unavailable" && h(ui.EmptyState, { title: words.unavailable, description: snapshot.reason }),
-          !conversation && snapshot?.kind === "ready" && !records.length && h(ui.EmptyState, { title: words.noActions, description: words.noActionsBody }),
-          pending.length > 0 && h("section", { className: "personal-review-list", "aria-label": words.pending }, pending.map(renderRecord)),
-          !conversation && history.length > 0 && h("section", { className: "personal-review-list", "aria-label": words.recent }, h("h3", null, words.recent), history.map(renderRecord)),
-          snapshot?.kind === "ready" && !conversation && h("p", { className: "personal-review-footnote" }, words.single)
-        )
+            { key: rule.id, className: "personal-review-rule", "data-review-rule": rule.id },
+            h(
+              ui.Select,
+              { label: ruleSubject(rule, locale), title: rule.target, value: ruleChoice(rule), disabled: Boolean(busy) || unverified, "data-review-rule-choice": rule.id, onChange: (event) => changeRuleChoice(rule, event.target.value) },
+              h("option", { value: "allow" }, words.allowRule),
+              h("option", { value: "ask" }, words.askRule),
+              h("option", { value: "paused" }, words.pausedRule)
+            ),
+            h(ui.Button, { variant: "ghost", disabled: Boolean(busy) || unverified, "data-review-rule-delete": rule.id, onClick: () => void changeRule({ action: "delete", expected_revision: rules.revision, id: rule.id }) }, words.deleteRule)
+          ))
+        )),
+        pending.length > 0 && h(ui.Section, { title: words.pending }, pending.map((record) => h(ui.Card, { key: record.action.id }, renderRecord(record)))),
+        history.length > 0 && h(ui.Section, { title: words.recent }, history.map((record) => h(ui.Card, { key: record.action.id }, renderRecord(record))))
       );
     };
   }
@@ -782,8 +743,7 @@ var personalDesktop = (() => {
     const h = react.createElement, ReviewPanel = createPersonalReviewPanel(react, ui);
     const host = async (method, input) => unwrapPersonalHost(await invoke(method, input));
     const reviewService = { list: () => host("review.list"), rules: (input) => host("review.rules", input), previewRule: (input) => host("review.rule.preview", input), resolve: (input) => host("review.resolve", input), revoke: (input) => host("review.revoke", input), settings: (input) => host("review.settings", input) };
-    return { ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale }) => h(ReviewPanel, { service: reviewService, locale }), styles: `${personalReviewStyles}
-.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}` };
+    return { ReviewConversation: ({ locale }) => h(ReviewPanel, { service: reviewService, locale, variant: "conversation" }), Review: ({ locale, leading }) => h(ReviewPanel, { service: reviewService, locale, leading }), styles: personalReviewStyles };
   }
 
   // plugins/personal/ui/send-motion.js
@@ -1021,8 +981,6 @@ var personalDesktop = (() => {
         "today": "Today",
         "settings": "Settings",
         "modelTitle": "Model",
-        "modelHelp": "Used for twin replies and new tasks. Existing tasks keep their model.",
-        "modelChoice": "Provider and model",
         "modelUnavailable": "No configured models are available. Add a connection in External connections.",
         "modelCurrentUnavailable": "Current selection is unavailable",
         "modelBusy": "Wait for the current reply to finish before changing the model.",
@@ -1138,8 +1096,6 @@ var personalDesktop = (() => {
         "today": "\u4ECA\u5929",
         "settings": "\u8BBE\u7F6E",
         "modelTitle": "\u6A21\u578B",
-        "modelHelp": "\u7528\u4E8E twin \u56DE\u590D\u548C\u65B0\u4EFB\u52A1\u3002\u5DF2\u6709\u4EFB\u52A1\u7EE7\u7EED\u4F7F\u7528\u539F\u6765\u7684\u6A21\u578B\u3002",
-        "modelChoice": "\u670D\u52A1\u5546\u4E0E\u6A21\u578B",
         "modelUnavailable": "\u6682\u65E0\u53EF\u9009\u6A21\u578B\u3002\u8BF7\u5148\u5728\u5916\u90E8\u8FDE\u63A5\u4E2D\u914D\u7F6E\u3002",
         "modelCurrentUnavailable": "\u5F53\u524D\u9009\u62E9\u4E0D\u53EF\u7528",
         "modelBusy": "\u8BF7\u7B49\u5F85\u5F53\u524D\u56DE\u590D\u7ED3\u675F\u540E\u518D\u5207\u6362\u6A21\u578B\u3002",
@@ -1413,16 +1369,7 @@ var personalDesktop = (() => {
     .mosaic-routines summary.mosaic-task::-webkit-details-marker { display:none; }
     .mosaic-routine-next { flex:none;max-width:42%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink-muted);font-size:var(--font-ui-small); }
     .mosaic-routine-detail { padding:4px 0 12px 32px; }
-    .mosaic-settings { display:flex;flex-direction:column;gap:var(--space-5);padding:var(--space-5);max-width:700px; }
-    .mosaic-settings p { color:var(--ink-muted); }
-    .mosaic-settings-group { display:flex;flex-direction:column;align-items:flex-start;gap:var(--space-3); }
-    .mosaic-settings-group h3, .mosaic-settings-group p { margin:0; }
-    .mosaic-settings-group > .plugin-ui-field:has(> .mosaic-model-select) {
-      display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;gap:var(--space-2);width:100%;
-    }
-    .mosaic-model-select { width:100%;min-width:0; }
-    .mosaic-model-full { display:none;overflow-wrap:anywhere; }
-    @media (max-width:850px) { .mosaic-model-full { display:block; } }
+    .mosaic-settings { display:flex;flex-direction:column;min-width:0; }
     .mosaic-history-search form { display:flex;flex-wrap:wrap;align-items:flex-end;gap:var(--space-3);margin-block:var(--space-3); }
     .mosaic-history-search form > label { flex:1;min-width:170px; }
     .mosaic-attachments { display:flex;flex-direction:column;gap:var(--space-2); }
@@ -1895,22 +1842,18 @@ var personalDesktop = (() => {
       return h(
         "section",
         { className: "mosaic-settings", "data-personal-preferences": true },
-        h("section", { className: "mosaic-settings-group" }, h("h3", null, t("modelTitle")), h("p", null, t("modelHelp")), modelError && h("p", { role: "alert" }, modelError), !model ? !modelError && h(LoadingState, { label: t("modelTitle") }) : h(
+        h(settingsPanels.Review, { locale, leading: h(
           React.Fragment,
           null,
           h(
             Select,
-            { className: "mosaic-model-select", label: t("modelChoice"), value: selectedModel, disabled: modelSaving || !availableModels.length, onChange: (event) => void saveModel(event.target.value) },
-            !currentAvailable && h("option", { value: selectedModel }, `${model.provider} \xB7 ${model.model} (${t("modelCurrentUnavailable")})`),
+            { className: "mosaic-model-select", label: t("modelTitle"), description: model && !availableModels.length ? t("modelUnavailable") : void 0, value: selectedModel, disabled: !model || modelSaving || !availableModels.length, onChange: (event) => void saveModel(event.target.value) },
+            !model && h("option", { value: "" }, "\u2026"),
+            model && !currentAvailable && h("option", { value: selectedModel }, `${model.provider} \xB7 ${model.model} (${t("modelCurrentUnavailable")})`),
             ...availableModels.map((item) => h("option", { key: modelKey(item), value: modelKey(item) }, `${item.provider} \xB7 ${item.label}`))
           ),
-          h("p", { className: "mosaic-model-full" }, (() => {
-            const selected = availableModels.find((item) => modelKey(item) === selectedModel) ?? model;
-            return `${selected.provider} \xB7 ${selected.label || selected.model}`;
-          })()),
-          !availableModels.length && h("p", null, t("modelUnavailable"))
-        )),
-        h(settingsPanels.Review, { locale })
+          modelError && h("p", { role: "alert" }, modelError)
+        ) })
       );
     }
     let identityAgent;

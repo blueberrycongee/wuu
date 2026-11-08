@@ -13,6 +13,7 @@ import {
   type PluginHostOptions,
 } from "./PluginHost";
 import { PluginViewContent, WorkbenchController } from "./Workbench";
+import type { PluginUIModelPickerProps } from "../../shared/workbench";
 import { ApplicationShellOutlet, createUIComposition } from "./ApplicationShell";
 import { ToolActivityPresenter } from "./ToolActivityPresenter";
 import { ConversationControlsProvider, ConversationTurnIdentityProvider } from "../ConversationControlsContext";
@@ -227,8 +228,12 @@ describe("first-party desktop plugin lifecycle", () => {
     }
   });
 
-  it("edits model aliases without losing advanced options and rejects duplicate names", async () => {
-    const host = new PluginHost({ react: React });
+  it("edits model aliases from configured models, keeps unchanged options, and rejects duplicate names", async () => {
+    // Stands in for the host picker so the plugin's alias semantics are tested through the public ModelPicker contract.
+    const modelPickerComponent = ({ models, value, onChange }: PluginUIModelPickerProps) => React.createElement("div", { "data-picker": "" },
+      models.map((entry) => React.createElement("button", { key: entry.model, onClick: () => onChange({ provider: entry.provider, model: entry.model, variant: "" }) }, `pick ${entry.model}`)),
+      value && !("alias" in value) ? React.createElement("button", { onClick: () => onChange({ ...value, variant: "low" }) }, "level low") : null);
+    const host = new PluginHost({ react: React, modelPickerComponent });
     const { manifest, module } = await loadFirstPartyPlugin("subagent");
     await host.activateGeneration({ pluginId: "subagent", generation: "aliases-test", contributions: contributionDeclarations(manifest), register: module.activate });
     const controller = new WorkbenchController(host);
@@ -238,37 +243,46 @@ describe("first-party desktop plugin lifecycle", () => {
     const updateValue = vi.fn(async () => {});
     const settings = {
       contractVersion: 1 as const,
-      getValue: () => ({ research: { provider: "primary", model: "model-a", effort: "high", variant: "fast" } }),
+      getValue: () => ({ research: { provider: "primary", model: "model-a", effort: "high" } }),
+      listAvailableModels: () => [
+        { provider: "primary", model: "model-a", label: "Model A", variants: ["low", "high"] },
+        { provider: "primary", model: "model-b", label: "Model B", variants: ["low"] },
+      ],
       updateValue,
     };
-    const click = async (text: string) => {
-      const button = [...container.querySelectorAll("button")].find((item) => item.textContent === text)!;
+    const rows = () => [...container.querySelectorAll(".plugin-subagent-alias")];
+    const click = async (button: Element | undefined) => {
+      if (!(button instanceof HTMLButtonElement)) throw new Error("Missing button");
       await act(async () => button.click());
     };
-    const fill = async (input: HTMLInputElement, value: string) => {
+    const buttonIn = (row: Element, text: string) => [...row.querySelectorAll("button")].find((item) => item.textContent === text);
+    const rename = async (row: Element, value: string) => {
+      const input = row.querySelector("input")!;
       await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+        Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(input, value);
         input.dispatchEvent(new Event("input", { bubbles: true }));
       });
+      await act(async () => input.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
     };
     try {
       await act(async () => root.render(React.createElement(PluginViewContent, { controller, pluginId: "subagent", viewTypeId: "subagent.settings", settings })));
-      await fill(container.querySelectorAll("input")[2], "model-b");
-      await click("保存别名");
-      expect(updateValue).toHaveBeenLastCalledWith("runtime.modelAliases", { research: { provider: "primary", model: "model-b", effort: "high", variant: "fast" } });
-      await click("添加别名");
-      const inputs = container.querySelectorAll("input");
-      await fill(inputs[5], "research");
-      await fill(inputs[6], "primary");
-      await fill(inputs[7], "model-c");
-      await click("保存别名");
-      expect(updateValue).toHaveBeenCalledTimes(1);
-      expect(container.querySelector('[role="alert"]')).not.toBeNull();
-      await click("删除别名");
-      await click("保存别名");
-      expect(updateValue).toHaveBeenLastCalledWith("runtime.modelAliases", { research: { provider: "primary", model: "model-c" } });
-      await click("删除别名");
-      await click("保存别名");
+      await rename(rows()[0], "Deep");
+      expect(updateValue).toHaveBeenLastCalledWith("runtime.modelAliases", { deep: { provider: "primary", model: "model-a", effort: "high" } });
+      await click(buttonIn(rows()[0], "level low"));
+      expect(updateValue).toHaveBeenLastCalledWith("runtime.modelAliases", { deep: { provider: "primary", model: "model-a", variant: "low" } });
+
+      await click([...container.querySelectorAll("button")].find((item) => item.textContent?.includes("添加别名")));
+      await rename(rows()[1], "deep");
+      await click(buttonIn(rows()[1], "pick model-b"));
+      expect(rows()[1].querySelector('[role="alert"]')).not.toBeNull();
+      expect(updateValue).toHaveBeenCalledTimes(2);
+      await rename(rows()[1], "fast");
+      expect(updateValue).toHaveBeenLastCalledWith("runtime.modelAliases", {
+        deep: { provider: "primary", model: "model-a", variant: "low" },
+        fast: { provider: "primary", model: "model-b" },
+      });
+
+      for (const row of rows().reverse()) await click(row.querySelector('button[aria-label="删除别名"]') ?? undefined);
       expect(updateValue).toHaveBeenLastCalledWith("runtime.modelAliases", {});
     } finally {
       act(() => root.unmount());
@@ -352,10 +366,6 @@ function firstPartyRuntimeResponse(method: string, workspaceId?: string): unknow
         candidates: {},
         last_status: "",
       };
-    case "memory.overview.start":
-      return { id: "overview-job" };
-    case "memory.job.get":
-      return { state: "completed", output: "" };
     case "memory.read":
       return { index_raw: "", files: [] };
     default:

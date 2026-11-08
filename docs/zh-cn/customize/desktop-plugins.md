@@ -216,6 +216,8 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 
 桌面宿主通过 `api.ui.ConversationMessage` 和 `api.ui.ConversationComposer` 复用 Wuu 原生消息渲染器和输入框，包括原有附件选择、粘贴/拖放、预览与发送/停止控件。调用方提供会话标识、受控草稿、附件与传输回调，并负责请求接纳、错误处理及成功接纳后的草稿清理。发送失败应保留原始文本和附件。未提供原生组件的宿主会明确报告输入框不可用，不会悄悄替换成另一套输入框。
 
+`ModelPicker` 渲染原生设置使用的宿主模型菜单和思考强度菜单。传入 `models`（例如设置页中的 `host.settings.listAvailableModels()`）、可选的 `aliases`（来自 `runtime.modelAliases`）、`value` 和 `onChange`。值为 `{ provider, model, variant }`，`variant: ""` 表示模型默认强度；或为 `{ alias }`，表示已配置的别名。别名自带强度，此时强度菜单不可用。换选其他模型时回报 `variant: ""`。已保存但不再配置的模型或别名保持选中并标为不可用，直到用户另选。没有桌面渲染器的宿主在渲染该组件时抛出错误。
+
 `ConversationComposer` 可选接收 `commands`、`commandsLoading`、`commandsError` 和 `onRefreshCommands`。每项命令包含 ID、名称、描述，以及 `kind: "skill"` 和目录 `skill`，或 `kind: "action"` 和 `onSelect`。组件复用原生斜杠菜单及键盘交互，调用方通过自身传输提供目录，不会隐式读取 Coding 技能。操作命令保留附件；技能草稿以明确身份传给调用方的发送处理函数。
 
 `api.ui.ConversationView` 提供相同的阅读列、原生标题栏和搜索对话框、输入框停靠、滚动跟随及按会话恢复阅读位置。调用方提供标题、可选头像/状态、搜索内容、消息和输入框。`ConversationMessage` 接受稳定的 `id`、可选时间、最新回复标记和附件内容；独立会话提供复制/时间，不显示不受支持的 Coding 动作。`api.ui.ConversationAttachment` 使用原生结果卡，加载和已核验的本地 Blob URL 由调用方负责。这些呈现组件不会加载 Coding 历史、选择工作区或读取附件路径，调用方仍须保留范围限定的传输及授权检查。

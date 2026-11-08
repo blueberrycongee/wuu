@@ -427,7 +427,6 @@ async function run() {
   // Removal asks first and deletes the saved key with the service.
   await click(main, '[data-provider="deepseek"]');
   await waitFor(main, () => document.querySelector('.connection-page-title')?.textContent === 'DeepSeek');
-  await click(main, '.connection-engine-advanced > summary');
   await click(main, '[data-testid="settings-provider-remove"]');
   await waitFor(main, () => document.querySelector('[data-testid="settings-provider-remove-confirm"]'));
   await capture(main, '08-remove-confirm.png');

@@ -172,7 +172,7 @@ Renderer 默认采用中性强调色：`--wuu-accent` 跟随主题的强正文�
 
 动效服务于反馈和位置变化：`--motion-fast` 120ms 用于即时反馈，`--motion-base` 180ms 用于菜单与内容切换，`--motion-slow` 280ms 用于结构位移，`--motion-slower` 440ms 用于较大的折叠。入场以 `--ease-out` 减速进入，退出以 `--ease-in` 加速离开，且比入场更短。优先使用已有语义别名，以及[桌面 UI 维护](desktop-ui.md#动画)中介绍的共享入场、退出 keyframe。系统设置与应用内“动态效果”偏好都会减少动态效果，且效果相同。不要让高频操作等待装饰动画，也不要自行覆盖组件中已有的专用动效契约。
 
-复用现有 [SelectMenu](../../../desktop/src/renderer/SelectMenu.tsx)、[SettingsRow](../../../desktop/src/renderer/SettingsRow.tsx)、[Modal](../../../desktop/src/renderer/Modal.tsx) 和对应样式；共享按钮、输入框使用既有样式角色，不复制一份私有实现。控件必须有可访问名称，并按用途支持悬停、按下、选中、禁用、键盘焦点和错误状态；加载状态保留位置与尺寸。相应状态只能在语义适用时组合，不能把选中和按下混为一谈。
+复用现有 [SelectMenu](../../../desktop/src/renderer/SelectMenu.tsx)、[SettingsRow](../../../desktop/src/renderer/SettingsRow.tsx)、[Modal](../../../desktop/src/renderer/Modal.tsx) 和对应样式；设置页由 [SettingsPageHeader、SettingsSection、SettingsGroup 与 SettingsEmptyState](../../../desktop/src/renderer/SettingsSection.tsx) 组合而成：列表为空时在卡片内渲染空状态——说明这里会出现什么、可选地说明它如何出现、以及填满它的那一个操作——而不是加边框的占位块或一行灰字；共享按钮、输入框使用既有样式角色，不复制一份私有实现。控件必须有可访问名称，并按用途支持悬停、按下、选中、禁用、键盘焦点和错误状态；加载状态保留位置与尺寸。相应状态只能在语义适用时组合，不能把选中和按下混为一谈。
 
 键盘焦点使用共享的 2px `--focus-ring` 机制，鼠标点击不额外增加一圈边框。菜单应支持键盘移动、选择、退出和焦点返回；对话框使用共享焦点管理。错误提示靠近对应字段并说明恢复办法；图标不能代替必要的文字说明。
 

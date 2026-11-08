@@ -143,26 +143,29 @@
   gap: var(--section-gap);
 }
 
-/* In Settings a kit section reads like a native settings section: the
- * semibold title, the quieter scope line, the same heading gap. */
+/* In Settings a kit section reads like a native settings section: a title at
+ * UI size above its card, the native heading gap. */
 .settings-page .plugin-ui-section {
-  gap: 10px;
+  gap: var(--settings-heading-gap);
 }
 
 .settings-page .plugin-ui-section-header {
-  gap: var(--space-1);
+  gap: 2px;
 }
 
 .settings-page .plugin-ui-section-header h2 {
+  margin: 0;
   color: var(--ink-strong);
-  font-size: var(--font-title);
+  font-size: var(--font-ui);
   font-weight: var(--weight-semibold);
-  letter-spacing: -0.01em;
+  line-height: 1.4;
 }
 
 .settings-page .plugin-ui-section-header p {
+  margin: 0;
   color: var(--ink-soft);
   font-size: var(--font-sm);
+  line-height: 1.5;
 }
 
 /* An empty section there is one quiet line at a row's height, like a
@@ -181,33 +184,33 @@
   font-weight: var(--weight-regular);
 }
 
-/* Settings cards are flat hairline groups of the public kit's fields. The page
- * owns the material and row rhythm, so plugins need no copies of the native layout. */
+/* Settings cards are the native rounded group of the public kit's fields: a
+ * hairline edge, inset rules between rows, and the page's row rhythm, so
+ * plugins need no copies of the native layout. */
 .settings-page .plugin-ui-card {
-  border: 0;
-  border-top: 1px solid var(--hairline-soft);
-  border-radius: 0;
-  background: transparent;
+  border: 1px solid var(--settings-card-border);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-bg);
   box-shadow: none;
-  padding: var(--settings-row-pad-block) 0;
+  padding: var(--settings-row-pad-block) var(--settings-card-pad-inline);
 }
 
 .settings-page .plugin-ui-card:has(.plugin-ui-field, .plugin-ui-checkbox) {
-  padding: 0;
+  padding-block: 0;
+}
+
+.settings-page .plugin-ui-card > :not([hidden]) ~ :not([hidden]),
+.settings-page .plugin-ui-card :is(.plugin-ui-field, .plugin-ui-checkbox) ~ :is(.plugin-ui-field, .plugin-ui-checkbox) {
+  border-top: 1px solid var(--settings-divider);
 }
 
 .settings-page .plugin-ui-card :is(.plugin-ui-field, .plugin-ui-checkbox) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, var(--settings-control-width));
   align-items: center;
-  gap: var(--space-1) var(--space-6);
+  gap: 2px var(--space-6);
   min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
   padding: var(--settings-row-pad-block) 0;
-  border-bottom: 1px solid var(--hairline-soft);
-}
-
-.settings-page .plugin-ui-card :is(.plugin-ui-field, .plugin-ui-checkbox):last-child {
-  border-bottom: 0;
 }
 
 .settings-page .plugin-ui-card .plugin-ui-field-label {
@@ -248,7 +251,7 @@
   font-size: var(--font-ui);
 }
 
-/* Flat cards have no inset to absorb the switch's enlarged hit target. */
+/* The card's inline padding already holds the switch's enlarged hit target. */
 .settings-page .plugin-ui-card .plugin-ui-checkbox input {
   margin-inline-end: 0;
 }
@@ -258,31 +261,59 @@
   gap: var(--space-2);
 }
 
+/* Fields and buttons match the native settings controls: fields keep an edge,
+ * buttons are a soft fill, and both share the control radius. */
 .settings-page .plugin-ui-input,
 .settings-page .plugin-ui-textarea {
   border: 1px solid var(--hairline);
-  border-radius: 6px;
-  background: var(--field-bg);
+  border-radius: var(--radius-sm);
+  background-color: var(--field-bg);
   box-shadow: none;
-  font-size: var(--font-sm);
+  font-size: var(--font-ui);
+}
+
+/* A native select draws the same quiet chevron as the shared select menu. */
+.settings-page select.plugin-ui-input,
+.settings-page select.plugin-ui-input:not(:disabled):hover {
+  appearance: none;
+  padding-inline-end: calc(var(--control-padding-inline) + 16px);
+  background-image:
+    linear-gradient(45deg, transparent calc(50% - 0.75px), var(--ink-tertiary) calc(50% - 0.75px), var(--ink-tertiary) calc(50% + 0.75px), transparent calc(50% + 0.75px)),
+    linear-gradient(135deg, transparent calc(50% - 0.75px), var(--ink-tertiary) calc(50% - 0.75px), var(--ink-tertiary) calc(50% + 0.75px), transparent calc(50% + 0.75px));
+  background-position:
+    right calc(var(--control-padding-inline) + 4px) center,
+    right var(--control-padding-inline) center;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
 }
 
 .settings-page .plugin-ui-button {
   min-height: var(--control-field-height);
-  border: 1px solid var(--hairline);
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
   box-shadow: none;
-  font-size: var(--font-sm);
-  padding: 4px 12px;
+  font-size: var(--font-ui);
+  padding: var(--control-padding-block) var(--control-padding-inline);
 }
 
-.settings-page .plugin-ui-button[data-wuu-variant="primary"] {
-  border-color: transparent;
+.settings-page .plugin-ui-button[data-wuu-variant="secondary"] {
+  background: var(--settings-button-bg);
+  color: var(--ink-strong);
 }
 
-.settings-page .plugin-ui-button[data-wuu-variant="ghost"],
-.settings-page .plugin-ui-button[data-wuu-variant="danger"] {
-  border-color: transparent;
+.settings-page .plugin-ui-button[data-wuu-variant="secondary"]:not(:disabled):hover {
+  background: var(--settings-button-hover-bg);
+}
+
+/* When the page is only a few words wide, card chrome would cost the content
+ * its width; groups fall back to hairline rules between them. */
+@container settings-page (max-width: 12em) {
+  .settings-page .plugin-ui-card {
+    border-inline: 0;
+    border-radius: 0;
+    background: transparent;
+    padding-inline: 0;
+  }
 }
 
 @container settings-page (max-width: 32em) {
@@ -565,6 +596,31 @@
 .plugin-ui-field-description {
   font-size: var(--font-sm);
   line-height: 1.5;
+}
+
+/* Model menu takes the free width; the level menu keeps a stable width and wraps below when space runs out. */
+.plugin-ui-model-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.plugin-ui-model-picker-model {
+  flex: 999 1 12em;
+  min-width: 0;
+}
+
+.plugin-ui-model-picker-level {
+  flex: 1 1 9em;
+  min-width: 0;
+}
+
+/* The model and level menus together need about two settings controls of width. */
+@container settings-page not (max-width: 32em) {
+  .settings-page .plugin-ui-card .plugin-ui-field:has(> .plugin-ui-model-picker) {
+    grid-template-columns: minmax(0, 1fr) minmax(0, calc(var(--settings-control-width) * 2));
+  }
 }
 
 /* Text fields share a stable fill and boundary with settings inputs. */

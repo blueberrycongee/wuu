@@ -733,7 +733,7 @@ async function run() {
     for (const label of labels) {
       await click(pick('.settings-nav-item', label), `settings-page-${label}`);
       pages.push(await evaluate(() => document.querySelector('[data-wuu-component="settings-page"]').dataset.wuuPage));
-      assert.ok(await evaluate(() => !!document.querySelector('.settings-titlebar-slot')?.textContent.trim()), 'Settings titlebar has the active page title');
+      assert.ok(await evaluate(() => !!document.querySelector('.settings-page-title')?.textContent.trim()), 'Settings page shows the active page title');
     }
     await fill('.settings-search input', 'Appearance');
     await waitFor(() => document.querySelectorAll('.settings-nav-item').length === 1);

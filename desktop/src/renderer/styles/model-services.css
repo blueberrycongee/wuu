@@ -357,6 +357,15 @@
   gap: var(--space-2);
 }
 
+/* Prose values keep the shared value layout but not its monospace face. */
+.settings-row-control-value:is(.model-service-plain, .model-service-status) {
+  font-family: inherit;
+}
+
+.model-service-plain[data-empty] {
+  color: var(--ink-tertiary);
+}
+
 .model-service-status:not([data-attention]) .icon-sm {
   color: var(--success);
 }
@@ -690,7 +699,7 @@
 .connection-page-heading { min-width: 0; }
 .connection-page-body, .connection-detail-body { display: flex; flex-direction: column; gap: var(--settings-gap); min-width: 0; }
 .connection-page-footer { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-.connection-page-back { align-self: start; }
+.connection-page-back { align-self: start; margin-inline-start: calc(var(--control-padding-inline) * -1); }
 .connection-page .model-browse-list { overflow: visible; margin: 0; padding: 0; }
 .connection-page .model-service-tiles { grid-template-columns: minmax(0, 1fr); gap: 0; }
 .connection-page .model-service-tile { margin: 0; padding: var(--settings-row-pad-block) 0; border-radius: 0; border-bottom: 1px solid var(--hairline-soft); }
@@ -766,8 +775,6 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-summary-secondary { min-width: 0; color: var(--ink-soft); font-size: var(--font-sm); line-height: 1.5; overflow-wrap: anywhere; text-align: end; }
 .connection-summary-secondary > .connection-summary-status { display: block; }
 .connection-summary-status { color: var(--ink-soft); }
-.connection-summary-status[data-ready] { color: var(--success); }
-.connection-summary-status[data-attention] { color: var(--warning); }
 @container settings-page (max-width: 34em) {
   .connection-summary-copy { grid-template-columns: minmax(0, 1fr); }
   .connection-summary-secondary { text-align: start; }
@@ -780,16 +787,15 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-usage-compact-window[data-stale] .connection-usage-compact-value { color: var(--ink-soft); }
 .connection-usage-compact-value[data-warning="true"] { color: var(--warning); }
 .connection-usage-compact-value[data-exhausted="true"] { color: var(--danger); }
-.connection-usage-inline meter { appearance: none; grid-column: 2; grid-row: 1; min-width: 0; width: 100%; height: 3px; border: 0; background: color-mix(in srgb, var(--info) 12%, var(--surface-1)); }
-.connection-usage-inline meter::-webkit-meter-bar { border: 0; border-radius: 1px; background: color-mix(in srgb, var(--info) 12%, var(--surface-1)); }
-.connection-usage-inline meter::-webkit-meter-optimum-value { background: var(--info); }
+.connection-usage-inline meter { appearance: none; grid-column: 2; grid-row: 1; min-width: 0; width: 100%; height: 3px; border: 0; background: var(--surface-3); }
+.connection-usage-inline meter::-webkit-meter-bar { border: 0; border-radius: 1px; background: var(--surface-3); }
+.connection-usage-inline meter::-webkit-meter-optimum-value { background: var(--ink-soft); }
 .connection-usage-inline meter[data-warning="true"]::-webkit-meter-optimum-value { background: var(--warning); }
 .connection-usage-inline meter[data-exhausted="true"]::-webkit-meter-optimum-value { background: var(--danger); }
-.connection-usage-inline meter::-moz-meter-bar { background: var(--info); }
+.connection-usage-inline meter::-moz-meter-bar { background: var(--ink-soft); }
 .connection-usage-inline meter[data-warning="true"]::-moz-meter-bar { background: var(--warning); }
 .connection-usage-inline meter[data-exhausted="true"]::-moz-meter-bar { background: var(--danger); }
-.connection-usage-inline .connection-usage-balance { display: flex; justify-content: space-between; gap: var(--space-2); }
-.connection-usage-inline .connection-usage-balance > :last-child { color: var(--ink); }
+.connection-usage-amount { color: var(--ink); }
 .connection-usage-summary { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); min-width: 0; color: var(--ink-soft); font-size: var(--font-sm); }
 .connection-usage-window { display: grid; align-content: start; gap: var(--space-1); flex: 1 1 7em; min-width: 0; }
 .connection-usage-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
@@ -816,52 +822,25 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-page .model-service-hero { min-height: 0; }
 .connection-page .model-service-hero { display: flex; margin: 0; }
 
-/* Model display names and exact IDs stay distinguishable at large UI sizes. */
-.connection-page .model-choice-main { flex-direction: column; align-items: flex-start; gap: var(--space-1); }
-.connection-page :is(.model-choice-name, .model-choice-id) {
-  flex: none;
-  max-width: 100%;
-  white-space: normal;
-  overflow: visible;
-  overflow-wrap: anywhere;
-  text-overflow: clip;
-}
 
 /* One content column keeps actions attached to their connection and section. */
-.connection-page { width: 100%; align-self: flex-start; gap: var(--settings-gap); --connection-model-order-width: calc(14px + 2 * max(28px, var(--control-field-height))); }
+.connection-page { width: 100%; align-self: flex-start; gap: var(--settings-gap); }
 .connection-page-header { flex-wrap: wrap; align-items: center; row-gap: var(--space-2); }
 .connection-page-heading { flex: 1 1 180px; }
 .connection-page-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-inline-start: auto; }
 .connection-page .settings-section-header { flex-wrap: wrap; }
 .connection-page-actions .model-service-hero-actions { gap: var(--space-1); }
-.connection-page .model-choice-label { display: flex; align-items: center; gap: var(--space-2); min-width: 0; max-width: 100%; }
-.connection-page .model-choice-selected { flex: 0 0 auto; width: 16px; height: 16px; }
-.connection-page .model-choice-main { padding-inline-start: 0; }
-@media (hover: hover) and (pointer: fine) {
-  .connection-page .model-choice-action { opacity: 0; }
-  .connection-page .model-choice:hover .model-choice-action,
-  .connection-page .model-choice:focus-within .model-choice-action,
-  .connection-page .model-choice-action[aria-expanded="true"] { opacity: 1; }
-}
-.connection-status-row, .connection-login { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.connection-login { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .connection-login-feedback { flex-basis: 100%; font-size: var(--font-sm); color: var(--ink-soft); }
-.connection-page .model-choice-label .model-choice-name { flex: 0 1 auto; min-width: 0; }
 .connection-auth-source { display: block; flex-basis: 100%; color: var(--ink-soft); font-size: var(--font-sm); }
-.connection-auth-methods { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
-.connection-auth-methods [aria-pressed="true"] { color: var(--ink); background: var(--ink-overlay-6); }
 
 /* Connection details share one hierarchy; controls do not alter catalog identity. */
 .connection-title-edit { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
 .connection-title-edit .settings-icon-button { color: var(--ink-tertiary); }
 .connection-title-form { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
 .connection-title-form input { width: min(20em, 100%); }
-.connection-status-pill { display: inline-flex; align-items: center; gap: var(--space-1); padding: 3px var(--space-2); background: color-mix(in srgb, var(--success, #468365) 10%, transparent); color: var(--success, #468365); border-radius: var(--radius-sm); font-size: var(--font-xs); }
-.connection-status-pill::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.connection-status-pill[data-attention="true"] { color: var(--ink-soft); background: var(--surface-2); }
+.connection-status-text { color: var(--ink-soft); }
 .connection-credential-menu { position: relative; font-size: var(--font-ui); }
-.connection-credential-menu > summary { list-style: none; cursor: pointer; white-space: nowrap; }
-.connection-credential-menu > summary::-webkit-details-marker { display: none; }
-.connection-credential-panel { position: absolute; inset-inline-end: 0; top: calc(100% + var(--space-2)); z-index: 20; width: min(460px, 80vw); max-height: 65vh; overflow: auto; background: var(--surface-1); padding: var(--space-4); border-radius: var(--radius-md); box-shadow: var(--shadow-pop); display: flex; flex-direction: column; gap: var(--space-3); }
 .connection-detail-quota { padding-block: var(--settings-row-pad-block); }
 .connection-detail-quota .connection-usage-summary { display: flex; flex-direction: column; gap: var(--space-4); }
 .connection-detail-quota .connection-usage-window { display: grid; grid-template-columns: 160px minmax(100px, 1fr) 180px; align-items: center; gap: var(--space-3); flex: none; }
@@ -870,34 +849,53 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-detail-quota .connection-usage-period { grid-column: 1; grid-row: 1; }
 .connection-detail-quota .connection-usage-reset { text-align: end; }
 .connection-detail-quota .connection-usage-scope, .connection-detail-quota .connection-usage-display { grid-column: 1 / -1; }
-.connection-model-head, .connection-model-table-heading, .connection-page .connection-model-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 3em var(--connection-model-order-width); column-gap: var(--space-3); align-items: center; }
-.connection-model-table-heading, .connection-page .model-choice.connection-model-row { grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) 3em var(--connection-model-order-width) var(--control-field-height); }
-.connection-page .connection-model-row { min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2); padding-block: var(--space-2); }
-.connection-page :is(.connection-model-head, .connection-model-table-heading) { min-height: 0; padding-block: var(--space-2); color: var(--ink-tertiary); font-size: var(--font-xs); }
-/* The name button spans the row height so it centers with the other cells. */
-.connection-page .connection-model-row .model-choice-main { min-width: 0; min-height: 0; align-self: stretch; justify-content: center; padding-block: 0; }
-.connection-model-id { min-width: 0; overflow-wrap: anywhere; color: var(--ink-soft); }
-.connection-model-name { min-width: 0; overflow-wrap: anywhere; }
-.connection-page .connection-model-row > .connection-model-enabled { order: 0; grid-column: 3; grid-row: 1; }
-.connection-page .connection-model-row > span.connection-model-enabled { display: flex; align-items: center; justify-content: flex-end; }
-.connection-page .connection-model-row > .connection-model-order { order: 0; grid-column: 4; grid-row: 1; }
-.connection-model-order { display: flex; align-items: center; gap: 0; color: var(--ink-tertiary); }
-.connection-model-order > .icon { width: 14px; flex: 0 0 14px; }
-.connection-model-order button { width: max(28px, var(--control-field-height)); flex: 0 0 auto; padding: 4px; min-width: 28px; min-height: 28px; }
-.connection-page .connection-model-row > .model-choice-action { grid-column: 5; grid-row: 1; margin: 0; justify-self: end; }
 .connection-engine-advanced > :not(summary) { margin-top: var(--space-3); }
 /* A titled section inside the disclosure keeps the page's section spacing. */
 .connection-engine-advanced > :not(summary) ~ .settings-section { margin-top: var(--settings-gap); }
 @container settings-page (max-width: 42em) {
   .connection-page-actions { margin-inline-start: 0; width: 100%; }
-  .connection-credential-panel { inset-inline-start: 0; inset-inline-end: auto; width: min(460px, 100cqw); }
-  .connection-page .connection-credential-panel .settings-row { grid-template-columns: minmax(0, 1fr); align-items: stretch; gap: var(--space-2); }
-  .connection-credential-panel .settings-row-control { justify-content: flex-start; }
-  .connection-credential-panel :is(.settings-row-label-title, .settings-row-control-value) { min-width: 0; max-width: 100%; overflow-wrap: anywhere; text-align: start; }
-  .connection-model-head, .connection-model-table-heading, .connection-page .connection-model-row { column-gap: var(--space-2); }
   .connection-detail-quota .connection-usage-window { grid-template-columns: minmax(0, 1fr); }
   .connection-detail-quota .connection-usage-heading { padding-inline-end: 0; }
   .connection-detail-quota .connection-usage-reset { text-align: start; }
 }
 
 .connection-engine-version { font-size: var(--font-sm); color: var(--ink-soft); font-weight: var(--weight-regular); }
+
+/* --- Connection model list ------------------------------------------------
+ * One list per connection: optional search on top, rows that drag to reorder
+ * with the visibility switch on the trailing edge, and an add row at the end.
+ * Rows run edge to edge so hover fills and dividers span the whole group. */
+.settings-group.connection-model-list { padding-inline: 0; overflow: hidden; }
+.connection-model-list > * { padding-inline: var(--settings-card-pad-inline); }
+.connection-model-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
+  padding-block: var(--space-2);
+  cursor: grab;
+  touch-action: pan-y;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.connection-model-row:hover { background: var(--surface-1); }
+.connection-model-row[data-dragging] { z-index: 1; cursor: grabbing; background: var(--settings-card-bg); box-shadow: var(--shadow-pop); }
+.connection-model-text { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+.connection-model-name { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
+.connection-model-id { min-width: 0; color: var(--ink-tertiary); font-family: var(--font-mono); font-size: var(--font-xs); overflow-wrap: anywhere; }
+.connection-model-badge { flex: 0 0 auto; padding: 0 var(--space-2); border-radius: var(--radius-xs); background: var(--ink-overlay-6); color: var(--ink-soft); font-size: var(--font-xs); line-height: 1.6; }
+.connection-model-enabled { flex: 0 0 auto; cursor: default; }
+.connection-model-search { display: flex; align-items: center; gap: var(--space-2); min-height: calc(var(--control-field-height) + var(--space-2) * 2); color: var(--ink-tertiary); cursor: text; }
+.connection-model-search > .icon { flex: 0 0 auto; }
+.connection-model-search > input { flex: 1 1 auto; min-width: 0; height: var(--control-field-height); border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; }
+.connection-model-search > input::placeholder { color: var(--ink-tertiary); }
+.connection-model-search:focus-within { color: var(--ink-soft); }
+.connection-model-add-trigger { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: calc(var(--control-field-height) + var(--space-2) * 2); background: transparent; color: var(--ink-soft); font: inherit; text-align: start; transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+.connection-model-add-trigger:hover:not(:disabled) { background: var(--surface-1); color: var(--ink); }
+.connection-model-add { display: flex; align-items: center; gap: var(--space-2); min-height: calc(var(--control-field-height) + var(--space-2) * 2); padding-block: var(--space-2); }
+.connection-model-add > .settings-input { flex: 1 1 auto; min-width: 0; }
+.connection-model-add > .settings-button { flex: 0 0 auto; white-space: nowrap; }
+.connection-model-list > .settings-group-empty { padding-block: var(--settings-row-pad-block); }
+.connection-detail-actions { display: flex; }
+.connection-detail-actions > .settings-button-danger { margin-inline-start: calc(var(--control-padding-inline) * -1); background: transparent; }
+.connection-detail-actions > .settings-button-danger:hover:not(:disabled) { background: var(--danger-soft); }

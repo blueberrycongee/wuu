@@ -23,7 +23,7 @@ const active = new Set();
 const evidence = { started_at: new Date().toISOString(), node: process.version, scenarios: [], artifacts: {} };
 const services = ['host.service.call', 'host.storage.get', 'host.storage.set', 'host.storage.delete',
   'host.storage.keys', 'host.storage.compare_exchange', 'host.session.create', 'host.session.send',
-  'host.session.list', 'host.session.inspect', 'host.session.cancel', 'host.session.control',
+  'host.session.list', 'host.session.inspect', 'host.session.cancel', 'host.session.control', 'host.session.context',
   'host.session.history.read', 'host.session.history.search', 'host.workspace.status'];
 await mkdir(output, { recursive: true });
 
@@ -181,6 +181,10 @@ class FixtureHost extends EventEmitter {
       case 'host.user-question.offer': return { request_id: 'question-fixture', expires_at: new Date(Date.now() + 30000).toISOString() };
       case 'memory.session': assert.equal(method, 'read'); return { action: 'read', target: params.target, content: this.memory, exists: true };
       case 'host.workspace.status': return { clean: true };
+      case 'host.session.context': {
+        const session = this.sessions.get(params.session_id);
+        return { session_id: params.session_id, user_space_id: '', product_domain: 'coding', agent_id: '', parent_session_id: session?.parent_session_id ?? '', visibility: session?.visibility ?? 'user' };
+      }
       case 'host.session.history.read': return { messages: [], entries: [] };
       default: throw new Error(`Unexpected host service ${service}.${method}`);
     }

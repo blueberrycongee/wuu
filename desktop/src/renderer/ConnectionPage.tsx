@@ -13,6 +13,7 @@ export type ConnectionPageProps = {
   onClose: () => void;
   closeDisabled?: boolean;
   backTestId?: string;
+  backLabel?: string;
   panelClassName?: string;
   asForm?: boolean;
   onSubmit?: (event: FormEvent<HTMLFormElement>) => void;
@@ -30,6 +31,7 @@ export function ConnectionPage({
   onClose,
   closeDisabled = false,
   backTestId = "settings-connection-back",
+  backLabel,
   panelClassName,
   asForm = false,
   onSubmit,
@@ -53,7 +55,7 @@ export function ConnectionPage({
       onClick={onClose}
     >
       <ArrowLeft className="icon" />
-      {t("common.back")}
+      {backLabel ?? t("common.back")}
     </button>
     <header className="connection-page-header">
       {icon ? <span className="connection-page-icon">{icon}</span> : null}

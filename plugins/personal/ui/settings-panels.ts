@@ -8,5 +8,5 @@ export function createSettingsPanels(react: typeof React, ui: Parameters<typeof 
   const h=react.createElement, ReviewPanel=createPersonalReviewPanel(react,ui);
   const host = async (method:string,input?:unknown) => unwrapPersonalHost(await invoke(method,input));
   const reviewService={list:()=>host('review.list'),rules:(input?:import('./action-review-panel.js').ReviewRuleCommand)=>host('review.rules',input),previewRule:(input:import('./action-review-panel.js').ReviewBinding)=>host('review.rule.preview',input),resolve:(input:unknown)=>host('review.resolve',input),revoke:(input:unknown)=>host('review.revoke',input),settings:(input:{enabled:boolean;expected_revision:number})=>host('review.settings',input)};
-  return { ReviewConversation:({locale}:{locale?:string})=>h(ReviewPanel,{service:reviewService,locale,variant:"conversation"}), Review:({locale}:{locale?:string})=>h(ReviewPanel,{service:reviewService,locale}), styles:`${personalReviewStyles}\n.mosaic-settings>.personal-review{margin-top:var(--space-6);padding-top:var(--space-5);border-top:1px solid var(--hairline);}` };
+  return { ReviewConversation:({locale}:{locale?:string})=>h(ReviewPanel,{service:reviewService,locale,variant:"conversation"}), Review:({locale,leading}:{locale?:string;leading?:React.ReactNode})=>h(ReviewPanel,{service:reviewService,locale,leading}), styles:personalReviewStyles };
 }

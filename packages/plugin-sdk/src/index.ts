@@ -278,6 +278,22 @@ export interface PluginUILiveDurationProps extends PluginUIContainerProps {
   readonly active?: boolean;
 }
 
+/** A configured model with an optional reasoning level ("" is the model default), or a named alias. */
+export type PluginUIModelPickerValue =
+  | { readonly provider: string; readonly model: string; readonly variant?: string }
+  | { readonly alias: string };
+
+/** Host model and reasoning-level menus, fed by the caller's model list such as host.settings.listAvailableModels(). */
+export interface PluginUIModelPickerProps {
+  readonly models: readonly Pick<SettingsAvailableModelV1, "provider" | "model" | "label" | "variants">[];
+  /** Offered after the models; an alias keeps its own level. */
+  readonly aliases?: Readonly<Record<string, SettingsModelAliasV1>>;
+  readonly value?: PluginUIModelPickerValue;
+  readonly onChange: (value: PluginUIModelPickerValue) => void;
+  readonly disabled?: boolean;
+  readonly className?: string;
+}
+
 /** A desktop Chromium page inside an existing plugin View. */
 export interface PluginUIWebPageProps {
   /** Initial HTTP(S) destination. Changing it navigates this page. */
@@ -428,6 +444,7 @@ export interface PluginUIKit {
   readonly LoadingState: HostUIComponent<PluginUILoadingStateProps>;
   readonly ErrorState: HostUIComponent<PluginUIErrorStateProps>;
   readonly LiveDuration: HostUIComponent<PluginUILiveDurationProps>;
+  readonly ModelPicker: HostUIComponent<PluginUIModelPickerProps>;
 }
 
 export interface OpenViewOptions {
@@ -1036,6 +1053,27 @@ export interface MemoryNotebookReadRequest {
   file: string;
   /** Positive UTF-8 byte budget, at most 65,536; absent or 0 uses 16,384. */
   max_bytes?: number;
+}
+
+/** Notebook metadata from service version 1.1; topic bodies are omitted. */
+export interface MemoryNotebookListV1 {
+  version: 1;
+  index: { found: boolean; bytes: number; lines: number; max_bytes: number; max_lines: number; truncated: boolean };
+  files: {
+    file: string; title?: string; type?: string; description?: string;
+    /** Frontmatter date the note was last confirmed against evidence. */
+    verified?: string;
+    /** Frontmatter evidence references such as session:<id>. */
+    sources?: string[];
+    bytes: number;
+    /** Whether MEMORY.md names this file. */
+    indexed: boolean;
+    /** Agent memory_read calls across workspaces, an advisory ranking signal. */
+    reads: number;
+    last_read_at?: string;
+  }[];
+  /** Plain topic filenames named by MEMORY.md that do not exist. */
+  dangling: string[];
 }
 
 /** Fresh file evidence, not a model summary or an instruction authority. */
@@ -1682,7 +1720,11 @@ export interface HostServiceContracts {
     params: { session_id: string; provider?: string; model?: string };
     result: { provider: string; model: string };
   };
-  "host.session.context": { params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string }; result: { session_id: string; user_space_id: string; product_domain: "personal" | "coding"; agent_id: string; parent_session_id: string } };
+  "host.session.context": { params: { execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference; session_id: string }; result: {
+    session_id: string; user_space_id: string; product_domain: "personal" | "coding"; agent_id: string; parent_session_id: string;
+    /** "plugin" for plugin-owned background sessions; absent from hosts before this field existed. */
+    visibility?: "user" | "plugin";
+  } };
   "host.session.inspect": {
     params: {
       execution_authorization?: import("./execution-authorization.js").ExecutionAuthorizationReference;

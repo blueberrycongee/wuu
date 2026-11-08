@@ -1,18 +1,19 @@
-import { readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat, unlink } from "node:fs/promises";
 import { basename, join, relative, sep } from "node:path";
 import { acquireFileLock, releaseFileLock, type JSONSchemaObject, type RuntimeExecutionContext, type RuntimeHost } from "@wuu/plugin-sdk";
-import { MAX_MEMORY_BYTES, missing, unsafeLine, writeAtomicFile } from "./notebook.js";
+import { INDEX_FILE, MAX_MEMORY_BYTES, missing, unsafeLine, writeAtomicFile } from "./notebook.js";
 
 const READ_MAX_BYTES = 64 * 1024;
 const targets = ["project_memory", "summary", "checkpoint", "notes"];
-export interface SessionMemoryArgs { action: string; target: string; content: string; source: string }
+export interface SessionMemoryArgs { action: string; target: string; content: string; source: string; file: string }
 
 export function sessionMemorySchema(): JSONSchemaObject {
   return {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["status", "read", "append", "replace"] },
+      action: { type: "string", enum: ["status", "read", "append", "replace", "delete"] },
       target: { type: "string", enum: targets },
+      file: { type: "string", description: "project_memory topic page such as build.md; omit for its MEMORY.md index. delete requires a page." },
       content: { type: "string", description: "Markdown content for append or replace." },
       source: { type: "string", description: "Optional source label such as agent, dream, workflow, or user." },
     },
@@ -23,7 +24,8 @@ export function sessionMemorySchema(): JSONSchemaObject {
 export async function runSessionMemory(stateDir: string, args: SessionMemoryArgs, threadId: string, lifecycleHost: RuntimeHost, execution: RuntimeExecutionContext): Promise<unknown> {
   if (!stateDir.trim()) throw new Error("memory plugin requires workspace_state_dir");
   threadId = threadId.trim();
-  const paths: Record<string, string> = { project_memory: join(stateDir, "memory", "MEMORY.md") };
+  const projectDir = join(stateDir, "memory");
+  const paths: Record<string, string> = { project_memory: join(projectDir, INDEX_FILE) };
   if (threadId) {
     if (basename(threadId) !== threadId || threadId === "." || threadId === "..") throw new Error("memory plugin requires a safe session id");
     const root = join(stateDir, "sessions", threadId);
@@ -41,10 +43,16 @@ export async function runSessionMemory(stateDir: string, args: SessionMemoryArgs
         catch (error) { if (!missing(error)) throw error; }
         files.push({ target, path, exists: info !== undefined, bytes: info?.size ?? 0 });
       }
-      return { action: "status", files };
+      const project_pages: { file: string; bytes: number }[] = [];
+      for (const entry of await readdir(projectDir, { withFileTypes: true }).catch((error: unknown) => { if (missing(error)) return []; throw error; })) {
+        if (!entry.isFile() || !projectPage(entry.name)) continue;
+        project_pages.push({ file: entry.name, bytes: (await stat(join(projectDir, entry.name))).size });
+      }
+      project_pages.sort((a, b) => Buffer.compare(Buffer.from(a.file), Buffer.from(b.file)));
+      return { action: "status", files, project_pages };
     }
     case "read": {
-      const [target, path] = checkedTarget(args.target, paths);
+      const [target, path] = checkedTarget(args, paths, projectDir);
       let content = Buffer.alloc(0);
       let exists = false;
       try { content = await readFile(path); exists = true; }
@@ -53,18 +61,28 @@ export async function runSessionMemory(stateDir: string, args: SessionMemoryArgs
       return { action: "read", target, path, exists, content: truncated ? headTailText(content) : content.toString(), truncated };
     }
     case "append":
-    case "replace": {
-      const [target, path] = checkedTarget(args.target, paths);
+    case "replace":
+    case "delete": {
+      const [target, path] = checkedTarget(args, paths, projectDir);
       const content = args.content.trim();
-      if (!content) throw new Error("session_memory content is required");
-      if (args.content.split("\n").some(unsafeLine)) throw new Error("session_memory content failed the prompt-injection safety scan");
-      if (Buffer.byteLength(content) > MAX_MEMORY_BYTES) throw new Error(`session_memory content exceeds ${MAX_MEMORY_BYTES} bytes`);
+      if (args.action === "delete") {
+        if (!args.file.trim()) throw new Error("session_memory delete requires a project_memory topic file");
+      } else {
+        if (!content) throw new Error("session_memory content is required");
+        if (args.content.split("\n").some(unsafeLine)) throw new Error("session_memory content failed the prompt-injection safety scan");
+        if (Buffer.byteLength(content) > MAX_MEMORY_BYTES) throw new Error(`session_memory content exceeds ${MAX_MEMORY_BYTES} bytes`);
+      }
       execution.signal.throwIfAborted();
       // Wait for the authoritative acquire reply, even if cancellation races
       // the grant. Otherwise the caller could lose the handle before releasing.
       const lock = await acquireFileLock(lifecycleHost, { root: "workspace_state", path: relative(stateDir, path + ".lock").split(sep).join("/") }, execution.executionId);
       try {
         execution.signal.throwIfAborted();
+        if (args.action === "delete") {
+          let deleted = true;
+          await unlink(path).catch((error: unknown) => { if (!missing(error)) throw error; deleted = false; });
+          return { action: "delete", target, file: args.file.trim(), path, deleted };
+        }
         let next: string;
         if (args.action === "append") {
           let previous = "";
@@ -84,14 +102,21 @@ export async function runSessionMemory(stateDir: string, args: SessionMemoryArgs
         await releaseFileLock(lifecycleHost, lock.lock_id);
       }
     }
-    default: throw new Error("session_memory action must be status, read, append, or replace");
+    default: throw new Error("session_memory action must be status, read, append, replace, or delete");
   }
 }
 
-function checkedTarget(target: string, paths: Record<string, string>): [string, string] {
-  target = target.trim();
+function projectPage(file: string): boolean {
+  return file === basename(file) && !file.startsWith(".") && !/[\\/]/.test(file) && file.endsWith(".md") && file.toLowerCase() !== INDEX_FILE.toLowerCase();
+}
+
+function checkedTarget(args: SessionMemoryArgs, paths: Record<string, string>, projectDir: string): [string, string] {
+  const target = args.target.trim(), file = args.file.trim();
   if (!Object.hasOwn(paths, target)) throw new Error(`unknown session_memory target ${JSON.stringify(target)}`);
-  return [target, paths[target]!];
+  if (!file) return [target, paths[target]!];
+  if (target !== "project_memory") throw new Error("session_memory file is only valid for project_memory");
+  if (!projectPage(file)) throw new Error("session_memory file must be a plain, non-hidden .md topic page other than MEMORY.md");
+  return [target, join(projectDir, file)];
 }
 
 function headTailText(bytes: Buffer): string {

@@ -8,7 +8,7 @@ import type {
   BrowserProfile,
 } from "../shared/protocol";
 import { ChevronDown, Folder, Loader2, RefreshCw, Settings, Trash2 } from "./WuuIcons";
-import { SettingsGroup, SettingsPageHeader, SettingsSection } from "./SettingsSection";
+import { SettingsGroup, SettingsPageHeader, SettingsSection, SettingsEmptyState } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
 import { Switch } from "./ui/Switch";
@@ -207,9 +207,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
               <Loader2 className="icon settings-spin" aria-hidden="true" />
             </SettingsRow>
           ) : !profilesLoaded ? null : profiles.length === 0 ? (
-            <div className="settings-group-empty" role="status">
-              <span>{t("settings.browserNoProfiles")}</span>
-            </div>
+            <SettingsEmptyState title={t("settings.browserNoProfiles")} />
           ) : (
             profiles.map((profile) => (
               <SettingsRow
@@ -272,9 +270,7 @@ export function BrowserSettingsSection(): JSX.Element | null {
               <Loader2 className="icon settings-spin" aria-hidden="true" />
             </SettingsRow>
           ) : !extensionsLoaded ? null : extensions.length === 0 ? (
-            <div className="settings-group-empty" role="status">
-              <span>{t("settings.browserExtensionsEmpty")}</span>
-            </div>
+            <SettingsEmptyState title={t("settings.browserExtensionsEmpty")} />
           ) : (
             extensions.map((extension) => (
               <div className="browser-extension-entry" key={extension.id}>

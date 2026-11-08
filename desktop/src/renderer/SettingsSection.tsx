@@ -74,4 +74,31 @@ export function SettingsGroup({ children, className }: { children: ReactNode; cl
   return <div className={className ? `settings-group ${className}` : "settings-group"} data-wuu-component="settings-group">{children}</div>;
 }
 
+/** Stands in for a list that has nothing to show: what would appear here,
+ * optionally how it gets here, and the one action that fills it. */
+export function SettingsEmptyState({
+  title,
+  description,
+  action,
+  testID,
+}: {
+  title: string;
+  description?: ReactNode;
+  action?: ReactNode;
+  testID?: string;
+}): JSX.Element {
+  const showDescription = Boolean(description) && !isTouchWebShell();
+  return (
+    <div
+      className="settings-empty-state"
+      data-wuu-component="settings-empty-state"
+      {...(testID ? { "data-testid": testID } : {})}
+    >
+      <p className="settings-empty-state-title">{title}</p>
+      {showDescription ? <p className="settings-empty-state-description">{description}</p> : null}
+      {action ? <div className="settings-empty-state-action">{action}</div> : null}
+    </div>
+  );
+}
+
 export type SettingsStatusTone = "success" | "warning" | "danger" | "neutral";
