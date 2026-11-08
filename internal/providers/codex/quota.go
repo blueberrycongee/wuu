@@ -116,7 +116,7 @@ func codexQuotaAccount(baseURL string, creds credentials) *providers.QuotaAccoun
 		source = "codex"
 	}
 	label := ""
-	claims := jwtClaims(creds.accessToken)
+	claims := providers.DecodeJWTClaims(creds.accessToken)
 	if profile, ok := claims["https://api.openai.com/profile"].(map[string]any); ok {
 		label, _ = profile["email"].(string)
 	}

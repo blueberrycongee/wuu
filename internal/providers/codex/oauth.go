@@ -1,9 +1,7 @@
 package codex
 
 import (
-	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +16,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
 const (
@@ -95,7 +94,7 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 		if cliErr != nil {
 			return credentials{}, fmt.Errorf("no Codex OAuth credentials found; run `codex` to sign in or import credentials into wuu: %w", cliErr)
 		}
-		if tokenExpiring(cliState.AccessToken, 0) {
+		if providers.TokenExpiringWithin(cliState.AccessToken, 0) {
 			return credentials{}, errors.New("Codex CLI credentials are expired; run `codex` to refresh them before using openai-codex")
 		}
 		creds := credentials{
@@ -118,7 +117,7 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 			source:       "wuu-auth-store",
 			refreshable:  strings.TrimSpace(state.RefreshToken) != "",
 		}
-		if forceRefresh || tokenExpiring(creds.accessToken, refreshSkew) {
+		if forceRefresh || providers.TokenExpiringWithin(creds.accessToken, refreshSkew) {
 			refreshed, refreshErr := refresh(ctx, s.httpClient, creds.refreshToken)
 			if refreshErr != nil {
 				return credentials{}, refreshErr
@@ -162,7 +161,7 @@ func LocalOAuthStatus(home string, reuseCodexCredentials bool) (string, error) {
 	if !reuseCodexCredentials {
 		if store, err := authstorage.ForHome(home); err == nil {
 			if state, err := store.Get("openai-codex"); err == nil && strings.TrimSpace(state.AccessToken) != "" &&
-				(!tokenExpiring(state.AccessToken, 0) || strings.TrimSpace(state.RefreshToken) != "") {
+				(!providers.TokenExpiringWithin(state.AccessToken, 0) || strings.TrimSpace(state.RefreshToken) != "") {
 				return "wuu-auth-store", nil
 			}
 		}
@@ -171,7 +170,7 @@ func LocalOAuthStatus(home string, reuseCodexCredentials bool) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("Codex CLI OAuth credentials not found: %w", err)
 	}
-	if tokenExpiring(cliState.AccessToken, 0) {
+	if providers.TokenExpiringWithin(cliState.AccessToken, 0) {
 		return "", errors.New("Codex CLI OAuth credentials are expired; run `codex` to refresh them")
 	}
 	return "codex-cli", nil
@@ -299,42 +298,13 @@ func codexHeaders(accessToken, accountID string) map[string]string {
 }
 
 func accountIDFromToken(token string) string {
-	claims := jwtClaims(token)
+	claims := providers.DecodeJWTClaims(token)
 	authClaims, ok := claims["https://api.openai.com/auth"].(map[string]any)
 	if !ok {
 		return ""
 	}
 	accountID, _ := authClaims["chatgpt_account_id"].(string)
 	return strings.TrimSpace(accountID)
-}
-
-func tokenExpiring(token string, skew time.Duration) bool {
-	claims := jwtClaims(token)
-	exp, ok := claims["exp"].(float64)
-	if !ok || exp <= 0 {
-		return false
-	}
-	return time.Unix(int64(exp), 0).Before(time.Now().Add(skew))
-}
-
-func jwtClaims(token string) map[string]any {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return nil
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		payload, err = base64.URLEncoding.DecodeString(parts[1])
-		if err != nil {
-			return nil
-		}
-	}
-	var claims map[string]any
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	if err := dec.Decode(&claims); err != nil {
-		return nil
-	}
-	return claims
 }
 
 func firstNonEmpty(values ...string) string {
@@ -363,7 +333,7 @@ func OAuthStatus(ctx context.Context, selected credentialstore.Store, reuseCLI b
 		}
 		return "", err
 	}
-	if strings.TrimSpace(state.AccessToken) == "" || (tokenExpiring(state.AccessToken, 0) && (reuseCLI || strings.TrimSpace(state.RefreshToken) == "")) {
+	if strings.TrimSpace(state.AccessToken) == "" || (providers.TokenExpiringWithin(state.AccessToken, 0) && (reuseCLI || strings.TrimSpace(state.RefreshToken) == "")) {
 		return "", errors.New("Codex OAuth credentials are missing or expired; sign in again")
 	}
 	return source, nil
