@@ -306,12 +306,16 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
   const request = useCallback((type, extra = {}) => new Promise((resolve, reject) => {
     const bridge = bridgeRef.current;
     const id = `r${++bridge.seq}`;
-    bridge.pending.set(id, { resolve, reject });
-    setTimeout(() => {
+    const timer = setTimeout(() => {
       if (bridge.pending.delete(id)) reject(new Error("design bridge timed out"));
     }, 8000);
+    bridge.pending.set(id, {
+      resolve: (message) => { clearTimeout(timer); resolve(message); },
+      reject: (error) => { clearTimeout(timer); reject(error); },
+    });
     if (!command(type, { id, ...extra })) {
       bridge.pending.delete(id);
+      clearTimeout(timer);
       reject(new Error("design bridge is not connected"));
     }
   }), [command]);
@@ -427,9 +431,12 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
       setStale(false);
       setOrphans([]);
       setRevertArmed(false);
+      setComments([]);
+      return true;
     } catch (err) {
       setError(String(err?.message ?? err));
       setPhase("error");
+      return false;
     }
   }, [backend, storageGet]);
 
@@ -455,8 +462,8 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
           ?? list.find((item) => item.id === remembered)
           ?? list[0];
         if (ws) setWorkspaceId(ws.id);
-        if (ws) await openWorkspace(ws);
-        if (!cancelled) setPhase("ready");
+        const ok = ws ? await openWorkspace(ws) : true;
+        if (!cancelled && ok !== false) setPhase("ready");
       } catch (err) {
         if (!cancelled) { setError(String(err?.message ?? err)); setPhase("error"); }
       }
@@ -543,6 +550,7 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
     setStale(false);
     setOrphans([]);
     setRevertArmed(false);
+    setComments([]);
   }, [pages]);
 
   const commitWorkspace = useCallback((id) => {
@@ -633,19 +641,19 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
   // Poll the page list so an agent revision on disk surfaces as a reload hint
   // instead of leaving the canvas silently stale (or colliding on the next save).
   useEffect(() => {
-    if (!workspace?.root || !path || phase !== "ready") return;
+    if (!workspace || !path || phase !== "ready") return;
     let cancelled = false;
     const tick = async () => {
       if (cancelled || document.hidden || busy) return;
       try {
-        const list = await refreshPages(workspace.root);
+        const list = await refreshPages(workspace.root ?? "");
         const fresh = list?.find((item) => item.path === path);
         if (!cancelled && fresh) setStale(fresh.sha256 !== sha);
       } catch { /* polling is best-effort */ }
     };
     const id = setInterval(tick, 4000);
     return () => { cancelled = true; clearInterval(id); };
-  }, [workspace?.root, path, sha, busy, backend, phase, refreshPages]);
+  }, [workspace, path, sha, busy, phase, refreshPages]);
 
   const frameWidth = VIEWPORTS.find((item) => item.id === viewport)?.width ?? null;
   const flush = frameWidth == null;
@@ -712,6 +720,7 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
         "aria-label": t("design.external"), disabled: !url,
         onClick: () => {
           void Promise.resolve(api.application?.invoke?.("preview.open-url", { url }))
+            .then((result) => { if (!result) window.open(url, "_blank", "noopener"); })
             .catch(() => window.open(url, "_blank", "noopener"));
         },
       }, h(Glyph, { h, d: ICON_PATHS.external })),
@@ -748,7 +757,9 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
               })),
         url && hintText && !sheetOpen ? h("div", { className: "plugin-design-hint" }, hintText) : null,
         url && stale && !dirty && !sheetOpen ? h("button", {
-          type: "button", className: "plugin-design-hint plugin-design-stale", onClick: reload,
+          type: "button", className: "plugin-design-hint plugin-design-stale",
+          style: hintText ? { bottom: "calc(var(--space-6, 24px) + 52px)" } : undefined,
+          onClick: reload,
         }, t("design.stale")) : null,
         conflict ? h("div", { className: "plugin-design-conflict" },
           h("div", { className: "plugin-design-conflict-card" },
@@ -902,8 +913,8 @@ function StyleRows({ h, React, t, selected, onApply }) {
       value: styles.borderStyle ?? "", options: BORDER_STYLES.map((s) => ({ label: s || "—", value: s })),
       onCommit: (value) => onApply("border-style", value),
     }),
-    h(Field, { ...field, key: key("width"), label: t("design.style.width"), value: styles.width, placeholder: `${Math.round(selected.rect?.w ?? 0)}px`, onCommit: (value) => onApply("width", value) }),
-    h(Field, { ...field, key: key("height"), label: t("design.style.height"), value: styles.height, placeholder: `${Math.round(selected.rect?.h ?? 0)}px`, onCommit: (value) => onApply("height", value) }),
+    h(Field, { ...field, key: key("width"), label: t("design.style.width"), value: styles.width, placeholder: `${Math.round(selected.rect?.w ?? 0)}px`, onCommit: pxCommit("width") }),
+    h(Field, { ...field, key: key("height"), label: t("design.style.height"), value: styles.height, placeholder: `${Math.round(selected.rect?.h ?? 0)}px`, onCommit: pxCommit("height") }),
     h(QuadField, {
       ...field, key: key("padding"), label: t("design.style.padding"), full: true,
       values: { Top: styles.paddingTop, Right: styles.paddingRight, Bottom: styles.paddingBottom, Left: styles.paddingLeft },

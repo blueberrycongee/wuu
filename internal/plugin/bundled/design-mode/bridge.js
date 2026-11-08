@@ -357,11 +357,11 @@
         anchor: item.anchor,
         offset: item.offset ?? (item.anchor === "tr" ? { x: -2, y: -2 } : { x: 8, y: -10 }),
       };
+      const numeric = /^c(\d+)$/.exec(comment.id ?? "");
+      if (numeric) state.seq = Math.max(state.seq, Number(numeric[1]));
       if (!comment.selector || !document.querySelector(comment.selector)) { missing.push(comment.id); return; }
       state.comments.push(comment);
       pinElement(comment);
-      const numeric = /^c(\d+)$/.exec(comment.id ?? "");
-      if (numeric) state.seq = Math.max(state.seq, Number(numeric[1]));
     });
     schedulePaint();
     return missing;
