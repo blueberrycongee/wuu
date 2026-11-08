@@ -255,7 +255,7 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
     const HIDDEN = 0.004;
     const last = {
       coreTransform: "", coreOpacity: -1, faceTransform: "", faceOpacity: -1,
-      coreD: "", fluid: false, filter: "",
+      coreD: "", filter: "",
       particles: Array<string>(8).fill(""), rings: Array<string>(5).fill(""),
       bars: Array<string>(5).fill(""), ink: Array<string>(3).fill(""),
     };
@@ -347,7 +347,6 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
         }
       }
       if (c.fluid > .001 || c.pencil > .001) {
-        last.fluid = true;
         const coords = points.map((p, i) => {
           const a = Math.atan2(p.y - 50, p.x - 50), wobble = 1 + .10 * Math.sin(time * 3.1 + a * 2);
           const x = lerp(p.x, 50 + Math.cos(a) * 39 * wobble, c.fluid), y = lerp(p.y, 50 + Math.sin(a) * 39 / wobble, c.fluid);
@@ -358,8 +357,7 @@ export function useMascotMorph(host: SVGSVGElement | null, mode: MascotMorph, pa
           last.coreD = d;
           core.setAttribute("d", d);
         }
-      } else if (last.fluid) {
-        last.fluid = false;
+      } else if (last.coreD !== originalPath) {
         last.coreD = originalPath;
         core.setAttribute("d", originalPath);
       }
