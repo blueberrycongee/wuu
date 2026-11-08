@@ -91,24 +91,11 @@ func (a *SystemPromptAssembler) Remove(key string) {
 }
 
 // RemoveByPlugin withdraws all sections registered by the given plugin.
-// Deprecated: prefer RemoveByGeneration which uses the unique generation ID
-// to avoid accidentally removing entries from a newer generation.
-//
 // Used by the generation lifecycle to atomically clean up on deactivation.
 func (a *SystemPromptAssembler) RemoveByPlugin(pluginID string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.removeByOwner(pluginID)
-}
-
-// RemoveByGeneration withdraws all sections whose owner matches the given
-// generation ID. This is the preferred cleanup method; it uses the unique
-// generation ID to avoid accidentally removing entries from a newer
-// generation of the same plugin.
-func (a *SystemPromptAssembler) RemoveByGeneration(generationID string) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.removeByOwner(generationID)
 }
 
 func (a *SystemPromptAssembler) removeByOwner(owner string) {
