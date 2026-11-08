@@ -312,11 +312,16 @@ export function FloatingMenuPortal({
           visibleBottom - Number(nextStyle.top) - viewportMargin
         );
       } else {
-        nextStyle.top = clamp(
-          rect.top + rect.height / 2,
-          visible.top + viewportMargin,
-          visibleBottom - viewportMargin
-        );
+        // Side placement: the panel's vertical center tracks the anchor's
+        // middle. Once the panel is measured, pull that center just far
+        // enough off the edge to keep the whole panel inside the viewport.
+        const halfPanel = (measuredPanelHeight ?? 0) / 2;
+        const minCenter = visible.top + viewportMargin + halfPanel;
+        const maxCenter = visibleBottom - viewportMargin - halfPanel;
+        const center = rect.top + rect.height / 2;
+        nextStyle.top = minCenter <= maxCenter
+          ? clamp(center, minCenter, maxCenter)
+          : clamp(center, visible.top + viewportMargin, visibleBottom - viewportMargin);
         nextStyle.transform = "translateY(-50%)";
         availableHeight = Math.max(
           0,

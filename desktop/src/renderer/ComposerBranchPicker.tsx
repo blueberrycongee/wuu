@@ -46,7 +46,7 @@ export function ComposerBranchPicker({
       </Tooltip>
       {open && !disabled && !pending && gitStatus ? (
         <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime"
-          placement={inToolRail ? "below" : "above"} align={inToolRail ? "right" : "left"}
+          placement={inToolRail ? "middle" : "above"} align={inToolRail ? "right" : "left"}
           crossAxisOffset={inToolRail ? -(anchorRef.current?.offsetWidth ?? 0) - 8 : 0}
           flip width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
           onDismiss={onToggle}
