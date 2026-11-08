@@ -95,15 +95,3 @@ export function parseCronExpression(input: string): CronExpression {
   for (let i = 0; i < fields.length; i++) if (!validField(fields[i], i)) throw new Error(`invalid cron field ${JSON.stringify(fields[i])} at position ${i}`);
   return new CronExpression(fields);
 }
-
-export function intervalToCron(input: string): string {
-  const interval = input.trim().toLowerCase();
-  if (!interval) throw new Error("empty interval");
-  const unit = interval.slice(-1), raw = interval.slice(0, -1), n = integer(raw);
-  if (!"mhds".includes(unit)) throw new Error(`invalid interval unit: ${JSON.stringify(unit)}`);
-  if (!(n > 0)) throw new Error(`invalid interval number: ${JSON.stringify(raw)}`);
-  if (unit === "s") return n < 60 ? "*/1 * * * *" : intervalToCron(`${Math.ceil(n / 60)}m`);
-  if (unit === "m") return n <= 59 ? `*/${n} * * * *` : `0 */${Math.ceil(n / 60)} * * *`;
-  if (unit === "h") return n <= 23 ? `0 */${n} * * *` : `0 0 */${Math.ceil(n / 24)} * *`;
-  return `0 0 */${n} * *`;
-}
