@@ -58,6 +58,39 @@ describe("shared application state", () => {
     expect(controller.getSnapshot().navigationWorkspace.regionVisibilityRequest).toEqual({ id: first!.id + 1, region: "auxiliary" });
   });
 
+  it("reveals the auxiliary panel when a PiP expand docks its browser page", async () => {
+    const context = { kind: "no_project" as const, cwd: "/fixture" };
+    const thread = { id: "thread", cwd: "/fixture", preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const,
+      turns: [{ id: "turn", status: "completed" as const, items_view: "full" as const, items: [] }] };
+    let dock!: (target: { thread_id: string; workdir: string; tabID: string }) => void;
+    const off = () => () => {};
+    window.wuu = { browserSurface: vi.fn(), browserCommand: vi.fn(), onBrowserSurface: off, onBrowserTabAdopted: off, onBrowserUserInput: off,
+      onBrowserInvalidate: off, reportBrowserBounds: vi.fn(), suppressBrowserOverlay: vi.fn(),
+      onBrowserDock: (listener: typeof dock) => { dock = listener; return () => {}; },
+      resumeThread: vi.fn().mockResolvedValue({ thread }), listUserQuestions: vi.fn().mockResolvedValue({ questions: [] }),
+      listActivities: vi.fn().mockResolvedValue({ activities: [] }), listAllThreads: vi.fn().mockResolvedValue({ threads: [] }),
+      listProjects: vi.fn().mockResolvedValue({ projects: [] }), listArchivedThreads: vi.fn().mockResolvedValue({ threads: [] }),
+      listEngines: vi.fn().mockResolvedValue({ engines: [], settings: {} }) } as unknown as WuuDesktopApi;
+    const controller = new ApplicationController({ ...initialState, initialized: submissionInitialized, activeContext: context, thread, threads: [thread],
+      activeSessionTabID: "thread:thread", sessionTabs: [{ id: "thread:thread", kind: "thread", threadID: "thread", context, title: "", prompt: "", images: [], files: [] }] });
+    let lastRequestId = 0;
+    const regionRequests: string[] = [];
+    const offPublish = controller.subscribe(() => {
+      const request = controller.getSnapshot().navigationWorkspace.regionVisibilityRequest;
+      if (request && request.id !== lastRequestId) { lastRequestId = request.id; regionRequests.push(request.region); }
+    });
+    const stop = controller.start();
+    try {
+      dock({ thread_id: "thread", workdir: "/fixture", tabID: "tab-1" });
+      await vi.waitFor(() => expect(controller.getSnapshot().navigationWorkspace.regionVisibilityRequest?.region).toBe("auxiliary"));
+      // A "primary" request would reselect the conversation under globalized
+      // layout and hide the freshly docked page again.
+      expect(regionRequests).toEqual(["auxiliary"]);
+      expect(controller.getSnapshot().previewWorkspace.activeTabId).toBe("browser");
+      expect(controller.getSnapshot().previewWorkspace.browserDockTarget).toMatchObject({ thread_id: "thread", workdir: "/fixture", tabID: "tab-1" });
+    } finally { offPublish(); stop(); }
+  });
+
   it("retains the first draft and rejects repeated submissions while its conversation is being created", async () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
     let finish!: (value: unknown) => void;
