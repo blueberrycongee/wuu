@@ -12,6 +12,7 @@ import {
   CODEX_PET_SIZE_OPTIONS,
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isLanguagePreference,
+  normalizeProxyURL,
   type CodexPetSettings,
   type CodexPetSize,
   type DesktopPreferences,
@@ -78,6 +79,8 @@ export const DEFAULT_DESKTOP_PREFERENCES: Readonly<Omit<DesktopPreferences, "ope
   notification_sound: true,
   auto_check_updates: true,
   send_shortcut: "enter",
+  proxy_mode: "system",
+  proxy_url: "",
 });
 
 function readStoredPreferences(value: unknown): Omit<DesktopPreferences, "open_at_login"> {
@@ -90,6 +93,8 @@ function readStoredPreferences(value: unknown): Omit<DesktopPreferences, "open_a
     notification_sound: flag("notification_sound"),
     auto_check_updates: flag("auto_check_updates"),
     send_shortcut: record.send_shortcut === "mod_enter" ? "mod_enter" : "enter",
+    proxy_mode: record.proxy_mode === "manual" || record.proxy_mode === "none" ? record.proxy_mode : "system",
+    proxy_url: typeof record.proxy_url === "string" ? normalizeProxyURL(record.proxy_url) ?? "" : "",
   };
 }
 

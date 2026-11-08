@@ -100,12 +100,17 @@ export type SystemNotificationParams = {
 export type DesktopSendShortcut = "enter" | "mod_enter";
 
 /** Desktop-only preferences persisted by the Electron main process. */
+export type DesktopProxyMode = "system" | "manual" | "none";
+
 export type DesktopPreferences = {
   notify_turn_completed: boolean;
   notify_questions: boolean;
   notification_sound: boolean;
   auto_check_updates: boolean;
   send_shortcut: DesktopSendShortcut;
+  proxy_mode: DesktopProxyMode;
+  /** Normalized address used when proxy_mode is "manual"; empty when unset. */
+  proxy_url: string;
   /** Undefined where the OS has no login-item support (Linux). */
   open_at_login?: boolean;
 };

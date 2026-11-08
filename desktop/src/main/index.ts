@@ -30,7 +30,7 @@ import { showArtifactItemMenu } from "./artifactItemMenu";
 import { showContextMenu, dismissContextMenu } from "./contextMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
-import { inheritSystemProxy } from "./systemProxy";
+import { configureBackendProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
 import { requestTrustedRemote, bindRemoteEventAuthorization } from "./trustedRemoteTransport";
 import { EngineLogin } from "./engineLogin";
@@ -1667,7 +1667,7 @@ app.whenReady().then(async () => {
     }
     return desktopRecovery.open();
   });
-  await inheritSystemProxy();
+  await configureBackendProxy(getDesktopPreferences());
   if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
   setMainLocale(resolveMainLocale(getLanguagePreference(), app.getLocale()));
   installProductionAppShellGuards({

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
-import { applySystemProxy } from "./systemProxy";
+import { normalizeProxyURL } from "../shared/protocol";
+import { applySystemProxy, overrideProxy } from "./systemProxy";
 
 const settings = `<dictionary> {
   ExceptionsList : <array> {
@@ -47,6 +48,34 @@ describe("macOS backend proxy inheritance", () => {
       const env = {};
       applySystemProxy(env, input);
       expect(env).toEqual({});
+    }
+  });
+});
+
+describe("explicit proxy preference", () => {
+  const inherited = { HTTP_PROXY: "http://launch.example:1", https_proxy: "http://launch.example:2", ALL_PROXY: "socks5://launch.example:3" };
+
+  it("replaces inherited proxies with the manual address and keeps local traffic direct", () => {
+    const env: NodeJS.ProcessEnv = { ...inherited };
+    overrideProxy(env, "http://127.0.0.1:7890");
+    const output = execFileSync(process.execPath, ["-e", "console.log(JSON.stringify(process.env))"], { env, encoding: "utf8" });
+    const child = JSON.parse(output);
+    expect(child).toMatchObject({ HTTP_PROXY: "http://127.0.0.1:7890", HTTPS_PROXY: "http://127.0.0.1:7890", NO_PROXY: "localhost,127.0.0.1,::1" });
+    expect(child).not.toHaveProperty("https_proxy");
+    expect(child).not.toHaveProperty("ALL_PROXY");
+  });
+
+  it("removes every inherited proxy when proxies are turned off", () => {
+    const env: NodeJS.ProcessEnv = { ...inherited, no_proxy: "internal.example" };
+    overrideProxy(env, undefined);
+    expect(env).toEqual({ no_proxy: "internal.example" });
+  });
+
+  it("accepts only addresses Go can use as a proxy", () => {
+    expect(normalizeProxyURL(" 127.0.0.1:7890 ")).toBe("http://127.0.0.1:7890");
+    expect(normalizeProxyURL("socks5://127.0.0.1:1080")).toBe("socks5://127.0.0.1:1080");
+    for (const input of ["", "ftp://127.0.0.1:21", "http://", "not a url"]) {
+      expect(normalizeProxyURL(input)).toBeUndefined();
     }
   });
 });

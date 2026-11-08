@@ -1715,7 +1715,7 @@ describe("Composer send control", () => {
   });
 
   it("keeps plain Enter for new lines when the send shortcut is Cmd/Ctrl+Enter", async () => {
-    const preferences = { notify_turn_completed: true, notify_questions: true, notification_sound: true, auto_check_updates: true, send_shortcut: "mod_enter" as const };
+    const preferences = { notify_turn_completed: true, notify_questions: true, notification_sound: true, auto_check_updates: true, send_shortcut: "mod_enter" as const, proxy_mode: "system" as const, proxy_url: "" };
     let publish: ((next: typeof preferences | (Omit<typeof preferences, "send_shortcut"> & { send_shortcut: "enter" })) => void) | undefined;
     window.wuu = {
       ...window.wuu,
