@@ -27,9 +27,12 @@ type historyTurn struct {
 // ForkHistory creates an independent native prefix without mutating ref. Codex
 // supports whole-turn boundaries, not arbitrary message/tool-item cuts. removed
 // is supplied only for editing: its first prompt and all later turns are cut.
-// Returned history is checked because older servers may ignore unknown cutoff
-// fields rather than reject them. Never accept such a full-history fork.
-func (e *Engine) ForkHistory(ctx context.Context, ref, cwd string, retained, removed []providers.ChatMessage, wholeTurn bool) (string, error) {
+// endBoundary is not needed: Codex verifies coverage against native turns
+// itself, so a retained prefix that misses the tail cannot be mistaken for
+// the whole session. Returned history is checked because older servers may
+// ignore unknown cutoff fields rather than reject them. Never accept such a
+// full-history fork.
+func (e *Engine) ForkHistory(ctx context.Context, ref, cwd string, retained, removed []providers.ChatMessage, wholeTurn, endBoundary bool) (string, error) {
 	if e == nil || e.host == nil || strings.TrimSpace(ref) == "" {
 		return "", errors.New("Codex history has no native session reference; its context cannot be safely forked")
 	}

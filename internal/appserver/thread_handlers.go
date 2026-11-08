@@ -852,6 +852,9 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 	var display []forkDisplayRecord
 	resolvedDisplay := false
 	err = errForkTargetNotFound
+	turnBoundary, endBoundary := false, false
+	persistedClassify := func(rec persistedMessage) (string, bool) { return rec.Role, rec.Steered }
+	chatClassify := func(msg providers.ChatMessage) (string, bool) { return msg.Role, msg.Steered }
 	if len(source.rawHistory) > 0 {
 		var prefix []persistedMessage
 		prefix, err = forkPersistedPrefixAtTarget(source.rawHistory, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
@@ -859,13 +862,20 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 			history = cloneForkHistory(chatMessagesFromPersistedMessages(prefix))
 			display = forkDisplayRecords(prefix, history)
 			resolvedDisplay = true
+			turnBoundary, endBoundary = forkBoundaryAfter(source.rawHistory[len(prefix):], persistedClassify)
 		}
 	}
 	if errors.Is(err, errForkTargetNotFound) && len(source.displayHistory) > 0 {
 		history, err = forkHistoryAtTargetWithIdentity(source.displayHistory, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
+		if err == nil {
+			turnBoundary, endBoundary = forkBoundaryAfter(source.displayHistory[len(history):], chatClassify)
+		}
 	}
 	if errors.Is(err, errForkTargetNotFound) {
 		history, err = forkHistoryAtTargetWithIdentity(source.history, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
+		if err == nil {
+			turnBoundary, endBoundary = forkBoundaryAfter(source.history[len(history):], chatClassify)
+		}
 	}
 	if errors.Is(err, errForkTargetNotFound) && source.liveHistory {
 		if liveTurn, ok := turnByID(source.thread.Turns, strings.TrimSpace(params.TurnID)); ok {
@@ -963,7 +973,7 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		}
 	}
 
-	nativeRef, err := s.forkNativeHistory(ctx, binding, source.thread.EngineID, metadata.EngineRef, forkCWD, history, nil, params.ItemID == "")
+	nativeRef, err := s.forkNativeHistory(ctx, binding, source.thread.EngineID, metadata.EngineRef, forkCWD, history, nil, turnBoundary, endBoundary)
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -1135,7 +1145,7 @@ func (s *Server) handleThreadEditMessageForState(binding *runtime.State, ctx con
 	// canonical-history engine. Fence mutation without holding the dispatch lock.
 	th.nativeHistoryMutation = true
 	th.mu.Unlock()
-	nativeRef, err := s.forkNativeHistory(ctx, binding, engineID, oldNativeRef, cwd, nextHistory, removedHistory, true)
+	nativeRef, err := s.forkNativeHistory(ctx, binding, engineID, oldNativeRef, cwd, nextHistory, removedHistory, true, false)
 	th.mu.Lock()
 	th.nativeHistoryMutation = false
 	if err == nil {

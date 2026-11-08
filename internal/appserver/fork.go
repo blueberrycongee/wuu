@@ -64,6 +64,23 @@ func forkPersistedPrefixAtTarget(history []persistedMessage, sourceThreadID stri
 	return history[:origin.EndIndex+1], nil
 }
 
+// forkBoundaryAfter reports whether a retained prefix ends at a turn
+// boundary — the next element after it is a non-steered user prompt or
+// nothing — and whether it reaches the session's current end. Engines use
+// the pair to pick a native cutoff: a turn boundary maps to the next native
+// prompt, a user-prompt tail to the message right after it, and anything
+// else is a mid-turn cut that message-granular engines cannot express.
+func forkBoundaryAfter[T any](rest []T, classify func(T) (role string, steered bool)) (turnBoundary, endBoundary bool) {
+	for _, element := range rest {
+		role, steered := classify(element)
+		if role == "meta" {
+			continue
+		}
+		return role == "user" && !steered, false
+	}
+	return true, true
+}
+
 type forkDisplayRecord struct {
 	before int
 	record persistedMessage

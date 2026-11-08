@@ -773,6 +773,9 @@ func TestACPHelper(t *testing.T) {
 				version = 2
 			}
 			caps := map[string]any{"loadSession": scenario != "no-load"}
+			if scenario == "fork" {
+				caps["sessionCapabilities"] = map[string]any{"fork": map[string]any{}, "close": map[string]any{}}
+			}
 			if scenario == "host-mcp-http" {
 				caps["mcpCapabilities"] = map[string]bool{"http": true}
 			}
@@ -976,6 +979,16 @@ func TestACPHelper(t *testing.T) {
 				}
 				result = configuration
 			}
+		case "session/fork":
+			var params struct {
+				SessionID string `json:"sessionId"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			if params.SessionID != "native-session" {
+				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32602, "message": "unknown source session"}})
+				continue
+			}
+			result = map[string]any{"sessionId": "native-fork"}
 		case "session/load":
 			if scenario == "load-error" {
 				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32000, "message": "session not found"}})

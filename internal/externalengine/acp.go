@@ -58,6 +58,9 @@ type acpInitialize struct {
 			Resume *struct{} `json:"resume"`
 			Close  *struct{} `json:"close"`
 			Delete *struct{} `json:"delete"`
+			// Fork is the unstable ACP sessionCapabilities.fork advertisement:
+			// when present the agent accepts session/fork to copy a session.
+			Fork *struct{} `json:"fork"`
 		} `json:"sessionCapabilities"`
 		Prompt struct {
 			Image bool `json:"image"`

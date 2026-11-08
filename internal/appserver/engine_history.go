@@ -13,7 +13,7 @@ import (
 
 // Native histories stay owned by their engines. A visible transcript is not a
 // replay substitute for tool state, hidden context, or native turn identity.
-func (s *Server) forkNativeHistory(ctx context.Context, binding *runtime.State, engineID, ref, cwd string, retained, removed []providers.ChatMessage, wholeTurn bool) (string, error) {
+func (s *Server) forkNativeHistory(ctx context.Context, binding *runtime.State, engineID, ref, cwd string, retained, removed []providers.ChatMessage, wholeTurn, endBoundary bool) (string, error) {
 	id := agentengine.NormalizeEngineID(engineID)
 	// A never-run empty thread has no native history to copy.
 	if ref == "" && removed == nil {
@@ -41,6 +41,6 @@ func (s *Server) forkNativeHistory(ctx context.Context, binding *runtime.State, 
 		return out
 	}
 	var result pluginprotocol.EngineHistoryForkResult
-	err := binding.CallEngine(ctx, id, "history_fork", pluginprotocol.EngineHistoryForkRequest{Ref: ref, CWD: cwd, Retained: convert(retained), Removed: convert(removed), WholeTurn: wholeTurn}, &result)
+	err := binding.CallEngine(ctx, id, "history_fork", pluginprotocol.EngineHistoryForkRequest{Ref: ref, CWD: cwd, Retained: convert(retained), Removed: convert(removed), WholeTurn: wholeTurn, EndBoundary: endBoundary}, &result)
 	return result.Ref, err
 }

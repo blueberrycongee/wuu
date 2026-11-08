@@ -86,7 +86,13 @@ type EngineHistoryForkRequest struct {
 	CWD       string                 `json:"cwd"`
 	Retained  []EngineHistoryMessage `json:"retained"`
 	Removed   []EngineHistoryMessage `json:"removed"`
-	WholeTurn bool                   `json:"whole_turn"`
+	// WholeTurn reports that Retained ends at a turn boundary: the next
+	// visible element after it is a non-steered user prompt or nothing.
+	WholeTurn bool `json:"whole_turn"`
+	// EndBoundary reports that Retained reaches the session's current end.
+	// Engines whose native fork only copies the whole session must reject
+	// partial boundaries instead of silently widening the copied context.
+	EndBoundary bool `json:"end_boundary,omitempty"`
 }
 type EngineHistoryForkResult struct {
 	Ref string `json:"ref"`

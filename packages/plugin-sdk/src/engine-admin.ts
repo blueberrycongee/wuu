@@ -96,6 +96,8 @@ export interface EngineHistoryForkRequest {
   /** null means fork; a non-null prefix identifies the edited turn. */
   readonly removed: readonly EngineHistoryMessage[] | null;
   readonly whole_turn: boolean;
+  /** retained reaches the session's current end; whole-session forks require it. */
+  readonly end_boundary?: boolean;
 }
 export interface EngineHistoryForkResult { readonly ref: string }
 export interface EngineAdminMethods {

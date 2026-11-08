@@ -134,7 +134,7 @@ func (s *nativeEngineAdmin) Invoke(ctx context.Context, method string, raw json.
 		if s.canonicalHistory(ctx) {
 			return json.Marshal(pluginprotocol.EngineHistoryForkResult{})
 		}
-		engine, ok := s.factory.(*codexengine.Engine)
+		forker, ok := s.factory.(agentengine.HistoryForker)
 		if !ok {
 			return nil, fmt.Errorf("engine %s does not expose a verified native history cutoff; original history is unchanged", s.engineID)
 		}
@@ -152,7 +152,7 @@ func (s *nativeEngineAdmin) Invoke(ctx context.Context, method string, raw json.
 			return out
 		}
 		retained, removed := convert(req.Retained), convert(req.Removed)
-		ref, err := engine.ForkHistory(ctx, req.Ref, req.CWD, retained, removed, req.WholeTurn)
+		ref, err := forker.ForkHistory(ctx, req.Ref, req.CWD, retained, removed, req.WholeTurn, req.EndBoundary)
 		if err != nil {
 			return nil, err
 		}
