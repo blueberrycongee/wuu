@@ -290,11 +290,9 @@ func (s *Server) listPluginSessions(ctx context.Context, pluginID string, params
 			}
 			th.mu.Unlock()
 		}
-		s.queuedTurnMu.Lock()
-		if len(s.pendingQueuedTurns[item.ID]) != 0 {
+		if s.hasQueuedUserTurns(item.ID) {
 			state = pluginhost.TurnLifecycleQueued
 		}
-		s.queuedTurnMu.Unlock()
 		summary := pluginhost.SessionSummary{SessionID: item.ID, UserSpaceID: item.UserSpaceID, ProductDomain: item.ProductDomain, AgentID: item.AgentID, Name: item.Title, ParentSessionID: item.ParentID, Visibility: item.Visibility, State: state, WorkspaceID: item.WorkspaceID, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano)}
 		if scope == pluginhost.SessionListScopeOwned {
 			summary.CreationRequestID = item.CreationRequestID
@@ -482,11 +480,9 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 		}
 		th.mu.Unlock()
 	}
-	s.queuedTurnMu.Lock()
-	if len(s.pendingQueuedTurns[params.SessionID]) > 0 {
+	if s.hasQueuedUserTurns(params.SessionID) {
 		state = pluginhost.TurnLifecycleQueued
 	}
-	s.queuedTurnMu.Unlock()
 	result := pluginhost.SessionInspectResult{Session: pluginhost.SessionSummary{
 		SessionID: metadata.ID, UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain, AgentID: metadata.AgentID, Name: metadata.Title, ParentSessionID: metadata.ParentID,
 		Visibility: metadata.Visibility, State: state, WorkspaceID: metadata.WorkspaceID,
@@ -896,18 +892,22 @@ func (s *Server) removePluginQueuedTurn(binding *runtime.State, threadID, plugin
 	if s == nil || s.threadForState(binding, threadID) == nil {
 		return queuedTurn{}, false
 	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	pending := s.pendingQueuedTurns[threadID]
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return queuedTurn{}, false
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	pending := queue.pending
 	for index, entry := range pending {
 		if entry.id != queueID || entry.snapshot.PluginTurn == nil || entry.snapshot.PluginTurn.PluginID != pluginID {
 			continue
 		}
 		remaining := append(append([]queuedTurn(nil), pending[:index]...), pending[index+1:]...)
 		if len(remaining) == 0 {
-			delete(s.pendingQueuedTurns, threadID)
+			queue.pending = nil
 		} else {
-			s.pendingQueuedTurns[threadID] = remaining
+			queue.pending = remaining
 		}
 		return entry, true
 	}

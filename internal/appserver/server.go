@@ -137,6 +137,10 @@ type threadState struct {
 
 	// streamMu keeps a live snapshot and its response ordered with stream
 	// mutations and notifications. Acquire it before mu when both are needed.
+	// Per-thread scheduling state (queued turns, completion wakeups, side
+	// turn) lives on the threadScheduler cell — it outlives this projection,
+	// so it is guarded by the cell's own leaf mutexes below mu; see
+	// thread_scheduler.go for the lock-order contract.
 	streamMu              sync.Mutex
 	mu                    sync.Mutex
 	running               bool
@@ -298,23 +302,18 @@ type Server struct {
 	// Title attempts outlive cached thread snapshots and are deduplicated by ID.
 	titleGenerations map[sessionCacheKey]bool
 
-	runMu             sync.Mutex
-	runs              map[string]*runTracker
-	activeRunByThread map[string]string
+	runMu sync.Mutex
+	runs  map[string]*runTracker
 
 	agentTerminalFinalizationMu sync.Mutex
 	agentTerminalFinalizations  map[agentTerminalFinalizationKey]struct{}
 
-	agentCompletionMu            sync.Mutex
-	pendingAgentCompletionTurns  map[string][]agentCompletionTurn
-	drainingAgentCompletionTurns map[string]bool
-
-	queuedTurnMu                sync.Mutex
-	pendingQueuedTurns          map[string][]queuedTurn
-	claimedQueuedTurns          map[string]*queuedTurnClaim
-	cancelledPendingSubmissions map[string]string
-	drainingQueuedTurns         map[string]bool
-	heldUserWorkMu              sync.Mutex
+	// schedulersMu guards only the cell registry. Per-thread turn-scheduling
+	// state (queued turns, claims, cancellation tombstones, drain markers,
+	// pending agent-completion wakeups, held-input serialization) lives
+	// inside the cells; see thread_scheduler.go.
+	schedulersMu sync.Mutex
+	schedulers   map[string]*threadScheduler
 
 	pluginClientMu       sync.Mutex
 	pluginClientRequests map[pluginClientRequestKey]*pluginClientRequest
@@ -400,16 +399,20 @@ type Server struct {
 	startupErr                   error
 	pluginControl                *plugincontrol.Registration
 
+	// controlLocks stays global: lockSessionControls refcounts several
+	// sessions' locks atomically in sorted order, so the registry cannot be
+	// split per thread.
 	controlLocksMu sync.Mutex
 	controlLocks   map[string]*sessionControlLock
 
+	// stdioResumeTail stays global: one deferred request atomically chains
+	// onto the tails of every session it touches, so the tail registry is a
+	// cross-session dependency structure, not per-thread state.
 	stdioResumeMu   sync.Mutex
 	stdioResumeTail map[string]*stdioResumeRequest
 	// inboxMu orders deliveries into a session so pending input is admitted
 	// in creation order.
-	inboxMu    sync.Mutex
-	sideTurnMu sync.Mutex
-	sideTurns  map[string]*sideThreadTurn
+	inboxMu sync.Mutex
 }
 
 func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
@@ -424,20 +427,13 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		out:     out,
 		threads: make(map[string]*threadState),
 
-		pendingAgentCompletionTurns:  make(map[string][]agentCompletionTurn),
-		drainingAgentCompletionTurns: make(map[string]bool),
-		pendingQueuedTurns:           make(map[string][]queuedTurn),
-		claimedQueuedTurns:           make(map[string]*queuedTurnClaim),
-		cancelledPendingSubmissions:  make(map[string]string),
-		drainingQueuedTurns:          make(map[string]bool),
-		codexModelCache:              make(map[string]map[string]config.ProviderModelConfig),
-		inferenceMaintenanceStop:     make(chan struct{}),
-		sideTurns:                    make(map[string]*sideThreadTurn),
-		clientCalls:                  make(map[string]chan clientResponse),
-		clientMethods:                make(map[string]struct{}),
-		runs:                         make(map[string]*runTracker),
-		activeRunByThread:            make(map[string]string),
-		modelCatalogHTTPClient:       http.DefaultClient,
+		schedulers:               make(map[string]*threadScheduler),
+		codexModelCache:          make(map[string]map[string]config.ProviderModelConfig),
+		inferenceMaintenanceStop: make(chan struct{}),
+		clientCalls:              make(map[string]chan clientResponse),
+		clientMethods:            make(map[string]struct{}),
+		runs:                     make(map[string]*runTracker),
+		modelCatalogHTTPClient:   http.DefaultClient,
 	}
 	for _, option := range options {
 		if err := option(s); err != nil {
@@ -975,19 +971,22 @@ func (s *Server) Close() {
 		// never wedge the process on a shutdown drain.
 		s.failPendingClientCalls()
 
-		s.queuedTurnMu.Lock()
-		queuedOnClose := make(map[string][]queuedTurn, len(s.pendingQueuedTurns))
-		for threadID, entries := range s.pendingQueuedTurns {
-			queuedOnClose[threadID] = append([]queuedTurn(nil), entries...)
+		queuedOnClose := make(map[string][]queuedTurn)
+		for threadID, sched := range s.schedulersSnapshot() {
+			queue := &sched.queue
+			queue.mu.Lock()
+			if len(queue.pending) > 0 {
+				queuedOnClose[threadID] = append([]queuedTurn(nil), queue.pending...)
+				queue.pending = nil
+			}
+			// Claimed inputs belong to their drain until settlement. Preserve its
+			// commit/cancellation evidence across shutdown so an explicit dequeue
+			// cannot become a replayable shutdown discard while its receipt is
+			// still being persisted. The owning drain removes the claim.
+			clear(queue.cancelled)
+			queue.draining = false
+			queue.mu.Unlock()
 		}
-		clear(s.pendingQueuedTurns)
-		// Claimed inputs belong to their drain until settlement. Preserve its
-		// commit/cancellation evidence across shutdown so an explicit dequeue
-		// cannot become a replayable shutdown discard while its receipt is
-		// still being persisted. The owning drain removes the claim.
-		clear(s.cancelledPendingSubmissions)
-		clear(s.drainingQueuedTurns)
-		s.queuedTurnMu.Unlock()
 		for threadID, entries := range queuedOnClose {
 			th := closingThreads[threadID]
 			if th == nil || th.state == nil {
@@ -998,10 +997,13 @@ func (s *Server) Close() {
 				s.notifyPluginTurnDiscardedWithRetry(th.state, threadID, entry, "app-server closed before queued turn started", true)
 			}
 		}
-		s.agentCompletionMu.Lock()
-		clear(s.pendingAgentCompletionTurns)
-		clear(s.drainingAgentCompletionTurns)
-		s.agentCompletionMu.Unlock()
+		for _, sched := range s.schedulersSnapshot() {
+			completions := &sched.completions
+			completions.mu.Lock()
+			completions.pending = nil
+			completions.draining = false
+			completions.mu.Unlock()
+		}
 		s.waitForOwnedShutdown(threads, controls, stops)
 		s.interruptAttachedRunsOnClose()
 		for _, th := range threads {

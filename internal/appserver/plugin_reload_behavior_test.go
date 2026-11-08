@@ -614,9 +614,12 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			if tc.frozen {
 				waitPluginGenerationWatchTest(t, func() bool {
 					next := srv.thread(th.ID)
-					srv.agentCompletionMu.Lock()
-					draining := srv.drainingAgentCompletionTurns[th.ID]
-					srv.agentCompletionMu.Unlock()
+					draining := false
+					if completions := srv.peekCompletionQueue(th.ID); completions != nil {
+						completions.mu.Lock()
+						draining = completions.draining
+						completions.mu.Unlock()
+					}
 					return next != nil && !draining && !threadIsRunning(next)
 				})
 				assertFakeClientRequestCount(t, client, 0)

@@ -130,11 +130,10 @@ func newSideThreadServer(t *testing.T, client providers.StreamClient) (*Server, 
 	rt.ActivePlugins = []pluginpkg.Plugin{item}
 	out := &lockedBuffer{}
 	s := &Server{
-		access:    localOwnerTestAccess(),
-		rt:        rt,
-		out:       out,
-		threads:   make(map[string]*threadState),
-		sideTurns: make(map[string]*sideThreadTurn),
+		access:  localOwnerTestAccess(),
+		rt:      rt,
+		out:     out,
+		threads: make(map[string]*threadState),
 	}
 	t.Cleanup(func() {
 		s.Close()
@@ -545,9 +544,8 @@ func TestSideThreadSendRejectsConcurrentServers(t *testing.T) {
 			ActivePlugins: rt.ActivePlugins,
 			StreamRunner:  &agent.StreamRunner{LoopDriver: agent.DefaultDriver{}, Client: peerClient, Model: "test-model"},
 		},
-		out:       &lockedBuffer{},
-		threads:   make(map[string]*threadState),
-		sideTurns: make(map[string]*sideThreadTurn),
+		out:     &lockedBuffer{},
+		threads: make(map[string]*threadState),
 	}
 	if _, err := peer.sendSideThreadMessage(testRuntimeState(t, peer.rt), "main_concurrent", "second"); !errors.Is(err, errSideThreadExecutionBusy) {
 		t.Fatalf("contending send error = %v, want busy", err)
@@ -622,9 +620,7 @@ func TestInterruptSideThreadCancelsAndPersistsPartialReply(t *testing.T) {
 	if err := rt.ActivatePluginGeneration(candidate, nil); err != nil {
 		t.Fatal(err)
 	}
-	s.sideTurnMu.Lock()
-	activeTurn := s.sideTurns["main_interrupt"]
-	s.sideTurnMu.Unlock()
+	activeTurn := s.schedulerFor("main_interrupt").sideTurn
 	if activeTurn == nil || !s.sideConversationTurnAvailable(activeTurn) {
 		t.Fatal("same-ID update canceled a pinned answer")
 	}
@@ -742,10 +738,9 @@ func TestRemoteInterruptCancelsOwningSideThreadProcess(t *testing.T) {
 	waitForSideThreadDelta(t, ownerOut, "partial progress")
 
 	peer := &Server{
-		rt:        rt,
-		out:       &lockedBuffer{},
-		threads:   make(map[string]*threadState),
-		sideTurns: make(map[string]*sideThreadTurn),
+		rt:      rt,
+		out:     &lockedBuffer{},
+		threads: make(map[string]*threadState),
 	}
 	res, err := peer.interruptSideThread(testRuntimeState(t, peer.rt), "main_remote_interrupt")
 	if err != nil || !res.Ok {

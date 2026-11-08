@@ -40,9 +40,10 @@ func TestPluginTurnToolPolicyPreservesFrozenWorkerTree(t *testing.T) {
 			th.mu.Lock()
 			th.workerTreeFrozen = true
 			th.mu.Unlock()
-			srv.agentCompletionMu.Lock()
-			srv.pendingAgentCompletionTurns[created.SessionID] = []agentCompletionTurn{{agentID: "unrelated-worker", resultID: "unrelated-result", msg: providers.ChatMessage{Role: "user", Content: "unrelated result"}}}
-			srv.agentCompletionMu.Unlock()
+			completions := srv.completionQueue(created.SessionID)
+			completions.mu.Lock()
+			completions.pending = []agentCompletionTurn{{agentID: "unrelated-worker", resultID: "unrelated-result", msg: providers.ChatMessage{Role: "user", Content: "unrelated result"}}}
+			completions.mu.Unlock()
 			params := pluginhost.SessionSendParams{SessionID: created.SessionID, RequestID: "next", Input: pluginhost.SessionInput{Prompt: "next"}}
 			if isolated {
 				params.ToolPolicy = &pluginhost.SessionTurnToolPolicy{Allow: []string{}}
@@ -58,9 +59,9 @@ func TestPluginTurnToolPolicyPreservesFrozenWorkerTree(t *testing.T) {
 			th.mu.Lock()
 			frozen := th.workerTreeFrozen
 			th.mu.Unlock()
-			srv.agentCompletionMu.Lock()
-			pending := len(srv.pendingAgentCompletionTurns[created.SessionID])
-			srv.agentCompletionMu.Unlock()
+			completions.mu.Lock()
+			pending := len(completions.pending)
+			completions.mu.Unlock()
 			if frozen != isolated {
 				t.Fatalf("frozen=%v, isolated=%v", frozen, isolated)
 			}

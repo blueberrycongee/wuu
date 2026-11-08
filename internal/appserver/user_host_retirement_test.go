@@ -42,14 +42,18 @@ func TestUserHostRetirementCancelsOnlyUnavailablePluginOwners(t *testing.T) {
 				th.running, th.currentTurn, th.cancel = true, "active-turn", cancel
 			}
 			srv.threads[th.ID] = th
-			srv.pendingQueuedTurns[th.ID] = []queuedTurn{{id: "queued-work", snapshot: turnRuntimeSnapshot{PluginTurn: &pluginTurnReference{PluginID: "fixture", RequestID: "queued-request", QueueID: "queued-work"}}}}
+			queuedWork := srv.turnQueue(th.ID)
+			queuedWork.mu.Lock()
+			queuedWork.pending = []queuedTurn{{id: "queued-work", snapshot: turnRuntimeSnapshot{PluginTurn: &pluginTurnReference{PluginID: "fixture", RequestID: "queued-request", QueueID: "queued-work"}}}}
+			queuedWork.mu.Unlock()
 			srv.retireIdlePluginRuntimes()
 			if cancelled := ctx.Err() != nil; cancelled != tc.wantCancel {
 				t.Fatalf("cancelled = %v, want %v", cancelled, tc.wantCancel)
 			}
-			srv.queuedTurnMu.Lock()
-			queued := len(srv.pendingQueuedTurns[th.ID]) > 0
-			srv.queuedTurnMu.Unlock()
+			queue := srv.turnQueue(th.ID)
+			queue.mu.Lock()
+			queued := len(queue.pending) > 0
+			queue.mu.Unlock()
 			if queued != tc.wantQueue {
 				t.Fatalf("queued work retained = %v, want %v", queued, tc.wantQueue)
 			}

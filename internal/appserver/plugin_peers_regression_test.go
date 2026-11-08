@@ -111,13 +111,16 @@ func TestDisablingPeersCannotBlockOrdinaryMessageSends(t *testing.T) {
 	}
 
 	// Queue a peers-owned turn whose lifecycle observation will block.
-	srv.pendingQueuedTurns[threadID] = []queuedTurn{{
+	peersQueue := srv.turnQueue(threadID)
+	peersQueue.mu.Lock()
+	peersQueue.pending = []queuedTurn{{
 		id:  "peers-turn",
 		msg: providers.ChatMessage{Role: "user", Content: "hello"},
 		snapshot: turnRuntimeSnapshot{PluginTurn: &pluginTurnReference{
 			PluginID: peers.ID(), RequestID: "peer-req-1", QueueID: "peer-queue-1",
 		}},
 	}}
+	peersQueue.mu.Unlock()
 
 	drained := make(chan struct{})
 	go func() {

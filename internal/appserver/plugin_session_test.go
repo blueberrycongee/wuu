@@ -636,9 +636,10 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 		t.Fatalf("idempotent steer = %+v, %v", replayed, err)
 	}
 
-	srv.queuedTurnMu.Lock()
-	queued := len(srv.pendingQueuedTurns[created.SessionID])
-	srv.queuedTurnMu.Unlock()
+	queue := srv.turnQueue(created.SessionID)
+	queue.mu.Lock()
+	queued := len(queue.pending)
+	queue.mu.Unlock()
 	if queued != 0 {
 		t.Fatalf("steer queued %d follow-up turn(s)", queued)
 	}
@@ -714,12 +715,15 @@ func TestPluginSessionSendSteersBusyThreadWithoutQueueingAnotherTurn(t *testing.
 }
 
 func TestQueuedUserWorkHasPriorityOverPluginWakeups(t *testing.T) {
-	srv := &Server{pendingQueuedTurns: map[string][]queuedTurn{}}
+	srv := &Server{}
 	threadID := "priority-thread"
-	srv.pendingQueuedTurns[threadID] = []queuedTurn{
+	priorityQueue := srv.turnQueue(threadID)
+	priorityQueue.mu.Lock()
+	priorityQueue.pending = []queuedTurn{
 		{id: "plugin", snapshot: turnRuntimeSnapshot{PluginTurn: &pluginTurnReference{PluginID: "example", RequestID: "continue"}}},
 		{id: "user"},
 	}
+	priorityQueue.mu.Unlock()
 	first, ok := srv.takeNextQueuedUserTurn(threadID)
 	if !ok || first.id != "user" {
 		t.Fatalf("first queued turn = %+v, %t", first, ok)
