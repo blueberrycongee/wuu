@@ -5,7 +5,7 @@ import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { useSettingsControls } from "./SettingsControlsContext";
 import { MCPDiagnostic } from "./MCPDiagnostic";
 import { SettingsRow } from "./SettingsRow";
-import { SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatusTone } from "./SettingsSection";
+import { SettingsEmptyState, SettingsGroup, SettingsPageHeader, SettingsSection, type SettingsStatusTone } from "./SettingsSection";
 import { toastErrorMessage } from "./Toast";
 import { Tooltip } from "./Tooltip";
 import { useI18n } from "./i18n";
@@ -384,7 +384,7 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
               );
             })
           ) : (
-            <p className="settings-group-empty">{t("settings.noMcpServers")}</p>
+            <SettingsEmptyState title={t("settings.noMcpServers")} />
           )}
         </SettingsGroup> : null}
         {mcpError ? (

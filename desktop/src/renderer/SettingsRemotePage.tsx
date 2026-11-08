@@ -12,7 +12,7 @@ import { useI18n } from "./i18n";
 import { showActionErrorToast } from "./Toast";
 import { SettingsFailure } from "./SettingsFailure";
 import { SettingsRow } from "./SettingsRow";
-import { SettingsGroup, SettingsSection } from "./SettingsSection";
+import { SettingsGroup, SettingsSection, SettingsEmptyState } from "./SettingsSection";
 import { Switch } from "./ui/Switch";
 
 export type RemoteDeviceView = {
@@ -109,7 +109,7 @@ export function SettingsRemotePage({
       <SettingsSection title={t("remote.devicesSection")} description={t("remote.devicesSectionDescription")}>
         <SettingsGroup>
           {!status || status.devices.length === 0 ? (
-            <p className="settings-group-empty">{t("remote.noDevices")}</p>
+            <SettingsEmptyState title={t("remote.noDevices")} />
           ) : (
             status.devices.map((device) => (
               <SettingsRow
