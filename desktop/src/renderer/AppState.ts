@@ -132,6 +132,10 @@ type AppState = {
   configError?: string;
   initialized?: InitializeResult;
   runtimeConnectionGeneration?: number;
+  // The last committed plugin inventory generation. Skills live in the same
+  // publication, so this is the slash catalog's freshness signal even when an
+  // update leaves the inventory records themselves byte-identical.
+  extensionEpoch?: number;
   // Page selection outlives shell activations, including catalog refreshes.
   nativeSection?: "conversations" | "catalog";
   catalogSection?: "plugins" | "skills";
@@ -688,6 +692,7 @@ function reduceNotification(
       }
       return {
         ...state,
+        extensionEpoch: params.epoch,
         initialized: {
           ...state.initialized,
           extension_inventory: params.extension_inventory,

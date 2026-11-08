@@ -2250,6 +2250,26 @@ describe("Composer send control", () => {
     expect(slashMenu?.classList.contains("composer-plus-menu")).toBe(true);
   });
 
+  it("keeps the slash selection when the command list rebuilds with identical content", () => {
+    const activeContext = { kind: "project" as const, project_id: "repo", cwd: "/repo" };
+    renderComposer({ prompt: "/", activeContext });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    const selectedName = () => document.body.querySelector<HTMLElement>(
+      '.slash-command-menu .slash-command-item[aria-selected="true"]',
+    )?.dataset.commandName;
+
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    });
+    const selected = selectedName();
+    expect(selected).not.toBe("review");
+
+    // Stream frames hand the composer fresh objects with identical content;
+    // the visible list is rebuilt but the highlight must not snap back.
+    renderComposer({ prompt: "/", activeContext, initialized: initialized() });
+    expect(selectedName()).toBe(selected);
+  });
+
   it("places the caret after a command inserted from the plus menu", async () => {
     renderStatefulComposer({ activeContext: { kind: "no_project", cwd: "/tmp" } });
 
