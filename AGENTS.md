@@ -51,6 +51,12 @@ machine-specific setup in user-level configuration.
 - Follow the language's own visibility, error handling, and control flow. Go
   returns early on errors. Match the surrounding file's types, imports, and
   logging.
+- Derive renderer context provider values only from their inputs so they stay
+  referentially stable across unrelated re-renders; memoized subtrees require
+  value-compared or identity-stable props.
+- Read each resource's freshness from one shared store or subscription and
+  retain unchanged snapshot fields structurally; do not rebuild them on every
+  publication.
 - Judge public APIs from the caller's perspective: discoverability, misuse
   resistance, error semantics, configuration, compatibility, and evolution.
 - Base repository claims on inspected code, tests, configuration, and history.
@@ -140,6 +146,10 @@ machine-specific setup in user-level configuration.
 - Include only text that helps users understand, decide, or act. Avoid repeating a
   label in a subtitle or hint. Retain explanations for non-obvious consequences
   and restrictions. Remove redundant copy, wrappers, and decoration before handoff.
+- Route hover hints through the shared Tooltip component; keep native `title`
+  only at embedded-browser and native-chrome boundaries where renderer portals
+  cannot composite. A tooltip names an otherwise-unlabeled control and never
+  carries information that is not otherwise reachable.
 - For UI copy, write the target locale directly instead of translating English
   word order, and use one verb for the same action across the product. Keep
   labels neutral rather than promotional.
