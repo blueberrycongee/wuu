@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import type { DesktopDictationAPI, DictationEvent } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import { Mic, Square, X, LoaderCircle } from "./WuuIcons";
-import { Tooltip } from "./Tooltip";
 import { ScopedToast } from "./Toast";
 import "./styles/composer-dictation.css";
 
@@ -123,7 +122,7 @@ export function DictationRecording({ api, sessionId, phase, stop, cancel }: {
   const listening = phase === "listening";
   const status = t(listening ? "composer.voice.listening" : phase === "finalizing" ? "composer.voice.transcribing" : "composer.voice.preparing");
   return <div className="composer-dictation-recording" data-phase={phase}>
-    <Tooltip asChild content={t("composer.voice.cancel")}><button type="button" className="composer-action-button" aria-label={t("composer.voice.cancel")} onClick={cancel}><X /></button></Tooltip>
+    <button type="button" className="composer-action-button" aria-label={t("composer.voice.cancel")} onClick={cancel}><X /></button>
     <div className="composer-dictation-status">
       <span className="composer-dictation-dot" aria-hidden="true" />
       {!listening && <span className="composer-dictation-status-label">{status}</span>}
@@ -131,8 +130,8 @@ export function DictationRecording({ api, sessionId, phase, stop, cancel }: {
       <span className="sr-only" role="status" aria-live="polite">{status}</span>
     </div>
     <div className="composer-dictation-wave" aria-hidden="true">{levels.map((level, index) => <span key={index} style={{ transform: `scaleY(${0.08 + level * 0.92})`, opacity: 0.3 + level * 0.7 }} />)}</div>
-    <Tooltip asChild content={t("composer.voice.stop")}><button type="button" className="composer-action-button composer-dictation-stop" aria-label={t("composer.voice.stop")} disabled={!listening} onClick={() => void stop()}>
+    <button type="button" className="composer-action-button composer-dictation-stop" aria-label={t("composer.voice.stop")} disabled={!listening} onClick={() => void stop()}>
       {listening ? <Square /> : <LoaderCircle className="is-spinning" />}
-    </button></Tooltip>
+    </button>
   </div>;
 }
