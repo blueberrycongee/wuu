@@ -580,7 +580,10 @@ describe("WorkspaceFileTree", () => {
     expect(button?.disabled).toBe(false);
     await act(async () => { button?.click(); });
     expect(exporter).toHaveBeenCalledWith("src/components/Button.tsx", activeContext.cwd);
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Share destination unavailable");
+    expect(vi.mocked(showActionErrorToast)).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Share destination unavailable" }),
+      expect.any(String),
+    );
     expect(button?.disabled).toBe(false);
   });
 

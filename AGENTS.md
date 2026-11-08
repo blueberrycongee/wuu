@@ -147,9 +147,11 @@ machine-specific setup in user-level configuration.
   view and user input. Plugins use public `api.showNotice` rather than custom
   error notifications or private renderer imports. Keep field validation next to
   the field, page-load failures in place with a retry control, and conversation
-  or task failures in their history with appropriate recovery actions. A temporary
-  toast does not replace a persistent failure state. Avoid duplicate notifications
-  for the same failure. Follow the [error feedback contract](docs/en/customize/ui-sdk.md#error-feedback).
+  or task failures in their history with appropriate recovery actions. Settings
+  surfaces are an exception: keep a blocking settings failure beside its controls
+  with diagnostics on demand (`SettingsFailure`), rather than a temporary toast.
+  A temporary toast does not replace a persistent failure state. Avoid duplicate
+  notifications for the same failure. Follow the [error feedback contract](docs/en/customize/ui-sdk.md#error-feedback).
 - Motion explains changes and provides feedback. Keep frequent actions responsive,
   avoid layout jumps and moving click targets, and respect reduced-motion settings.
 - Before declaring a UI change complete, walk the primary task as a first-time

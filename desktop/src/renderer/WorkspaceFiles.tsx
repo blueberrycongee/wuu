@@ -588,7 +588,6 @@ export function WorkspaceFilePreview({
   const [error, setError] = useState<string | undefined>(undefined);
   const [presenterReloadKey, setPresenterReloadKey] = useState(0);
   const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState("");
   const editorViewStateRef = useRef<WorkspaceMonacoViewState | null>(null);
   const loadedFileKeyRef = useRef<string | undefined>(undefined);
   const markdownHostRef = useRef<HTMLDivElement>(null);
@@ -609,7 +608,6 @@ export function WorkspaceFilePreview({
   }, [selectedFileKey, service]);
   useEffect(() => {
     setExporting(false);
-    setExportError("");
   }, [selectedFileKey, service]);
 
   useEffect(() => {
@@ -822,18 +820,15 @@ export function WorkspaceFilePreview({
       <button type="button" disabled={loading || exporting || !file} onClick={() => {
         if (!file || exporting) return;
         const generation = exportGenerationRef.current;
-        setExporting(true); setExportError("");
+        setExporting(true);
         void service.exportFile({ path: file.path, root: activeContext.cwd })
           .catch(error => {
-            if (exportGenerationRef.current === generation) {
-              setExportError(desktopApiErrorMessage(error, translateCurrent("workspace.files.openFailed")));
-            }
+            showActionErrorToast(error, translateCurrent("workspace.files.openFailed"));
           })
           .finally(() => {
             if (exportGenerationRef.current === generation) setExporting(false);
           });
       }}>{t("artifacts.downloadNamed", { name: file?.path ?? selectedWorkspaceFilePath })}</button>
-      {exportError && <span role="alert">{exportError}</span>}
     </div>
     <div className="workspace-file-export-preview">{presentation}</div>
   </div>;
