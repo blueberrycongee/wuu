@@ -52,7 +52,7 @@ app.whenReady().then(async () => {
           await capture(label);
           const geometry = await evaluate(() => {
             const button = document.querySelector('[data-testid="settings-connection-add"]');
-            const title = document.querySelector('.settings-titlebar-slot > .settings-page-title');
+            const title = document.querySelector('.settings-page-title');
             const rect = button.getBoundingClientRect();
             const range = document.createRange();
             range.selectNodeContents(button);

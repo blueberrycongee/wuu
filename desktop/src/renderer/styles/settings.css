@@ -2833,12 +2833,14 @@ button.settings-engine-expand:hover {
 /* --- Floating panel ------------------------------------------------------ */
 
 .settings-shell.settings-floating {
-  --canvas-titlebar-height: 52px;
+  /* The rail is a fixed column; the content column takes the rest. Narrow
+   * windows keep a usable content column by giving up rail width first. */
+  --settings-rail-width: 232px;
   display: grid;
   width: min(1120px, 100%);
   height: min(820px, 100%);
   max-height: 100%;
-  grid-template-columns: 248px minmax(0, 1fr);
+  grid-template-columns: var(--settings-rail-width) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   padding: 0;
   overflow: hidden;
@@ -2887,23 +2889,44 @@ button.settings-engine-expand:hover {
 .settings-floating .settings-main {
   grid-column: 2;
   grid-row: 1;
+  /* No window strip inside the panel: the page header is the first line. */
+  grid-template-rows: minmax(0, 1fr);
   margin: 0;
   border-radius: 0;
   background: var(--settings-canvas);
 }
 
+/* The page title is the first line of the panel; its top padding centers the
+ * title line on the close button, so the two read as one header row. */
+.settings-floating .settings-page {
+  --settings-page-top: var(--space-6);
+  padding-top: var(--settings-page-top);
+}
+
+/* Close sits on the panel corner, vertically centered on the title line. */
+.settings-floating > .settings-main > .settings-close-button {
+  position: absolute;
+  top: calc(var(--settings-page-top, var(--space-6)) + (var(--font-heading) * 1.3 - var(--control-field-height)) / 2);
+  right: var(--space-4);
+  z-index: 1;
+}
+
+/* When the content column meets the panel edge, header actions clear the
+ * close button instead of sharing its corner. */
+@container settings-page (max-width: 40em) {
+  .settings-floating .settings-page-header {
+    padding-inline-end: calc(var(--control-field-height) + var(--space-3));
+  }
+}
+
+@media (max-width: 1000px) {
+  .settings-shell.settings-floating {
+    --settings-rail-width: 200px;
+  }
+}
+
 .settings-floating .settings-main::before {
   content: none;
-}
-
-.settings-floating .settings-titlebar {
-  gap: var(--space-2);
-  padding: 0 var(--space-2) 0 var(--space-4);
-  -webkit-app-region: no-drag;
-}
-
-.settings-floating .settings-titlebar-slot {
-  flex: 1 1 auto;
 }
 
 .settings-close-button {
