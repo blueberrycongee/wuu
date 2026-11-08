@@ -88,6 +88,8 @@ export interface EngineHistoryMessage {
   readonly engine_turn_id?: string;
   readonly provider_item_id?: string;
   readonly steered?: boolean;
+  /** sha256 of the visible text; engines verify native messages against it. */
+  readonly content_sha256?: string;
 }
 export interface EngineHistoryForkRequest {
   readonly ref: string;
@@ -95,7 +97,12 @@ export interface EngineHistoryForkRequest {
   readonly retained: readonly EngineHistoryMessage[] | null;
   /** null means fork; a non-null prefix identifies the edited turn. */
   readonly removed: readonly EngineHistoryMessage[] | null;
+  /** the request had no item-level cutoff. */
   readonly whole_turn: boolean;
+  /** retained ends at a turn boundary: next element is a user prompt or nothing. */
+  readonly turn_boundary?: boolean;
+  /** retained reaches the session's current end; whole-session forks require it. */
+  readonly end_boundary?: boolean;
 }
 export interface EngineHistoryForkResult { readonly ref: string }
 export interface EngineAdminMethods {

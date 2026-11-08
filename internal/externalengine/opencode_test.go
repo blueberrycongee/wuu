@@ -339,7 +339,33 @@ func TestOpenCodeHelper(t *testing.T) {
 			_ = json.NewDecoder(r.Body).Decode(&reply)
 			replies <- reply.Reply
 			writeJSON(w, true)
+		case r.URL.Path == "/session/ses_native/fork":
+			var input struct {
+				MessageID string `json:"messageID"`
+			}
+			if json.NewDecoder(r.Body).Decode(&input) != nil || input.MessageID != "m_u3" {
+				http.Error(w, "wrong fork cutoff", 400)
+				return
+			}
+			writeJSON(w, map[string]string{"id": "ses_fork"})
 		case r.URL.Path == "/session/ses_native/message" && r.Method == "GET":
+			if scenario == "fork" {
+				message := func(id, role, parent, text string) map[string]any {
+					return map[string]any{
+						"info":  map[string]any{"id": id, "sessionID": "ses_native", "role": role, "parentID": parent},
+						"parts": []any{map[string]any{"id": "p_" + id, "sessionID": "ses_native", "type": "text", "text": text}},
+					}
+				}
+				writeJSON(w, []any{
+					message("m_u1", "user", "", "first"),
+					message("m_a1", "assistant", "m_u1", "reply one"),
+					message("m_u2", "user", "", "second"),
+					message("m_a2", "assistant", "m_u2", "reply two"),
+					message("m_u3", "user", "", "third"),
+					message("m_a3", "assistant", "m_u3", "reply three"),
+				})
+				return
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			writeJSON(w, []any{past, final})

@@ -279,6 +279,30 @@ type ThreadBoundFactory interface {
 	SessionForThread(context.Context, ThreadBinding) (Session, error)
 }
 
+// HistoryForkBoundary describes the visible cutoff a history fork or edit
+// asked for. WholeTurn is the caller's declared intent — the request had no
+// item-level cutoff. TurnBoundary reports the retained prefix ends at a turn
+// boundary: the next visible element is a non-steered user prompt or nothing.
+// EndBoundary reports the retained prefix reaches the session's current end.
+// Engines whose native fork only copies the whole session must require
+// EndBoundary rather than silently widening the copied context.
+type HistoryForkBoundary struct {
+	WholeTurn    bool
+	TurnBoundary bool
+	EndBoundary  bool
+}
+
+// HistoryForker is an optional factory extension for engines that can copy
+// native session history at a Wuu-supplied boundary without mutating the
+// source. Retained lists the visible messages the child keeps; removed lists
+// the visible suffix an edit drops (nil for a pure fork). Messages carry
+// native identities and content digests, not a replayable transcript.
+// Implementations verify the boundary against native state and never replay
+// the visible transcript as native context.
+type HistoryForker interface {
+	ForkHistory(ctx context.Context, ref, cwd string, retained, removed []providers.ChatMessage, boundary HistoryForkBoundary) (string, error)
+}
+
 // FailedSession returns a session that fails every turn with err. It is used
 // when an engine cannot produce a real session (missing binary, auth failure,
 // protocol error) so the turn terminates with the specific error instead of a
