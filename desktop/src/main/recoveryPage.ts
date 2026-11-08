@@ -38,24 +38,43 @@ body {
   width: min(100% - 64px, 620px);
   margin: auto;
   padding: 48px 0 40px;
+  animation: wuu-shell-in 360ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+@keyframes wuu-shell-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.99); }
 }
 .hero {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 18px;
   padding: 0 4px;
 }
 .hero:has(.lead:not([hidden])) { align-items: flex-start; }
 .mark {
-  width: 44px;
-  height: 44px;
+  position: relative;
+  width: 56px;
+  height: 56px;
   flex: none;
-  overflow: hidden;
-  border-radius: 12px;
+  border-radius: 15px;
   background: #ffffff;
   box-shadow: 0 0 0 1px light-dark(rgba(25, 25, 28, 0.10), rgba(255, 255, 255, 0.16)), 0 1px 3px light-dark(rgba(20, 20, 24, 0.08), rgba(0, 0, 0, 0.28));
 }
-.mark svg { display: block; width: 100%; height: 100%; }
+.mark > svg { display: block; width: 100%; height: 100%; border-radius: inherit; }
+.mark-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--danger);
+  color: #ffffff;
+  box-shadow: 0 0 0 2.5px var(--canvas);
+}
+body[data-mode="diagnostic"] .mark-badge { background: var(--warning); }
+.mark-badge svg { display: block; width: 11px; height: 11px; }
 .hero-copy { min-width: 0; padding-top: 2px; }
 h1 {
   margin: 0;
@@ -119,6 +138,7 @@ h2 {
   color: var(--ink-soft);
   font-size: 13px;
   line-height: 1.55;
+  text-wrap: pretty;
 }
 .row-actions {
   display: flex;
@@ -176,14 +196,17 @@ h2 {
 :is(.button, .link):focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 #retry[data-pending="true"] .icon { animation: wuu-spin 1s linear infinite; }
 pre {
+  max-height: 42vh;
   margin: 0;
   padding: 16px 20px;
+  overflow: auto;
   border-top: 1px solid var(--line);
   background: var(--surface-muted);
   color: var(--ink);
   font: 12px/1.65 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  user-select: text;
 }
 .notice {
   min-height: 20px;
@@ -199,14 +222,15 @@ pre {
 @media (max-width: 560px) {
   .shell { width: min(100% - 40px, 620px); padding-block: 36px; }
   .hero { gap: 14px; }
-  .mark { width: 40px; height: 40px; border-radius: 11px; }
-  .mark svg { width: 21px; height: 21px; }
+  .mark { width: 48px; height: 48px; border-radius: 13px; }
+  .mark-badge { right: -5px; bottom: -5px; width: 18px; height: 18px; box-shadow: 0 0 0 2px var(--canvas); }
   h1 { font-size: 23px; }
   .row { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 16px; }
   .row-actions { justify-content: flex-start; }
   pre { padding: 14px 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
+  .shell,
   .status-dot[data-phase="loading"],
   #retry[data-pending="true"] .icon { animation: none; }
   .button { transition: none; }
@@ -218,7 +242,7 @@ pre {
 </style></head><body>
 <main class="shell">
   <header class="hero">
-    <div class="mark" aria-hidden="true"><svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" focusable="false"><rect width="1024" height="1024" fill="#ffffff"/><g transform="translate(718 718) scale(11.538) translate(-51.22200724110007 -49.9707875601016)"><defs><radialGradient id="wuu-volume-b8f2fc-0.55" gradientUnits="userSpaceOnUse" cx="41.472" cy="32.421" r="58.5"><stop offset="0" stop-color="#454647"/><stop offset="0.52" stop-color="#353637"/><stop offset="1" stop-color="#242526"/></radialGradient></defs><path fill="url(#wuu-volume-b8f2fc-0.55)" d="M90.22 49.97C90.22 70.8 72.05 88.97 51.22 88.97C30.39 88.97 12.22 70.8 12.22 49.97C12.22 29.14 30.39 10.97 51.22 10.97C72.05 10.97 90.22 29.14 90.22 49.97Z"/></g><g fill="#ffffff" transform="translate(580.75 560.5) rotate(28)"><rect x="-135.5" y="-92" width="86" height="184" rx="43"/><rect x="49.5" y="-92" width="86" height="184" rx="43"/></g><g fill="#101112"><rect x="-46" y="-19" width="92" height="38" rx="19" transform="translate(246.882 446) rotate(209)"/><rect x="-64" y="-20.5" width="128" height="41" rx="20.5" transform="translate(333.919 291.435) rotate(229)"/><rect x="-51" y="-19" width="102" height="38" rx="19" transform="translate(493.888 214.636) rotate(249)"/></g></svg></div>
+    <div class="mark" aria-hidden="true"><svg viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg" focusable="false"><rect width="1024" height="1024" fill="#ffffff"/><g transform="translate(718 718) scale(11.538) translate(-51.22200724110007 -49.9707875601016)"><defs><radialGradient id="wuu-volume-b8f2fc-0.55" gradientUnits="userSpaceOnUse" cx="41.472" cy="32.421" r="58.5"><stop offset="0" stop-color="#454647"/><stop offset="0.52" stop-color="#353637"/><stop offset="1" stop-color="#242526"/></radialGradient></defs><path fill="url(#wuu-volume-b8f2fc-0.55)" d="M90.22 49.97C90.22 70.8 72.05 88.97 51.22 88.97C30.39 88.97 12.22 70.8 12.22 49.97C12.22 29.14 30.39 10.97 51.22 10.97C72.05 10.97 90.22 29.14 90.22 49.97Z"/></g><g fill="#ffffff" transform="translate(580.75 560.5) rotate(28)"><rect x="-135.5" y="-92" width="86" height="184" rx="43"/><rect x="49.5" y="-92" width="86" height="184" rx="43"/></g><g fill="#101112"><rect x="-46" y="-19" width="92" height="38" rx="19" transform="translate(246.882 446) rotate(209)"/><rect x="-64" y="-20.5" width="128" height="41" rx="20.5" transform="translate(333.919 291.435) rotate(229)"/><rect x="-51" y="-19" width="102" height="38" rx="19" transform="translate(493.888 214.636) rotate(249)"/></g></svg><span class="mark-badge"><svg viewBox="0 0 16 16" fill="none" focusable="false"><path d="M8 4.9v4.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="8" cy="11.4" r="1.1" fill="currentColor"/></svg></span></div>
     <div class="hero-copy">
       <h1 id="title">Wuu Recovery</h1>
       <p class="lead" id="lead" hidden></p>
@@ -255,7 +279,7 @@ pre {
       </div>
       <div class="row-actions">
         <button type="button" class="button link" id="preview-toggle" aria-expanded="false" aria-controls="preview"></button>
-        <button type="button" class="button link" id="export"></button>
+        <button type="button" class="button secondary" id="export"></button>
       </div>
     </section>
     <pre id="preview" hidden></pre>
