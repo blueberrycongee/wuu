@@ -150,7 +150,8 @@ type Env struct {
 	externalCapabilitiesOnly bool
 	// conversationMCPServers/conversationPluginTools admit servers and plugin
 	// tools for the lifetime of the capability surface; the turn-prefixed maps
-	// hold one turn's plugin-reference admission and are cleared when it ends.
+	// hold one turn's referenced server/tool admission and are cleared when it
+	// ends.
 	conversationMCPServers      map[string]bool
 	conversationPluginTools     map[string]bool
 	turnConversationMCPServers  map[string]bool
