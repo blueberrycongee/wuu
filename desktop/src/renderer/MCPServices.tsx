@@ -151,7 +151,6 @@ function MCPServerServices({ pluginID, enabled = true, filter = "", catalogView 
       <MCPFailure message={t("mcp.listFailed")} diagnostic={loadError} />
       <button type="button" className="settings-button settings-button-ghost" data-testid="mcp-list-retry" onClick={() => void refresh()}>{t("mcp.refresh")}</button>
     </div> : null}
-    {!enabled && visible.length > 0 ? <p className="settings-section-description">{t("mcp.enablePlugin")}</p> : null}
     {visible.length ? <SettingsGroup>{visible.map(server => {
       const name = server.display_name || server.name;
       const failure = errors[server.name];
