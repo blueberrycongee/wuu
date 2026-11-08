@@ -866,7 +866,6 @@ func RunToolLoop(
 		}
 		prevCacheFingerprint = currentFingerprint
 
-		requestInfo := requestContextInfo(stepIdx, assembly, req.Tools, cacheHint, cfg.SystemPromptSections)
 		requestUsageContract := usageContractKey(
 			cfg.ProviderObservationKey,
 			req.Provider,
@@ -876,7 +875,7 @@ func RunToolLoop(
 			req.ProviderOptions,
 		)
 		if cfg.OnRequestContext != nil {
-			cfg.OnRequestContext(requestInfo)
+			cfg.OnRequestContext(requestContextInfo(stepIdx, assembly, req.Tools, cacheHint, cfg.SystemPromptSections))
 		}
 		if cfg.RequestContextStore != nil {
 			checkpoint := RequestContextCheckpoint{Provider: cfg.ProviderName, Model: req.Model, DriverID: cfg.DriverID, DriverVersion: cfg.DriverVersion, State: buildRetainedRequestContextState(retainedContext, messages)}

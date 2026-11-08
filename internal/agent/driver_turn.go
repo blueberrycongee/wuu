@@ -293,7 +293,8 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 		step.tools, step.toolLedger, step.enableStreamingToolExec = g.runner.Tools, g.runner.ToolLedger, true
 		if streaming, ok := g.runner.SelectedToolBatch.(toolbatch.StreamingExecutor); ok {
 			step.streamToolAdmission = func(ctx context.Context, call providers.ToolCall) (bool, error) {
-				return streaming.AdmitStream(ctx, toolbatch.StreamRequest{BatchID: batchID, Call: call, ReadOnly: toolCanStartDuringStreaming(g.runner.Tools, call), ConcurrencySafe: toolCanRunConcurrently(g.runner.Tools, call)})
+				concurrencySafe, streamSafe := toolSchedulingSafety(g.runner.Tools, call)
+				return streaming.AdmitStream(ctx, toolbatch.StreamRequest{BatchID: batchID, Call: call, ReadOnly: streamSafe, ConcurrencySafe: concurrencySafe})
 			}
 		}
 		// A successful model RPC ends before its streamed tools. Their lifetime

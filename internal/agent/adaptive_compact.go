@@ -178,6 +178,7 @@ func applyAdaptiveCompactBudget(ctx context.Context, messages []providers.ChatMe
 		}
 	}
 
+	protectedTokens := -1
 	if hint.TargetTotalTokens <= 0 && hint.FailedRequestTokens > 0 {
 		// The failed request is negative rather than safe-bound evidence, but it
 		// still tells an unknown-model first retry to be materially smaller instead
@@ -187,7 +188,8 @@ func applyAdaptiveCompactBudget(ctx context.Context, messages []providers.ChatMe
 			margin = hint.FailedRequestTokens / 2
 		}
 		candidate := hint.FailedRequestTokens - margin
-		minimumUsefulTarget := protectedDurableTokens(messages) + compact.SummaryReserveTokens(budget)
+		protectedTokens = protectedDurableTokens(messages)
+		minimumUsefulTarget := protectedTokens + compact.SummaryReserveTokens(budget)
 		if candidate > minimumUsefulTarget {
 			hint.TargetTotalTokens = candidate
 		}
@@ -200,7 +202,9 @@ func applyAdaptiveCompactBudget(ctx context.Context, messages []providers.ChatMe
 	if fixedRequestTokens < 0 {
 		fixedRequestTokens = 0
 	}
-	protectedTokens := protectedDurableTokens(messages)
+	if protectedTokens < 0 {
+		protectedTokens = protectedDurableTokens(messages)
+	}
 	requiredTokens := fixedRequestTokens + protectedTokens + compact.SummaryReserveTokens(budget)
 	if requiredTokens >= hint.TargetTotalTokens {
 		return budget, fmt.Errorf(
