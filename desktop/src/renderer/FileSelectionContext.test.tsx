@@ -1,8 +1,8 @@
-import { act, useMemo, useRef, useState } from "react";
+import { act, memo, useMemo, useRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  buildFileSelectionPart, FileSelectionProvider, useFileSelectionActions,
+  buildFileSelectionPart, FileSelectionProvider, useFileSelectionActions, usePdfSelectionNavigation,
   type FileSelectionPart, type FileSelectionSource,
 } from "./FileSelectionContext";
 import { ApplicationFileSelection } from "./plugins/ApplicationFileSelection";
@@ -124,6 +124,40 @@ describe("file selection draft ownership", () => {
     expect(actions.comments).toEqual([part]);
     expect(readCollapsedPromptParts(owner, prompt)?.map(item => item.text).join("")).toBe(prompt);
     expect(readCollapsedPromptParts(owner, prompt)?.[1]).toMatchObject({ type: "file_selection", intent: "quote", source });
+  });
+
+  it("keeps shell-wide context values across publications that do not change selection inputs", async () => {
+    // The provider wraps every mounted turn. A new value per publication makes
+    // React rescan the whole shell on each stream frame, which grows with the
+    // conversation and saturates the renderer during long sessions.
+    const listeners = new Set<() => void>();
+    let status: "connected" | "error" = "connected";
+    const service = new ApplicationFileSelection({
+      getState: () => ({ ...initialState, initialized: {} as AppState["initialized"], activeContext: { kind: "no_project", cwd: "/project" },
+        activeSessionTabID: "stable", sessionTabs: [{ id: "stable", kind: "draft", context: { kind: "no_project", cwd: "/project" }, title: "", createdAt: 1, ...emptyComposerDraft(), prompt: "" }] }),
+      subscribeState: () => () => {}, isNavigationPending: () => false, getDraft: () => emptyComposerDraft(), setDraft: vi.fn(),
+      submission: { submitIndependent: vi.fn(), getSnapshot: () => ({ operations: [] }) },
+      preview: { invoke: vi.fn() }, previewContent: { readFile: vi.fn() }, side: { available: () => false, open: vi.fn() },
+    });
+    const application = {
+      fileSelection: service,
+      getSnapshot: () => ({ connection: { status } }),
+      subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    };
+    const seen: unknown[] = [];
+    const Consumer = memo(function Consumer(): null {
+      seen.push([useFileSelectionActions(), usePdfSelectionNavigation()]);
+      return null;
+    });
+    const render = () => root.render(<FileSelectionProvider application={application} source={{ ownerTabId: "stable" }}><Consumer /></FileSelectionProvider>);
+    await act(async () => render());
+    await act(async () => render());
+    await act(async () => listeners.forEach(listener => listener()));
+    expect(seen).toHaveLength(1);
+    status = "error";
+    await act(async () => listeners.forEach(listener => listener()));
+    expect(seen).toHaveLength(2);
+    await expect((seen[1] as [NonNullable<ReturnType<typeof useFileSelectionActions>>])[0].edit(source, "rewrite")).resolves.toBe(false);
   });
 
   it("serializes delimiter-like source text and user instructions separately", () => {

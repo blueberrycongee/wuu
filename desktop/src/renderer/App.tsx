@@ -436,6 +436,9 @@ export function App({ application, slots, shellPluginId }: {
     rightPanelGlobalized,
     setRightPanelOpenWithMotion,
   });
+  // Provided above the whole shell; a new function per render makes React
+  // rescan every mounted turn for consumers on each stream frame.
+  const openArtifactPreview = useStableCallback(openWorkspaceArtifactTab);
   const workspaceToolsCoverConversation = rightPanelGlobalized && !workspaceConversationActive;
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false);
   const [environmentPanelDismissed, setEnvironmentPanelDismissed] =
@@ -1594,7 +1597,7 @@ export function App({ application, slots, shellPluginId }: {
         : application.getSnapshot().drafts.activeTabId }}>
       <ImagePreviewProvider>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
-      <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
+      <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openArtifactPreview}>
       <ArtifactInteractionProvider application={application}>
         <div
           ref={appShellRef}

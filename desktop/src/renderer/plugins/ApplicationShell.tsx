@@ -31,7 +31,10 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
   function Slot({ name, context = {}, fallback, layout: Layout }: UISlotProps): React.ReactNode {
     const registered = React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
     const ancestors = React.useContext(SlotAncestors);
-    if (ancestors.includes(name)) throw new Error(`UI slot cycle: ${[...ancestors, name].join(" → ")}`);
+    // A new array on every render would make React rescan the slot's whole
+    // subtree for context consumers on each stream frame.
+    const scope = React.useMemo(() => [...ancestors, name], [ancestors, name]);
+    if (ancestors.includes(name)) throw new Error(`UI slot cycle: ${scope.join(" → ")}`);
     // A contribution cannot recreate a slot after its defining provider unloads.
     const slot = host.getUISlot(name);
     const bindings = React.useContext(SurfaceBindings);
@@ -73,7 +76,7 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
         <Contribution host={host} contribution={contribution} slots={composition} context={context}>{composed}</Contribution>
       </ShellBoundary>;
     }
-    return <SlotAncestors.Provider value={[...ancestors, name]}>{composed}</SlotAncestors.Provider>;
+    return <SlotAncestors.Provider value={scope}>{composed}</SlotAncestors.Provider>;
   }
   const composition: UICompositionV1 = Object.freeze({ Slot: React.memo(Slot) });
   return composition;
