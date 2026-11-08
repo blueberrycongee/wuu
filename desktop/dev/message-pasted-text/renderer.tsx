@@ -433,16 +433,13 @@ function FileTileVertical({ file }: { file: InputFile }) {
   );
 }
 
-/** F3 · 页面剪影：折角页造型露扩展名 + 底部一行截断文件名。 */
+/** F3 · 页面剪影：折角页 + 文件名小字三行截断（与生产 .message-files-tile 一致）。 */
 function FileTilePage({ file }: { file: InputFile }) {
-  const { stem, extension, kind } = fileParts(file);
+  const { stem, extension } = fileParts(file);
   return (
     <div className="mpt-file-tile mpt-file-p" title={file.filename}>
-      <span className="mpt-file-p-kind" aria-hidden="true">{kind.slice(0, 4)}</span>
-      <span className="mpt-file-p-rule" aria-hidden="true" />
-      <span className="mpt-file-p-rule short" aria-hidden="true" />
       <span className="mpt-file-p-name">
-        <span className="mpt-file-p-stem">{stem}</span>{extension}
+        <span>{stem}</span>{extension}
       </span>
     </div>
   );
@@ -451,7 +448,7 @@ function FileTilePage({ file }: { file: InputFile }) {
 const FILE_VARIANTS: { id: string; name: string; render: (file: InputFile, index: number) => ReactNode }[] = [
   { id: "f1", name: "F1 · 横向卡（图标 + 两行）", render: (file, index) => <FileTileHorizontal key={index} file={file} /> },
   { id: "f2", name: "F2 · 竖版文档卡（徽标 + 名称底条）", render: (file, index) => <FileTileVertical key={index} file={file} /> },
-  { id: "f3", name: "F3 · 页面剪影（只露类型）", render: (file, index) => <FileTilePage key={index} file={file} /> },
+  { id: "f3", name: "F3 · 页面剪影（文件名三行）", render: (file, index) => <FileTilePage key={index} file={file} /> },
 ];
 
 const LONG_FILES: InputFile[] = [
