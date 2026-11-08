@@ -648,6 +648,95 @@ func TestACPCancelAndCloseStopQuietAgent(t *testing.T) {
 	}
 }
 
+func TestACPInstructionsDeliveredOncePerSession(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	engine := testEngine(t, "echo-prompt")
+	binding := testBinding()
+	binding.Instructions = "host contract v1"
+	var ref string
+	binding.PersistRef = func(value string) error { ref = value; return nil }
+
+	prompt := func() []map[string]string {
+		session, err := engine.SessionForThread(ctx, binding)
+		if err != nil {
+			t.Fatal(err)
+		}
+		result, err := session.RunTurn(ctx, testInput(), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var blocks []map[string]string
+		if err := json.Unmarshal([]byte(result.Result.Content), &blocks); err != nil {
+			t.Fatalf("prompt %q: %v", result.Result.Content, err)
+		}
+		return blocks
+	}
+
+	blocks := prompt()
+	if len(blocks) != 2 || !strings.Contains(blocks[0]["text"], "host contract v1") {
+		t.Fatalf("first turn must deliver instructions: %+v", blocks)
+	}
+	binding.ExternalRef = ref
+	blocks = prompt()
+	if len(blocks) != 1 || strings.Contains(blocks[0]["text"], "host contract") {
+		t.Fatalf("unchanged instructions must not repeat: %+v", blocks)
+	}
+	binding.Instructions = "host contract v2"
+	blocks = prompt()
+	if len(blocks) != 2 || !strings.Contains(blocks[0]["text"], "host contract v2") {
+		t.Fatalf("changed instructions must redeliver: %+v", blocks)
+	}
+}
+
+func TestACPInstructionsDuePolicy(t *testing.T) {
+	engine := &Engine{}
+	if !engine.acpInstructionsDue("s1", "a", false) {
+		t.Fatal("fresh session must always deliver")
+	}
+	engine.acpInstructionsDelivered("s1", "a")
+	for i := 0; i < acpRedeliverInterval-1; i++ {
+		if engine.acpInstructionsDue("s1", "a", true) {
+			t.Fatalf("unchanged instructions repeated on turn %d", i+1)
+		}
+	}
+	if !engine.acpInstructionsDue("s1", "a", true) {
+		t.Fatal("periodic redelivery did not fire")
+	}
+	engine.acpInstructionsDelivered("s1", "a")
+	if !engine.acpInstructionsDue("s1", "b", true) {
+		t.Fatal("changed instructions must redeliver")
+	}
+	if !engine.acpInstructionsDue("s1", "a", false) {
+		t.Fatal("a never-resumed session must deliver even with matching text")
+	}
+}
+
+func TestSweepACPImagesDropsStaleEntries(t *testing.T) {
+	root := t.TempDir()
+	stale := filepath.Join(root, "stale-thread")
+	fresh := filepath.Join(root, "fresh-thread")
+	for _, dir := range []string{stale, fresh} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "img.png"), []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	old := time.Now().Add(-2 * acpImageMaxAge)
+	if err := os.Chtimes(stale, old, old); err != nil {
+		t.Fatal(err)
+	}
+	sweepACPImages(root)
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale dir survived: %v", err)
+	}
+	if _, err := os.Stat(fresh); err != nil {
+		t.Fatalf("fresh dir removed: %v", err)
+	}
+}
+
 // TestACPHelper is an isolated fake process, not a model connection. Requests
 // drive it deterministically; it never reads user settings or credentials.
 func TestACPHelper(t *testing.T) {

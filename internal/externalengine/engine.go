@@ -21,6 +21,56 @@ import (
 type Engine struct {
 	entry        enginecatalog.Entry
 	binary, root string
+
+	deliveredMu sync.Mutex
+	delivered   map[string]acpDelivery
+}
+
+// acpDelivery tracks which host instructions an agent session already carries.
+// ACP has no session-level instructions channel, so the block rides inside the
+// persisted prompt; re-sending an unchanged text would append another copy to
+// the transcript every turn.
+type acpDelivery struct {
+	text  string
+	turns int
+}
+
+// acpRedeliverInterval re-sends unchanged instructions periodically: an agent
+// may compact or truncate the earlier copy out of its transcript and ACP
+// exposes no signal to detect that loss.
+const acpRedeliverInterval = 8
+
+// maxACPTrackedSessions bounds the per-engine delivery table; eviction only
+// costs one redundant delivery.
+const maxACPTrackedSessions = 1024
+
+func (e *Engine) acpInstructionsDue(ref, instructions string, resumed bool) bool {
+	e.deliveredMu.Lock()
+	defer e.deliveredMu.Unlock()
+	if e.delivered == nil {
+		e.delivered = make(map[string]acpDelivery)
+	}
+	d := e.delivered[ref]
+	d.turns++
+	e.delivered[ref] = d
+	// A fresh session (new, or a failed load that fell back to new) has an
+	// empty transcript and must always receive the block.
+	return !resumed || d.text != instructions || d.turns >= acpRedeliverInterval
+}
+
+func (e *Engine) acpInstructionsDelivered(ref, instructions string) {
+	e.deliveredMu.Lock()
+	defer e.deliveredMu.Unlock()
+	if e.delivered == nil {
+		e.delivered = make(map[string]acpDelivery)
+	}
+	if len(e.delivered) >= maxACPTrackedSessions {
+		for key := range e.delivered {
+			delete(e.delivered, key)
+			break
+		}
+	}
+	e.delivered[ref] = acpDelivery{text: instructions}
 }
 
 func New(entry enginecatalog.Entry, binary, root string) *Engine {
