@@ -117,8 +117,8 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 	readonly := true
 	manager.Configure(map[string]mcp.ServerConfig{
 		"docs": {
-			Name:           "docs",
-			URL:            baseURL,
+			Name:          "docs",
+			URL:           baseURL,
 			ToolOverrides: map[string]mcp.ToolOverride{"get-self": {ReadOnly: &readonly}},
 			OAuth: &mcp.OAuthConfig{
 				ClientID:    "desktop-client",
