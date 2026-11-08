@@ -662,7 +662,11 @@ export function Composer({
   const slashQuery = slashDraft?.query ?? "";
   const slashSkillContextKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
   const slashSkillCountKey = services?.view.skillRevision ?? initialized?.extension_trust?.main_session?.skills?.count ?? 0;
-  const slashSkillInventory = initialized?.extension_inventory;
+  // Application scopes already publish skillRevision as a content key for the
+  // inventory, so their effect deps must not also track the inventory object:
+  // host projections re-wrap it on unrelated state updates and an identity dep
+  // would reload the catalog mid-stream, flashing the open menu's skill rows.
+  const slashSkillInventory = services ? undefined : initialized?.extension_inventory;
   const slashRuntimeReady = Boolean(activeContext && initialized);
   const subscribePluginHost = useCallback(
     (listener: () => void) => services ? services.presentation.subscribe(listener) : pluginHost.subscribe(listener),

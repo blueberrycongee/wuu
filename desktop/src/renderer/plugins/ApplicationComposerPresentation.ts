@@ -3,6 +3,7 @@ import type { ComposerStatusItem, ComposerStatusState } from "../../../../packag
 import type { ApplicationComposerStatusSnapshotV1, ApplicationComposerStatusItemV1, ApplicationComposerPresentationV1, ApplicationComposerPresentationViewV1, ApplicationComposerInlineProviderV1 } from "../../../../packages/plugin-sdk/src/ui-composer-presentation";
 import { activeTodoUpdateForThread, activeTurnAcceptsSteering, activeTurnForThread, activeTurnIsAnswerReady, isThreadRunning, latestContextUsageForThread, queryTextsForThread, requestedHandoffIntentForThread, type AppState } from "../AppState";
 import { providerModelContextWindow } from "../RuntimeHelpers";
+import type { InitializeResult } from "../../shared/protocol";
 import { runtimeViewForConversation } from "../SessionRuntimeState";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
 import type { RegisteredComposerStatusSourceV1 as RegisteredComposerStatusSource, UIContributionRegistryV1 as PluginHost, RegisteredComposerInlineCompletionProviderV1 as RegisteredComposerInlineCompletionProvider } from "../../../../packages/plugin-sdk/src/ui-contributions";
@@ -35,6 +36,10 @@ export class ApplicationComposerPresentation {
   // recomputation cost separately on every state notification.
   private readonly views = new Map<string, { state: AppState; key: string; heavy: readonly unknown[]; value: ApplicationComposerPresentationViewV1 }>();
   private skillRevisionCache: { inventory: unknown; count: unknown; value: string } | undefined;
+  // The runtime projection is identity-stable across unrelated state updates,
+  // so the published configuration keeps one frozen wrapper per projection and
+  // consumers can memoize heavy clones (structuredClone, effect deps) on it.
+  private readonly configurationCache = new WeakMap<InitializeResult, NonNullable<ApplicationComposerPresentationViewV1["configuration"]>>();
   constructor(private readonly host: { getState(): AppState; updateState(update: (state: AppState) => AppState): void; subscribeState(listener: () => void): () => void; getPluginHost(): PluginHost }) {}
 
   createScope(signal: AbortSignal): ApplicationComposerPresentationV1 {
@@ -178,17 +183,22 @@ export class ApplicationComposerPresentation {
     const ceiling = providerModelContextWindow(initialized, thread?.model_provider || initialized?.provider, thread?.model || initialized?.model)
       || (!thread ? state.initialized?.advanced_settings?.context_window_tokens : undefined);
     const usage = latestContextUsageForThread(state, thread, { model: thread?.model || initialized?.model, contextWindowTokens: ceiling });
-    const configuration = initialized && Object.freeze({ provider: initialized.provider, model: initialized.model, effort: initialized.effort, variant: initialized.variant,
-      speed: initialized.speed, permissions: frozenCopy(initialized.permissions), providers: frozenCopy(initialized.providers),
-      features: immutable({ safe_mode: initialized.features?.safe_mode }),
-      extension_inventory: frozenCopy(initialized.extension_inventory) });
+    const configuration = initialized && this.configurationFor(initialized);
     const skillsCount = initialized?.extension_trust?.main_session?.skills?.count;
     const inventory = initialized?.extension_inventory;
     const revision = this.skillRevisionCache;
     const skillRevision = revision && revision.inventory === inventory && revision.count === skillsCount
       ? revision.value
       : (this.skillRevisionCache = { inventory, count: skillsCount, value: JSON.stringify([skillsCount, inventory]) }).value;
-    const queryHistory = queryTextsForThread(thread);
+    // Turn updates replace the turns array, so the cached query list comes back
+    // with a new identity carrying the same entries. Reuse the published array
+    // while the texts match or unrelated item traffic would rebuild the view.
+    const rawQueryHistory = queryTextsForThread(thread);
+    const previousQueryHistory = cached?.value.queryHistory;
+    const queryHistory = previousQueryHistory
+      && previousQueryHistory.length === rawQueryHistory.length
+      && previousQueryHistory.every((text, index) => text === rawQueryHistory[index])
+      ? previousQueryHistory : rawQueryHistory;
     const value: ApplicationComposerPresentationViewV1 = Object.freeze({ ownerTabId, runtimeMenu: state.codexRuntimeMenu ?? null, threadId: thread?.id, available: Boolean(initialized && (tab.kind === "draft" || thread)),
       running, turnRunning: running && !activeTurnIsAnswerReady(thread), canSteer: activeTurnAcceptsSteering(thread), readOnly: Boolean(thread?.read_only),
       status: state.status, turnId: turn?.id, configuration, contextUsage: immutable(usage && ceiling ? { ...usage, window: ceiling } : usage),
@@ -203,6 +213,19 @@ export class ApplicationComposerPresentation {
       cached.state = state; return cached.value;
     }
     this.views.set(ownerTabId, { state, key, heavy, value }); return value;
+  }
+
+  private configurationFor(initialized: InitializeResult): NonNullable<ApplicationComposerPresentationViewV1["configuration"]> {
+    const cached = this.configurationCache.get(initialized);
+    if (cached) {
+      return cached;
+    }
+    const value = Object.freeze({ provider: initialized.provider, model: initialized.model, effort: initialized.effort, variant: initialized.variant,
+      speed: initialized.speed, permissions: frozenCopy(initialized.permissions), providers: frozenCopy(initialized.providers),
+      features: immutable({ safe_mode: initialized.features?.safe_mode }),
+      extension_inventory: frozenCopy(initialized.extension_inventory) });
+    this.configurationCache.set(initialized, value);
+    return value;
   }
 
   dispose(): void { if (this.disposed) return; this.disposed = true; this.views.clear(); for (const retire of [...this.scopes]) retire(); }
