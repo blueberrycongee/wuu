@@ -524,7 +524,7 @@ function UserMessageContent({
             <div className="user-message-raw-query">{displayedText}</div>
           ) : textParts.some(part => part.type === "plugin_reference") ? (
             <div className="user-message-raw-query">{textParts.map((part, index) => part.type === "plugin_reference"
-              ? <span key={index} className="composer-plugin-reference" title={[part.plugin.plugin_id, part.plugin.mcp_server, part.plugin.account_id, part.plugin.workspace_id].filter(Boolean).join(" · ")}>{part.text}</span>
+              ? <span key={index} className="composer-plugin-reference" title={[part.plugin.plugin_id, part.plugin.mcp_server].filter(Boolean).join(" · ")}>{part.text}</span>
               : <span key={index}>{part.text}</span>)}</div>
           ) : structured ? (
             <div className="user-message-content-parts">

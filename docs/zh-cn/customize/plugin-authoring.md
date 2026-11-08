@@ -97,90 +97,19 @@
 
 ## 声明式贡献
 
-### MCP 连接器卡片
+### MCP 服务
 
-Personal 在嵌入宿主明确授予账号共享时，复用 Coding 的全局 MCP 连接器插件及所选凭据提供方。项目级 MCP 定义仍留在 Coding。桌面仅为自己的账号用户空间授予共享，其他嵌入应用需在可信启动路径设置 `SharedMCPConnectors`。启用 verified_host 隔离的宿主不共享账号。
+插件可以在 `mcp_servers` 中声明服务，字段与用户配置相同。仅含声明的插件不需要 `runtime` 或 `desktop` 入口。规范名称为 `plugin.<plugin-id>.<server>`，OAuth 凭据也使用这个名称。插件自带的定义由包管理：用户可以连接、登录和断开，但不能作为独立定义编辑或移除。禁用插件会停止其服务，不会替换为其他实现。
 
-经认证的客户端输入可携带 `content_parts`，内容为文本、粘贴文本和插件引用。插件通过 `input.content_parts` 原样转发；宿主拒绝替换或遗漏，并将选择纳入持久请求摘要。插件引用保留资源和授权身份，在执行前重新验证；支持对话插件的外部引擎也走同一验证路径。
+插件自带的服务只在 Coding 中使用。共享的 Personal 宿主只获得用户的全局独立服务。
 
-插件所属 MCP 服务的可选 `connector` 元数据将其展示为账号连接器。它复用已有服务定义、连接生命周期、OAuth 凭据存储和插件归属，不会注册第二个服务。独立服务的元数据仅用于说明，不改变普通 MCP 管理操作。纯声明式插件无需 `runtime` 或 `desktop` 入口：
-
-```json
-{
-  "schema_version": 1,
-  "id": "workspace-connector",
-  "name": "Workspace Connector",
-  "version": "0.1.0",
-  "mcp_servers": {
-    "notion": {
-      "url": "https://mcp.notion.com/mcp",
-      "transport": "http",
-      "enabled": false,
-      "connector": {
-        "title": "Notion",
-        "description": "Work with the workspace you authorize.",
-        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client",
-        "icon": { "path": "assets/notion.svg" }
-      }
-    }
-  }
-}
-```
-
-`connector` 支持以下字段：
-
-| 字段 | 契约 |
-| --- | --- |
-| `title` | 必填且非空白的显示名称。 |
-| `description` | 可选的简短服务说明。 |
-| `documentation_url` | 可选的服务商文档链接，必须是绝对 HTTPS 地址，且不内嵌凭据。默认目录不显示该链接。 |
-| `setup_required` | 可选的应用配置缺失说明。非空白时，默认目录和输入框都不列出该连接器，也不提供连接或授权操作。 |
-| `identity_probe` | 可选的固定只读 MCP 调用及有界 JSON Pointer 映射，用于读取服务商返回的身份；仅接受活动的受信任插件包声明，不接受独立配置注入。 |
-| `icon` | 可选的品牌图片：`{ "path": "..." }` 或 `{ "light": "...", "dark": "..." }`，使用包内相对路径的 SVG、PNG 或 WebP，限制与插件 `icon` 相同。显示在连接器卡片、登录对话框和输入框插件菜单的中性底板中，只为所属插件版本提供。未声明图标的卡片和独立服务显示通用图标。 |
-
-按需连接账号时，必须显式声明 `enabled: false`，避免首次安装就开始账号连接。示例的规范服务名是 `plugin.workspace-connector.notion`，用户偏好和 OAuth 凭据使用同一身份。连接操作先检查当前配置提供方的版本并保存启用偏好，再使用普通 MCP 连接与 OAuth 流程。连接器的断开操作会删除本机 OAuth 凭据，并持久化 `enabled: false`，不表示已撤销服务商侧的授权。禁用插件会停止所属服务，不会替换为其他连接器。
-
-已启用的连接器如果保存了授权，且服务端没有要求重新授权，连接操作会使用该授权重试连接；如果服务端要求授权，则开始新的登录。
-
-默认应用提供方通过可选设置控件 `requestMCPConnectorLogin`、`getPendingMCPConnectorLogin`、`takeMCPConnectorLogin` 和 `cancelMCPConnectorLogin` 接收明确的连接意图。进程内检查点观察原始配置写入的结果，不会序列化或重放写入。重新附着时会验证上下文、页面、包指纹与来源、资源及启用状态。修改启用偏好必须等待后继图谱的控件；已启用的连接器可以在重新验证后使用当前控件。
-
-自动登录由所有者启动一次，而不是由挂载的对话框启动。可选的 `startMCPConnectorLogin` 和 `pollMCPConnectorLogin` 附着到同一个操作，在兼容的界面替换期间保留进行中与终态回执；`retryMCPConnectorLogin` 仅接受失败后的明确重试。此进程内交接只持有不透明的原生登录句柄，不在检查点中保存 OAuth state、授权网址、验证码或凭据。界面卸载不会取消登录；明确取消、上下文或导航或来源变化以及到期会取消。原生启动在发现服务前返回句柄，因此可以取消尚未打开的浏览器登录。等待中的轮询可返回 `phase: "starting"` 或 `"waiting"`。后端授权所有权撤销仍是终止条件，不会静默重试。手动重定向登录保留原有的对话框所有权，中断后需要明确重试，不保存其 OAuth 数据。独立提供方可以省略这些可选方法，但仍须遵守控件作用域取消规则。
-
-如果 OAuth 已完成而后续连接失败，登录的终态错误可以包含 `authorized: true`。此时可使用保存的授权重试连接；该标记不表示服务已经连接，也不保证服务端会接受该授权。
-
-当前选择入口仅支持 Coding/当前项目宿主。OAuth 存储以规范服务名而非项目身份为键：使用同一服务名及凭据提供方的项目共享账号，更换账号和本地退出也会影响它们。绑定用户的 Personal/twin 宿主会从运行配置中排除共享 MCP 定义，后端报告配置不可用并拒绝连接器修改，避免混用不同域的偏好或凭据。扩展此流程需要按域隔离连接身份、偏好和凭据存储，而不是永久按产品 ID 判断。资源 URL 将凭据绑定到远程端点，不授予显示位置或域归属权限。没有获准的身份探测时，卡片不会将账号身份标为已验证。
-
-使用真实的服务商端点，并如实声明配置要求。有 URL 不等于支持动态客户端注册。如果还缺少固定 OAuth 客户端、预览资格或管理员配置，不应提供连接按钮。当前服务商限制见[内置账号连接器指南](mcp.md#连接账号)。
-
-#### 已验证的连接身份
-
-将下面片段合并到插件所属服务定义中，而非用户配置：
-
-```json
-{
-  "connector": {
-    "title": "Notion",
-    "identity_probe": {
-      "tool": "notion-get-self",
-      "arguments": {},
-      "result": "single_text_json",
-      "account": { "id": "/user/id", "label": "/user/name", "email": "/user/email", "kind": "/user/type" },
-      "workspace": { "id": "/workspace/id", "label": "/workspace/name" }
-    }
-  },
-  "tool_overrides": { "notion-get-self": { "read_only": true } }
-}
-```
-
-工具必须存在于已连接服务的实时工具目录，并在同一插件包的 `tool_overrides` 中显式标记 `read_only: true`；仅有服务端提示不够。`arguments` 是固定 JSON 对象，不是生成代码。`result` 选择 MCP `structuredContent`（`structured_content`），或恰好一个包含 JSON 对象的文本块（`single_text_json`）。映射使用有界 RFC 6901 JSON Pointer，不支持表达式。账号 ID 必填；声明工作区映射时工作区 ID 也必填。可选名称或邮箱可以缺失或为空。只保存规范化的字符串 ID 与展示字段，不持久化原始响应。固定参数上限为 8 KiB、嵌套 16 层；指针上限为 512 字节、32 段。身份解码器仅接受不超过 64 KiB 的完整工具结果；保存的 ID、名称和类型各不超过 512 字节，邮箱不超过 320 字节。传输层先按现有的 8 MiB 消息 / 4 MiB SSE 事件上限读取，再应用更严格的身份结果上限。
-
-宿主只在用户成功连接或主动刷新身份后，使用现有 OAuth 授权及当前凭据提供方执行探测。启动、状态/目录读取和 token 刷新都不会运行探测。失败不会影响已有授权与传输连接，只报告身份暂不可用。缓存与授权、资源和获准的插件声明绑定；token 刷新保持授权身份，成功的新授权会替换它。已取消或被替换的操作无法写入迟到结果。读取不会迁移旧凭据；主动验证可安全补充身份。账号/工作区名称不用于选择凭据、授权工具，也不能证明 OAuth 应用品牌。本契约不扩大 Personal/twin 域的访问权限。
+请使用真实的服务商端点。有 URL 不等于支持动态客户端注册；需要固定 OAuth 客户端的服务须配置 `oauth.client_id`。
 
 #### 对话引用
 
 默认输入框通过 `listMCPServers` 发现 MCP 连接，通过目录的 `conversation_tools` 发现提供运行时工具的插件。主题和仅提供后台服务的包不需要额外声明退出。构造运行时插件引用时，请使用规范的 `provenance.plugin_id`，而不是目录记录的 subject ID。
 
-`plugin_reference` 消息片段携带可读的 `text` 和 `plugin` 对象（`ApplicationPluginReferenceV1`）。运行时引用使用 `plugin_id`；MCP 引用还保留 `mcp_server`、`resource_url`、不透明的 `authorization_id`，以及可用的已验证 `account_id` / `workspace_id`。草稿恢复、排队、编辑和提交时应完整保留片段。这些标识表示用户选择，不是凭据或执行授权。宿主解析工具名称，并在接收消息和开始轮次时重新验证连接身份。OAuth 刷新保留授权标识，新登录则替换它。MCP 客户端绑定已接受的授权；新登录取代它后，旧客户端会失败。
+`plugin_reference` 消息片段携带可读的 `text` 和 `plugin` 对象（`ApplicationPluginReferenceV1`）。运行时引用使用 `plugin_id`；MCP 引用还保留 `mcp_server`、`resource_url`和不透明的 `authorization_id`。草稿恢复、排队、编辑和提交时应完整保留片段。这些标识表示用户选择，不是凭据或执行授权。宿主解析工具名称，并在接收消息和开始轮次时重新验证服务和授权。OAuth 刷新保留授权标识，新登录则替换它。MCP 客户端绑定已接受的授权；新登录取代它后，旧客户端会失败。
 
 引擎声明 `conversation-plugins`，即承诺本轮使用宿主选中的插件工具和说明，并保留原有权限检查。外部引擎通过现有的轮次级 MCP 桥接获得明确选中的工具。不支持的适配器应省略该能力；宿主会拒绝带引用的提交，避免静默丢失用户意图。运行中的轮次收到新引用时应排队，因为已有的外部桥接不能在执行中途取得新连接。
 

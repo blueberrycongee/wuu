@@ -248,11 +248,10 @@ func TestMCPAuthUnrelatedShadowCleanupPreservesRootAttempt(t *testing.T) {
 }
 
 func TestMCPAuthPackageReplacementCannotReusePendingOwner(t *testing.T) {
-	for _, change := range []string{"source", "fingerprint", "subject", "setup"} {
+	for _, change := range []string{"source", "fingerprint", "subject"} {
 		t.Run(change, func(t *testing.T) {
 			rt, cfg := mcpAuthRuntime(t)
 			definition := cfg.MCPServers["docs"]
-			definition.Connector = &config.MCPConnectorDescriptor{Title: "Synthetic connector"}
 			delete(cfg.MCPServers, "docs")
 			item := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "fixture.connector", MCPServers: map[string]config.MCPServerConfig{"docs": definition}}, Source: "bundled", Official: true, SubjectID: "fixture-owner", Fingerprint: "fixture-original"}
 			cfg.Composition.Patches = append(cfg.Composition.Patches, composition.Patch{Modules: map[string]bool{item.ID: true}})
@@ -279,10 +278,6 @@ func TestMCPAuthPackageReplacementCannotReusePendingOwner(t *testing.T) {
 				item.Fingerprint = "replacement"
 			case "subject":
 				item.SubjectID = "replacement-owner"
-			case "setup":
-				item.Fingerprint = "replacement-setup"
-				definition.Connector = &config.MCPConnectorDescriptor{Title: "Synthetic connector", SetupRequired: "Synthetic setup"}
-				item.MCPServers = map[string]config.MCPServerConfig{"docs": definition}
 			}
 			publish()
 			if _, _, err := rt.FinishMCPAuth(context.Background(), name, pending.State, "late"); err == nil {

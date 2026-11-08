@@ -57,16 +57,7 @@ func (s *Server) resolvePluginReferences(ctx context.Context, parts []providers.
 			if !server.Connected || server.ConfigurationEnabled != nil && !*server.ConfigurationEnabled || server.PluginActive != nil && !*server.PluginActive {
 				return "", fmt.Errorf("plugin connection %q is unavailable; connect or enable it before sending", ref.MCPServer)
 			}
-			accountID, workspaceID := "", ""
-			if identity := server.Identity; identity != nil && identity.State == "verified" {
-				if identity.Account != nil {
-					accountID = identity.Account.ID
-				}
-				if identity.Workspace != nil {
-					workspaceID = identity.Workspace.ID
-				}
-			}
-			if ref.AccountID != accountID || ref.WorkspaceID != workspaceID || ref.AuthorizationID != server.AuthorizationID {
+			if ref.AuthorizationID != server.AuthorizationID {
 				return "", fmt.Errorf("account for %q changed; select the connection again to confirm the current account", ref.MCPServer)
 			}
 			if server.AuthStatus == "oauth" && server.AuthorizationID == "" {

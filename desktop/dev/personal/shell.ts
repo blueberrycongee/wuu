@@ -25,7 +25,7 @@ export function installFixtureBridge(invoke: NonNullable<PluginHostOptions["invo
       if (!new URLSearchParams(location.search).has("mcp")) return { servers: [] };
       mcpFixture.contexts.push(context);
       const personal = context?.kind === "user" && context.product_domain === "personal" && context.user_space_id === "local";
-      const servers: MCPServerStatus[] = [{ name: personal ? "plugin.account-connectors.notion" : "coding-private-server", connected: true, state: "ready", tool_count: 1, tool_names: ["read_page"], plugin_id: "account-connectors", plugin_active: true, configuration_enabled: true, authorization_id: mcpFixture.authorization, resource_url: "https://synthetic-mcp.invalid/mcp", connector: { title: personal ? "Notion" : "Coding private connection", description: "Synthetic connection; no real account or network" } }];
+      const servers: MCPServerStatus[] = [{ name: personal ? "shared-docs" : "coding-private-server", connected: true, state: "ready", tool_count: 1, tool_names: ["read_page"], configuration_enabled: true, authorization_id: mcpFixture.authorization, resource_url: "https://synthetic-mcp.invalid/mcp" }];
       return { servers };
     },
     listEngines: async () => ({ engines: [] }),

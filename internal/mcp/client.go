@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/capability"
-	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/mcpconfig"
 )
 
@@ -26,13 +25,10 @@ const (
 
 // ServerConfig describes one MCP server connection.
 type ServerConfig struct {
-	// Identity declarations are admitted only from active trusted packages.
-	IdentityProbe  *config.MCPIdentityProbe `json:"-"`
-	IdentitySource string                   `json:"-"`
-	Name           string                   `json:"name"`
-	Command        string                   `json:"command,omitempty"`
-	Args           []string                 `json:"args,omitempty"`
-	URL            string                   `json:"url,omitempty"`
+	Name    string   `json:"name"`
+	Command string   `json:"command,omitempty"`
+	Args    []string `json:"args,omitempty"`
+	URL     string   `json:"url,omitempty"`
 	// Transport selects the wire protocol for URL servers: "http" (streamable
 	// HTTP, aliases "streamable-http"/"streamable_http") or "sse" (legacy
 	// HTTP+SSE). Empty means auto: try streamable HTTP first and fall back to

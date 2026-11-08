@@ -25,7 +25,7 @@ import {
   X,
   type IconComponent
 } from "./WuuIcons";
-import { DESKTOP_AUTO_ARCHIVE_DAYS } from "../shared/protocol";
+import { DESKTOP_AUTO_ARCHIVE_DAYS, normalizeProxyURL } from "../shared/protocol";
 import type {
   CodexPetSettingsUpdate,
   DesktopAutoArchiveDays,
@@ -57,6 +57,7 @@ import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState, type SidebarDrawerPhase } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
 import { SelectMenu } from "./SelectMenu";
+import { providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
 import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
@@ -276,7 +277,7 @@ function SettingsViewContent({
   resizingSidebar: boolean;
   shellRef?: RefObject<HTMLDivElement | null>;
   onBack: () => void;
-  onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
+  onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string, permissionMode?: string) => Promise<void>;
   onRemoveProvider: (provider: string, options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
   onRefreshModelCatalog: () => Promise<void>;
   onProvidersChanged?: (providers: NonNullable<InitializeResult["providers"]>) => void;
@@ -822,6 +823,7 @@ function SettingsViewContent({
                 <SettingsGeneralPage
                   initialized={initialized}
                   onGeneralSave={onGeneralSave}
+                  onSave={onSave}
                   desktopBuild={desktopBuild}
                   permissionStateCache={permissionStateCache}
                   copyState={copyState}
@@ -917,6 +919,7 @@ function SettingsNavItem({
 function SettingsGeneralPage({
   initialized,
   onGeneralSave,
+  onSave,
   permissionStateCache,
   desktopBuild,
   copyState,
@@ -925,6 +928,7 @@ function SettingsGeneralPage({
   initialized: InitializeResult | undefined;
   permissionStateCache: RefObject<SystemPermissionsState | undefined>;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
+  onSave: Parameters<typeof SettingsViewContent>[0]["onSave"];
   desktopBuild: DesktopBuildInfo | undefined;
   copyState: CopyState;
   onCopyVersion: () => Promise<void>;
@@ -984,6 +988,7 @@ function SettingsGeneralPage({
       <DesktopPreferencesSections />
       {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
       <SystemPermissionsSection stateCache={permissionStateCache} />
+      <NewThreadDefaultsSection initialized={initialized} onSave={onSave} />
 
       <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
         <SettingsGroup>
@@ -1007,12 +1012,80 @@ function SettingsGeneralPage({
   );
 }
 
+const PERMISSION_MODE_OPTIONS = [
+  { value: "standard", label: "runtime.permission.standard", hint: "runtime.permission.standardHint" },
+  { value: "read_only", label: "runtime.permission.readOnly", hint: "runtime.permission.readOnlyHint" },
+  { value: "unconfined", label: "runtime.permission.unconfined", hint: "runtime.permission.unconfinedHint" },
+] as const;
+
+function NewThreadDefaultsSection({ initialized, onSave }: {
+  initialized: InitializeResult | undefined;
+  onSave: Parameters<typeof SettingsViewContent>[0]["onSave"];
+}): JSX.Element {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const providerName = initialized?.provider ?? "";
+  const model = initialized?.model ?? "";
+  const provider = initialized?.providers?.find((row) => row.name === providerName);
+  const effortOptions = providerModelVariantOptions(provider, model, "");
+  const effort = initialized?.variant ?? initialized?.effort ?? "";
+  const permissionMode = initialized?.permissions?.mode || "standard";
+  const disabled = !providerName || !model || busy;
+
+  async function save(change: { permissionMode?: string; variant?: string }): Promise<void> {
+    setBusy(true);
+    setError("");
+    try {
+      await onSave(providerName, model, undefined, undefined, change.variant, change.permissionMode);
+    } catch (err) {
+      setError(toastErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SettingsSection title={t("settings.sectionNewThreads")} testID="settings-new-threads">
+      <SettingsGroup>
+        <SettingsRow title={t("settings.defaultPermissionMode")} hint={t("settings.newThreadDefaultsHint")} hideDescriptionWhenNarrow error={error}>
+          <SelectMenu
+            triggerClassName="settings-select-trigger"
+            ariaLabel={t("settings.defaultPermissionMode")}
+            dataTestid="settings-default-permission-mode"
+            value={permissionMode}
+            disabled={disabled}
+            align="right"
+            onChange={(next) => void save({ permissionMode: next })}
+            options={PERMISSION_MODE_OPTIONS.map((option) => ({ value: option.value, label: t(option.label), hint: t(option.hint) }))}
+          />
+        </SettingsRow>
+        {effortOptions.length > 1 && (
+          <SettingsRow title={t("settings.defaultReasoningEffort")}>
+            <SelectMenu
+              triggerClassName="settings-select-trigger"
+              ariaLabel={t("settings.defaultReasoningEffort")}
+              dataTestid="settings-default-reasoning-effort"
+              value={effortOptions.includes(effort) ? effort : ""}
+              disabled={disabled}
+              align="right"
+              onChange={(next) => void save({ variant: next })}
+              options={effortOptions.map((option) => ({ value: option, label: variantLabel(option) }))}
+            />
+          </SettingsRow>
+        )}
+      </SettingsGroup>
+    </SettingsSection>
+  );
+}
+
 function DesktopPreferencesSections(): JSX.Element | null {
   const { t } = useI18n();
   const preferences = useDesktopPreferences();
   const [updateState, setUpdateState] = useState<DesktopUpdateState>({ kind: "unsupported" });
   const [checking, setChecking] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof DesktopPreferences | "update" | DesktopFolder, string>>>({});
+  const [proxyDraft, setProxyDraft] = useState<string>();
   const isMac = navigator.platform.toLowerCase().includes("mac");
 
   useEffect(() => {
@@ -1066,6 +1139,17 @@ function DesktopPreferencesSections(): JSX.Element | null {
       />
     </SettingsRow>
   );
+  function commitProxyURL(): void {
+    if (proxyDraft === undefined || !preferences) return;
+    const url = proxyDraft.trim() ? normalizeProxyURL(proxyDraft) : "";
+    if (url === undefined) {
+      setErrors(current => ({ ...current, proxy_url: t("settings.proxyURLInvalid") }));
+      return;
+    }
+    setProxyDraft(undefined);
+    if (url !== preferences.proxy_url) void save("proxy_url", url);
+  }
+
   const updatesSupported = updateState.kind !== "unsupported";
   const updateBusy = checking || updateState.kind === "checking" || updateState.kind === "prompting";
 
@@ -1109,6 +1193,42 @@ function DesktopPreferencesSections(): JSX.Element | null {
           </SettingsGroup>
         </SettingsSection>
       )}
+      <SettingsSection title={t("settings.sectionNetwork")} testID="settings-network">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.proxy")} hint={t("settings.proxyRestartHint")} hideDescriptionWhenNarrow error={errors.proxy_mode}>
+            <SegmentedControl
+              label={t("settings.proxy")}
+              value={preferences.proxy_mode}
+              options={[
+                { value: "system", label: t("settings.proxySystem"), testID: "settings-proxy-system" },
+                { value: "manual", label: t("settings.proxyManual"), testID: "settings-proxy-manual" },
+                { value: "none", label: t("settings.proxyNone"), testID: "settings-proxy-none" },
+              ]}
+              onChange={value => void save("proxy_mode", value)}
+            />
+          </SettingsRow>
+          {preferences.proxy_mode === "manual" && (
+            <SettingsRow title={t("settings.proxyURL")} error={errors.proxy_url}>
+              <input
+                className="settings-input"
+                data-testid="settings-proxy-url"
+                aria-label={t("settings.proxyURL")}
+                value={proxyDraft ?? preferences.proxy_url}
+                placeholder="http://127.0.0.1:7890"
+                spellCheck={false}
+                autoComplete="off"
+                onChange={event => {
+                  const value = event.currentTarget.value;
+                  setProxyDraft(value);
+                  setErrors(current => ({ ...current, proxy_url: "" }));
+                }}
+                onBlur={commitProxyURL}
+                onKeyDown={event => { if (event.key === "Enter") commitProxyURL(); }}
+              />
+            </SettingsRow>
+          )}
+        </SettingsGroup>
+      </SettingsSection>
       <SettingsSection title={t("settings.sectionData")} testID="settings-data">
         <SettingsGroup>
           <SettingsRow title={t("settings.dataFolder")} hint={t("settings.dataFolderHint")} hideDescriptionWhenNarrow error={errors.data}>

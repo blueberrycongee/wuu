@@ -20,7 +20,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 )
 
-func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
+func TestSharedGlobalMCPUserHostAdmissionAndDisable(t *testing.T) {
 	var calls atomic.Int32
 	peer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -51,17 +51,17 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 	defer peer.Close()
 	home := t.TempDir()
 	enabled, disabled := true, false
-	item := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "connector-fixture", MCPServers: map[string]config.MCPServerConfig{
-		"docs": {URL: peer.URL, Transport: "http", Enabled: &disabled, Connector: &config.MCPConnectorDescriptor{Title: "Docs"}},
-	}}, Source: "bundled", Official: true, SubjectID: "fixture-connector", Fingerprint: "fixture-v1"}
-	name := "plugin.connector-fixture.docs"
+	item := pluginpkg.Plugin{Manifest: pluginpkg.Manifest{ID: "plugin-fixture", MCPServers: map[string]config.MCPServerConfig{
+		"docs": {URL: peer.URL, Transport: "http"},
+	}}, Source: "bundled", Official: true, SubjectID: "fixture-plugin", Fingerprint: "fixture-v1"}
+	name := "docs"
 	cfg := config.Default()
 	cfg.PTC.Enabled = false
 	cfg.DefaultProvider = "fixture"
 	cfg.Providers = map[string]config.ProviderConfig{"fixture": {Type: "openai-compatible", BaseURL: "http://127.0.0.1:9/v1", Model: "fixture", APIKey: "synthetic"}}
-	cfg.MCPServers = map[string]config.MCPServerConfig{name: {Enabled: &enabled}, "project-only": {URL: peer.URL}}
+	cfg.MCPServers = map[string]config.MCPServerConfig{name: {URL: peer.URL, Transport: "http", Enabled: &enabled}}
 	cfg.Composition = composition.DefaultConfig("headless")
-	cfg.Composition.Patches = []composition.Patch{{Modules: map[string]bool{credentialstore.OSModule: false, credentialstore.FileModule: true, "connector-fixture": true}}}
+	cfg.Composition.Patches = []composition.Patch{{Modules: map[string]bool{credentialstore.OSModule: false, credentialstore.FileModule: true, "plugin-fixture": true}}}
 	catalog := []pluginpkg.Plugin{item}
 	configPath := filepath.Join(home, "selected-config.json")
 	source, err := json.Marshal(cfg)
@@ -92,8 +92,8 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 	if err := mgr.Connect(context.Background(), name); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := mgr.Config("project-only"); ok {
-		t.Fatal("project MCP crossed host boundary")
+	if _, ok := mgr.Config(PluginMCPServerName(item.ID, "docs")); ok {
+		t.Fatal("plugin MCP crossed host boundary")
 	}
 	native := mgr.NativeTools()
 	if len(native) != 1 {
@@ -110,7 +110,7 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 		}
 	}
 	if !discovered {
-		t.Fatal("shared connector tool not offered to the main session")
+		t.Fatal("shared server tool not offered to the main session")
 	}
 	call := providers.ToolCall{ID: "shared-call", Name: tool.Name(), Arguments: "{}"}
 	if _, err := rt.Toolkit.ExecuteResult(context.Background(), call); err != nil {
@@ -142,7 +142,7 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 		}
 	}
 	if !foundBackground {
-		t.Fatal("fresh Personal external-engine task cannot discover the shared connector")
+		t.Fatal("fresh Personal external-engine task cannot discover the shared server")
 	}
 	if _, err := thread.CapabilityTools.Execute(loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "fresh-worker", ExecutionID: "turn-one"}), call); err != nil {
 		t.Fatalf("fresh Personal external-engine task: %v", err)
@@ -158,7 +158,7 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 	deniedCall := call
 	deniedCall.ID = "denied-call"
 	if _, err := readOnly.CapabilityTools.Execute(loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "read-only-worker", ExecutionID: "turn-two"}), deniedCall); err == nil {
-		t.Fatal("read-only external task invoked a write-capable connector tool")
+		t.Fatal("read-only external task invoked a write-capable server tool")
 	}
 	external, err := rt.Toolkit.CloneForRoot(rt.RootDir)
 	if err != nil {
@@ -167,11 +167,11 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 	external.ConfigureExternalCapabilities()
 	for _, def := range external.ExternalCapabilityDefinitions() {
 		if def.Name == call.Name {
-			t.Fatal("external engine got unselected connector")
+			t.Fatal("external engine got unselected server")
 		}
 	}
 	if _, err := external.ExecuteResult(context.Background(), call); err == nil {
-		t.Fatal("external engine invoked unselected connector")
+		t.Fatal("external engine invoked unselected server")
 	}
 	external.SetConversationTools([]string{name}, nil)
 	found := false
@@ -181,7 +181,7 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatal("selected connector missing from external capability catalog")
+		t.Fatal("selected server missing from external capability catalog")
 	}
 	if _, err := external.ExecuteResult(context.Background(), call); err != nil {
 		t.Fatalf("selected external call: %v", err)
@@ -204,7 +204,7 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 	}
 	replacement := rt.Toolkit.MCPManager()
 	if replacement == nil || replacement == mgr {
-		t.Fatal("reload did not create replacement connector manager")
+		t.Fatal("reload did not create replacement server manager")
 	}
 	if err := replacement.Connect(context.Background(), name); err != nil {
 		t.Fatalf("connect after reload: %v", err)
@@ -237,7 +237,7 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 		}
 	}
 	if codingTool == nil {
-		t.Fatal("Coding connector tool missing")
+		t.Fatal("Coding server tool missing")
 	}
 	if _, err := codingTool.ExecuteResult(context.Background(), `{}`); err != nil {
 		t.Fatalf("Coding tool: %v", err)
@@ -253,7 +253,7 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	view.Config.MCPServers[name] = config.MCPServerConfig{Enabled: &disabled}
+	view.Config.MCPServers[name] = config.MCPServerConfig{URL: peer.URL, Transport: "http", Enabled: &disabled}
 	raw, err := json.Marshal(view.Config)
 	if err != nil {
 		t.Fatal(err)
@@ -264,9 +264,6 @@ func TestSharedMCPConnectorUserHostAdmissionAndDisable(t *testing.T) {
 	release()
 	if _, err := tool.ExecuteResult(context.Background(), `{}`); err == nil {
 		t.Fatal("captured tool dispatched after disable")
-	}
-	if _, err := codingTool.ExecuteResult(context.Background(), `{}`); err == nil {
-		t.Fatal("Coding captured tool dispatched after Personal disabled shared connection")
 	}
 	if calls.Load() != 6 {
 		t.Fatal("disabled tool reached remote")
