@@ -74,7 +74,7 @@ export class ApplicationSettings {
       model: initialized.model, effort: initialized.effort, variant: initialized.variant, workspace_root: initialized.workspace_root, core: initialized.core,
       providers: initialized.providers, catalog_providers: initialized.catalog_providers,
       model_aliases: initialized.model_aliases,
-      advanced_settings: initialized.advanced_settings, general_settings: initialized.general_settings,
+      advanced_settings: initialized.advanced_settings, general_settings: initialized.general_settings, permissions: initialized.permissions,
       features: initialized.features,
       extension_inventory: initialized.extension_inventory?.map(plugin => ({
         id: plugin.id, name: plugin.name, description: plugin.description, developer: plugin.developer, kind: plugin.kind,
@@ -132,7 +132,7 @@ export class ApplicationSettings {
     switch (action) {
       case "settings.save-provider": {
         const value = input as ApplicationSettingsActionMapV1["settings.save-provider"]["input"];
-        await runtime.updateProviderSettings(value.provider, value.model, value.effort, value.connection, value.variant); break;
+        await runtime.updateProviderSettings(value.provider, value.model, value.effort, value.connection, value.variant, value.permissionMode); break;
       }
       case "settings.remove-provider": {
         const value = input as ApplicationSettingsActionMapV1["settings.remove-provider"]["input"];

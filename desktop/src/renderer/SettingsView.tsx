@@ -55,6 +55,7 @@ import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState, type SidebarDrawerPhase } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
 import { SelectMenu } from "./SelectMenu";
+import { providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
 import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
@@ -274,7 +275,7 @@ function SettingsViewContent({
   resizingSidebar: boolean;
   shellRef?: RefObject<HTMLDivElement | null>;
   onBack: () => void;
-  onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
+  onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string, permissionMode?: string) => Promise<void>;
   onRemoveProvider: (provider: string, options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
   onRefreshModelCatalog: () => Promise<void>;
   onProvidersChanged?: (providers: NonNullable<InitializeResult["providers"]>) => void;
@@ -820,6 +821,7 @@ function SettingsViewContent({
                 <SettingsGeneralPage
                   initialized={initialized}
                   onGeneralSave={onGeneralSave}
+                  onSave={onSave}
                   desktopBuild={desktopBuild}
                   permissionStateCache={permissionStateCache}
                   copyState={copyState}
@@ -915,6 +917,7 @@ function SettingsNavItem({
 function SettingsGeneralPage({
   initialized,
   onGeneralSave,
+  onSave,
   permissionStateCache,
   desktopBuild,
   copyState,
@@ -923,6 +926,7 @@ function SettingsGeneralPage({
   initialized: InitializeResult | undefined;
   permissionStateCache: RefObject<SystemPermissionsState | undefined>;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
+  onSave: Parameters<typeof SettingsViewContent>[0]["onSave"];
   desktopBuild: DesktopBuildInfo | undefined;
   copyState: CopyState;
   onCopyVersion: () => Promise<void>;
@@ -982,6 +986,7 @@ function SettingsGeneralPage({
       <DesktopPreferencesSections />
       {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
       <SystemPermissionsSection stateCache={permissionStateCache} />
+      <NewThreadDefaultsSection initialized={initialized} onSave={onSave} />
 
       <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
         <SettingsGroup>
@@ -1002,6 +1007,73 @@ function SettingsGeneralPage({
         </SettingsGroup>
       </SettingsSection>
     </>
+  );
+}
+
+const PERMISSION_MODE_OPTIONS = [
+  { value: "standard", label: "runtime.permission.standard", hint: "runtime.permission.standardHint" },
+  { value: "read_only", label: "runtime.permission.readOnly", hint: "runtime.permission.readOnlyHint" },
+  { value: "unconfined", label: "runtime.permission.unconfined", hint: "runtime.permission.unconfinedHint" },
+] as const;
+
+function NewThreadDefaultsSection({ initialized, onSave }: {
+  initialized: InitializeResult | undefined;
+  onSave: Parameters<typeof SettingsViewContent>[0]["onSave"];
+}): JSX.Element {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const providerName = initialized?.provider ?? "";
+  const model = initialized?.model ?? "";
+  const provider = initialized?.providers?.find((row) => row.name === providerName);
+  const effortOptions = providerModelVariantOptions(provider, model, "");
+  const effort = initialized?.variant ?? initialized?.effort ?? "";
+  const permissionMode = initialized?.permissions?.mode || "standard";
+  const disabled = !providerName || !model || busy;
+
+  async function save(change: { permissionMode?: string; variant?: string }): Promise<void> {
+    setBusy(true);
+    setError("");
+    try {
+      await onSave(providerName, model, undefined, undefined, change.variant, change.permissionMode);
+    } catch (err) {
+      setError(toastErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SettingsSection title={t("settings.sectionNewThreads")} testID="settings-new-threads">
+      <SettingsGroup>
+        <SettingsRow title={t("settings.defaultPermissionMode")} hint={t("settings.newThreadDefaultsHint")} hideDescriptionWhenNarrow error={error}>
+          <SelectMenu
+            triggerClassName="settings-select-trigger"
+            ariaLabel={t("settings.defaultPermissionMode")}
+            dataTestid="settings-default-permission-mode"
+            value={permissionMode}
+            disabled={disabled}
+            align="right"
+            onChange={(next) => void save({ permissionMode: next })}
+            options={PERMISSION_MODE_OPTIONS.map((option) => ({ value: option.value, label: t(option.label), hint: t(option.hint) }))}
+          />
+        </SettingsRow>
+        {effortOptions.length > 1 && (
+          <SettingsRow title={t("settings.defaultReasoningEffort")}>
+            <SelectMenu
+              triggerClassName="settings-select-trigger"
+              ariaLabel={t("settings.defaultReasoningEffort")}
+              dataTestid="settings-default-reasoning-effort"
+              value={effortOptions.includes(effort) ? effort : ""}
+              disabled={disabled}
+              align="right"
+              onChange={(next) => void save({ variant: next })}
+              options={effortOptions.map((option) => ({ value: option, label: variantLabel(option) }))}
+            />
+          </SettingsRow>
+        )}
+      </SettingsGroup>
+    </SettingsSection>
   );
 }
 

@@ -394,9 +394,10 @@ export function createRuntimeSettingsActions(
     effort?: string,
     connection?: RuntimeConnectionUpdate,
     variant?: string,
+    permissionMode?: string,
   ): Promise<void> {
     if (!provider.trim() || !model.trim()) return;
-    await sendRuntimeSelection({ provider, model, effort, connection, variant }, "workspace");
+    await sendRuntimeSelection({ provider, model, effort, connection, variant, permissionMode }, "workspace");
   }
 
   async function updateAdvancedSettings(
