@@ -25,6 +25,7 @@ export type FloatingMenuOwner =
   | "web-workspace-options"
   | "sidebar-account"
   | "sidebar-workspace"
+  | "sidebar-recent-view"
   | "conversation-actions"
   | "conversation-workspace"
   | "conversation-status"
