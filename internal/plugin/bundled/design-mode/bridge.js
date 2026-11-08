@@ -66,8 +66,10 @@
     node.style.display = "block";
   }
   function paint() {
-    if (state.hover && state.hover !== state.selected && state.mode === "edit") place(hoverBox, state.hover.getBoundingClientRect());
-    else hoverBox.style.display = "none";
+    if (state.hover && state.hover !== state.selected && state.mode !== "off") {
+      hoverBox.style.outlineColor = state.mode === "comment" ? "#f59e0b" : state.accent;
+      place(hoverBox, state.hover.getBoundingClientRect());
+    } else hoverBox.style.display = "none";
     if (state.selected) {
       const rect = state.selected.getBoundingClientRect();
       place(selectBox, rect);
@@ -83,9 +85,10 @@
     for (const pin of pinLayer.children) {
       const comment = state.comments.find((item) => item.id === pin.dataset.id);
       const el = comment && document.querySelector(comment.selector);
-      if (!comment || !el || state.mode !== "comment") { pin.style.display = "none"; continue; }
+      if (!comment || !el || state.mode === "off") { pin.style.display = "none"; continue; }
       const rect = el.getBoundingClientRect();
       pin.style.display = "grid";
+      pin.style.opacity = state.mode === "comment" ? "1" : "0.55";
       if (comment.anchor === "tr") {
         pin.style.left = `${Math.min(rect.right, innerWidth - 12) + (comment.offset?.x ?? 0)}px`;
         pin.style.top = `${rect.top + (comment.offset?.y ?? 0)}px`;
@@ -139,7 +142,7 @@
     return {
       selector: selectorFor(el),
       tag: tagName(el),
-      text: (el.innerText ?? el.textContent ?? "").trim().slice(0, 400),
+      text: (el.innerText ?? el.textContent ?? "").trim(),
       rect: { x: Math.round(rect.left), y: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) },
       styles: {
         color: style.color,
@@ -391,6 +394,7 @@
       state.nonce = message.nonce;
       if (typeof message.accent === "string" && message.accent) { state.accent = message.accent; paintAccent(); }
       state.mode = message.mode === "comment" ? "comment" : message.mode === "off" ? "off" : "edit";
+      document.documentElement.style.cursor = state.mode === "comment" ? "crosshair" : "";
       post({ type: "ready", url: location.pathname, title: document.title });
       schedulePaint();
       return;
@@ -400,6 +404,7 @@
       case "set-mode":
         state.mode = message.mode === "comment" ? "comment" : message.mode === "off" ? "off" : "edit";
         if (state.mode !== "edit") { state.hover = null; endTextEdit(state.mode !== "off"); }
+        document.documentElement.style.cursor = state.mode === "comment" ? "crosshair" : "";
         schedulePaint();
         break;
       case "apply":

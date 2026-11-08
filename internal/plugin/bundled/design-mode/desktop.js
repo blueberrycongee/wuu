@@ -55,6 +55,7 @@ const EN_STRINGS = {
   "design.viewport.tablet": "Tablet",
   "design.viewport.desktop": "Desktop",
   "design.viewport.fill": "Fill",
+  "design.mode.group": "Canvas mode",
   "design.mode.edit": "Edit",
   "design.mode.comment": "Comment",
   "design.save": "Save",
@@ -82,8 +83,6 @@ const EN_STRINGS = {
   "design.comment.hint": "Click an element to pin a comment · Esc exits",
   "design.comment.title": "Comments",
   "design.comment.placeholder": "What should change here?",
-  "design.comment.empty": "Switch to Comment mode and click anywhere on the page to pin feedback for the agent.",
-  "design.inspector.element": "Element",
   "design.inspector.styles": "Styles",
   "design.inspector.text": "Text",
   "design.style.color": "Color",
@@ -107,7 +106,6 @@ const EN_STRINGS = {
   "design.newTab.failed": "Could not open a conversation for the revision brief.",
   "design.removeComment": "Remove comment",
   "design.sheet.close": "Close panel",
-  "design.sheet.collapse": "Collapse panel",
   "design.retry": "Try again",
   "design.save.failed": "The page could not be saved.",
   "design.apply.failed": "That edit could not be applied to the page.",
@@ -121,6 +119,7 @@ const ZH_STRINGS = {
   "design.viewport.tablet": "平板",
   "design.viewport.desktop": "桌面",
   "design.viewport.fill": "填满",
+  "design.mode.group": "画布模式",
   "design.mode.edit": "编辑",
   "design.mode.comment": "评论",
   "design.save": "保存",
@@ -148,8 +147,6 @@ const ZH_STRINGS = {
   "design.comment.hint": "点击元素即可钉上评论 · Esc 退出",
   "design.comment.title": "评论",
   "design.comment.placeholder": "这里需要怎么改？",
-  "design.comment.empty": "切到评论模式，点击页面任意位置为 Agent 钉一条反馈。",
-  "design.inspector.element": "元素",
   "design.inspector.styles": "样式",
   "design.inspector.text": "文本",
   "design.style.color": "颜色",
@@ -173,7 +170,6 @@ const ZH_STRINGS = {
   "design.newTab.failed": "无法为修订说明打开对话。",
   "design.removeComment": "删除评论",
   "design.sheet.close": "关闭面板",
-  "design.sheet.collapse": "收起面板",
   "design.retry": "重试",
   "design.save.failed": "页面未能保存。",
   "design.apply.failed": "修改未能应用到页面。",
@@ -261,15 +257,20 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   const [bridgeLost, setBridgeLost] = useState(false);
   const [revertArmed, setRevertArmed] = useState(false);
   const [frameKey, setFrameKey] = useState(0);
-  const [collapsed, setCollapsed] = useState(false);
 
   const frameRef = useRef(null);
+  const revertTimerRef = useRef(0);
   const bridgeRef = useRef({ nonce: "", ready: false, pending: new Map(), seq: 0 });
   const commentsKeyRef = useRef("");
   const commentsReadyRef = useRef(false);
   const commentsRef = useRef(comments);
   commentsRef.current = comments;
   const dirty = ops.length > 0;
+  const armRevertTimer = useCallback(() => {
+    clearTimeout(revertTimerRef.current);
+    revertTimerRef.current = setTimeout(() => setRevertArmed(false), 2600);
+  }, []);
+  useEffect(() => () => clearTimeout(revertTimerRef.current), []);
 
   const notify = useCallback((message, tone = "info") => {
     try { api.showNotice?.({ message, tone, key: `design-${tone}` }); }
@@ -357,10 +358,12 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
 
   useEffect(() => { if (bridgeRef.current.ready) command("set-mode", { mode }); }, [mode, command]);
 
-  // Esc outside the iframe leaves comment mode or clears the selection.
+  // Esc outside the iframe leaves comment mode or clears the selection —
+  // but not while typing in a field, and not when a menu already claimed it.
   useEffect(() => {
     const onKey = (event) => {
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (event.target instanceof Element && event.target.closest("input, textarea, select, [contenteditable]")) return;
       if (mode === "comment") setMode("edit");
       else if (selected) { command("deselect"); setSelected(null); }
     };
@@ -464,7 +467,6 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   }, [comments, storageSet, command]);
 
   useEffect(() => { setTextDraft(selected?.text ?? ""); }, [selected?.selector]);
-  useEffect(() => { setCollapsed(false); }, [mode, selected?.selector]);
 
   const url = base && path ? `${base}/${path}` : "";
 
@@ -580,9 +582,9 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
   }, [applyTextNow]);
 
   const frameWidth = VIEWPORTS.find((item) => item.id === viewport)?.width ?? null;
-  const sheetOpen = Boolean(selected) || (mode === "comment" && comments.length > 0);
+  const sheetOpen = (mode === "edit" && Boolean(selected)) || (mode === "comment" && comments.length > 0);
   const hintText = bridgeLost ? t("design.bridge.lost")
-    : mode === "comment" && bridgeReady && !sheetOpen ? t("design.comment.hint")
+    : mode === "comment" && bridgeReady ? t("design.comment.hint")
     : null;
 
   // ---- render -----------------------------------------------------------------
@@ -617,7 +619,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
         onChange: (event) => choosePage(event.currentTarget.value),
       }, pages.map((page) => h("option", { key: page.path, value: page.path }, page.path))),
       h(ViewportMenu, { h, React, viewport, onPick: setViewport, t }),
-      h("div", { className: "plugin-design-tools", role: "group", "aria-label": "Canvas mode" },
+      h("div", { className: "plugin-design-tools", role: "group", "aria-label": t("design.mode.group") },
         h("button", {
           type: "button", className: "plugin-design-iconbutton", "data-active": mode === "edit" || undefined,
           onClick: () => setMode("edit"), "aria-pressed": mode === "edit",
@@ -625,17 +627,21 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
         }, h(Glyph, { h, d: ICON_PATHS.cursor })),
         h("button", {
           type: "button", className: "plugin-design-iconbutton", "data-active": mode === "comment" || undefined,
-          onClick: () => setMode("comment"), "aria-pressed": mode === "comment",
+          onClick: () => { setMode("comment"); command("deselect"); setSelected(null); }, "aria-pressed": mode === "comment",
           title: t("design.mode.comment"), "aria-label": t("design.mode.comment"),
         }, h(Glyph, { h, d: ICON_PATHS.comment }), comments.length > 0 ? h("span", { className: "plugin-design-badge" }, comments.length) : null)),
       h("div", { className: "plugin-design-topbar-spacer" }),
       h("button", {
-        type: "button", className: "plugin-design-iconbutton", title: t("design.reload"),
+        type: "button", className: "plugin-design-iconbutton", title: dirty && revertArmed ? t("design.revert.confirm") : t("design.reload"),
         "aria-label": t("design.reload"), disabled: !url || busy === "reload",
-        onClick: reload,
+        "data-armed": dirty && revertArmed || undefined,
+        onClick: () => {
+          if (dirty && !revertArmed) { setRevertArmed(true); armRevertTimer(); return; }
+          setRevertArmed(false); reload();
+        },
       }, h(Glyph, { h, d: ICON_PATHS.refresh })),
       h("button", {
-        type: "button", className: "plugin-design-iconbutton", title: t("design.external"),
+        type: "button", className: "plugin-design-iconbutton plugin-design-external", title: t("design.external"),
         "aria-label": t("design.external"), disabled: !url,
         onClick: () => {
           void Promise.resolve(api.application?.invoke?.("preview.open-url", { url }))
@@ -655,7 +661,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
           ? h("div", {
               className: "plugin-design-frame",
               "data-flush": frameWidth == null || undefined,
-              style: frameWidth ? { width: `${frameWidth}px`, maxWidth: "100%" } : { width: "100%" },
+              style: frameWidth ? { width: `${frameWidth}px` } : { width: "100%" },
             },
               h("iframe", {
                 key: `${frameKey}:${url}`,
@@ -673,7 +679,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
                 description: t("design.empty.pagesHelp"),
                 actions: h(Button, { variant: "secondary", onClick: () => void openWorkspace(workspace) }, t("design.empty.refresh")),
               })),
-        url && hintText ? h("div", { className: "plugin-design-hint" }, hintText) : null,
+        url && hintText && !sheetOpen ? h("div", { className: "plugin-design-hint" }, hintText) : null,
         conflict ? h("div", { className: "plugin-design-conflict" },
           h("div", { className: "plugin-design-conflict-card" },
             h("strong", null, t("design.conflict.title")),
@@ -682,7 +688,7 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
               h(Button, { variant: "secondary", onClick: reload }, t("design.conflict.reload")),
               h(Button, { variant: "danger", onClick: () => void save(true) }, t("design.conflict.force")))),
         ) : null),
-      sheetOpen ? h("section", { className: "plugin-design-sheet", "data-collapsed": collapsed || undefined },
+      sheetOpen ? h("section", { className: "plugin-design-sheet" },
         h("header", { className: "plugin-design-sheet-head" },
           mode === "comment"
             ? h("span", { className: "plugin-design-sheet-title" }, t("design.comment.title"),
@@ -691,16 +697,11 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
                 h("span", { className: "plugin-design-tag" }, selected.tag),
                 h("span", { className: "plugin-design-rect" }, `${selected.rect.w} × ${selected.rect.h}`)),
           h("button", {
-            type: "button", className: "plugin-design-iconbutton", "aria-expanded": !collapsed,
-            title: t("design.sheet.collapse"), "aria-label": t("design.sheet.collapse"),
-            onClick: () => setCollapsed((value) => !value),
-          }, h(Glyph, { h, d: ICON_PATHS.chevron })),
-          h("button", {
             type: "button", className: "plugin-design-iconbutton",
             title: t("design.sheet.close"), "aria-label": t("design.sheet.close"),
             onClick: () => { if (mode === "comment") setMode("edit"); else command("deselect"); },
           }, h(Glyph, { h, d: ICON_PATHS.x }))),
-        collapsed ? null : h("div", { className: "plugin-design-sheet-body" },
+        h("div", { className: "plugin-design-sheet-body" },
           mode === "comment" ? commentsSection()
             : h(React.Fragment, null,
                 h("section", { className: "plugin-design-section" },
@@ -717,26 +718,24 @@ function Studio({ api, host, context, translate, devServer, devWorkspace }) {
                 h("section", { className: "plugin-design-section" },
                   h("h2", { className: "plugin-design-section-title" }, t("design.inspector.styles")),
                   h(StyleRows, { h, React, t, selected, onApply: applyStyle })))),
-        collapsed || (ops.length === 0 && comments.length === 0) ? null : h("footer", { className: "plugin-design-sheet-foot" },
+        (ops.length === 0 && comments.length === 0) ? null : h("footer", { className: "plugin-design-sheet-foot" },
           ops.length > 0 || conflict ? h(Button, {
             variant: "ghost", disabled: (!dirty && !conflict) || Boolean(busy),
             "data-armed": revertArmed || undefined,
             onClick: () => {
-              if (!revertArmed) { setRevertArmed(true); setTimeout(() => setRevertArmed(false), 2600); return; }
-              reload();
+              if (!revertArmed) { setRevertArmed(true); armRevertTimer(); return; }
+              setRevertArmed(false); reload();
             },
           }, revertArmed ? t("design.revert.confirm") : t("design.revert")) : null,
           h("span", { className: "plugin-design-sheet-spacer" }),
           comments.length > 0 ? h(Button, {
-            variant: "secondary", disabled: comments.length === 0 || Boolean(busy),
+            variant: "secondary", disabled: Boolean(busy),
             onClick: () => void sendToAgent(),
           }, h(Glyph, { h, d: ICON_PATHS.send }), " ", t("design.send")) : null)) : null));
 
   function commentsSection() {
     return h("section", { className: "plugin-design-section plugin-design-comments" },
-      comments.length === 0
-        ? h("p", { className: "plugin-design-muted" }, t("design.comment.empty"))
-        : h("ol", { className: "plugin-design-comment-list" },
+      h("ol", { className: "plugin-design-comment-list" },
             comments.map((comment, index) => h("li", {
               key: comment.id, className: "plugin-design-comment",
               onMouseEnter: () => command("comment-focus", { id: comment.id }),
@@ -913,7 +912,7 @@ function ViewportMenu({ h, React, viewport, onPick, t }) {
   useEffect(() => {
     if (!open) return;
     const down = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
-    const key = (event) => { if (event.key === "Escape") setOpen(false); };
+    const key = (event) => { if (event.key === "Escape") { setOpen(false); event.stopPropagation(); } };
     document.addEventListener("pointerdown", down);
     document.addEventListener("keydown", key);
     return () => { document.removeEventListener("pointerdown", down); document.removeEventListener("keydown", key); };
@@ -1051,15 +1050,23 @@ const DESIGN_CSS = `
 .plugin-design-page-picker { max-width: 230px; }
 
 .plugin-design-topbar-spacer { flex: 1; min-width: 8px; }
-.plugin-design-tools { flex: none; display: inline-flex; align-items: center; gap: 2px; }
+.plugin-design-tools {
+  flex: none; display: inline-flex; align-items: center; gap: 2px; padding: 2px;
+  border-radius: 10px; background: var(--wuu-color-surface-muted, rgba(127,127,127,.12));
+}
 
 .plugin-design-iconbutton {
   position: relative; flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px;
   border: 0; border-radius: var(--radius-sm, 8px); background: transparent;
   color: var(--ink-tertiary); cursor: pointer;
+  transition: background-color .12s ease, color .12s ease, box-shadow .12s ease;
 }
 .plugin-design-iconbutton:hover:not([disabled]) { background: var(--wuu-nav-item-hover-background, rgba(127,127,127,.14)); color: var(--ink); }
-.plugin-design-iconbutton[data-active] { background: var(--wuu-color-surface-muted, rgba(127,127,127,.16)); color: var(--ink); }
+.plugin-design-tools .plugin-design-iconbutton:hover:not([disabled]):not([data-active]) { background: rgba(127,127,127,.1); }
+.plugin-design-iconbutton[data-active] {
+  background: var(--wuu-color-surface-elevated, var(--paper, #fff)); color: var(--ink);
+  box-shadow: 0 1px 2px rgba(15,23,42,.1), 0 0 0 .5px rgba(15,23,42,.06);
+}
 .plugin-design-iconbutton[disabled] { opacity: .45; cursor: default; }
 .plugin-design-iconbutton svg { width: 15px; height: 15px; }
 .plugin-design-count {
@@ -1152,21 +1159,28 @@ const DESIGN_CSS = `
 .plugin-design-sheet {
   position: absolute; z-index: 6; left: 10px; right: 10px; bottom: 10px;
   display: flex; flex-direction: column; max-height: min(64%, 560px);
-  border-radius: 14px;
+  border-radius: var(--wuu-radius-panel, 14px);
   border: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.22)));
   background: color-mix(in srgb, var(--wuu-color-surface-elevated, var(--paper, #fff)) 92%, transparent);
   backdrop-filter: blur(16px) saturate(1.15);
   -webkit-backdrop-filter: blur(16px) saturate(1.15);
   box-shadow: 0 18px 48px -14px rgba(15,23,42,.28), 0 3px 12px rgba(15,23,42,.08);
   overflow: hidden;
+  animation: pluginDesignSheetIn .18s cubic-bezier(.2,.7,.3,1);
+}
+@keyframes pluginDesignSheetIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .plugin-design-sheet { animation: none; }
+  .plugin-design-frame, .plugin-design-iconbutton { transition: none; }
 }
 .plugin-design-sheet-head {
   flex: none; display: flex; align-items: center; gap: 8px;
   min-height: 40px; padding: 0 6px 0 12px;
 }
-.plugin-design-sheet-head [aria-expanded] { margin-inline-start: auto; }
-.plugin-design-sheet-head [aria-expanded] svg { transition: transform .16s ease; }
-.plugin-design-sheet-head [aria-expanded="true"] svg { transform: rotate(180deg); }
+.plugin-design-sheet-head .plugin-design-iconbutton { margin-inline-start: auto; }
 .plugin-design-sheet-title {
   display: flex; align-items: center; gap: 6px; min-width: 0;
   font-size: .8em; font-weight: 650; letter-spacing: .02em; color: var(--ink-soft);
@@ -1280,6 +1294,7 @@ const DESIGN_CSS = `
   .plugin-design-topbar { gap: 5px; padding-inline: 8px; }
   .plugin-design-picker { max-width: 132px; }
   .plugin-design-page-picker { max-width: 118px; }
+  .plugin-design-external { display: none; }
   .plugin-design-stage { padding: var(--space-3, 12px); }
   .plugin-design-stage[data-flush] { padding: 0; }
 }
