@@ -539,7 +539,6 @@ export const enUS = {
   "settings.mcpServers": "MCP servers",
   "settings.loading": "Loading…",
   "settings.noMcpServers": "No MCP servers",
-  "settings.mcpDescription": "Add servers under {key} in {file}, then restart Wuu.",
   "settings.about": "About",
   "settings.version": "Version",
   "settings.copyVersion": "Copy version information",
