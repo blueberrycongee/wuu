@@ -41,6 +41,13 @@ type threadCompletionQueue struct {
 type threadScheduler struct {
 	queue       threadTurnQueue
 	completions threadCompletionQueue
+	// activeRunID names the thread's one attached execution run. It is
+	// guarded by Server.runMu together with s.runs so registering and
+	// detaching a run remains a single critical section.
+	activeRunID string
+	// sideMu guards the thread's single in-flight side-conversation turn.
+	sideMu   sync.Mutex
+	sideTurn *sideThreadTurn
 	// heldMu serializes the read-modify-write compounds against this
 	// thread's durable held-input rows (appendHeldUserTurns, findHeldUserTurn,
 	// updateHeldUserTurn). It is independent of queue.mu; the two are never

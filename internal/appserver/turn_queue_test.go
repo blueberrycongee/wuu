@@ -181,11 +181,10 @@ func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 		activeSteerDocument:   &ActiveDocument{Path: "docs/next.md"},
 	}
 	s := &Server{
-		access:            localOwnerTestAccess(),
-		rt:                rt,
-		out:               out,
-		threads:           map[string]*threadState{threadID: th},
-		activeRunByThread: make(map[string]string),
+		access:  localOwnerTestAccess(),
+		rt:      rt,
+		out:     out,
+		threads: map[string]*threadState{threadID: th},
 	}
 	params, err := json.Marshal(TurnRequeueParams{ThreadID: threadID, SteerID: steerID})
 	if err != nil {
@@ -231,10 +230,9 @@ func TestTurnRequeueSupersedesStaleQueueCancellation(t *testing.T) {
 		}},
 	}
 	s := &Server{
-		rt:                rt,
-		out:               out,
-		threads:           map[string]*threadState{threadID: th},
-		activeRunByThread: make(map[string]string),
+		rt:      rt,
+		out:     out,
+		threads: map[string]*threadState{threadID: th},
 	}
 	t.Cleanup(s.Close)
 	s.recordCancelledPendingSubmission(threadID, steerID, session.HeldUserWorkOriginQueue)

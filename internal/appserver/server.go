@@ -298,9 +298,8 @@ type Server struct {
 	// Title attempts outlive cached thread snapshots and are deduplicated by ID.
 	titleGenerations map[sessionCacheKey]bool
 
-	runMu             sync.Mutex
-	runs              map[string]*runTracker
-	activeRunByThread map[string]string
+	runMu sync.Mutex
+	runs  map[string]*runTracker
 
 	agentTerminalFinalizationMu sync.Mutex
 	agentTerminalFinalizations  map[agentTerminalFinalizationKey]struct{}
@@ -396,16 +395,20 @@ type Server struct {
 	startupErr                   error
 	pluginControl                *plugincontrol.Registration
 
+	// controlLocks stays global: lockSessionControls refcounts several
+	// sessions' locks atomically in sorted order, so the registry cannot be
+	// split per thread.
 	controlLocksMu sync.Mutex
 	controlLocks   map[string]*sessionControlLock
 
+	// stdioResumeTail stays global: one deferred request atomically chains
+	// onto the tails of every session it touches, so the tail registry is a
+	// cross-session dependency structure, not per-thread state.
 	stdioResumeMu   sync.Mutex
 	stdioResumeTail map[string]*stdioResumeRequest
 	// inboxMu orders deliveries into a session so pending input is admitted
 	// in creation order.
-	inboxMu    sync.Mutex
-	sideTurnMu sync.Mutex
-	sideTurns  map[string]*sideThreadTurn
+	inboxMu sync.Mutex
 }
 
 func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
@@ -423,11 +426,9 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		schedulers:               make(map[string]*threadScheduler),
 		codexModelCache:          make(map[string]map[string]config.ProviderModelConfig),
 		inferenceMaintenanceStop: make(chan struct{}),
-		sideTurns:                make(map[string]*sideThreadTurn),
 		clientCalls:              make(map[string]chan clientResponse),
 		clientMethods:            make(map[string]struct{}),
 		runs:                     make(map[string]*runTracker),
-		activeRunByThread:        make(map[string]string),
 		modelCatalogHTTPClient:   http.DefaultClient,
 	}
 	for _, option := range options {
