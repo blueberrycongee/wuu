@@ -28,7 +28,7 @@ The **Default** skin shows the picture in the outer frame and ribbon; conversati
 
 The UI font-size preference controls the interface and conversation prose together. Code size is separate, so you can make messages easier to read without enlarging code blocks and editors by the same amount. Valid saved preferences are preserved across upgrades.
 
-Choose fonts separately for the interface, content, and code. Content defaults to **Same as UI** and applies to messages, drafts, and Markdown previews; its size follows the UI preference. Inline code scales with the surrounding prose, while code blocks, diffs, and editors use the independent code size. **Reset fonts** restores all three font choices without changing sizes.
+There are two font choices: the **Interface font** covers the interface, messages, drafts, and Markdown previews, and the **Code font** covers code blocks, diffs, and the terminal. Inline code scales with the surrounding prose, while code blocks, diffs, and editors use the independent code size. **Reset fonts** restores both font choices without changing sizes.
 
 On macOS, **Font smoothing** defaults to the system rendering for fuller regular-text strokes; choose **Grayscale** for a lighter appearance. You can also reduce motion. Fonts must be installed locally; unavailable fonts use the fallback family.
 

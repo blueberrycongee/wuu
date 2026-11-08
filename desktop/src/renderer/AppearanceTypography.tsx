@@ -8,6 +8,7 @@ import { SettingsRow } from "./SettingsRow";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { Switch } from "./ui/Switch";
 import { SegmentedControl } from "./ui/SegmentedControl";
+import { SettingsStepper } from "./ui/SettingsStepper";
 
 export function AppearanceTypography({ section = "text" }: { section?: "text" | "motion" }): JSX.Element {
   const controls = useSettingsControls();
@@ -59,15 +60,15 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       {saveError}
     </SettingsSection>;
   }
-  const fontPicker = (key: "uiFont" | "contentFont" | "codeFont"): JSX.Element => {
-    const label = key === "codeFont" ? "settings.codeFont" : key === "contentFont" ? "settings.contentFont" : "settings.uiFont";
+  const fontPicker = (key: "uiFont" | "codeFont"): JSX.Element => {
+    const label = key === "codeFont" ? "settings.codeFont" : "settings.uiFont";
     const names = key === "codeFont" ? monoFonts : localFonts;
     const current = preferences[key];
     const defaultLabel = t("settings.systemFont");
     const options = [{ value: "", label: defaultLabel }, ...names.map((name) => ({ value: name, label: name }))];
     if (current && !names.includes(current)) options.push({ value: current, label: current });
     return <div className="appearance-font-picker" onClickCapture={() => { void loadFonts(); }} onKeyDownCapture={(event) => { if (["Enter", " ", "ArrowDown", "ArrowUp"].includes(event.key)) void loadFonts(); }}>
-      <SelectMenu ariaLabel={t(label)} value={current} onChange={(value) => update({ [key]: value })} options={options} searchable
+      <SelectMenu ariaLabel={t(label)} value={current} onChange={(value) => update(key === "uiFont" ? { uiFont: value, contentFont: "" } : { codeFont: value })} options={options} searchable
         triggerClassName="settings-select-trigger" panelClassName="appearance-font-menu" minMenuWidthEm={20} />
     </div>;
   };
@@ -88,23 +89,26 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
           ]}
           onChange={(messageStyle) => update({ messageStyle })} />
       </SettingsRow>
-      <SettingsRow title={t("settings.textInterface")}>
+      <SettingsRow title={t("settings.uiFont")} description={t("settings.uiFontHint")}>
         {fontPicker("uiFont")}
+      </SettingsRow>
+      <SettingsRow title={t("settings.uiSize")} description={t("settings.uiSizeHint")}>
         <MessageFlowFontSizeControl />
       </SettingsRow>
-      <SettingsRow title={t("settings.textContent")}>
-        {fontPicker("contentFont")}
-      </SettingsRow>
-      <SettingsRow title={t("settings.textCode")}>
+      <SettingsRow title={t("settings.codeFont")} description={t("settings.codeFontHint")}>
         {fontPicker("codeFont")}
-        <input className="settings-input settings-input-num settings-input-num-center" aria-label={t("settings.codeSize")} type="number" min={9} max={24} step={1} value={sizeDraft}
-          onChange={(event) => {
-            setSizeDraft(event.target.value);
-            const value = event.target.valueAsNumber;
-            if (Number.isInteger(value) && value >= 9 && value <= 24) update({ codeSize: value });
-          }}
-          onBlur={(event) => commitSize(event.currentTarget.value)}
-          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+      </SettingsRow>
+      <SettingsRow title={t("settings.codeSize")} description={t("settings.codeSizeHint")}>
+        <SettingsStepper onStep={(direction) => commitSize(String(preferences.codeSize + direction))} atMin={preferences.codeSize <= 9} atMax={preferences.codeSize >= 24}>
+          <input className="settings-input settings-stepper-input" aria-label={t("settings.codeSize")} type="number" min={9} max={24} step={1} value={sizeDraft}
+            onChange={(event) => {
+              setSizeDraft(event.target.value);
+              const value = event.target.valueAsNumber;
+              if (Number.isInteger(value) && value >= 9 && value <= 24) update({ codeSize: value });
+            }}
+            onBlur={(event) => commitSize(event.currentTarget.value)}
+            onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+        </SettingsStepper>
       </SettingsRow>
       {controls.capabilities.platform === "darwin" && (
         <SettingsRow title={t("settings.fontSmoothing")}>
