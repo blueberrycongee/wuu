@@ -857,10 +857,6 @@ html[data-focus-modality="keyboard"] .composer-editor > :is(textarea, .composer-
   border-radius: var(--radius-xs);
 }
 
-.composer-queue-row.guide .composer-queue-preview {
-  color: var(--turn-warning-text, var(--warning));
-}
-
 .composer-queue-index {
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
@@ -1041,10 +1037,6 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .composer-pending-drawer.expanded .composer-pending-preview {
   color: var(--ink-tertiary);
   font-weight: var(--weight-medium);
-}
-
-.composer-pending-drawer.expanded.is-held .composer-pending-preview {
-  color: var(--turn-warning-text, var(--warning));
 }
 
 .composer-pending-details {
