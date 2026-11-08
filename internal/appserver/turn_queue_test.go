@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
@@ -360,6 +361,50 @@ func TestSteerCancellationTombstoneRejectsMatchingLateSubmission(t *testing.T) {
 	}
 	if s.isCancelledPendingSubmission("thread-1", "steer-1", session.HeldUserWorkOriginQueue) {
 		t.Fatal("steer cancellation tombstone blocked the queue delivery mode")
+	}
+}
+
+// Queued work, cancellation tombstones, and the drain marker live on the
+// per-thread scheduling cell, which deliberately outlives the cached
+// threadState projection: admission swaps and cache evictions must not lose
+// or re-key the thread's scheduling state.
+func TestSchedulerCellSurvivesThreadProjectionEviction(t *testing.T) {
+	const threadID = "thread-1"
+	const drainingID = "thread-draining"
+	s := &Server{threads: map[string]*threadState{
+		threadID:   newThreadState(threadID, nil, "provider", "model", "", false, time.Now().UTC()),
+		drainingID: newThreadState(drainingID, nil, "provider", "model", "", false, time.Now().UTC()),
+	}}
+	if !s.enqueueQueuedUserTurn(threadID, queuedTurn{
+		id: "queued-1", msg: providers.ChatMessage{Role: "user", Content: "keep me"},
+	}) {
+		t.Fatal("queue rejected")
+	}
+	s.recordCancelledPendingSubmission(threadID, "late-1", session.HeldUserWorkOriginQueue)
+	drainQueue := s.turnQueue(drainingID)
+	drainQueue.mu.Lock()
+	drainQueue.draining = true
+	drainQueue.mu.Unlock()
+
+	s.mu.Lock()
+	delete(s.threads, threadID)
+	delete(s.threads, drainingID)
+	s.mu.Unlock()
+
+	if _, ok := s.findQueuedUserTurn(threadID, "queued-1"); !ok {
+		t.Fatal("queued turn was lost with the thread projection")
+	}
+	if s.enqueueQueuedUserTurn(threadID, queuedTurn{
+		id: "late-1", msg: providers.ChatMessage{Role: "user", Content: "replay"},
+	}) {
+		t.Fatal("evicted thread accepted a cancelled submission")
+	}
+	if !s.hasQueuedUserWork(drainingID) {
+		t.Fatal("drain marker was lost with the thread projection")
+	}
+	// Tombstones stay per-thread: another thread must not inherit them.
+	if s.isCancelledPendingSubmission("thread-2", "late-1", session.HeldUserWorkOriginQueue) {
+		t.Fatal("cancellation tombstone leaked across threads")
 	}
 }
 
