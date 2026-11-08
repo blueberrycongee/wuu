@@ -1,0 +1,7 @@
+Default artwork — public domain, from Artvee (https://artvee.com).
+Retrieved 2026-11-08. Source page: https://artvee.com/dl/<slug>/
+
+  hira-evening-snow.webp   Evening Snow at Mount Hira — Utagawa Hiroshige (1797–1858)
+                           slug: evening-snow-at-mount-hira
+  glasgow-docks.webp       Glasgow Docks at Twilight — John Atkinson Grimshaw (1836–1893)
+                           slug: glasgow-docks-at-twilight-2

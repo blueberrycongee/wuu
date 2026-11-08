@@ -1,0 +1,124 @@
+{
+  "schemaVersion": 1,
+  "id": "halftone",
+  "name": "Halftone",
+  "description": "Canvas-placement shell skins that render your background image as a round halftone screen behind the main area, in three transparency levels.",
+  "icon": "sparkles",
+  "version": "0.2.0",
+  "author": {
+    "name": "blueberrycongee"
+  },
+  "minimumWuuVersion": "2026.1108.0",
+  "interface": {
+    "displayName": "Halftone",
+    "shortDescription": "Your picture as a halftone print behind the main area.",
+    "developerName": "blueberrycongee",
+    "category": "Appearance"
+  },
+  "contributes": {
+    "skins": [
+      {
+        "id": "halftone-sheer",
+        "name": "Halftone 半调 · 轻纱",
+        "placement": "canvas",
+        "userImage": true,
+        "light": {
+          "background": "#f4efe7",
+          "foreground": "#241b12",
+          "hover": "#0000000a",
+          "active": "#00000016",
+          "image": "hira-evening-snow.webp",
+          "overlay": "#fff2df33",
+          "veil": 0.72,
+          "dots": {
+            "pitch": 5,
+            "size": 3.8,
+            "shape": "round"
+          }
+        },
+        "dark": {
+          "background": "#15100d",
+          "foreground": "#f0e7dc",
+          "hover": "#ffffff12",
+          "active": "#ffffff22",
+          "image": "glasgow-docks.webp",
+          "overlay": "#1c0e0559",
+          "veil": 0.78,
+          "dots": {
+            "pitch": 5,
+            "size": 3.8,
+            "shape": "round"
+          }
+        }
+      },
+      {
+        "id": "halftone",
+        "name": "Halftone 半调",
+        "placement": "canvas",
+        "userImage": true,
+        "light": {
+          "background": "#f4efe7",
+          "foreground": "#241b12",
+          "hover": "#0000000a",
+          "active": "#00000016",
+          "image": "hira-evening-snow.webp",
+          "overlay": "#fff2df33",
+          "veil": 0.5,
+          "dots": {
+            "pitch": 5,
+            "size": 3.8,
+            "shape": "round"
+          }
+        },
+        "dark": {
+          "background": "#15100d",
+          "foreground": "#f0e7dc",
+          "hover": "#ffffff12",
+          "active": "#ffffff22",
+          "image": "glasgow-docks.webp",
+          "overlay": "#1c0e0559",
+          "veil": 0.58,
+          "dots": {
+            "pitch": 5,
+            "size": 3.8,
+            "shape": "round"
+          }
+        }
+      },
+      {
+        "id": "halftone-clear",
+        "name": "Halftone 半调 · 全透",
+        "placement": "canvas",
+        "userImage": true,
+        "light": {
+          "background": "#f4efe7",
+          "foreground": "#241b12",
+          "hover": "#0000000a",
+          "active": "#00000016",
+          "image": "hira-evening-snow.webp",
+          "overlay": "#fff2df33",
+          "veil": 0.3,
+          "dots": {
+            "pitch": 5,
+            "size": 3.8,
+            "shape": "round"
+          }
+        },
+        "dark": {
+          "background": "#15100d",
+          "foreground": "#f0e7dc",
+          "hover": "#ffffff12",
+          "active": "#ffffff22",
+          "image": "glasgow-docks.webp",
+          "overlay": "#1c0e0559",
+          "veil": 0.36,
+          "dots": {
+            "pitch": 5,
+            "size": 3.8,
+            "shape": "round"
+          }
+        }
+      }
+    ]
+  }
+}
