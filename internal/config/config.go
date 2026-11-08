@@ -78,7 +78,6 @@ type MCPServerConfig struct {
 	Enabled       *bool                      `json:"enabled,omitempty"`
 	ToolOverrides map[string]MCPToolOverride `json:"tool_overrides,omitempty"`
 	ToolTimeoutMS mcpconfig.ToolTimeoutMS    `json:"tool_timeout_ms,omitempty"`
-	Connector     *MCPConnectorDescriptor    `json:"connector,omitempty"`
 }
 
 // definesServer reports whether the entry says how to reach a server, as
@@ -461,6 +460,7 @@ func LoadFrom(workdir, home string) (Config, string, error) {
 		return Config{}, "", fmt.Errorf("resolve user config: %w", err)
 	}
 	if newPath != "" {
+		migrateAccountConnectorServers(newPath)
 		userCandidates = append(userCandidates, newPath)
 	}
 	if legacyPath := statepath.LegacyConfigPath(home); legacyPath != "" {
@@ -543,6 +543,7 @@ func LoadPath(path string) (Config, string, error) {
 	if err != nil {
 		return Config{}, "", fmt.Errorf("resolve config path: %w", err)
 	}
+	migrateAccountConnectorServers(abs)
 	cfg, _, err := readConfig(abs)
 	if err != nil {
 		return Config{}, "", err
@@ -739,9 +740,6 @@ func (c Config) Validate() error {
 		}
 	}
 	for name, server := range c.MCPServers {
-		if err := server.Connector.Validate(); err != nil {
-			return fmt.Errorf("mcp_servers.%s.connector: %w", name, err)
-		}
 		if _, err := server.ToolTimeoutMS.Duration(); err != nil {
 			return fmt.Errorf("mcp_servers.%s: %w", name, err)
 		}

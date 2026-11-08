@@ -117,9 +117,9 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 	readonly := true
 	manager.Configure(map[string]mcp.ServerConfig{
 		"docs": {
-			Name:           "docs",
-			URL:            baseURL,
-			IdentitySource: "trusted-fixture", IdentityProbe: &config.MCPIdentityProbe{Tool: "get-self", Arguments: json.RawMessage(`{}`), Result: "structured_content", Account: config.MCPIdentityAccountMapping{ID: "/id", Label: "/name"}}, ToolOverrides: map[string]mcp.ToolOverride{"get-self": {ReadOnly: &readonly}},
+			Name:          "docs",
+			URL:           baseURL,
+			ToolOverrides: map[string]mcp.ToolOverride{"get-self": {ReadOnly: &readonly}},
 			OAuth: &mcp.OAuthConfig{
 				ClientID:    "desktop-client",
 				RedirectURI: "http://127.0.0.1/callback",
@@ -179,16 +179,8 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 		t.Fatal(response)
 	}
 	verified := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "verified")["result"])
-	if identityCalls.Load() != 1 || verified.Identity == nil || verified.Identity.State != "verified" || verified.Identity.Account.ID != "owner" {
+	if !verified.Authenticated {
 		t.Fatalf("verified=%+v, calls=%d", verified, identityCalls.Load())
-	}
-	identityFailure.Store(true)
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"identity-retry","method":"mcp/identity/refresh","params":{"name":"docs","tool":"unsafe","arguments":{"override":true}}}`)); err != nil {
-		t.Fatal(err)
-	}
-	retry := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "identity-retry")["result"])
-	if identityCalls.Load() != 2 || !retry.Authenticated || retry.Identity == nil || retry.Identity.State != "unavailable" || !manager.Status()["docs"].Connected {
-		t.Fatalf("retry=%+v, calls=%d", retry, identityCalls.Load())
 	}
 	if strings.Contains(out.String(), "app-server-secret") || strings.Contains(out.String(), "refresh-secret") {
 		t.Fatalf("OAuth RPC leaked credentials: %s", out.String())

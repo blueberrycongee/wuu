@@ -14,7 +14,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/insight"
-	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -125,7 +124,6 @@ const (
 	MethodMCPRefresh                      = "mcp/refresh"
 	MethodMCPAuthStart                    = "mcp/auth/start"
 	MethodMCPAuthStatus                   = "mcp/auth/status"
-	MethodMCPIdentityRefresh              = "mcp/identity/refresh"
 	MethodMCPAuthFinish                   = "mcp/auth/finish"
 	MethodMCPAuthRemove                   = "mcp/auth/remove"
 	MethodActivityList                    = "activity/list"
@@ -590,25 +588,21 @@ type PermissionSummary struct {
 }
 
 type MCPServerStatus struct {
-	AuthorizationID                string                         `json:"authorization_id,omitempty"`
-	Identity                       *mcp.IdentityStatus            `json:"identity,omitempty"`
-	ToolNames                      []string                       `json:"tool_names,omitempty"`
-	ConfigurationUnavailableReason string                         `json:"configuration_unavailable_reason,omitempty"`
-	Connector                      *config.MCPConnectorDescriptor `json:"connector,omitempty"`
-	ConfigurationEnabled           *bool                          `json:"configuration_enabled,omitempty"`
-	Configurable                   bool                           `json:"configurable,omitempty"`
-	ResourceURL                    string                         `json:"resource_url,omitempty"`
-	PluginActive                   *bool                          `json:"plugin_active,omitempty"`
-	PluginID                       string                         `json:"plugin_id,omitempty"`
-	DisplayName                    string                         `json:"display_name,omitempty"`
-	Editable                       bool                           `json:"editable,omitempty"`
-	OAuthRedirectURI               string                         `json:"oauth_redirect_uri,omitempty"`
-	Name                           string                         `json:"name"`
-	State                          string                         `json:"state"`
-	AuthStatus                     string                         `json:"auth_status,omitempty"`
-	Connected                      bool                           `json:"connected"`
-	ToolCount                      int                            `json:"tool_count"`
-	Error                          string                         `json:"error,omitempty"`
+	AuthorizationID      string   `json:"authorization_id,omitempty"`
+	ToolNames            []string `json:"tool_names,omitempty"`
+	ConfigurationEnabled *bool    `json:"configuration_enabled,omitempty"`
+	ResourceURL          string   `json:"resource_url,omitempty"`
+	PluginActive         *bool    `json:"plugin_active,omitempty"`
+	PluginID             string   `json:"plugin_id,omitempty"`
+	DisplayName          string   `json:"display_name,omitempty"`
+	Editable             bool     `json:"editable,omitempty"`
+	OAuthRedirectURI     string   `json:"oauth_redirect_uri,omitempty"`
+	Name                 string   `json:"name"`
+	State                string   `json:"state"`
+	AuthStatus           string   `json:"auth_status,omitempty"`
+	Connected            bool     `json:"connected"`
+	ToolCount            int      `json:"tool_count"`
+	Error                string   `json:"error,omitempty"`
 }
 
 type MCPListResult struct {
@@ -650,11 +644,10 @@ type MCPAuthStartResult struct {
 }
 
 type MCPAuthStatusResult struct {
-	Identity      *mcp.IdentityStatus `json:"identity,omitempty"`
-	Name          string              `json:"name"`
-	Authenticated bool                `json:"authenticated"`
-	ExpiresAt     string              `json:"expires_at,omitempty"`
-	Scopes        []string            `json:"scopes,omitempty"`
+	Name          string   `json:"name"`
+	Authenticated bool     `json:"authenticated"`
+	ExpiresAt     string   `json:"expires_at,omitempty"`
+	Scopes        []string `json:"scopes,omitempty"`
 }
 
 type MCPAuthFinishParams struct {

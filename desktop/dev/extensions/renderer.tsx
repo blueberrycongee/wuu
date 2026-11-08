@@ -23,20 +23,12 @@ const empty = params.has("empty");
 const long = params.has("long");
 const artwork = import.meta.glob<string>([
   "../../../internal/plugin/bundled/*/icon.webp",
-  "../../../internal/plugin/bundled/account-connectors/assets/*.svg",
 ], { eager: true, query: "?url", import: "default" });
 const assetKey = (id: string, path: string) => `../../../internal/plugin/bundled/${id}/${path}`;
-const connectors: MCPServerStatus[] = empty ? [] : [
-  ["atlassian", "Atlassian", "Search and update Jira issues and Confluence pages."],
-  ["linear", "Linear", "Find and update issues, projects, and comments in Linear."],
-  ["notion", "Notion", "Search and edit pages in your Notion workspace."],
-  ["sentry", "Sentry", "Investigate errors and performance issues in Sentry."],
-].map(([name, title, description]) => ({
-  name, plugin_id: "account-connectors", state: "stopped", connected: false, tool_count: 0,
-  plugin_active: true, configurable: true, configuration_enabled: false,
-  connector: { title, description, icon: name === "notion" ? { path: "assets/notion.svg" }
-    : { light: `assets/${name}-light.svg`, dark: `assets/${name}-dark.svg` } },
-}));
+const mcpServers: MCPServerStatus[] = empty ? [] : [
+  { name: "docs", state: "stopped", connected: false, tool_count: 0, configuration_enabled: true, editable: true, resource_url: "https://docs.example.invalid/mcp" },
+  { name: "tracker", state: "ready", connected: true, tool_count: 3, configuration_enabled: true, editable: true, resource_url: "https://tracker.example.invalid/mcp" },
+];
 
 const skills: SkillSummary[] = empty ? [] : [
   { name: "browser", source: "bundled", user_invocable: false, disable_model_invoke: false, description: "嵌入式浏览器自动化：在后台的隐藏网页宿主里导航、观察并操作网页。" },
@@ -89,7 +81,6 @@ const goalFamily = {
 };
 
 const initialPlugins: ExtensionInventoryRecord[] = empty ? [] : [
-  record("account-connectors", "Account Connectors", "", "Connect your tools and accounts."),
   record("current-time", long ? "Current time with an exceptionally long plugin name without a description" : "current-time", "clock", "", { enabled: false, runtime_state: "stopped" }),
   record("automation", "Automation", "clock", "Schedule prompts and recurring Agent work.", {
     family: automationFamily,
@@ -208,7 +199,7 @@ function Fixture(): JSX.Element {
       },
     };
     return { ...base, catalog, settingsControls: {...base.settingsControls,
-      listMCPServers: async () => ({ servers: connectors }),
+      listMCPServers: async () => ({ servers: mcpServers }),
       getMCPAuthStatus: async (name) => ({ name, authenticated: name === "notion" }),
       getConflicts: () => noDiagnostics, getDiagnostics: () => noDiagnostics,
       getPluginSetting: async ({id, key}) => ({id, key, scope: "user", value: settings[key]}),

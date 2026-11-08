@@ -1150,37 +1150,7 @@ export type MessageImageReadParams = {
   sha256?: string;
 };
 
-/** Fixed read-only tool probe admitted only from the owning active plugin package. */
-export type MCPIdentityProbe = {
-  tool: string;
-  arguments: Record<string, unknown>;
-  result: "structured_content" | "single_text_json";
-  /** Bounded RFC 6901 JSON pointers; no expressions or executable mappings. */
-  account: { id: string; label?: string; email?: string; kind?: string };
-  workspace?: { id: string; label?: string };
-};
-/** Provider-reported connection identity, not OAuth application branding or permissions. */
-export type MCPIdentityStatus = {
-  state: "verified" | "unavailable";
-  verified_at?: string;
-  account?: { id: string; label?: string; email?: string; kind?: string };
-  workspace?: { id: string; label?: string };
-  error_code?: string;
-};
-
-/** Non-secret onboarding information; standalone MCP metadata is informational only. */
-export type MCPConnectorDescriptor = {
-  title: string;
-  description?: string;
-  documentation_url?: string;
-  /** Package setup required before a plugin-owned connector can be enabled. */
-  setup_required?: string;
-  identity_probe?: MCPIdentityProbe;
-  /** Package-relative brand image, served only for the owning plugin generation. */
-  icon?: { path: string; light?: never; dark?: never } | { path?: never; light: string; dark: string };
-};
 export type MCPServerConfig = {
-  connector?: MCPConnectorDescriptor;
   command?: string;
   args?: string[];
   url?: string;
@@ -1205,15 +1175,9 @@ export type MCPLoginPollResult = {
 
 export type MCPServerStatus = {
   authorization_id?: string;
-  identity?: MCPIdentityStatus;
   tool_names?: string[];
-  connector?: MCPConnectorDescriptor;
   /** Effective per-server startup preference, independent of connection state. */
   configuration_enabled?: boolean;
-  /** Why this host cannot persist a connector startup preference. */
-  configuration_unavailable_reason?: string;
-  /** Only active package-declared connectors accept enabled-only preferences. */
-  configurable?: boolean;
   /** Resource URL without credentials, query parameters, or fragment. */
   resource_url?: string;
   plugin_active?: boolean;
@@ -1246,7 +1210,6 @@ export type MCPAuthStartResult = {
 export type MCPAuthStatusResult = {
   name: string;
   authenticated: boolean;
-  identity?: MCPIdentityStatus;
   expires_at?: string;
   scopes?: string[];
 };
@@ -2050,8 +2013,6 @@ export type PluginReference = {
   plugin_id?: string;
   mcp_server?: string;
   resource_url?: string;
-  account_id?: string;
-  workspace_id?: string;
 };
 
 export type MessageContentPart =
@@ -3477,7 +3438,6 @@ export type WuuDesktopApi = {
   refreshMCPServer: (name: string) => Promise<MCPServerActionResult>;
   startMCPAuth: (name: string) => Promise<MCPAuthStartResult>;
   getMCPAuthStatus: (name: string) => Promise<MCPAuthStatusResult>;
-  refreshMCPIdentity: (name: string) => Promise<MCPAuthStatusResult>;
   finishMCPAuth: (name: string, state: string, code: string) => Promise<MCPAuthFinishResult>;
   removeMCPAuth: (name: string) => Promise<MCPAuthRemoveResult>;
   startChatGPTLogin: (accountId?: string, enablePlanUsage?: boolean) => Promise<AuthChatGPTLoginResult>;

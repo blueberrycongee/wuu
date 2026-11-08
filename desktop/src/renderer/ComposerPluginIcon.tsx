@@ -14,10 +14,9 @@ export function ComposerPluginIcon({ plugin, server, className }: {
   const owner = plugin.plugin_id
     ? catalog?.getSnapshot().inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === plugin.plugin_id)
     : undefined;
-  const connector = server?.name === plugin.mcp_server && server?.plugin_id === plugin.plugin_id ? server?.connector : undefined;
   return <span className={className} aria-hidden="true">
     {owner
-      ? <PluginIcon icon={connector?.icon ?? owner.icon} pluginId={owner.id} fingerprint={owner.fingerprint ?? ""} loadIcon={loadIcon} />
+      ? <PluginIcon icon={owner.icon} pluginId={owner.id} fingerprint={owner.fingerprint ?? ""} loadIcon={loadIcon} />
       : <PublicIcon name={plugin.mcp_server ? "plug" : undefined} />}
   </span>;
 }

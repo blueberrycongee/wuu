@@ -109,7 +109,7 @@ function draftComposerReferences(value: string): DraftComposerReference[] {
       end: plugin.end,
       token: plugin.token,
       text: plugin.text,
-      title: [plugin.plugin.plugin_id, plugin.plugin.mcp_server, plugin.plugin.account_id, plugin.plugin.workspace_id].filter(Boolean).join(" · "),
+      title: [plugin.plugin.plugin_id, plugin.plugin.mcp_server].filter(Boolean).join(" · "),
       plugin,
     });
   }
@@ -178,7 +178,7 @@ export const ComposerInput = forwardRef<ComposerInputHandle, Props>(function Com
     if (!rich || !services) return;
     let active = true;
     setServers([]);
-    // Connector metadata only decorates the draft; unavailable metadata keeps
+    // Server metadata only decorates the draft; unavailable metadata keeps
     // the package icon without blocking editing or changing the saved identity.
     void services.settingsControls.listMCPServers().then(result => {
       if (active) setServers(result.servers);
