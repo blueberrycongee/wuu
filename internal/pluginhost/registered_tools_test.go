@@ -189,6 +189,20 @@ func TestHostSnapshotsTranslatedToolLabels(t *testing.T) {
 	}
 }
 
+func TestHostRejectsUnboundedToolGuidance(t *testing.T) {
+	for name, guidance := range map[string]string{
+		"oversized":    strings.Repeat("x", maxToolGuidanceLen+1),
+		"contains nul": "prefix\x00suffix",
+	} {
+		t.Run(name, func(t *testing.T) {
+			tool := ToolRegistration{ID: "lookup", Description: "Lookup", InputSchema: map[string]any{"type": "object"}, Guidance: guidance}
+			if err := validateToolRegistrations([]ToolRegistration{tool}); err == nil {
+				t.Fatal("invalid guidance was accepted")
+			}
+		})
+	}
+}
+
 func TestHostRejectsUnboundedTranslatedLabels(t *testing.T) {
 	for name, display := range map[string]*providers.ToolCallDisplay{
 		"missing fallback":      {LabelTranslations: map[string]string{"zh": "查询"}},

@@ -94,14 +94,17 @@ type ToolOverride struct {
 
 // Client is a connected MCP server session.
 type Client struct {
-	callAdmission            func(context.Context, string) error
-	connectionID             string
-	name                     string
-	toolTimeout              time.Duration
-	transport                Transport
-	inFlight                 *inFlight
-	readLoop                 *readLoop
-	protocolVersion          string
+	callAdmission   func(context.Context, string) error
+	connectionID    string
+	name            string
+	toolTimeout     time.Duration
+	transport       Transport
+	inFlight        *inFlight
+	readLoop        *readLoop
+	protocolVersion string
+	// instructions is written during the handshake and immutable once Connect
+	// returns the client to its caller.
+	instructions             string
 	mu                       sync.RWMutex
 	tools                    []Tool
 	overrides                map[string]ToolOverride
@@ -109,7 +112,6 @@ type Client struct {
 	onConnectionClosed       func(error)
 	connectionErr            error
 	connectionClosedNotified bool
-	instructions             string
 	closed                   bool
 	retired                  bool
 	activeCalls              int

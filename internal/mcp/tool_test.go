@@ -207,8 +207,16 @@ func TestMCPTool_DefinitionGuidance(t *testing.T) {
 	t.Run("server instructions framed as untrusted text", func(t *testing.T) {
 		tool := NewMCPTool(&Client{name: "docs", instructions: "use search before answering"}, Tool{Name: "search"})
 		got := tool.Definition().Guidance
-		if !strings.Contains(got, "docs") || !strings.Contains(got, "server-authored") || !strings.Contains(got, "use search before answering") {
+		if !strings.Contains(got, "docs") || !strings.Contains(got, "untrusted") || !strings.Contains(got, "use search before answering") {
 			t.Fatalf("Guidance = %q, want framed server instructions", got)
+		}
+	})
+
+	t.Run("server instructions bounded", func(t *testing.T) {
+		tool := NewMCPTool(&Client{name: "docs", instructions: strings.Repeat("x", maxMCPServerInstructionsLen+200)}, Tool{Name: "search"})
+		got := tool.Definition().Guidance
+		if len(got) > maxMCPServerInstructionsLen+200 || !strings.Contains(got, "truncated") {
+			t.Fatalf("Guidance was not bounded, length=%d", len(got))
 		}
 	})
 
