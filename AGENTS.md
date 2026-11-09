@@ -2,7 +2,10 @@
 
 These instructions apply throughout the repository. Read applicable instructions
 in subdirectories before changing their files. Keep personal preferences and
-machine-specific setup in user-level configuration.
+machine-specific setup in user-level configuration. This is the only tracked
+agent-instruction file: directory-level `AGENTS.md`, `CLAUDE.md`, tool configs,
+and `.agents/notes/` stay untracked, so shared project norms belong here and
+reusable agent workflows belong under `.agents/skills/`.
 
 ## Scope and authorization
 
@@ -102,6 +105,12 @@ machine-specific setup in user-level configuration.
   lists, snapshot generated theme matrices, or assert prompt/i18n wording. Run
   `make test-policy-check` when changing tests; existing stylesheet-read
   exceptions do not authorize new ones.
+- Regenerate derived files with their Make target in the same change rather
+  than editing generated output: `make generate-theme-contract` and
+  `make build-plugins` are enforced (`repository-check` and `check-plugins`
+  reject stale output). `make generate-theme-surface-matrix` refreshes the
+  tracked surface matrix, coverage baseline, and docs pages when theme CSS
+  changes.
 - Comments explain rationale, invariants, safety constraints, or external quirks.
   Public API documentation describes observable contracts, not incidental internals.
 - For long tasks, preserve the overall objective and report material progress.
@@ -174,6 +183,10 @@ machine-specific setup in user-level configuration.
   readability, clipping, truncation, overlap, and focus visibility.
 - Tests do not replace visual acceptance. State precisely what was inspected and
   what remains unverified; do not claim full coverage from one screenshot.
+- Gate unreleased or developer-only UI behind the shared feature flags
+  (`FeatureFlags.ts`, `import.meta.env.DEV && VITE_ENABLE_*`) so production
+  builds never expose it; debug controls stay behind the development-only
+  Settings switch.
 
 ## Product versioning
 
@@ -188,6 +201,12 @@ machine-specific setup in user-level configuration.
 - Use `make release-prepare` for the next UTC CalVer, or pass
   `RELEASE_VERSION=YYYY.MMDD.P`. Run `make version-check` before tagging.
   Release tags are `vYYYY.MMDD.P`; product releases do not use SemVer bump rules.
+- For a maintainer-requested release, follow
+  [release-check](.agents/skills/release-check/SKILL.md) and the
+  [release guide](docs/en/project/release.md): write
+  `docs/releases/<version>.md` before `make release-prepare` (it requires the
+  notes file), land through a release PR, and tag the merged commit with
+  `make tag-release`. Push only the tag.
 - Product versions express release recency. Check and document Extension API,
   protocol, storage, and migration compatibility separately. `minimum_wuu_version`
   accepts the same CalVer values as the product version.
@@ -249,8 +268,13 @@ machine-specific setup in user-level configuration.
 ## Documentation and communication
 
 - Public product, development, protocol, and design documentation belongs in
-  `docs/`; follow [docs/README.md](docs/README.md). Keep English and Chinese public
-  pages aligned. Only pages registered in `docs/site.json` appear on the docs site.
+  `docs/`; follow [docs/README.md](docs/README.md). Update both locales,
+  `docs/site.json` navigation, and affected links in the same change.
+  `make docs-policy-check` is a required PR gate: every tracked `docs/**/*.md`
+  must be registered in `docs/site.json` (except `docs/README.md` and
+  `docs/releases/<version>.md`), local links must resolve to tracked files, and
+  one-off or private material stays outside the repository. Pre-declare
+  unstaged pages with `make docs-policy-check DOCS_NEW_FILES="..."`.
 - Keep sensitive research, private reference material, and unpublished plans out
   of tracked public files. Use the maintainer-designated private documentation
   location when available; public contributors must not depend on that checkout.
