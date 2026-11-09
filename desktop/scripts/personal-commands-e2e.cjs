@@ -40,7 +40,7 @@ async function appendText(value) {
  await evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));
 }
 async function key(keyCode,modifiers=[]) {win.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});win.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});await evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));}
-async function capture(name){await evaluate(()=>Promise.all((document.querySelector('.slash-command-menu')?.getAnimations({subtree:true})||[]).map(animation=>animation.finished.catch(()=>{}))));await evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());}
+async function capture(name){await evaluate(()=>Promise.all((document.querySelector('.slash-command-menu')?.getAnimations({subtree:true})||[]).filter(animation=>animation.timeline instanceof DocumentTimeline && Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation=>animation.finished.catch(()=>{}))));await evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());}
 async function initialize(){
  provider=http.createServer(async(req,res)=>{
   let bytes='';for await(const chunk of req)bytes+=chunk;
@@ -121,7 +121,7 @@ app.whenReady().then(async()=>{
  const sent=modelRequests.find(body=>JSON.stringify(body.messages).includes('PERSONAL_SKILL_DISPATCH_SENTINEL'));
  assert(sent,'selected skill never reached model');assert(JSON.stringify(sent.messages).includes('中文验证'));assert(!JSON.stringify(sent.messages).includes('PROJECT_PRIVATE_SENTINEL'));
  await fill('/coding-shared');await until(()=>document.querySelector('[data-command-name="coding-shared"]'));await key('Enter');await appendText('shared check');await evaluate(()=>document.querySelector('.mosaic-main .composer-send-button').click());
- await until(()=>document.querySelector('.mosaic-main .composer-send-button') && !document.querySelector('.mosaic-main .composer-stop-button'));
+ await until(()=>composerText(document.querySelector('.mosaic-main '+COMPOSER_INPUT))==='');
  assert(modelRequests.some(body=>JSON.stringify(body.messages).includes('CODING_SHARED_SENTINEL')),'shared skill never reached model');
  report.cases.push('Personal and shared Coding skill identities reach the model; project skills remain excluded');
  await evaluate(()=>document.querySelector('.mosaic-main [data-action="reply-message"]').click());await until(()=>document.querySelector('.mosaic-replies '+COMPOSER_INPUT));
