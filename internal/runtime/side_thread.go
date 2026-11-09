@@ -1,0 +1,201 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentthread"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/modelcatalog"
+	"github.com/blueberrycongee/wuu/internal/modelroles"
+	"github.com/blueberrycongee/wuu/internal/modelvariant"
+	"github.com/blueberrycongee/wuu/internal/providerfactory"
+	"github.com/blueberrycongee/wuu/internal/statepath"
+)
+
+// NewSideThreadRunner clones the attached conversation's model configuration
+// into an isolated runner with the same tool surface as a main agent in
+// read-only mode. selected is the main conversation's
+// pinned model selection, so a side chat answers with the same model the
+// conversation is locked to rather than the workspace default (which drifts
+// whenever another session switches model). Its toolkit is separately cloned,
+// rooted at the main thread's workspace, and protected by ReadOnlyBoundary.
+// It shares no mutable callbacks, tool ledger, or usage tracker with the main
+// thread.
+func (s *Session) NewSideThreadRunner(sideThreadID, rootDir string, selected ThreadModelSelection, systemPrompt string, parentSession ...string) (*agent.StreamRunner, error) {
+	shadow, err := s.cloneForThreadModel()
+	if err != nil {
+		return nil, err
+	}
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
+	return shadow.newSideThreadRunner(sideThreadID, rootDir, selected, systemPrompt, parentSession...)
+}
+
+func (s *Session) newSideThreadRunner(sideThreadID, rootDir string, selected ThreadModelSelection, systemPrompt string, parentSession ...string) (*agent.StreamRunner, error) {
+	if s == nil || s.StreamRunner == nil {
+		return nil, errors.New("stream runner is required")
+	}
+	id := strings.TrimSpace(sideThreadID)
+	if id == "" {
+		return nil, errors.New("side thread id is required")
+	}
+
+	if strings.TrimSpace(systemPrompt) == "" {
+		return nil, errors.New("side conversation prompt is required")
+	}
+	runner, err := s.newSideThreadBaseRunner(selected)
+	if err != nil {
+		return nil, err
+	}
+	root := strings.TrimSpace(rootDir)
+	if root == "" {
+		root = s.RootDir
+	}
+	if s.Toolkit != nil {
+		kit, err := s.Toolkit.CloneForRoot(root)
+		if err != nil {
+			return nil, err
+		}
+		_, threadSkills, generation := s.skillSnapshotForRoot(kit.RootDir(), nil)
+		kit.SetSkillsWithAvailability(threadSkills, generation.skillAvailable)
+		s.bindLocalSkillRefresh(kit, kit.RootDir(), generation)
+		model := strings.TrimSpace(runner.APIModel)
+		if model == "" {
+			model = strings.TrimSpace(runner.Model)
+		}
+		kit.ConfigureSurfaceForProviderModel(runner.ProviderName, model, true)
+		ConfigureToolkitPermissions(kit, config.ResolvedPermissions{Mode: config.PermissionModeReadOnly})
+		kit.SetSessionID(id)
+		// Side conversations do not resume from managed-process completion.
+		// Keep their requested foreground wait instead of yielding early.
+		kit.SetShellEarlyHandoffEnabled(false)
+		if len(parentSession) > 0 {
+			kit.SetCodeModeStateOwner(parentSession[0])
+		}
+		kit.SetAgentIdentity(id, agentthread.RootPath)
+		configureToolkitWorkspaceScope(kit, s.WuuHome, s.UserBinding())
+		if len(parentSession) > 0 {
+			stateDir, err := s.executionStateDir()
+			if err != nil {
+				return nil, err
+			}
+			if err := s.configureExecutionEnvironment(kit, parentSession[0], statepath.SessionArtifactDir(stateDir, parentSession[0])); err != nil {
+				return nil, err
+			}
+		}
+
+		var toolExecutor agent.ToolExecutor = newPluginAwareToolExecutor(kit, s.PluginHost, s.HookDispatcher, id, "", root)
+		runner.Tools = toolExecutor
+
+		surface, surfaceErr := selectedToolSurface(context.Background(), toolExecutor)
+		if surfaceErr != nil {
+			return nil, surfaceErr
+		}
+		promptParts := []string{systemPrompt, strings.TrimSpace(surface.SystemFragment)}
+		promptParts = append(promptParts, strings.TrimSpace(surface.DeferredToolCatalog))
+		runner.SystemPrompt = joinNonEmptyPromptParts(promptParts...)
+	} else if s.PluginHost != nil && s.StreamRunner.Tools != nil {
+		runner.Tools = newPluginAwareToolExecutor(nil, s.PluginHost, s.HookDispatcher, id, "", root)
+		surface, err := selectedToolSurface(context.Background(), runner.Tools)
+		if err != nil {
+			return nil, err
+		}
+		runner.SystemPrompt = joinNonEmptyPromptParts(systemPrompt, surface.SystemFragment, surface.DeferredToolCatalog)
+	} else {
+		runner.Tools = nil
+		runner.SystemPrompt = systemPrompt
+	}
+	runner.ToolLedger = nil
+	runner.SystemPromptSections = nil
+	runner.OnEvent = nil
+	runner.OnUsage = nil
+	runner.OnTokenUsage = nil
+	runner.StreamingToolExecution = false
+	runner.BeforeStep = nil
+	runner.BeforeModelStep = pluginPreStepInjector(s.PluginHost, runner.ProviderName, runner.Model, id, root)
+	runner.StepPolicy = pluginStepPolicy(s.PluginHost, runner.ProviderName, runner.Model, id, root)
+	runner.BeforeRequestContext = nil
+	runner.BeforeRequest = pluginRequestInterceptor(s.PluginHost, runner.ProviderName, id, root)
+	runner.OnRequestContext = nil
+	runner.OnCompactAttempt = nil
+	runner.OnToolBatchRejected = nil
+	runner.AfterTurn = nil
+	runner.ForceToolFirstStep = ""
+	runner.ForceInitialCompact = false
+	runner.CompactOnly = false
+	runner.PromptCacheKey = "side-thread:" + id
+	runner.InferenceJournal = s.InferenceJournalForOwner("side-thread:" + id)
+	return runner, nil
+}
+
+func joinNonEmptyPromptParts(parts ...string) string {
+	nonEmpty := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			nonEmpty = append(nonEmpty, trimmed)
+		}
+	}
+	return strings.Join(nonEmpty, "\n\n")
+}
+
+// newSideThreadBaseRunner pins the captured runner to the conversation's model.
+// An explicit selection that cannot be resolved fails before any inference.
+func (s *Session) newSideThreadBaseRunner(selected ThreadModelSelection) (*agent.StreamRunner, error) {
+	providerName := strings.TrimSpace(selected.Provider)
+	model := strings.TrimSpace(selected.Model)
+	currentVariant := strings.TrimSpace(s.StreamRunner.Variant)
+	currentEffort := strings.TrimSpace(s.StreamRunner.Effort)
+	if (providerName == "" && model == "") ||
+		(selected.Speed == "" && providerName == s.ProviderName && model == s.Model &&
+			strings.TrimSpace(selected.Variant) == currentVariant &&
+			strings.TrimSpace(selected.Effort) == currentEffort) {
+		return cloneStreamRunnerForThread(s.StreamRunner, nil), nil
+	}
+	if providerName == "" || model == "" {
+		return nil, errors.New("side conversation model selection requires provider and model")
+	}
+
+	cfg, _, err := s.LoadEffectiveConfig()
+	if err != nil {
+		return nil, fmt.Errorf("load side conversation model configuration: %w", err)
+	}
+	providerCfg, resolvedName, err := cfg.ResolveProvider(providerName)
+	if err != nil {
+		return nil, fmt.Errorf("resolve side conversation provider %q: %w", providerName, err)
+	}
+	ruleProviderName, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
+	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, model, strings.TrimSpace(selected.Variant), strings.TrimSpace(selected.Effort))
+	if err := modelvariant.ApplySpeed(ruleProviderCfg, model, selected.Speed, &selection); err != nil {
+		return nil, fmt.Errorf("resolve side conversation speed: %w", err)
+	}
+	client, err := selectedRouteClient(s.PluginHost, ruleProviderCfg, resolvedName, providerfactory.Bindings{Credentials: s.credentials, ChatGPT: s.chatGPTManager})
+	if err != nil {
+		return nil, fmt.Errorf("build side conversation client %q: %w", resolvedName, err)
+	}
+	budget := ResolveModelBudget(model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
+	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
+
+	runner := cloneStreamRunnerForThread(s.StreamRunner, nil)
+	runner.Client = client
+	runner.ProviderName = resolvedName
+	runner.ProviderObservationKey = agent.BuildProviderObservationKey(resolvedName, ruleProviderCfg.BaseURL, ruleProviderCfg.Type, ruleProviderCfg.API, ruleProviderCfg.WireAPI, ruleProviderCfg.StreamTransport, agent.ProviderUsageNormalizationKey(ruleProviderCfg.CacheCreationInputTokensOmitted, ruleProviderCfg.InputTokensIncludeCacheRead))
+	runner.Model = model
+	runner.APIModel = apiModel
+	// The cloned runner inherits the workspace model's media admission
+	// policy; re-derive it for the pinned model so unsupported images do
+	// not inherit a permissive base-model policy (same trap as
+	// NewThreadRuntimeForRootModel's shadow path).
+	capabilities, _ := modelroles.BuildFacts(resolvedName, providerCfg, model)
+	runner.MediaInput = mediaInputPolicyFromCapabilities(capabilities)
+	runner.Effort = selection.LegacyEffort
+	runner.Variant = selection.Variant
+	runner.ProviderOptions = modelvariant.CloneOptions(selection.ProviderOptions)
+	runner.ContextWindowOverride = budget.ContextWindowTokens
+	runner.MaxInputTokens = budget.InputLimitTokens
+	runner.OutputReserveTokens = budget.OutputReserveTokens
+	runner.CompactThresholdTokens = budget.CompactThresholdTokens
+	return runner, nil
+}

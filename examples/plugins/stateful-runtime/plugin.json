@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "id": "stateful-runtime-example",
+  "name": "Stateful TypeScript Runtime Example",
+  "version": "1.0.0",
+  "description": "Demonstrates full-duplex Storage and Session Host Service calls from TypeScript.",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": ["dist/runtime.js"]
+  }
+}

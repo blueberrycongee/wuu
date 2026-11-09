@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "additive-counter-controls",
+  "name": "Additional counter controls example",
+  "version": "1.0.0",
+  "dependencies": [{ "id": "additive-counter", "version": "^1.0.0" }],
+  "desktop": {
+    "entry": "desktop.js",
+    "required_services": [{ "name": "example.counter", "major_version": 1, "required": true }]
+  }
+}

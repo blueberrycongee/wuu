@@ -1,0 +1,34 @@
+Artwork sources — all works are in the public domain.
+Retrieved 2026-11-08 from Artvee (https://artvee.com), which distributes
+high-resolution reproductions of public-domain art. Source page for each
+file: https://artvee.com/dl/<slug>/
+
+Note: title cartouches, calligraphy, publisher/artist seals, and museum
+collection stamps were retouched out where they read as overlaid text,
+so the images work as backgrounds.
+
+  nihonbashi-snow.webp         Clearing Weather after Snow (Nihonbashi Yukibare)
+                               Utagawa Hiroshige (1797–1858)
+                               slug: clearing-water-after-snow
+  hira-evening-snow.webp       Evening Snow at Mount Hira
+                               Utagawa Hiroshige (1797–1858)
+                               slug: evening-snow-at-mount-hira
+  cherry-branch-tits.webp      Tits on Cherry Branch
+                               Ohara Koson (1877–1945)
+                               slug: tits-on-cherry-branch
+  snowy-currant-sparrows.webp  Sparrows on Snowy Currant Bush
+                               Ohara Koson (1877–1945)
+                               slug: sparrows-on-snowy-currant-bush
+  starry-night-rhone.webp      Starry Night Over the Rhône
+                               Vincent van Gogh (1853–1890)
+                               slug: starry-night
+  moonlit-street.webp          A Moonlit Street
+                               John Atkinson Grimshaw (1836–1893)
+                               slug: a-moonlit-street-2
+  crimea-moonlit-sea.webp      Moonlit Night over Crimea
+                               A. Frandetti (19th century)
+                               slug: moonlit-night-over-crimea
+  glasgow-docks.webp           Glasgow Docks at Twilight
+                               John Atkinson Grimshaw (1836–1893)
+                               slug: glasgow-docks-at-twilight-2
+  icon.webp                    detail of starry-night-rhone.webp

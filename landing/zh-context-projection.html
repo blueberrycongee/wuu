@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+        <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f0eee6" />
+    <title>第一次读取，需要多少信息 — Wuu</title>
+    <meta
+      name="description"
+      content="从限制单次输出，到按需继续读取：Wuu 的裁剪投影是怎样形成的。"
+    />
+    <link rel="icon" href="assets/brand/wuu.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="stylesheet" href="projection-diagrams.css" />
+    <script type="module" src="mascot-motion.mjs"></script>
+    <script type="module" src="site-nav.mjs"></script>
+  </head>
+  <body class="zh-page">
+    <a class="skip" href="#main">跳到正文</a>
+    <div class="site-header-shell">
+      <header class="site-header wrap">
+        <a class="wordmark" href="zh.html" aria-label="Wuu 中文首页"
+          ><img
+            src="assets/brand/wuu.svg"
+            width="36"
+            height="36"
+            alt=""
+          />wuu</a
+        >
+        <nav aria-label="主导航">
+          <a
+            class="language-switch"
+            href="context-projection.html"
+            lang="en"
+            hreflang="en"
+            aria-label="Switch this page to English"
+            >EN</a
+          >
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="product"
+          >
+            <summary>产品</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">Wuu</span>
+                  <p>在自己的项目里，和 AI 一起把想法做出来。</p>
+                </div>
+                <div class="nav-destinations">
+                  <a class="nav-featured" href="zh-features.html"
+                    >认识 Wuu <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="blog">
+            <summary>博客</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a class="nav-featured" href="zh-blog.html"
+                    >博客 <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a href="zh-context-projection.html">第一次读取，需要多少信息</a
+                  ><a href="zh-note-compaction.html"
+                    >换一个窗口，接着把事做完</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="docs">
+            <summary>文档</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a
+                    class="nav-featured"
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/"
+                    >文档 <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/getting-started/first-task/"
+                    >开始第一个任务</a
+                  ><a
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/getting-started/model-services/"
+                    >连接模型服务</a
+                  ><a
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/customize/"
+                    >扩展 Wuu</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="download"
+          >
+            <summary class="button">下载</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">桌面应用</span>
+                  <p>Wuu for Mac</p>
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    class="nav-featured"
+                    href="https://github.com/blueberrycongee/wuu/releases/latest"
+                    >下载 Mac 版 <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+        </nav>
+      </header>
+      <div class="nav-backdrop" aria-hidden="true"></div>
+    </div>
+    <main id="main" class="wrap">
+      <article class="editorial">
+        <a class="text-link" href="zh-blog.html">← 博客</a>
+        <h1>第一次读取，需要多少信息</h1>
+        <p class="article-lead">
+          从限制单次输出，到按需继续读取：Wuu 的裁剪投影是怎样形成的。
+        </p>
+        <img
+          class="article-image"
+          src="assets/brand/shore.webp"
+          width="1086"
+          height="477"
+          alt="通向海边的阶梯"
+        />
+        <div class="article-body">
+<p>Wuu 让模型先读取较少的内容，再按需要继续读取原文。这么做的起点是一条硬约束：会话历史里已经进入上下文的内容，要尽量保持稳定，不能随手改写。</p>
+<h2>缓存命中是原则</h2>
+<p>模型每做一步，都要把之前所有轮次的内容重新读一遍，成本不低。为了省下这部分，推理会缓存已经处理过的前缀，后续请求只要前缀没变，命中缓存的部分就不用重算。这带来一条硬性的代价：任何已经进入上下文的文字，一旦这一轮和上一轮不一样，前面缓存好的内容就作废了。</p>
+<p>所以 Wuu 对待历史的基本态度是稳定：工具执行完，把处理好的结果写进历史，这份内容就不再改动；后面的请求继续沿用它，只把新增的部分接到后面。缓存命中的部分因此能在连续几轮之间延续。</p>
+<p>可这也带来了一个问题。工具调用一个接着一个，每轮都会有新结果写进历史，而且一旦写进去就很难再动——改了或删了，都会打断前面缓存好的前缀。所以工具调用返回的内容，价值会随着上下文增长而下降：刚返回时它正帮模型确认下一步，几轮过去、任务往前推了，它就成了前面那部分占着位置的旧输出。</p>
+<h2>一次工具调用，本身就有目的</h2>
+<p>模型调用什么工具、读文件到第几行，多半不是随机的，而是带着具体的问题来的。它怀疑某个配置项没生效，就会去读配置文件；接下来能不能往下走，常常只取决于能不能确认这个配置项的值。</p>
+<p>于是我们开始留意工具调用本身在问什么。返回的结果如果刚好能帮它确认或修正手里那个判断，这次调用就没有白做——至于它用不上的部分，等它真需要时再读也不迟。</p>
+<p>可"返回多少才算够"没有现成答案。给得太少，模型一次拿不到能往前走的信息，就得反复读；给得太多，又回到了起点：多带进历史的内容，过几轮就成了甩不掉的负担。我们先用一个更小的默认预算试起来。</p>
+<h2>先试一个更小的预算</h2>
+<p>我们回看了收集到的会话历史，比较不同长度的工具输出，最后把默认投影预算定在了约 2k token。</p>
+<p>返回的内容变小，最直接的收益是每轮请求要发的输入 token 少了。多轮下来，后面请求反复带着的历史也在变短；同一份前缀能被缓存命中的比例因此更高，模型不用每轮都重新处理一遍旧内容。</p>
+<p>这还只是输入侧的账。上下文里的无关输出越少，模型就越容易盯住真正影响下一步的线索——Anthropic 讨论 <a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">context rot</a> 时也提到，随着上下文增长，模型对其中信息的准确回忆会下降。单次读取没触到窗口上限，可几轮大段输出攒下来，还是容易把当前要解决的问题淹没在旧内容里。</p>
+<figure class="essay-figure"><div class="context-trace"><div class="trace-row"><span>第一次请求</span><div class="trace-track"><b>任务</b><i>文件输出</i><em>下一步</em></div></div><div class="trace-row"><span>下一次请求</span><div class="trace-track"><b>任务</b><i>文件输出</i><i>测试输出</i><em>下一步</em></div></div><div class="trace-row"><span>再下一次请求</span><div class="trace-track"><b>任务</b><i>文件输出</i><i>测试输出</i><i>更多输出</i><em>下一步</em></div></div></div></figure><p>工具输出会跟着历史带进后续每一轮请求。一次返回看起来并不大，可模型已经从一份日志里找到了原因，接下来改文件、跑检查时，那份日志还在——几轮下来，旧输出和新证据挤在一起，恰恰是前文说的"甩不掉"。把首次返回缩得越小，从源头带进历史的负担就越轻。</p><h2>压缩返回的内容，也留下续读的路径</h2>
+<p>但我们很快意识到，不该在"模型该读多少"上引入太强的先验。The Bitter Lesson 提醒我们，那些替 Agent 预设好行为的设计往往不友好——你没法预先规定"理解一个函数要连带调用者、排查日志要看错误前后"这些，只有模型遇到具体任务时才判断得出来。硬给它定一个"此刻最佳读量"，多半是替它做决定。所以我们宁可少猜一点，把获取更多信息的路径留足，让模型在需要时自己顺着读下去。</p>
+<p>较小的硬上限也会截掉这些必要的上下文。模型需要一条继续读取的路径，把有关联的内容补齐。</p>
+<p>所以做了裁剪投影。需要省略内容时，先保存这次工具返回的结果，或接着用它已经留下的完整日志。第一次只展示较小的一部分，同时告诉模型怎样继续读取。文件内容按完整行保留，命令结果保留退出状态和关键错误信息。模型发现当前内容不够，就沿着续读入口或保存的原文继续看。</p>
+<p>还是那个配置项的例子。如果读到的值已经解释了问题，Agent 就可以往下走；如果发现这个配置引用自另一个文件，就转去读那个文件；如果被省略的部分才是关键，就把那一段读回来。</p>
+<figure class="essay-figure"><div class="projection-demo"><div class="saved-source"><span class="diagram-label">完整结果已保存</span><div class="source-sheet" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><strong>config.ts</strong></div><span class="diagram-arrow" aria-hidden="true">→</span><div class="reading-view"><span class="diagram-label">模型首次看到的内容</span><div class="code-sample"><code>export const config = {<br>  service: "api",<br>  retries: 3,</code><details class="read-continuation"><summary>展开被省略的部分 <span>＋</span></summary><code>  timeout: 30_000,<br>  cache: {<br>    enabled: true,<br>    ttl: 60,<br>  },<br>  logging: "errors",</code></details><code>  endpoint: process.env.API_URL,<br>};</code></div></div></div></figure><h2>原始结果另行保存，供后续补读</h2>
+<p>走到这一步，我们需要把整个工具结果的处理方式理清楚。工具完成一次调用，会留下它在那个时刻获得的信息；模型接下来要做决定，只需要先看到其中足以推进任务的部分。这两份内容有不同的用途：保存下来的结果供后续核对和补读，进入上下文的内容负责支持眼前的判断。</p>
+<p>如果连保存的那份也一起裁掉，后续读取就失去了来源。模型可能在几轮之后才发现一段日志有用，也可能需要回头核对一个当时没有注意的值。首次展示的选择无法提前覆盖这些需要，所以我们让被省略的内容留在会话的结果文件里。命令已经保存了完整日志时，就直接复用那份日志。</p>
+<p>这里保存的，是工具这次调用实际返回的内容。一次文件读取可能只请求了几十行，工具自己也可能有读取范围和执行上限。保存这次结果，能够找回投影省略的部分；要了解文件的其他位置，模型仍然需要继续发起有明确范围的读取。</p>
+<p>有了这个基础，返回的内容才能按情况处理。结构熟悉的结果，可以按行、条目和回合组织一个较小的首次视图；其余结果先保持工具原本的样子，只有文字特别大时才保存原文、给一段预览。图片和附件各走各的通道。这些处理加在一起，决定了模型每轮收到什么。</p>
+<figure class="essay-figure flow-figure" aria-label="工具结果的处理范围：四类工具的纯文本采用专用投影，其他结果的长文本采用通用预览，媒体附件单独保留">
+  <div class="flow-origin">一次工具调用的结果</div>
+  <div class="scope-grid">
+    <div class="scope-lane"><span class="flow-dot"></span><h3>熟悉的文本结构</h3><p>文件 · 目录 · 命令 · 会话</p><div class="flow-rule"></div><strong>按结构生成投影</strong><span>保留行、条目和回合</span></div>
+    <div class="scope-lane"><span class="flow-dot"></span><h3>其他工具结果</h3><p>编辑 · 协作 · 外部工具</p><div class="flow-rule"></div><strong>超大文本保存并预览</strong><span>附上原文的读取入口</span></div>
+    <div class="scope-lane"><span class="flow-dot"></span><h3>结果中的媒体</h3><p>图片 · 音频 · 文件</p><div class="flow-rule"></div><strong>保留附件</strong><span>交给模型适配层</span></div>
+  </div>
+</figure>
+<h2>读文件、列目录这几类，按结构做投影</h2>
+<p>我们先挑 read_file、list_files、bash 和 sessions 这几类结果。它们贯穿 coding 的过程，输出很容易在反复探索中累积起来。把它们的首次返回做得紧凑一些，可以持续减少后续请求携带的旧输出。</p>
+<p>读得多只是理由之一。更关键的是，这几类结果我们清楚它们的边界，也总能给出下一次读取的入口：文件可以按行接着看，目录可以按条目翻页，命令会留下日志，会话可以往前翻更早的回合。模型每次拿到一部分，都知道该去哪里补齐。</p>
+<p>目前的文件投影保留这次读取结果的首尾完整行，在中间标出省略的位置。它没有尝试判断哪一行最能回答模型的问题。模型需要中间内容时，就继续读取那一段。目录按完整条目保留，避免把路径和条目本身拆开。</p>
+<p>命令结果的优先级又有不同。退出状态、是否超时以及检查结果，会直接影响模型接下来的操作，因此需要留下。缩短输出时，先减少普通输出，再减少错误输出，并优先保留靠后的日志。检查信息本身很长时，最终结果也可能超过预设预算；保留这些信息有助于模型判断工作是否完成。</p>
+<p>查看会话的目的，是把一段工作的来龙去脉交还给模型。Wuu 会先取最近的会话摘要或最初的用户请求作背景，再围绕近期的回合组织内容，并提供往前翻的入口。会话读取即使较短也会经过这层组织，因为只有看全上下文，模型才知道之前做到哪、接下来该干什么。</p>
+<p>这几类规则能成立，前提是结果的结构清楚：我们知道保留什么、省略了哪一段，也说得清没看到的内容在哪里。其余工具的结果往往就是一大段文本，看不出哪部分重要，单凭长度我们无法替它做同样的取舍。</p>
+<h2>其余结果保持工具原样输出</h2>
+<p>工具结果除了内容，还常常交代工作进展。编辑返回的结果可能带有一段没有真正改上的修改，协作工具会告诉你事情交给了谁、接下来等什么，加载技能返回的正文可能正是下一步要照着做的说明。这些结果里，要紧的信息在哪儿没有定式，照搬文件投影"保留首尾"的做法，很容易把真正依赖的那几句裁掉。</p>
+<p>接入外部工具后差别更大。通过 MCP 接进来的工具，返回的是搜索结果、报告还是操作回执，结构都由提供方定；同一份报告里，结论可能在开头，限制条件却藏在末尾或正文。对不熟悉的结构，Wuu 无法判断哪部分要紧，也就没法设计更细的裁剪规则。</p>
+<p>所以对这类结果，Wuu 先不做取舍。文字没有超过通用的长度或行数上限时，就原样给出去；超了才保存这次的原文，返回一段短预览并附上读取入口。这样既压住占用的上下文，又让模型缺什么都能自己取回来——至于哪段重要，交给模型按需读，而不是替每种工具猜一遍。</p>
+<p>这也关系到动作能否顺畅地接下去。模型想补看一份报告时，重新调用生成报告的工具可能得到另一份内容；想核对一次操作的回执时，重做操作可能再次产生影响。保存结果后，补读可以停留在这次已经完成的调用上。模型查到缺失的细节，再决定下一步是否需要新的动作。</p>
+<h2>续读入口指向尚未展示的内容</h2>
+<p>仅仅说“输出已截断”，仍然把找回内容的工作留给了模型。它得猜下一次该读哪里，也可能再次请求同一个过大的范围。续读入口需要指出尚未展示的部分，让下一次调用带来新信息。</p>
+<p>文件投影会给出中间省略区间的读取参数；目录和会话提供下一页的入口；命令输出和通用预览可以指向保存结果中的剩余区间。模型可以沿着这些位置往下读，也可以根据已经发现的线索主动缩小范围。</p>
+<figure class="essay-figure recovery-figure" aria-label="一次调用保存结果，首次读取预览，之后从已保存的结果补读遗漏内容，再继续任务">
+  <div class="recovery-top"><div class="step-card">执行一次调用</div><span aria-hidden="true">→</span><div class="step-card archive-card"><span>保存本次结果</span><div class="paper-lines" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i></div></div></div>
+  <div class="recovery-reads"><div><span class="read-marker">首次读取</span><div class="segment-strip" aria-hidden="true"><b></b><i></i><i></i><i></i><b></b></div><strong>先看预览</strong></div><span class="read-arrow" aria-hidden="true">→</span><div><span class="read-marker">需要细节时</span><div class="segment-strip" aria-hidden="true"><i></i><b></b><b></b><b></b><i></i></div><strong>补读省略的部分</strong></div><span class="read-arrow" aria-hidden="true">→</span><div class="continue-task"><span class="read-marker">获得所需信息</span><strong>继续任务 ↗</strong></div></div>
+</figure>
+<p>两次读取之间，内容还可能变化。文件被修改后，旧行号可能指向新的内容。文件续读携带内容版本校验，会话分页也固定读取的快照，避免模型把不同时间的片段接在一起。保存下来的结果则留下了当次调用的内容，供模型回头核对。</p>
+<p>原文能否保存，是省略内容的前提。如果保存失败，这一层处理就保留传入的结果。没有可用的恢复路径时，压缩返回的内容会让信息永久丢失，后续调用也无法补救。</p>
+<h2>文字、图片和数据走不同的路径</h2>
+<p>一份工具结果可能同时包含文字、截图和供程序使用的数据，作用各不相同。检查按钮有没有对齐，需要看截图中的位置关系；判断操作是否成功，需要工具给出的状态；界面和后续处理还可能依赖完整的数据对象。把这些内容一起变成短文本，会丢掉它们各自的用途。</p>
+<p>因此，带媒体的结果采用通用的文本处理。长文字可以保存为原文并缩短展示，图片、音频和文件附件继续保留。图片的内容不会因为旁边的说明太长而被截成一段文字提示。</p>
+<figure class="essay-figure media-figure" aria-label="混合工具结果分开处理：长文字形成预览，截图作为观察附件保留，完整结构化数据保留在结果中并向模型提供索引">
+  <div class="media-source"><span class="diagram-label">工具返回</span><div class="mini-screen" aria-hidden="true"><div class="mini-toolbar"><i></i><i></i><i></i></div><div class="mini-window"><div class="mini-sidebar"></div><div class="mini-page"><i></i><i></i><b></b></div></div></div><div class="paper-lines" aria-hidden="true"><i></i><i></i><i></i></div><span class="data-chip">完整数据</span></div>
+  <div class="media-routes"><div><span class="media-route-arrow" aria-hidden="true">→</span><strong>文字预览</strong><span>进入工具消息</span></div><div><span class="media-route-arrow" aria-hidden="true">→</span><strong>截图附件</strong><span>进入随后的观察消息</span></div><div><span class="media-route-arrow" aria-hidden="true">→</span><strong>数据索引</strong><span>完整数据留在工具结果中</span></div></div>
+</figure>
+<p>发送请求时，Wuu 把文字放进工具结果消息，把一组连续工具结果里的图片和文件汇集到随后的观察消息中。模型先获得这组调用的文字回答，再接收它们带回的画面和附件。音频也通过文件附件交给适配层；具体能否使用，取决于所连接的模型和接口。只有地址、无法直接附上的内容，会以位置提示留下线索。</p>
+<p>结构化数据的处理还要考虑重复。有些工具已经提供了面向模型的内容，同时附带完整的数据对象。如果再把那个对象全部转成文字，可能把同一份内容发送两次。Wuu 保留结果中的完整数据，在模型输入中补上一份短索引，呈现数据形状、部分键和值，减少重复携带。</p>
+<p>这个索引本身提供的是概览。它让模型知道结果的大致结构，完整数据仍供客户端、扩展和历史重放使用。只有结构化数据、没有其他内容的结果，则先把这份数据转成可读文本；超出通用上限时再保存并提供续读入口，让工具的回答能够被读到。</p>
+<h2>复用稳定的历史前缀</h2>
+<p>这些选择最终要落实到会话历史里。Wuu 在工具执行完成后生成文本投影，再交给历史记录；这份处理后的结果保持不变，后续请求继续使用它，补读获得的内容则通过新的调用追加进来。</p>
+<p>保持不变的原因和推理缓存有关。已经进入上下文的内容，模型在每轮推理时都要重新处理一遍；如果文字前后不一致，前面几轮的缓存就会失效，无法被这一轮复用。所以已经发送过的内容不能被轻易改写——同一份旧输出不会随着每一轮请求被逐步削短，模型第一次看到的内容留在原来的位置，下一次读取只增加新的证据。稳定的历史前缀正是为了让缓存命中的部分延续到后续请求。</p>
+<p>代价是有些任务需要更多次读取。理解跨文件的调用关系，或比较一段错误前后的完整日志，都可能用到较多材料。判断设计是否有效，需要把这些续读一起考虑：每次是否带回新的信息，模型是否能够据此完成下一步，以及整个任务一共携带了多少输入。</p>
+<h2>按读取表现调整返回量</h2>
+<p>随着模型变化，适合首次返回的信息量也会变化。模型可能从更少的线索中做出可靠判断，也可能更擅长一次读完较大的内容。我们可以沿着实际的读取和续读表现调整预算，而保存下来的结果继续提供补充信息的来源。</p>
+<p>回到最初那个配置项的例子：模型读到一个值，发现它已经解释了问题，就去修改并验证；发现它还依赖别处的定义，就继续读；需要核对刚才省略的内容，就沿入口补回来。首次返回给它一个开始判断的位置，后续读取让它把判断需要的内容逐步找齐。</p>
+
+          <a class="article-next" href="zh-note-compaction.html"
+            >继续阅读<strong>换一个窗口，接着把事做完 ↗</strong></a
+          >
+        </div>
+      </article>
+    </main>
+    <footer class="site-footer wrap">
+      <a class="wordmark" href="zh.html"
+        ><img src="assets/brand/wuu.svg" width="32" height="32" alt="" />wuu</a
+      >
+      <nav aria-label="页脚">
+        <a href="zh-features.html">产品</a><a href="zh-blog.html">博客</a
+        ><a href="https://github.com/blueberrycongee/wuu">GitHub ↗</a>
+      </nav>
+    </footer>
+  </body>
+</html>

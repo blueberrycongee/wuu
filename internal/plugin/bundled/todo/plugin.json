@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "todo",
+  "name": "TODO",
+  "description": "Visible task tracking with an Inspector summary.",
+  "icon": { "path": "icon.webp" },
+  "version": "0.1.0",
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "0.1.0",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 15 },
+  "desktop": { "entry": "desktop.js" },
+  "interface": { "displayName": "TODO", "shortDescription": "Track a visible task checklist.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
+}

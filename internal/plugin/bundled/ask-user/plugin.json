@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "id": "ask-user",
+  "name": "Ask User",
+  "description": "Offer focused questions to the user without pausing the current turn.",
+  "icon": { "path": "icon.webp" },
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "0.1.0",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 15 },
+  "interface": { "displayName": "Ask User", "shortDescription": "Offer focused questions without pausing a task.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Interaction"] }
+}

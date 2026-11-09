@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "id": "research-evidence",
+  "name": "Research evidence notebook",
+  "version": "1.0.0",
+  "desktop": {
+    "entry": "dist/evidence.js"
+  },
+  "dependencies": [
+    {
+      "id": "research-workbench"
+    }
+  ]
+}

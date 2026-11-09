@@ -1,0 +1,140 @@
+---
+const chinese = Astro.url.pathname.split("/").includes("zh-cn")
+const labels = chinese
+  ? { auto: "自动", light: "浅色", dark: "深色" }
+  : { auto: "Auto", light: "Light", dark: "Dark" }
+---
+
+<wuu-theme-menu>
+  <button class="header-menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false">
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+      <path d="M7 3h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 18h6m-3-4v4" />
+    </svg>
+    <span class="theme-value">{labels.auto}</span>
+    <svg class="header-menu-caret" aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
+      <path d="m4 6 4 4 4-4" />
+    </svg>
+  </button>
+
+  <div class="header-menu-panel" role="menu" hidden>
+    {
+      (["auto", "light", "dark"] as const).map((theme) => (
+        <button type="button" role="menuitemradio" aria-checked={theme === "auto" ? "true" : "false"} tabindex="-1" data-theme-value={theme} data-label={labels[theme]}>
+          <svg class="header-menu-check" aria-hidden="true" viewBox="0 0 16 16" width="14" height="14">
+            {theme === "auto" && <path d="m3 8 3 3 7-7" />}
+          </svg>
+          <span>{labels[theme]}</span>
+        </button>
+      ))
+    }
+  </div>
+</wuu-theme-menu>
+
+<script>
+  type Theme = "auto" | "light" | "dark"
+
+  const storageKey = "starlight-theme"
+  const parseTheme = (value: unknown): Theme =>
+    value === "light" || value === "dark" || value === "auto" ? value : "auto"
+  const loadTheme = () => parseTheme(localStorage.getItem(storageKey) || "auto")
+  const resolvedTheme = (theme: Theme) =>
+    theme === "auto"
+      ? matchMedia("(prefers-color-scheme: light)").matches
+        ? "light"
+        : "dark"
+      : theme
+
+  function applyTheme(theme: Theme) {
+    localStorage.setItem(storageKey, theme === "auto" ? "" : theme)
+    document.documentElement.dataset.theme = resolvedTheme(theme)
+    document.querySelectorAll<WuuThemeMenu>("wuu-theme-menu").forEach((menu) => menu.syncTheme(theme))
+    document.dispatchEvent(new CustomEvent("wuu-theme-change", { detail: { theme } }))
+  }
+
+  class WuuThemeMenu extends HTMLElement {
+    button = this.querySelector<HTMLButtonElement>(".header-menu-trigger")
+    panel = this.querySelector<HTMLElement>(".header-menu-panel")
+    value = this.querySelector<HTMLElement>(".theme-value")
+    items = [...this.querySelectorAll<HTMLButtonElement>("[role='menuitemradio']")]
+
+    connectedCallback() {
+      this.syncTheme(loadTheme())
+      this.button?.addEventListener("click", this.onButtonClick)
+      this.button?.addEventListener("keydown", this.onButtonKeyDown)
+      this.panel?.addEventListener("keydown", this.onPanelKeyDown)
+      this.items.forEach((item) => item.addEventListener("click", this.onThemeClick))
+      document.addEventListener("pointerdown", this.onOutsidePointerDown)
+    }
+
+    disconnectedCallback() {
+      document.removeEventListener("pointerdown", this.onOutsidePointerDown)
+    }
+
+    syncTheme(theme: Theme) {
+      for (const item of this.items) {
+        const selected = item.dataset.themeValue === theme
+        item.setAttribute("aria-checked", String(selected))
+        item.querySelector(".header-menu-check")!.innerHTML = selected
+          ? '<path d="m3 8 3 3 7-7"></path>'
+          : ""
+        if (selected && this.value) this.value.textContent = item.dataset.label ?? ""
+      }
+    }
+
+    setOpen = (open: boolean) => {
+      if (!this.button || !this.panel) return
+      this.button.setAttribute("aria-expanded", String(open))
+      this.panel.hidden = !open
+    }
+
+    close = () => this.setOpen(false)
+
+    focusItem(index: number) {
+      this.items.at(index)?.focus()
+    }
+
+    onButtonClick = () => this.setOpen(this.button?.getAttribute("aria-expanded") !== "true")
+
+    onButtonKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return
+      event.preventDefault()
+      this.setOpen(true)
+      this.focusItem(event.key === "ArrowDown" ? 0 : -1)
+    }
+
+    onPanelKeyDown = (event: KeyboardEvent) => {
+      const current = this.items.indexOf(document.activeElement as HTMLButtonElement)
+      let target: number | undefined
+      if (event.key === "ArrowDown") target = (current + 1) % this.items.length
+      if (event.key === "ArrowUp") target = (current - 1 + this.items.length) % this.items.length
+      if (event.key === "Home") target = 0
+      if (event.key === "End") target = -1
+      if (target !== undefined) {
+        event.preventDefault()
+        this.focusItem(target)
+      } else if (event.key === "Escape") {
+        event.preventDefault()
+        this.close()
+        this.button?.focus()
+      }
+    }
+
+    onThemeClick = (event: MouseEvent) => {
+      const item = event.currentTarget as HTMLButtonElement
+      applyTheme(parseTheme(item.dataset.themeValue))
+      this.close()
+      this.button?.focus()
+    }
+
+    onOutsidePointerDown = (event: PointerEvent) => {
+      if (!this.contains(event.target as Node)) this.close()
+    }
+  }
+
+  if (!customElements.get("wuu-theme-menu")) {
+    customElements.define("wuu-theme-menu", WuuThemeMenu)
+    matchMedia("(prefers-color-scheme: light)").addEventListener("change", () => {
+      if (loadTheme() === "auto") applyTheme("auto")
+    })
+  }
+</script>

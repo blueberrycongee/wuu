@@ -1,0 +1,3612 @@
+package appserver
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/approvefor"
+	"github.com/blueberrycongee/wuu/internal/authstorage"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/extensions"
+	"github.com/blueberrycongee/wuu/internal/grokbuildspec"
+	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/modelbudget"
+	"github.com/blueberrycongee/wuu/internal/modelcatalog"
+	"github.com/blueberrycongee/wuu/internal/modelroles"
+	"github.com/blueberrycongee/wuu/internal/modelvariant"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/principal"
+	"github.com/blueberrycongee/wuu/internal/providerfactory"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/providers/chatgpt"
+	"github.com/blueberrycongee/wuu/internal/providers/codex"
+	"github.com/blueberrycongee/wuu/internal/providers/grokbuild"
+	"github.com/blueberrycongee/wuu/internal/providers/xaisub"
+	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/skills"
+	"github.com/blueberrycongee/wuu/internal/subagent"
+	"github.com/blueberrycongee/wuu/internal/tools"
+	"github.com/blueberrycongee/wuu/internal/version"
+)
+
+func (s *Server) handleInitialize(req Request) error {
+	var params InitializeParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if params.ProtocolVersion != "" && params.ProtocolVersion != ProtocolVersion {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported protocol version %q (server uses %q)", params.ProtocolVersion, ProtocolVersion))
+	}
+	s.setClientMethods(params.Capabilities.ReverseRPC.Methods)
+	s.deferredNotificationContent.Store(params.Capabilities.DeferredNotificationContent)
+	s.pinLegacyRuntimeSelections()
+	core := version.Info()
+	runtimeHost := s.rt.HostInfo()
+	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
+	status := "ready"
+	issues := make([]RuntimeIssue, 0, len(s.rt.ReadinessIssues))
+	for _, issue := range s.rt.ReadinessIssues {
+		status = "needs_setup"
+		issues = append(issues, RuntimeIssue{Code: issue.Code, Provider: issue.Provider, Message: issue.Message})
+	}
+	var isolation *UserHostIsolationSummary
+	if s.rt.UserBinding().IsUser() {
+		isolation = &UserHostIsolationSummary{Memory: "logical", Host: "unverified"}
+		if s.rt.UserHostIsolationMode == runtime.UserHostIsolationVerifiedHost {
+			isolation.Host = "verified"
+		}
+	}
+	var ownerLocalLocator *pluginhost.SessionLocatorV1
+	if s.trustedTransport.enabled && s.ConnectionPrincipal().IsOwner() && s.ConnectionPrincipal().Identity() == principal.LocalOwner().Identity() && !s.rt.UserBinding().IsUser() && s.rt.HostInfo().Kind == runtime.HostLocal {
+		locator := s.ownerLocalSessionLocator()
+		ownerLocalLocator = &locator
+	}
+	var federationLocator *pluginhost.SessionLocatorV1
+	if federation, err := s.currentSessionFederation(); err == nil && federation != nil {
+		federationLocator = &pluginhost.SessionLocatorV1{Version: 1, ExecutionHost: federation.config.HostID, StorageHost: federation.config.StorageHost}
+	}
+	shell, surfaces := s.rt.ApplicationBindings()
+	return s.writeResponse(req.ID, InitializeResult{
+		SessionFederation: federationLocator, OwnerLocalSessionControl: ownerLocalLocator,
+		UserSpaceID: s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain, UserHostIsolation: isolation,
+		ResourceAccess: resourceAccessCapabilities(), ApplicationShell: shell, ApplicationSurfaces: surfaces,
+		Status:          status,
+		Issues:          issues,
+		ProtocolVersion: ProtocolVersion,
+		Core: CoreBuildInfo{
+			Version: core.Version,
+			Commit:  core.Commit,
+			Date:    core.Date,
+			Dirty:   core.Dirty,
+		},
+		Provider:    s.rt.ProviderName,
+		Model:       s.rt.Model,
+		Effort:      s.currentDisplayEffort(),
+		Variant:     s.currentVariant(),
+		MaxParallel: s.rt.MaxParallel(),
+		RuntimeHost: RuntimeHostSummary{
+			Kind:       string(runtimeHost.Kind),
+			InstanceID: runtimeHost.InstanceID,
+		},
+		WorkspaceRoot:      s.rt.RootDir,
+		Permissions:        s.currentPermissionSummary(),
+		ExtensionTrust:     s.currentExtensionTrustSummary(),
+		ExtensionInventory: s.currentExtensionInventory(),
+		ModelProfile:       modelProfile,
+		ToolSurface:        toolSurface,
+		ModelRoles:         s.currentModelRoleSummaries(),
+		ModelAliases:       s.currentModelAliasSummaries(),
+		Providers:          s.providerSummaries(),
+		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
+		GeneralSettings:    s.currentGeneralSettingsSummary(),
+		CatalogProviders:   catalogProviderSummaries(),
+		Features:           FeatureFlags{Browser: s.supportsBrowserClient(), SafeMode: s.rt.SafeMode},
+	}, nil)
+}
+
+func (s *Server) handleConfigRead(req Request) error {
+	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
+	return s.writeResponse(req.ID, ConfigReadResult{
+		Provider:           s.rt.ProviderName,
+		Model:              s.rt.Model,
+		Effort:             s.currentDisplayEffort(),
+		Variant:            s.currentVariant(),
+		MaxParallel:        s.rt.MaxParallel(),
+		ConfigPath:         s.rt.ConfigPath,
+		WorkspaceRoot:      s.rt.RootDir,
+		SessionDir:         s.rt.SessionDir,
+		Permissions:        s.currentPermissionSummary(),
+		ExtensionTrust:     s.currentExtensionTrustSummary(),
+		ExtensionInventory: s.currentExtensionInventory(),
+		ModelProfile:       modelProfile,
+		ToolSurface:        toolSurface,
+		ModelRoles:         s.currentModelRoleSummaries(),
+		ModelAliases:       s.currentModelAliasSummaries(),
+		Providers:          s.providerSummaries(),
+		AdvancedSettings:   s.currentAdvancedSettingsSummary(),
+		GeneralSettings:    s.currentGeneralSettingsSummary(),
+	}, nil)
+}
+
+func (s *Server) currentModelRoleSummaries() []ModelRoleSummary {
+	if s == nil || s.rt == nil || s.rt.ModelRoles.Empty() {
+		return nil
+	}
+	selections := s.rt.ModelRoles.List()
+	out := make([]ModelRoleSummary, 0, len(selections))
+	for _, selection := range selections {
+		out = append(out, ModelRoleSummary{
+			Role:         string(selection.Role),
+			Provider:     selection.Provider,
+			Model:        selection.Model,
+			APIModel:     selection.APIModel,
+			Effort:       selection.Effort,
+			Variant:      selection.Variant,
+			Inherited:    selection.Inherited,
+			Capabilities: selection.Capabilities,
+			Behavior:     selection.Behavior,
+		})
+	}
+	return out
+}
+
+func (s *Server) currentModelAliasSummaries() map[string]ModelAliasSummary {
+	if s == nil || s.rt == nil {
+		return nil
+	}
+	cfg, _, err := s.rt.LoadEffectiveConfig()
+	if err != nil {
+		return nil
+	}
+	return modelAliasSummaries(cfg.Agent.ModelAliases)
+}
+
+func (s *Server) currentPermissionSummary() PermissionSummary {
+	if s == nil || s.rt == nil {
+		return PermissionSummary{}
+	}
+	permissions := s.rt.Permissions
+	if strings.TrimSpace(permissions.Mode) == "" {
+		permissions = config.ResolvedPermissions{Mode: config.PermissionModeStandard}
+	}
+	return PermissionSummary{
+		Mode: strings.TrimSpace(permissions.Mode),
+	}
+}
+
+func (s *Server) permissionSummaryForThread(th *threadState) PermissionSummary {
+	summary := s.currentPermissionSummary()
+	if th == nil {
+		return summary
+	}
+	th.mu.Lock()
+	defer th.mu.Unlock()
+	if mode := strings.TrimSpace(th.PermissionMode); mode != "" {
+		summary.Mode = config.NormalizePermissionMode(mode)
+	}
+	summary.ApproveForMe = th.ApproveForMe && approvefor.EnabledForMode(summary.Mode)
+	return summary
+}
+
+func (s *Server) currentAdvancedSettingsSummary() AdvancedSettingsSummary {
+	if s == nil || s.rt == nil {
+		return AdvancedSettingsSummary{}
+	}
+	summary := AdvancedSettingsSummary{}
+	if s.rt.StreamRunner != nil {
+		summary.MaxSteps = s.rt.StreamRunner.MaxSteps
+		summary.Temperature = s.rt.StreamRunner.Temperature
+		summary.CompactThresholdPct = s.rt.StreamRunner.CompactThresholdPct
+		summary.CompactKeepRecentTokens = s.rt.StreamRunner.CompactKeepRecentTokens
+		summary.DisableAutoCompact = s.rt.StreamRunner.DisableAutoCompact
+	}
+	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
+		summary.MaxSteps = cfg.Agent.MaxSteps
+		summary.MaxContextTokens = cfg.Agent.MaxContextTokens
+		summary.Temperature = cfg.Agent.Temperature
+		summary.CompactThresholdPct = cfg.Agent.CompactThresholdPct
+		summary.CompactKeepRecentTokens = cfg.Agent.CompactKeepRecentTokens
+		summary.DisableAutoCompact = cfg.Agent.DisableAutoCompact
+		if provider, _, err := cfg.ResolveProvider(s.rt.ProviderName); err == nil {
+			summary.ProviderContextWindow = provider.ContextWindow
+		}
+	}
+	budget := s.rt.ModelBudget
+	contextWindowTokens, contextWindowSource := budget.EffectiveContextWindow()
+	summary.ContextWindowTokens = contextWindowTokens
+	summary.ContextWindowSource = string(contextWindowSource)
+	summary.InputLimitTokens = budget.InputLimitTokens
+	summary.OutputReserveTokens = budget.OutputReserveTokens
+	summary.CompactThresholdTokens = advancedCompactThresholdTokens(budget, summary.CompactThresholdPct)
+	return summary
+}
+
+func (s *Server) currentGeneralSettingsSummary() GeneralSettingsSummary {
+	if s == nil || s.rt == nil {
+		return GeneralSettingsSummary{}
+	}
+	summary := GeneralSettingsSummary{
+		MCPServerEnabled: map[string]bool{},
+	}
+	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
+		summary.GitAttributionEnabled = cfg.Agent.GitAttributionEnabledValue()
+		summary.PTC = cfg.PTC
+		summary.ExecutionEnvironments = cfg.ExecutionEnvironments
+		activePluginServers := make(map[string]bool)
+		for _, item := range s.rt.ExtensionSnapshot().Plugins {
+			for name := range item.MCPServers {
+				activePluginServers[runtime.PluginMCPServerName(item.ID, name)] = true
+			}
+		}
+		for name, server := range cfg.MCPServers {
+			if runtime.IsPluginMCPServerName(name) && !activePluginServers[name] {
+				continue
+			}
+			if server.Enabled == nil || *server.Enabled {
+				summary.MCPServerEnabled[name] = true
+			} else {
+				summary.MCPServerEnabled[name] = false
+			}
+		}
+	}
+	return summary
+}
+
+func advancedCompactThresholdTokens(budget modelbudget.Budget, pct float64) int {
+	if pct <= 0 || pct >= 1 {
+		return budget.CompactThresholdTokens
+	}
+	baseWindow := budget.ContextWindowTokens
+	if baseWindow <= 0 || (budget.InputLimitTokens > 0 && budget.InputLimitTokens < baseWindow) {
+		baseWindow = budget.InputLimitTokens
+	}
+	if baseWindow <= 0 {
+		return 0
+	}
+	threshold := int(float64(baseWindow) * pct)
+	if budget.ContextWindowTokens > 0 {
+		outputReserved := budget.ContextWindowTokens - budget.OutputReserveTokens
+		if outputReserved > 0 && outputReserved < threshold {
+			threshold = outputReserved
+		}
+	}
+	return threshold
+}
+
+func (s *Server) currentModelSurfaceSummaries() (*ModelProfileSummary, *ToolSurfaceSummary) {
+	if s == nil || s.rt == nil || s.rt.Toolkit == nil {
+		return nil, nil
+	}
+	surface := s.rt.Toolkit.ActiveSurface()
+	if surface.ProfileName == "" {
+		return nil, nil
+	}
+	summary := surface.Summarize()
+	profile := &ModelProfileSummary{
+		ProfileName:   summary.ProfileName,
+		Provider:      summary.Provider,
+		Model:         summary.Model,
+		EditPrimitive: summary.EditPrimitive,
+		BashFirst:     summary.BashFirst,
+	}
+	return profile, &summary
+}
+
+func (s *Server) currentExtensionTrustSummary() ExtensionTrustSummary {
+	main := ExtensionSessionTrustSummary{}
+	if s != nil && s.rt != nil {
+		mcpKnownTools := 0
+		if s.rt.Toolkit != nil {
+			if manager := s.rt.Toolkit.MCPManager(); manager != nil {
+				mcpKnownTools = len(manager.AllTools())
+			}
+		}
+		snapshot := s.rt.ExtensionSnapshot()
+		main.MCP = extensionSurfaceSummary(mcpKnownTools > 0, mcpKnownTools)
+		main.Skills = extensionSurfaceSummary(len(snapshot.Skills) > 0, len(snapshot.Skills))
+		main.Hooks = ExtensionSurfaceTrustSummary{Allowed: s.rt.HookDispatcher != nil, Active: hookDispatcherHasAny(s.rt.HookDispatcher)}
+		main.Plugins = ExtensionSurfaceTrustSummary{Allowed: true, Active: len(snapshot.ActivePlugins) > 0, Count: len(snapshot.ActivePlugins)}
+		main.ExternalTools = main.MCP
+	}
+	reviewer := ExtensionSessionTrustSummary{
+		MCP:           ExtensionSurfaceTrustSummary{Allowed: false, Active: false},
+		Hooks:         ExtensionSurfaceTrustSummary{Allowed: false, Active: false},
+		Plugins:       ExtensionSurfaceTrustSummary{Allowed: false, Active: false},
+		Skills:        ExtensionSurfaceTrustSummary{Allowed: false, Active: false},
+		Workflows:     ExtensionSurfaceTrustSummary{Allowed: false, Active: false},
+		ExternalTools: ExtensionSurfaceTrustSummary{Allowed: false, Active: false},
+	}
+	return ExtensionTrustSummary{
+		MainSession:     main,
+		ReviewerSession: reviewer,
+	}
+}
+
+func (s *Server) currentExtensionInventory() []ExtensionInventoryRecord {
+	if s == nil || s.rt == nil {
+		return nil
+	}
+	return s.extensionInventory(s.rt.ExtensionSnapshot())
+}
+
+func (s *Server) currentExtensionState() ([]ExtensionInventoryRecord, []SkillSummary) {
+	snapshot := s.rt.ExtensionSnapshot()
+	return s.extensionInventory(snapshot), s.skillSummaries(snapshot.Skills, s.rt.RootDir)
+}
+
+func (s *Server) extensionInventory(snapshot runtime.ExtensionSnapshot) []ExtensionInventoryRecord {
+	cfg := s.currentExtensionConfig()
+	grants := extensions.Settings{}
+	if cfg.Extensions != nil {
+		grants = *cfg.Extensions
+	}
+	if snapshot.ExtensionSettings != nil {
+		grants = *snapshot.ExtensionSettings
+	}
+	pluginsByID := make(map[string]struct {
+		scope    string
+		official bool
+	}, len(snapshot.Plugins))
+	for _, item := range snapshot.Plugins {
+		pluginsByID[item.ID] = struct {
+			scope    string
+			official bool
+		}{scope: normalizedExtensionScope(item.Source, item.ManifestPath, s.rt.RootDir), official: item.Official}
+	}
+	activePluginSubjects := make(map[string]struct{}, len(snapshot.ActivePlugins))
+	for _, item := range snapshot.ActivePlugins {
+		activePluginSubjects[item.SubjectID] = struct{}{}
+	}
+	runtimeStatuses := make(map[string]pluginhost.Status)
+	conversationTools := make(map[string][]string)
+	for _, definition := range snapshot.PluginHost.ToolDefinitions() {
+		if tool, ok := snapshot.PluginHost.Tool(definition.Name); ok && (s.rt.Toolkit == nil || !s.rt.Toolkit.IsToolDisabled(definition.Name)) {
+			conversationTools[tool.PluginID] = append(conversationTools[tool.PluginID], definition.Name)
+		}
+	}
+	if snapshot.PluginHost != nil {
+		for _, status := range snapshot.PluginHost.Statuses() {
+			runtimeStatuses[status.ID] = status
+		}
+	}
+	pendingUpdatesByID := map[string]pluginpkg.PendingUpdate{}
+	if pendingUpdates, err := pluginpkg.ListPendingUpdates(s.rt.WuuHome); err == nil {
+		for _, pending := range pendingUpdates {
+			pendingUpdatesByID[pending.Package.ID] = pending
+		}
+	}
+	packageActivationIssues := make(map[string][]pluginpkg.ActivationIssue)
+	packageDependencies := make(map[string][]string)
+	if plan, err := s.rt.ResolveExtensionPlan(cfg, snapshot.Plugins); err == nil {
+		packageActivationIssues = plan.Issues
+		packageDependencies = plan.Dependencies
+	}
+
+	records := make([]ExtensionInventoryRecord, 0, len(snapshot.Skills)+len(snapshot.Plugins))
+	for _, skill := range snapshot.Skills {
+		source := strings.TrimSpace(skill.Source)
+		scope := normalizedExtensionScope(source, skill.Path, s.rt.RootDir)
+		pluginID := strings.TrimPrefix(source, "plugin:")
+		if pluginID == source {
+			pluginID = ""
+		} else if plugin, ok := pluginsByID[pluginID]; ok {
+			scope = plugin.scope
+		}
+		records = append(records, ExtensionInventoryRecord{
+			ID:   extensionSubjectID("skill", source, skill.Name),
+			Name: skill.Name,
+			Kind: extensions.KindSkill,
+			Provenance: extensions.Provenance{
+				Kind:     extensions.KindSkill,
+				Source:   source,
+				Scope:    scope,
+				Path:     skill.Path,
+				PluginID: pluginID,
+				Official: strings.EqualFold(source, "bundled"),
+			},
+			State: ExtensionStateActive,
+		})
+	}
+	for _, item := range snapshot.Plugins {
+		scope := normalizedExtensionScope(item.Source, item.ManifestPath, s.rt.RootDir)
+		pluginSource := pluginManifestSource(item.ManifestPath)
+		if item.SubjectID == "" || item.Fingerprint == "" {
+			if contract, err := item.PackageContract(); err == nil {
+				item.SubjectID = contract.SubjectID
+				item.Fingerprint = contract.Fingerprint
+				item.EffectivePermissions = contract.Permissions
+			}
+		}
+		if item.SubjectID == "" {
+			item.SubjectID = extensions.SubjectID(scope, item.ID)
+		}
+		approval, state, grantScope, enabled := pluginPackageInventoryState(grants, item, runtime.PluginEnabledByDefault(cfg, item))
+		runtimeState := ExtensionRuntimeInactive
+		lastError := ""
+		if _, ok := activePluginSubjects[item.SubjectID]; ok {
+			runtimeState = ExtensionRuntimeActive
+		}
+		if status, ok := runtimeStatuses[item.ID]; ok {
+			switch status.State {
+			case pluginhost.StateStarting:
+				runtimeState = ExtensionRuntimeStarting
+			case pluginhost.StateFailed:
+				runtimeState = ExtensionRuntimeFailed
+			case pluginhost.StateStopped:
+				runtimeState = ExtensionRuntimeStopped
+			}
+			lastError = status.Error
+		}
+		commands := make([]ExtensionCommandDescriptor, 0, len(item.Commands))
+		for _, command := range item.Commands {
+			template := command.Prompt
+			if command.ResolvedPrompt != nil {
+				template = command.ResolvedPrompt.Text
+			}
+			commands = append(commands, ExtensionCommandDescriptor{
+				ID:          command.ID,
+				Title:       command.Title,
+				Description: command.Description,
+				Kind:        ExtensionCommandKind(command.Kind),
+				Template:    template,
+				Contexts:    append([]string(nil), command.Contexts...),
+				Aliases:     append([]string(nil), command.Aliases...),
+				Keywords:    append([]string(nil), command.Keywords...),
+			})
+		}
+		sort.Slice(commands, func(i, j int) bool { return commands[i].ID < commands[j].ID })
+		themes := make([]ExtensionThemeDescriptor, 0, len(item.Themes))
+		for _, theme := range item.Themes {
+			themes = append(themes, ExtensionThemeDescriptor{
+				ID:     theme.ID,
+				Name:   theme.Name,
+				Base:   theme.Base,
+				Tokens: cloneStringMap(theme.Tokens),
+				Syntax: cloneStringMap(theme.Syntax),
+			})
+		}
+		sort.Slice(themes, func(i, j int) bool { return themes[i].ID < themes[j].ID })
+		skins := make([]ExtensionSkinDescriptor, 0, len(item.Skins))
+		for _, skin := range item.Skins {
+			skins = append(skins, ExtensionSkinDescriptor{
+				ID: skin.ID, Name: skin.Name, Placement: skin.Placement, UserImage: skin.UserImage,
+				Light: ExtensionSkinVariant(skin.Light), Dark: ExtensionSkinVariant(skin.Dark),
+			})
+		}
+		settingIDs := sortedMapKeys(item.Settings)
+		settings := make([]ExtensionSettingDescriptor, 0, len(settingIDs))
+		for _, id := range settingIDs {
+			definition := item.Settings[id]
+			settings = append(settings, ExtensionSettingDescriptor{
+				ID:                id,
+				Type:              ExtensionSettingType(definition.Type),
+				Title:             definition.Title,
+				Description:       definition.Description,
+				Default:           definition.Default,
+				Enum:              append([]string(nil), definition.Enum...),
+				Scope:             ExtensionSettingScope(definition.Scope),
+				Apply:             ExtensionSettingApplyMode(definition.Apply),
+				CredentialOrigins: append([]string(nil), definition.CredentialOrigins...),
+			})
+		}
+		presenters := make([]ExtensionPresenterContributionDescriptor, 0, len(item.Presenters))
+		for _, contribution := range item.Presenters {
+			presenters = append(presenters, ExtensionPresenterContributionDescriptor{
+				ID: contribution.ID, Target: contribution.Target, Mode: string(contribution.Mode), Priority: contribution.Priority, Title: contribution.Title,
+			})
+		}
+		viewEntries := func(items []pluginpkg.ViewEntryContributionSpec) []ExtensionViewEntryDescriptor {
+			entries := make([]ExtensionViewEntryDescriptor, 0, len(items))
+			for _, contribution := range items {
+				entries = append(entries, ExtensionViewEntryDescriptor{
+					ID: contribution.ID, View: contribution.View, Title: contribution.Title,
+					Description: contribution.Description, Icon: extensionIconDescriptor(contribution.Icon), Order: contribution.Order,
+				})
+			}
+			return entries
+		}
+		navigation := viewEntries(item.Navigation)
+		workspaceTools := viewEntries(item.WorkspaceTools)
+		settingsPages := viewEntries(item.SettingsPages)
+		presentation := pluginPresentation(item.Manifest)
+		packageRecord := ExtensionInventoryRecord{
+			ConversationTools: conversationTools[item.ID],
+			ID:                item.SubjectID,
+			Name:              presentation.DisplayName,
+			Description:       presentation.ShortDescription,
+			LongDescription:   presentation.LongDescription,
+			Family:            presentation.Family,
+			Developer:         presentation.DeveloperName,
+			Icon:              extensionIconDescriptor(item.Icon),
+			Kind:              extensions.KindPlugin,
+			Provenance: extensions.Provenance{
+				Kind:     extensions.KindPlugin,
+				Source:   pluginSource,
+				Scope:    scope,
+				Path:     item.ManifestPath,
+				PluginID: item.ID,
+				Official: item.Official,
+			},
+			State:                state,
+			Executable:           item.Runtime != nil || len(item.MCPServers) > 0 || len(item.Hooks) > 0,
+			Fingerprint:          item.Fingerprint,
+			PackageSource:        item.Source,
+			GrantScope:           grantScope,
+			RequestedPermissions: cloneSortedStrings(item.EffectivePermissions),
+			UnsupportedFields:    cloneSortedStrings(item.UnsupportedFields),
+			ApprovalState:        approval,
+			RuntimeState:         runtimeState,
+			LastError:            lastError,
+			Requires:             cloneSortedStrings(item.Requires),
+			Dependencies:         append([]extensions.PackageDependency(nil), item.Dependencies...),
+			ResolvedDependencies: cloneSortedStrings(packageDependencies[item.ID]),
+			Breaks:               cloneSortedStrings(item.Breaks),
+			Conflicts:            cloneSortedStrings(item.Conflicts),
+			Enabled:              &enabled,
+		}
+		// Absent means the package default applies; false is a saved disable.
+		if grants.Disabled[item.SubjectID] || grants.Enabled[item.SubjectID] {
+			packageRecord.EnabledOverride = &enabled
+		}
+		for _, issue := range packageActivationIssues[item.ID] {
+			packageRecord.ActivationIssues = append(packageRecord.ActivationIssues, ExtensionPluginActivationIssue{
+				Kind:            string(issue.Kind),
+				RelatedPluginID: issue.RelatedPluginID,
+			})
+		}
+		if item.Desktop != nil {
+			packageRecord.Desktop = &ExtensionDesktopDescriptor{Entry: item.Desktop.Entry, ContentRenderers: append([]pluginpkg.DesktopContentRenderer(nil), item.Desktop.ContentRenderers...)}
+		}
+		if len(commands) > 0 || len(themes) > 0 || len(skins) > 0 || len(settings) > 0 || len(presenters) > 0 || len(navigation) > 0 || len(workspaceTools) > 0 || len(settingsPages) > 0 {
+			packageRecord.Contributions = &ExtensionContributions{
+				Commands: commands, Themes: themes, Skins: skins, Settings: settings,
+				Presenters: presenters,
+				Navigation: navigation, WorkspaceTools: workspaceTools, SettingsPages: settingsPages,
+			}
+		}
+		if pending, ok := pendingUpdatesByID[item.ID]; ok && item.Source == "user" {
+			packageRecord.PendingUpdate = &ExtensionPendingUpdate{
+				Version:              pending.Package.Version,
+				Fingerprint:          pending.Package.Fingerprint,
+				ActiveFingerprint:    pending.ActiveFingerprint,
+				RequestedPermissions: cloneSortedStrings(pending.Package.RequestedPermissions),
+				EffectivePermissions: cloneSortedStrings(pending.Package.EffectivePermissions),
+			}
+		}
+		records = append(records, packageRecord)
+
+		mcpNames := sortedMapKeys(item.MCPServers)
+		for _, name := range mcpNames {
+			server := item.MCPServers[name]
+			if override, ok := cfg.MCPServers[runtime.PluginMCPServerName(item.ID, name)]; ok && override.Enabled != nil {
+				server.Enabled = override.Enabled
+			}
+			permissions := executablePermissions(item.RequestedPermissions, server.Command != "", server.URL != "", false)
+			subjectID := extensionSubjectID("mcp", "plugin", item.ID, name)
+			fingerprint, _ := extensions.Fingerprint(extensions.ExecutableSpec{
+				Command:     server.Command,
+				Args:        server.Args,
+				URL:         server.URL,
+				Env:         server.Env,
+				Headers:     server.Headers,
+				Permissions: permissions,
+			})
+			state, grantScope := executableExtensionState(grants, subjectID, fingerprint, server.Enabled, item.Official)
+			records = append(records, ExtensionInventoryRecord{
+				ID:                   subjectID,
+				Name:                 name,
+				Kind:                 extensions.KindMCP,
+				Provenance:           extensions.Provenance{Kind: extensions.KindMCP, Source: "plugin:" + item.ID, Scope: scope, Path: item.ManifestPath, PluginID: item.ID, Official: item.Official},
+				State:                state,
+				Executable:           true,
+				Fingerprint:          fingerprint,
+				GrantScope:           grantScope,
+				RequestedPermissions: permissions,
+			})
+		}
+		appendHookInventory := func(event string, index int, entry config.HookEntry) {
+			permissions := executablePermissions(item.RequestedPermissions, entry.Command != "", false, strings.EqualFold(strings.TrimSpace(entry.Type), "prompt"))
+			subjectID := extensionSubjectID("hook", "plugin", item.ID, event, strconv.Itoa(index))
+			fingerprint := hookFingerprint(event, index, entry, permissions)
+			state, grantScope := executableExtensionState(grants, subjectID, fingerprint, nil, item.Official)
+			records = append(records, ExtensionInventoryRecord{
+				ID:                   subjectID,
+				Name:                 event,
+				Kind:                 extensions.KindHook,
+				Provenance:           extensions.Provenance{Kind: extensions.KindHook, Source: "plugin:" + item.ID, Scope: scope, Path: item.ManifestPath, PluginID: item.ID, Official: item.Official},
+				State:                state,
+				Executable:           true,
+				Fingerprint:          fingerprint,
+				GrantScope:           grantScope,
+				RequestedPermissions: permissions,
+			})
+		}
+		for _, event := range sortedMapKeys(item.Hooks) {
+			for index, entry := range item.Hooks[event] {
+				appendHookInventory(event, index, entry)
+			}
+		}
+	}
+
+	for _, name := range sortedMapKeys(cfg.MCPServers) {
+		if runtime.IsPluginMCPServerName(name) {
+			continue
+		}
+		server := cfg.MCPServers[name]
+		permissions := executablePermissions(nil, server.Command != "", server.URL != "", false)
+		subjectID := extensionSubjectID("mcp", "config", name)
+		fingerprint, _ := extensions.Fingerprint(extensions.ExecutableSpec{
+			Command: server.Command, Args: server.Args, URL: server.URL, Env: server.Env, Headers: server.Headers, Permissions: permissions,
+		})
+		state, grantScope := executableExtensionState(grants, subjectID, fingerprint, server.Enabled, false)
+		records = append(records, ExtensionInventoryRecord{
+			ID: subjectID, Name: name, Kind: extensions.KindMCP,
+			Provenance: extensions.Provenance{Kind: extensions.KindMCP, Source: "wuu_config", Scope: "project", Path: s.rt.ConfigPath},
+			State:      state, Executable: true, Fingerprint: fingerprint, GrantScope: grantScope, RequestedPermissions: permissions,
+		})
+	}
+	for _, event := range sortedMapKeys(cfg.Hooks) {
+		for index, entry := range cfg.Hooks[event] {
+			permissions := executablePermissions(nil, entry.Command != "", false, strings.EqualFold(strings.TrimSpace(entry.Type), "prompt"))
+			subjectID := extensionSubjectID("hook", "config", event, strconv.Itoa(index))
+			fingerprint := hookFingerprint(event, index, entry, permissions)
+			state, grantScope := executableExtensionState(grants, subjectID, fingerprint, nil, false)
+			records = append(records, ExtensionInventoryRecord{
+				ID: subjectID, Name: event, Kind: extensions.KindHook,
+				Provenance: extensions.Provenance{Kind: extensions.KindHook, Source: "wuu_config", Scope: "project", Path: s.rt.ConfigPath},
+				State:      state, Executable: true, Fingerprint: fingerprint, GrantScope: grantScope, RequestedPermissions: permissions,
+			})
+		}
+	}
+
+	for _, module := range snapshot.NativeRendererModules() {
+		enabled := true
+		presentation := pluginPresentation(pluginpkg.Manifest{Interface: module.Interface})
+		records = append(records, ExtensionInventoryRecord{
+			ID: module.SubjectID, Name: module.Name, Description: module.Description, Kind: extensions.KindPlugin,
+			Icon:       extensionIconDescriptor(module.Icon),
+			Family:     presentation.Family,
+			Provenance: extensions.Provenance{Kind: extensions.KindPlugin, Source: "bundled", Scope: "user", PluginID: module.ID, Official: true},
+			State:      ExtensionStateActive, Executable: true, Fingerprint: module.Fingerprint,
+			PackageSource: "bundled", ApprovalState: ExtensionApprovalOfficial,
+			RuntimeState: ExtensionRuntimeActive, Enabled: &enabled,
+			Desktop: &ExtensionDesktopDescriptor{Entry: module.Entry},
+		})
+	}
+
+	// Renderer ordering and failure propagation consume the same committed graph
+	// as the runtime. Native non-renderer services already execute in the Go host.
+	if snapshot.PluginHost != nil {
+		visible := make(map[string]bool)
+		for _, record := range records {
+			if record.Kind == extensions.KindPlugin {
+				visible[record.Provenance.PluginID] = true
+			}
+		}
+		dependencies := snapshot.PluginHost.Dependencies()
+		dependencyIssues := snapshot.PluginHost.DependencyIssues()
+		for index := range records {
+			record := &records[index]
+			if record.Kind != extensions.KindPlugin {
+				continue
+			}
+			edges, admitted := dependencies[record.Provenance.PluginID]
+			if !admitted {
+				continue
+			}
+			// Catalog resolution cannot describe optional edges omitted by the committed mixed graph.
+			record.ActivationIssues = nil
+			for _, issue := range dependencyIssues[record.Provenance.PluginID] {
+				record.ActivationIssues = append(record.ActivationIssues, ExtensionPluginActivationIssue{
+					Kind: issue.Kind, RelatedPluginID: issue.Provider,
+				})
+			}
+			var resolved, required []string
+			for _, edge := range edges {
+				if !visible[edge.Provider] {
+					continue
+				}
+				resolved = append(resolved, edge.Provider)
+				if edge.Required {
+					required = append(required, edge.Provider)
+				}
+			}
+			record.ResolvedDependencies = cloneSortedStrings(resolved)
+			record.ResolvedRequiredDependencies = cloneSortedStrings(required)
+		}
+	}
+
+	sort.Slice(records, func(i, j int) bool {
+		if records[i].Kind != records[j].Kind {
+			return records[i].Kind < records[j].Kind
+		}
+		if records[i].Name != records[j].Name {
+			return records[i].Name < records[j].Name
+		}
+		return records[i].ID < records[j].ID
+	})
+	for i := range records {
+		if records[i].Kind == extensions.KindPlugin {
+			records[i].GraphGeneration = snapshot.GenerationID
+		}
+	}
+	return records
+}
+
+type pluginInterface struct {
+	Family           *ExtensionFamilyDescriptor `json:"family"`
+	DisplayName      string                     `json:"displayName"`
+	ShortDescription string                     `json:"shortDescription"`
+	LongDescription  string                     `json:"longDescription"`
+	DeveloperName    string                     `json:"developerName"`
+}
+
+// pluginPresentation resolves what people see for a plugin. An interface
+// block that does not parse falls back to the manifest fields rather than
+// hiding the plugin.
+func pluginPresentation(manifest pluginpkg.Manifest) pluginInterface {
+	var presentation pluginInterface
+	if len(manifest.Interface) > 0 {
+		_ = json.Unmarshal(manifest.Interface, &presentation)
+	}
+	first := func(values ...string) string {
+		for _, value := range values {
+			if value = strings.TrimSpace(value); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	if presentation.Family != nil {
+		family := presentation.Family
+		family.ID = strings.TrimSpace(family.ID)
+		family.Name = strings.TrimSpace(family.Name)
+		family.Description = strings.TrimSpace(family.Description)
+		if family.ID == "" || family.Name == "" {
+			presentation.Family = nil
+		}
+	}
+	return pluginInterface{
+		Family:           presentation.Family,
+		DisplayName:      first(presentation.DisplayName, manifest.Name, manifest.ID),
+		ShortDescription: first(presentation.ShortDescription, manifest.Description),
+		LongDescription:  first(presentation.LongDescription),
+		DeveloperName:    first(presentation.DeveloperName),
+	}
+}
+
+func extensionIconDescriptor(icon *pluginpkg.IconSpec) *ExtensionIconDescriptor {
+	if icon == nil {
+		return nil
+	}
+	return &ExtensionIconDescriptor{
+		Name: icon.Name, Path: icon.Path, Light: icon.Light, Dark: icon.Dark,
+	}
+}
+
+func (s *Server) currentExtensionConfig() config.Config {
+	if s == nil || s.rt == nil {
+		return config.Config{}
+	}
+	if cfg, _, err := s.rt.LoadEffectiveConfig(); err == nil {
+		return cfg
+	}
+	return config.Config{}
+}
+
+func pluginPackageInventoryState(settings extensions.Settings, item pluginpkg.Plugin, defaultEnabled bool) (ExtensionApprovalState, ExtensionState, extensions.GrantScope, bool) {
+	enabled := settings.IsEnabled(item.SubjectID, defaultEnabled)
+	if item.AuthorizedDev {
+		if !enabled {
+			return ExtensionApprovalGranted, ExtensionStateRejected, "", false
+		}
+		return ExtensionApprovalGranted, ExtensionStateActive, "", true
+	}
+	if item.Official {
+		if !enabled {
+			return ExtensionApprovalOfficial, ExtensionStateRejected, "", false
+		}
+		return ExtensionApprovalOfficial, ExtensionStateActive, "", true
+	}
+	if settings.IsRejected(item.SubjectID, item.Fingerprint) {
+		return ExtensionApprovalRejected, ExtensionStateRejected, "", enabled
+	}
+	if grant, ok := settings.FindGrant(item.SubjectID, item.Fingerprint); ok && inventoryPermissionSetContains(grant.Permissions, item.EffectivePermissions) {
+		if !enabled {
+			return ExtensionApprovalGranted, ExtensionStateRejected, grant.Scope, false
+		}
+		return ExtensionApprovalGranted, ExtensionStateGranted, grant.Scope, true
+	}
+	if settingsHasSubjectGrant(settings, item.SubjectID) {
+		return ExtensionApprovalChanged, ExtensionStateChanged, "", enabled
+	}
+	return ExtensionApprovalPending, ExtensionStatePending, "", enabled
+}
+
+func settingsHasSubjectGrant(settings extensions.Settings, subjectID string) bool {
+	for _, grant := range settings.Grants {
+		if grant.SubjectID == subjectID {
+			return true
+		}
+	}
+	return false
+}
+
+func inventoryPermissionSetContains(granted, required []string) bool {
+	set := make(map[string]struct{}, len(granted))
+	for _, permission := range granted {
+		set[strings.TrimSpace(permission)] = struct{}{}
+	}
+	for _, permission := range required {
+		if _, ok := set[strings.TrimSpace(permission)]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func executableExtensionState(grants extensions.Settings, subjectID, fingerprint string, enabled *bool, official bool) (ExtensionState, extensions.GrantScope) {
+	if enabled != nil && !*enabled {
+		return ExtensionStateRejected, ""
+	}
+	if official {
+		return ExtensionStateGranted, ""
+	}
+	if grant, ok := grants.FindGrant(subjectID, fingerprint); ok {
+		return ExtensionStateGranted, grant.Scope
+	}
+	if _, ok := grants.Grants[subjectID]; ok {
+		return ExtensionStateChanged, ""
+	}
+	return ExtensionStatePending, ""
+}
+
+func hookFingerprint(event string, index int, entry config.HookEntry, permissions []string) string {
+	fingerprint, _ := extensions.Fingerprint(extensions.ExecutableSpec{
+		Command:     entry.Command,
+		Args:        []string{event, strconv.Itoa(index), entry.Matcher, entry.Type, entry.Prompt, entry.Model, strconv.Itoa(entry.Timeout)},
+		Permissions: permissions,
+	})
+	return fingerprint
+}
+
+func executablePermissions(declared []string, process, network, model bool) []string {
+	permissions := append([]string(nil), declared...)
+	if process {
+		permissions = append(permissions, "process.spawn")
+	}
+	if network {
+		permissions = append(permissions, "network.connect")
+	}
+	if model {
+		permissions = append(permissions, "model.invoke")
+	}
+	return cloneSortedStrings(permissions)
+}
+
+func normalizedExtensionScope(source, path, projectRoot string) string {
+	if strings.EqualFold(strings.TrimSpace(source), "project") {
+		return "project"
+	}
+	if strings.EqualFold(strings.TrimSpace(source), "bundled") {
+		return "bundled"
+	}
+	if path != "" && projectRoot != "" {
+		if rel, err := filepath.Rel(projectRoot, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "project"
+		}
+	}
+	return "user"
+}
+
+func pluginManifestSource(path string) string {
+	slashPath := filepath.ToSlash(path)
+	switch {
+	case strings.Contains(slashPath, "/.codex-plugin/"):
+		return "codex"
+	case strings.Contains(slashPath, "/.claude-plugin/"):
+		return "claude"
+	default:
+		return "wuu"
+	}
+}
+
+func extensionSubjectID(parts ...string) string {
+	cleaned := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			cleaned = append(cleaned, part)
+		}
+	}
+	return strings.Join(cleaned, ":")
+}
+
+func cloneSortedStrings(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func cloneStringMap(values map[string]string) map[string]string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(values))
+	for key, value := range values {
+		out[key] = value
+	}
+	return out
+}
+
+func sortedMapKeys[V any](values map[string]V) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func extensionSurfaceSummary(active bool, count int) ExtensionSurfaceTrustSummary {
+	return ExtensionSurfaceTrustSummary{
+		Allowed:      true,
+		Active:       active,
+		Count:        count,
+		KnownTools:   count,
+		VisibleTools: count,
+	}
+}
+
+func hookDispatcherHasAny(dispatcher *hooks.Dispatcher) bool {
+	if dispatcher == nil {
+		return false
+	}
+	for _, event := range hooks.AllEvents() {
+		if dispatcher.HasHooks(event) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) handleExtensionPackageUpdate(req Request) error {
+	var params ExtensionPackageUpdateParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	var fields map[string]json.RawMessage
+	if err := decodeParams(req.Params, &fields); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	_, batch := fields["updates"]
+	updates := params.Updates
+	if batch {
+		for _, field := range []string{"id", "fingerprint", "action"} {
+			if _, present := fields[field]; present {
+				return s.writeResponse(req.ID, nil, errors.New("updates cannot be combined with single-package fields"))
+			}
+		}
+		if len(updates) == 0 {
+			return s.writeResponse(req.ID, nil, errors.New("updates must be a non-empty array"))
+		}
+		seen := make(map[string]bool, len(updates))
+		for index := range updates {
+			update := &updates[index]
+			update.ID = strings.TrimSpace(update.ID)
+			if update.ID == "" {
+				return s.writeResponse(req.ID, nil, errors.New("each update requires an extension package id"))
+			}
+			if seen[update.ID] {
+				return s.writeResponse(req.ID, nil, fmt.Errorf("duplicate extension package %q in updates", update.ID))
+			}
+			seen[update.ID] = true
+			if update.Action != ExtensionPackageEnable && update.Action != ExtensionPackageDisable {
+				return s.writeResponse(req.ID, nil, errors.New("updates only supports enable and disable actions"))
+			}
+		}
+	} else {
+		updates = []ExtensionPackageEnablementUpdate{{ID: strings.TrimSpace(params.ID), Fingerprint: params.Fingerprint, Action: params.Action}}
+	}
+	if s.rt == nil {
+		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
+	}
+	releaseMutation, err := s.beginPluginGenerationMutation("change", pluginGenerationMutationLive)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseMutation()
+	services, releaseServices, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseServices()
+	// Package management targets the installed catalog; captured services still
+	// own configuration writes and never replace retained execution inventory.
+	snapshot := s.rt.ExtensionSnapshot()
+	selected := make([]pluginpkg.Plugin, len(updates))
+	for index, update := range updates {
+		found := false
+		for _, item := range snapshot.Plugins {
+			if item.SubjectID == update.ID {
+				selected[index], found = item, true
+				break
+			}
+		}
+		if !found {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("extension package %q was not found", update.ID))
+		}
+		item := selected[index]
+		if update.Action == ExtensionPackagePromoteUpdate || update.Action == ExtensionPackageRejectUpdate {
+			return s.handlePendingPluginUpdate(req, params, item, services, releaseMutation)
+		}
+		providedFingerprint := strings.TrimSpace(update.Fingerprint)
+		if providedFingerprint != "" && providedFingerprint != item.Fingerprint {
+			return s.writeResponse(req.ID, nil, errors.New("extension package changed; refresh inventory before updating policy"))
+		}
+		if (update.Action == ExtensionPackageGrant || update.Action == ExtensionPackageReject) && providedFingerprint == "" {
+			return s.writeResponse(req.ID, nil, errors.New("fingerprint is required for grant and reject actions"))
+		}
+		if item.Official && (update.Action == ExtensionPackageGrant || update.Action == ExtensionPackageReject) {
+			return s.writeResponse(req.ID, nil, errors.New("official bundled packages cannot be granted or rejected"))
+		}
+	}
+
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	source, err := editableConfigSource(view)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	approvedAt := time.Now().UTC()
+	next, preparedSettings, err := config.UpdateExtensionSettingsSource(source, func(settings *extensions.Settings) error {
+		for index, update := range updates {
+			if err := applyExtensionPackageAction(settings, update.Action, selected[index], approvedAt); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	cfg := view.Config
+	cfg.Extensions = &preparedSettings
+	var requiredIDs []string
+	for index, update := range updates {
+		if update.Action == ExtensionPackageEnable {
+			requiredIDs = append(requiredIDs, selected[index].ID)
+		}
+	}
+	candidate, err := s.rt.PreflightExtensionPolicy(cfg, requiredIDs...)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	var committedView config.SourceView
+	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
+		var updateErr error
+		committedView, updateErr = services.Config.CompareExchange(context.Background(), view.Revision, next)
+		if updateErr != nil {
+			return fmt.Errorf("persist extension policy: %w", updateErr)
+		}
+		return nil
+	})
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return s.writeResponse(req.ID, nil, activationErr)
+	}
+	activationErr = errors.Join(activationErr, configActivationError(committedView), s.recordPublishedConfig(cfg))
+	s.scheduleCurrentPluginTurnLifecycleReplay()
+	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, releaseMutation)
+}
+
+func applyExtensionPackageAction(settings *extensions.Settings, action ExtensionPackageAction, selected pluginpkg.Plugin, approvedAt time.Time) error {
+	if settings == nil {
+		return errors.New("extension settings are required")
+	}
+	switch action {
+	case ExtensionPackageGrant:
+		if err := settings.RecordGrant(extensions.Grant{
+			SubjectID:   selected.SubjectID,
+			Fingerprint: selected.Fingerprint,
+			Scope:       extensions.GrantScopeProject,
+			Permissions: append([]string(nil), selected.EffectivePermissions...),
+			ApprovedAt:  approvedAt,
+		}); err != nil {
+			return err
+		}
+		// Approve and enable are the same user gesture in the catalog. Record
+		// the explicit enable here so default-disabled packages do not require a
+		// second "enable" click after approval.
+		settings.SetEnabled(selected.SubjectID, true)
+		return nil
+	case ExtensionPackageReject:
+		return settings.RecordRejection(selected.SubjectID, selected.Fingerprint)
+	case ExtensionPackageRevoke:
+		settings.Revoke(selected.SubjectID)
+	case ExtensionPackageEnable:
+		settings.SetEnabled(selected.SubjectID, true)
+	case ExtensionPackageDisable:
+		settings.SetEnabled(selected.SubjectID, false)
+	default:
+		return fmt.Errorf("unsupported extension package action %q", action)
+	}
+	return nil
+}
+
+func (s *Server) handleExtensionCatalogRefresh(req Request) error {
+	if s.rt == nil {
+		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
+	}
+	releaseMutation, err := s.beginPluginGenerationMutation("refresh", pluginGenerationMutationLive)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseMutation()
+	snapshot, err := s.rt.LoadEffectiveConfigSnapshot()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	activationErr := s.rt.PublishExtensionRefresh(snapshot.Config)
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return s.writeResponse(req.ID, nil, activationErr)
+	}
+	if activationErr == nil {
+		activationErr = s.recordCatalogPublishedConfig(snapshot.Source)
+	}
+	inventory, skills := s.currentExtensionState()
+	return s.writePluginGenerationResponse(req, ExtensionCatalogRefreshResult{
+		ExtensionInventory: inventory,
+		Skills:             skills,
+	}, activationErr, releaseMutation)
+}
+
+func (s *Server) handleConfigAdvancedUpdate(req Request) error {
+	var params ConfigAdvancedUpdateParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if s.hasRunningThread() {
+		return s.writeResponse(req.ID, nil, errors.New("cannot change advanced settings while a turn is running"))
+	}
+	if s.rt == nil {
+		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
+	}
+	modelAliases := modelAliasConfigUpdate(params.ModelAliases)
+	verificationModel := modelRoleConfigUpdate(params.VerificationModel)
+	if modelAliases != nil || verificationModel != nil {
+		candidate, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if modelAliases != nil {
+			candidate.Agent.ModelAliases = make(map[string]config.ModelRoleConfig, len(modelAliases))
+			for name, alias := range modelAliases {
+				if alias != nil {
+					candidate.Agent.ModelAliases[name] = *alias
+				}
+			}
+		}
+		if verificationModel != nil {
+			candidate.Agent.ModelRoles.Verification = *verificationModel
+		}
+		if err := candidate.Validate(); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	view, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		return config.UpdateAdvancedRuntimeSource(source, s.rt.ProviderName, config.AdvancedRuntimeUpdate{
+			MaxSteps:                params.MaxSteps,
+			MaxContextTokens:        params.MaxContextTokens,
+			Temperature:             params.Temperature,
+			CompactThresholdPct:     params.CompactThresholdPct,
+			CompactKeepRecentTokens: params.CompactKeepRecentTokens,
+			DisableAutoCompact:      params.DisableAutoCompact,
+			ProviderContextWindow:   params.ProviderContextWindow,
+			ModelAliases:            modelAliases,
+			VerificationModel:       verificationModel,
+		})
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+
+	cfg := view.Config
+	providerCfg, resolvedName, err := cfg.ResolveProvider(s.rt.ProviderName)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
+	ruleProviderName, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, s.rt.Model)
+	apiModel := modelcatalog.APIModel(ruleProviderCfg, s.rt.Model)
+	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
+		ProviderName:   resolvedName,
+		ProviderConfig: providerCfg,
+		Model:          s.rt.Model,
+		Effort:         s.currentEffort(),
+		Variant:        s.currentVariant(),
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.rt.ModelRoles = roleSelections
+	modelBudget := runtime.ResolveModelBudget(s.rt.Model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
+	s.rt.ModelBudget = modelBudget
+	workerBudget := runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
+	s.rt.WorkerModelBudget = workerBudget
+	if s.rt.StreamRunner != nil {
+		s.rt.StreamRunner.MaxSteps = cfg.Agent.MaxSteps
+		s.rt.StreamRunner.Temperature = cfg.Agent.Temperature
+		s.rt.StreamRunner.CompactThresholdPct = cfg.Agent.CompactThresholdPct
+		s.rt.StreamRunner.CompactKeepRecentTokens = cfg.Agent.CompactKeepRecentTokens
+		s.rt.StreamRunner.DisableAutoCompact = cfg.Agent.DisableAutoCompact
+		s.rt.StreamRunner.ContextWindowOverride = modelBudget.ContextWindowTokens
+		s.rt.StreamRunner.MaxInputTokens = modelBudget.InputLimitTokens
+		s.rt.StreamRunner.OutputReserveTokens = modelBudget.OutputReserveTokens
+		s.rt.StreamRunner.CompactThresholdTokens = modelBudget.CompactThresholdTokens
+	}
+	s.updateIdleThreadAdvancedRuntime(cfg)
+	if s.rt.Toolkit != nil {
+		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
+	}
+	return s.writeResponse(req.ID, ConfigAdvancedUpdateResult{
+		AdvancedSettings: s.currentAdvancedSettingsSummary(),
+		ModelAliases:     modelAliasSummaries(cfg.Agent.ModelAliases),
+		ModelRoles:       s.currentModelRoleSummaries(),
+		Providers:        s.providerSummaries(),
+	}, nil)
+}
+
+func modelAliasConfigUpdate(input *map[string]ModelAliasSummary) map[string]*config.ModelRoleConfig {
+	if input == nil {
+		return nil
+	}
+	out := make(map[string]*config.ModelRoleConfig, len(*input))
+	for name, alias := range *input {
+		selection := alias
+		out[name] = &config.ModelRoleConfig{
+			Provider: selection.Provider,
+			Model:    selection.Model,
+			Effort:   selection.Effort,
+			Variant:  selection.Variant,
+		}
+	}
+	return out
+}
+
+func modelRoleConfigUpdate(input *ModelAliasSummary) *config.ModelRoleConfig {
+	if input == nil {
+		return nil
+	}
+	return &config.ModelRoleConfig{
+		Provider: strings.TrimSpace(input.Provider),
+		Model:    strings.TrimSpace(input.Model),
+		Effort:   strings.TrimSpace(input.Effort),
+		Variant:  strings.TrimSpace(input.Variant),
+	}
+}
+
+func modelAliasSummaries(input map[string]config.ModelRoleConfig) map[string]ModelAliasSummary {
+	out := make(map[string]ModelAliasSummary, len(input))
+	for name, alias := range input {
+		out[strings.TrimSpace(name)] = ModelAliasSummary{
+			Provider: alias.Provider,
+			Model:    alias.Model,
+			Effort:   alias.Effort,
+			Variant:  alias.Variant,
+		}
+	}
+	return out
+}
+
+func (s *Server) handleConfigGeneralUpdate(req Request) error {
+	var params ConfigGeneralUpdateParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// Attribution changes are persisted now and applied to active threads only
+	// when their deferred runtime reset is safe. MCP and PTC changes require idle turns.
+	if params.ExecutionEnvironments != nil && s.hasRunningThread() {
+		return s.writeResponse(req.ID, nil, errors.New("cannot change execution environments while a turn is running"))
+	}
+	if (len(params.MCPEnabledToggles) > 0 || params.PTC != nil) && s.hasRunningThread() {
+		return s.writeResponse(req.ID, nil, errors.New("cannot change MCP or PTC settings while a turn is running"))
+	}
+	if s.rt == nil {
+		return s.writeResponse(req.ID, nil, errors.New("runtime is not initialized"))
+	}
+	view, err := s.updateConfigSource(context.Background(), func(source []byte) ([]byte, error) {
+		return config.UpdateGeneralSettingsSource(source, config.GeneralSettingsUpdate{
+			PTC:                   params.PTC,
+			ExecutionEnvironments: params.ExecutionEnvironments,
+			GitAttributionEnabled: params.GitAttributionEnabled,
+			MCPEnabledToggles:     params.MCPEnabledToggles,
+		})
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	cfg := view.Config
+	systemPrompt, err := s.rt.ApplyGeneralConfig(cfg, os.Getenv("HOME"))
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.resetThreadRuntimesForGeneralSettings(systemPrompt)
+	return s.writeResponse(req.ID, ConfigGeneralUpdateResult{
+		GeneralSettings: s.currentGeneralSettingsSummary(),
+	}, nil)
+}
+
+func (s *Server) handleConfigModelUpdate(req Request) error {
+	return s.handleConfigModelUpdateWithServices(req, nil)
+}
+
+func (s *Server) handleConfigModelUpdateWithServices(req Request, services *runtime.StateServices) error {
+	var params ConfigModelUpdateParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if params.ApplyAt != "" && params.ApplyAt != "next_step" {
+		return s.writeResponse(req.ID, nil, errors.New("unsupported model selection boundary"))
+	}
+	if params.ApplyAt == "next_step" && (params.ThreadID == "" || params.PermissionMode != nil || params.ApproveForMe != nil || params.ResetModel || params.ModelOptions != nil || params.BaseURL != nil || params.APIKey != nil || params.AuthToken != nil || params.Type != nil || params.CreateProvider || params.RemoveModel != "" || params.AddModel != "" || params.ChatGPTAccountID != nil || params.ReuseCodexCredentials != nil) {
+		return s.writeResponse(req.ID, nil, errors.New("next-step selection accepts only a conversation model, variant, effort, and speed; permissions and connections remain turn-bound"))
+	}
+	providerName := strings.TrimSpace(params.Provider)
+	model := strings.TrimSpace(params.Model)
+	threadID := strings.TrimSpace(params.ThreadID)
+	keepSelection := params.KeepSelection
+	if keepSelection && (threadID != "" || params.Effort != nil || params.Variant != nil || params.PermissionMode != nil || params.ApproveForMe != nil || params.Speed != nil) {
+		return s.writeResponse(req.ID, nil, errors.New("keep_selection saves a provider without changing a selection"))
+	}
+	addedModel := strings.TrimSpace(params.AddModel)
+	if addedModel != "" && (params.CreateProvider || threadID != "" || addedModel == strings.TrimSpace(params.RemoveModel)) {
+		return s.writeResponse(req.ID, nil, errors.New("model choices change on an existing provider, one direction per model"))
+	}
+	// A conversation selection must never persist workspace defaults.
+	if threadID != "" && params.BaseURL == nil && params.APIKey == nil && params.AuthToken == nil && params.Type == nil && !params.CreateProvider && params.RemoveModel == "" && addedModel == "" && params.ReuseCodexCredentials == nil && params.ChatGPTAccountID == nil {
+		return s.handleThreadModelSelection(req, params)
+	}
+	if threadID != "" && (providerName != "" || model != "" || params.Variant != nil || params.Effort != nil || params.PermissionMode != nil || params.ApproveForMe != nil) {
+		return s.writeResponse(req.ID, nil, errors.New("save provider configuration separately from conversation selection"))
+	}
+	if params.Speed != nil || params.ResetModel || params.ModelOptions != nil {
+		return s.writeResponse(req.ID, nil, errors.New("engine selection and speed are conversation settings; provide thread_id without provider configuration changes"))
+	}
+	explicitSelection := !keepSelection && (providerName != "" || model != "" ||
+		params.Effort != nil || params.Variant != nil || params.PermissionMode != nil)
+	if model == "" && (params.CreateProvider || (threadID == "" && !keepSelection)) {
+		return s.writeResponse(req.ID, nil, errors.New("model is required"))
+	}
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
+	if err := admit(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if providerName == "" {
+		providerName = s.rt.ProviderName
+	}
+	if services == nil {
+		var err error
+		var release func()
+		services, release, err = s.modelServices()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer release()
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	var providerCfg config.ProviderConfig
+	var resolvedName string
+	// providerTypeValue is populated below when creatingProvider is true;
+	// it is hoisted out of the if-block so the later CreateProviderRuntime
+	// call can pass it as the new optional provider-type argument.
+	providerTypeValue := ""
+	var createBaseURL *string
+	creatingProvider := params.CreateProvider
+	autoDiscoveredGrokBuild := false
+	if !creatingProvider {
+		if _, discovered := selectedGrokBuildProvider(cfg, providerName, services.Credentials); discovered {
+			creatingProvider = true
+			autoDiscoveredGrokBuild = true
+		}
+	}
+	if creatingProvider {
+		if providerName == "" {
+			return s.writeResponse(req.ID, nil, errors.New("provider is required"))
+		}
+		if _, _, err := cfg.ResolveProvider(providerName); err == nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("provider %q already exists", providerName))
+		}
+		baseURL := strings.TrimSpace(stringValue(params.BaseURL))
+		apiKey := strings.TrimSpace(stringValue(params.APIKey))
+		authToken := strings.TrimSpace(stringValue(params.AuthToken))
+		// Resolve the requested provider type. Empty / missing falls back to
+		// "openai-compatible" (preserves the historical default). Unknown
+		// values are rejected so the UI cannot accidentally create a
+		// provider that the factory cannot service.
+		providerTypeValue = "openai-compatible"
+		if autoDiscoveredGrokBuild {
+			providerTypeValue = "grok-build"
+		} else if params.Type != nil {
+			requested := strings.ToLower(strings.TrimSpace(*params.Type))
+			switch requested {
+			case "", "openai", "openai-compatible":
+				if requested != "" {
+					providerTypeValue = requested
+				}
+			case "chatgpt", "openai-codex", "anthropic", "claude", "anthropic-official":
+				providerTypeValue = requested
+			case "xai-subscription", "xai-oauth", "grok-subscription", "supergrok":
+				providerTypeValue = requested
+			case "grok-build", "xai-grok-build", "grok-cli":
+				providerTypeValue = requested
+			default:
+				return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported provider type %q", requested))
+			}
+		}
+		if providerTypeValue == "chatgpt" {
+			if params.BaseURL != nil || params.APIKey != nil || params.AuthToken != nil || params.ReuseCodexCredentials != nil {
+				return s.writeResponse(req.ID, nil, errors.New("ChatGPT connections use only a signed-in account"))
+			}
+			baseURL = chatgpt.DefaultBaseURL
+		}
+		if isCodexProviderType(providerTypeValue) {
+			if params.ReuseCodexCredentials == nil || !*params.ReuseCodexCredentials {
+				return s.writeResponse(req.ID, nil, errors.New("creating an openai-codex provider requires reuse_codex_credentials"))
+			}
+			if params.BaseURL != nil || apiKey != "" || authToken != "" {
+				return s.writeResponse(req.ID, nil, errors.New("connection settings are managed by OpenAI OAuth for this provider"))
+			}
+			baseURL = codex.DefaultBaseURL
+		}
+		if baseURL == "" && config.IsXAISubscriptionProvider(providerTypeValue) {
+			baseURL = xaisub.DefaultBaseURL
+		}
+		if baseURL == "" && config.IsGrokBuildProvider(providerTypeValue) {
+			baseURL = grokbuildspec.DefaultBaseURL
+		}
+		if baseURL == "" {
+			return s.writeResponse(req.ID, nil, errors.New("base_url is required"))
+		}
+		if apiKey == "" && authToken == "" && providerTypeValue != "chatgpt" && !isCodexProviderType(providerTypeValue) && !config.IsXAISubscriptionProvider(providerTypeValue) && !config.IsGrokBuildProvider(providerTypeValue) {
+			return s.writeResponse(req.ID, nil, errors.New("api_key or auth_token is required"))
+		}
+		providerCfg = config.ProviderConfig{
+			Type:      providerTypeValue,
+			BaseURL:   baseURL,
+			APIKey:    apiKey,
+			AuthToken: authToken,
+			Model:     model,
+		}
+		if config.IsXAISubscriptionProvider(providerTypeValue) {
+			providerCfg.WireAPI = "responses"
+			if strings.TrimSpace(providerCfg.Model) == "" {
+				providerCfg.Model = xaisub.DefaultModel
+				model = providerCfg.Model
+			}
+		}
+		if config.IsGrokBuildProvider(providerTypeValue) {
+			providerCfg = config.ApplyGrokBuildProviderDefaults(providerCfg)
+			model = providerCfg.Model
+		}
+		createBaseURL = &baseURL
+		resolvedName = providerName
+	} else {
+		providerCfg, resolvedName, err = cfg.ResolveProvider(providerName)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
+	}
+	if model == "" {
+		// Targeted request without an explicit model: the workspace side
+		// keeps its current selection; the thread layers its own below.
+		if resolvedName == s.rt.ProviderName {
+			model = strings.TrimSpace(s.rt.Model)
+		}
+		if model == "" {
+			model = strings.TrimSpace(providerCfg.Model)
+		}
+		if model == "" {
+			return s.writeResponse(req.ID, nil, errors.New("model is required"))
+		}
+	}
+	// The workspace model is the default provider's model.
+	if keepSelection && resolvedName == s.rt.ProviderName && model != strings.TrimSpace(s.rt.Model) {
+		return s.writeResponse(req.ID, nil, errors.New("keep_selection cannot change the workspace model"))
+	}
+	previousProviderCfg := providerCfg
+	previousModel := strings.TrimSpace(providerCfg.Model)
+	providerCfg.Model = model
+	if removed := strings.TrimSpace(params.RemoveModel); removed != "" {
+		if creatingProvider || threadID != "" || removed == model {
+			return s.writeResponse(req.ID, nil, errors.New("model removal requires an existing provider and a different workspace model"))
+		}
+		providerCfg.Models = cloneProviderModelConfigs(providerCfg.Models)
+		if providerCfg.Models == nil {
+			providerCfg.Models = make(map[string]config.ProviderModelConfig)
+		}
+		entry := providerCfg.Models[removed]
+		entry.Disabled = true
+		providerCfg.Models[removed] = entry
+	}
+	if addedModel != "" {
+		providerCfg.Models = cloneProviderModelConfigs(providerCfg.Models)
+		if providerCfg.Models == nil {
+			providerCfg.Models = make(map[string]config.ProviderModelConfig)
+		}
+		entry := providerCfg.Models[addedModel]
+		entry.Disabled = false
+		providerCfg.Models[addedModel] = entry
+	}
+	connectionChanged := creatingProvider
+	if params.ChatGPTAccountID != nil {
+		if providerCfg.Type != "chatgpt" {
+			return s.writeResponse(req.ID, nil, errors.New("chatgpt_account_id is only valid for ChatGPT connections"))
+		}
+		if providerCfg.ChatGPTAccountID != strings.TrimSpace(*params.ChatGPTAccountID) {
+			connectionChanged = true
+		}
+		providerCfg.ChatGPTAccountID = strings.TrimSpace(*params.ChatGPTAccountID)
+	}
+	if providerCfg.Type == "chatgpt" {
+		if params.AddModel != "" || params.RemoveModel != "" {
+			return s.writeResponse(req.ID, nil, errors.New("ChatGPT model choices are managed by the selected account"))
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := s.validateChatGPTModel(ctx, providerCfg, services.ChatGPT)
+		cancel()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	connectionLocked := isCodexProviderType(providerCfg.Type) || providerCfg.Type == "chatgpt"
+	if connectionLocked && (params.BaseURL != nil || strings.TrimSpace(stringValue(params.APIKey)) != "" || strings.TrimSpace(stringValue(params.AuthToken)) != "") {
+		return s.writeResponse(req.ID, nil, errors.New("connection settings are managed by OpenAI OAuth for this provider"))
+	}
+	if params.ReuseCodexCredentials != nil {
+		if !isCodexProviderType(providerCfg.Type) {
+			return s.writeResponse(req.ID, nil, errors.New("reuse_codex_credentials is only valid for openai-codex providers"))
+		}
+		if *params.ReuseCodexCredentials {
+			if _, err := codex.OAuthStatus(context.Background(), services.Credentials, true); err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+		}
+		if providerCfg.ReuseCodexCredentials != *params.ReuseCodexCredentials {
+			connectionChanged = true
+		}
+		providerCfg.ReuseCodexCredentials = *params.ReuseCodexCredentials
+	}
+	if params.BaseURL != nil {
+		baseURL := strings.TrimSpace(*params.BaseURL)
+		if baseURL == "" {
+			return s.writeResponse(req.ID, nil, errors.New("base_url is required"))
+		}
+		if baseURL != strings.TrimSpace(providerCfg.BaseURL) {
+			connectionChanged = true
+		}
+		providerCfg.BaseURL = baseURL
+	}
+	var apiKeyForConfig, authTokenForConfig *string
+	authKeyForStore := ""
+	authTokenForStore := ""
+	if params.APIKey != nil {
+		apiKey := strings.TrimSpace(*params.APIKey)
+		if apiKey != "" {
+			connectionChanged = true
+			authKeyForStore = apiKey
+			providerCfg.APIKey = apiKey
+			providerCfg.APIKeyEnv = ""
+			providerCfg.AuthToken = ""
+			providerCfg.AuthTokenEnv = ""
+			empty := ""
+			apiKeyForConfig = &empty
+			authTokenForConfig = &empty
+		}
+	}
+	if params.AuthToken != nil {
+		authToken := strings.TrimSpace(*params.AuthToken)
+		if authToken != "" {
+			connectionChanged = true
+			authTokenForStore = authToken
+			providerCfg.AuthToken = authToken
+			providerCfg.AuthTokenEnv = ""
+			providerCfg.APIKey = ""
+			providerCfg.APIKeyEnv = ""
+			empty := ""
+			authTokenForConfig = &empty
+			apiKeyForConfig = &empty
+		}
+	}
+	variant := s.currentVariant()
+	legacyEffort := s.currentEffort()
+	selectionTouched := params.Variant != nil || params.Effort != nil
+	if params.Variant != nil {
+		variant = strings.TrimSpace(*params.Variant)
+		if variant == "" && params.Effort == nil {
+			legacyEffort = ""
+		}
+	}
+	if params.Effort != nil {
+		legacyEffort = strings.TrimSpace(*params.Effort)
+		if params.Variant == nil {
+			variant = legacyEffort
+		}
+	}
+	ruleProviderName, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
+	_, previousRuleProviderCfg := modelcatalog.EnrichProvider(resolvedName, previousProviderCfg, previousModel)
+	providerClientChanged := providerClientConfigChanged(previousRuleProviderCfg, ruleProviderCfg)
+	// Model choice takes precedence over a stale effort inherited by a caller.
+	if resolvedName != s.rt.ProviderName || model != previousModel {
+		if variant == "" {
+			variant = legacyEffort
+		}
+		if variant != "" {
+			if _, ok := modelvariant.OptionsForProvider(ruleProviderName, ruleProviderCfg, model, variant); !ok {
+				variant, legacyEffort = "", ""
+				selectionTouched = true
+			}
+		}
+	}
+	if params.Variant != nil && variant != "" {
+		if _, ok := modelvariant.OptionsForProvider(ruleProviderName, ruleProviderCfg, model, variant); !ok {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("model %s does not support variant %s", model, variant))
+		}
+	}
+	if params.Effort != nil && params.Variant == nil && variant != "" && len(modelvariant.SummariesForProvider(ruleProviderName, ruleProviderCfg, model)) > 0 {
+		if _, ok := modelvariant.OptionsForProvider(ruleProviderName, ruleProviderCfg, model, variant); !ok {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("model %s does not support effort %s", model, variant))
+		}
+	}
+	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, model, variant, legacyEffort)
+	effort := selection.DisplayEffort
+	effortForConfig, variantForConfig := selectionConfigPointers(selection, selectionTouched, s.currentVariant())
+	if !explicitSelection {
+		// Connection-only update: leave the persisted
+		// workspace selection untouched.
+		effortForConfig, variantForConfig = nil, nil
+	}
+
+	if resolvedName != s.rt.ProviderName || connectionChanged || providerClientChanged {
+		err = s.validateModelConfigurationWithServices(services, ruleProviderCfg, resolvedName)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	if authKeyForStore != "" {
+		store := authstorage.NewBound(context.Background(), services.Credentials)
+		if err := store.Update(resolvedName, func(credentials *authstorage.Credentials) {
+			credentials.Type = "api_key"
+			credentials.APIKey = authKeyForStore
+			credentials.AuthToken = ""
+			credentials.Source = authstorage.SourceSaved
+		}); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	if authTokenForStore != "" {
+		store := authstorage.NewBound(context.Background(), services.Credentials)
+		if err := store.Update(resolvedName, func(credentials *authstorage.Credentials) {
+			credentials.Type = "auth_token"
+			credentials.AuthToken = authTokenForStore
+			credentials.APIKey = ""
+			credentials.Source = authstorage.SourceSaved
+		}); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	change := config.ProviderChange{
+		Create:                creatingProvider,
+		Type:                  providerTypeValue,
+		Model:                 model,
+		BaseURL:               params.BaseURL,
+		APIKey:                apiKeyForConfig,
+		AuthToken:             authTokenForConfig,
+		ReuseCodexCredentials: params.ReuseCodexCredentials,
+		ChatGPTAccountID:      params.ChatGPTAccountID,
+		Select:                !keepSelection,
+		Effort:                effortForConfig,
+		Variant:               variantForConfig,
+		PermissionMode:        params.PermissionMode,
+	}
+	if providerCfg.Type == "chatgpt" {
+		s.chatGPTMu.Lock()
+		catalog := make([]config.ChatGPTModelConfig, 0, len(s.chatGPTModelCache[providerCfg.ChatGPTAccountID]))
+		for _, model := range s.chatGPTModelCache[providerCfg.ChatGPTAccountID] {
+			catalog = append(catalog, config.ChatGPTModelConfig{ID: model.Slug, DisplayName: model.DisplayName, AccountDescriptor: model.Raw})
+		}
+		s.chatGPTMu.Unlock()
+		change.ChatGPTModels = &catalog
+	}
+	if creatingProvider && createBaseURL != nil {
+		change.BaseURL = createBaseURL
+	}
+	if removed := strings.TrimSpace(params.RemoveModel); removed != "" {
+		change.RemovedModels = []string{removed}
+	}
+	if addedModel != "" {
+		change.AddedModels = []string{addedModel}
+	}
+	if _, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) { return config.UpdateProviderSource(source, resolvedName, change) }); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if keepSelection && resolvedName != s.rt.ProviderName {
+		// The default runtime keeps its client; roles and idle conversations
+		// that use the edited provider pick up the saved connection.
+		if err := s.refreshRuntimeAfterProviderEdit(services, connectionChanged); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
+	}
+	view, err = services.Config.Read(context.Background())
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	cfg = view.Config
+	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
+		ProviderName:   resolvedName,
+		ProviderConfig: providerCfg,
+		Model:          model,
+		Effort:         selection.LegacyEffort,
+		Variant:        selection.Variant,
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if params.PermissionMode != nil {
+		permissions := config.ResolvedPermissions{Mode: config.NormalizePermissionMode(*params.PermissionMode)}
+		s.rt.Permissions = permissions
+		if s.rt.Toolkit != nil {
+			runtime.ConfigureToolkitPermissions(s.rt.Toolkit, s.rt.Permissions)
+		}
+	}
+	if err := s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, explicitSelection); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+
+	if keepSelection {
+		return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
+	}
+	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
+	return s.writeResponse(req.ID, ConfigModelUpdateResult{
+		ModelAliases:     s.currentModelAliasSummaries(),
+		Provider:         resolvedName,
+		Model:            model,
+		Effort:           effort,
+		Variant:          selection.Variant,
+		MaxParallel:      s.rt.MaxParallel(),
+		Permissions:      s.currentPermissionSummary(),
+		ExtensionTrust:   s.currentExtensionTrustSummary(),
+		ModelProfile:     modelProfile,
+		ToolSurface:      toolSurface,
+		ModelRoles:       s.currentModelRoleSummaries(),
+		Providers:        s.providerSummaries(),
+		AdvancedSettings: s.currentAdvancedSettingsSummary(),
+	}, nil)
+}
+
+// refreshRuntimeAfterProviderEdit re-resolves model roles for the unchanged
+// workspace selection after another provider's saved configuration changed.
+func (s *Server) refreshRuntimeAfterProviderEdit(services *runtime.StateServices, connectionChanged bool) error {
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
+	if err != nil {
+		return err
+	}
+	providerCfg, resolvedName, err := cfg.ResolveProvider(s.rt.ProviderName)
+	if err != nil {
+		return err
+	}
+	model := strings.TrimSpace(s.rt.Model)
+	ruleProviderName, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
+	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, model, s.currentVariant(), s.currentEffort())
+	roleSelections, err := modelroles.Resolve(cfg, modelroles.ResolveOptions{
+		ProviderName:   resolvedName,
+		ProviderConfig: providerCfg,
+		Model:          model,
+		Effort:         selection.LegacyEffort,
+		Variant:        selection.Variant,
+	})
+	if err != nil {
+		return err
+	}
+	return s.applyModelSelectionToRuntime(cfg, resolvedName, model, ruleProviderName, ruleProviderCfg, selection, roleSelections, connectionChanged, false)
+}
+
+// applyModelSelectionToRuntime swaps the workspace runtime onto a resolved
+// provider/model/variant selection in place. It is shared by the interactive
+// config/model/update handler and the config-file watcher so an external edit
+// to the effective config can be hot-applied without restarting the app-server.
+func (s *Server) applyModelSelectionToRuntime(
+	cfg config.Config,
+	resolvedName string,
+	model string,
+	ruleProviderName string,
+	ruleProviderCfg config.ProviderConfig,
+	selection modelvariant.Selection,
+	roleSelections modelroles.Set,
+	connectionChanged bool,
+	explicitSelection bool,
+) (err error) {
+	if s == nil || s.rt == nil {
+		return errors.New("runtime session is required")
+	}
+	before := s.rt.ExtensionSnapshot().GenerationID
+	defer func() {
+		snapshot := s.rt.ExtensionSnapshot()
+		if snapshot.GenerationID == before {
+			return
+		}
+		// Model publication replaces the complete service graph too. Announce
+		// its new routes even after a committed activation failure; config/changed
+		// carries model fields only and cannot invalidate desktop plugin handles.
+		shell, surfaces := s.rt.ApplicationBindings()
+		err = errors.Join(err, s.writeNotification(NotificationPluginInventoryChanged, PluginInventoryChangedNotification{
+			ApplicationShell: shell, ApplicationSurfaces: surfaces, Epoch: s.pluginGenerationEpoch.Load(),
+			ExtensionInventory: s.extensionInventory(snapshot), Skills: s.skillSummaries(snapshot.Skills, s.rt.RootDir),
+		}))
+	}()
+	if err := s.rt.RefreshModelConfiguration(cfg, resolvedName, model); err != nil {
+		return err
+	}
+	if explicitSelection {
+		s.rt.ProviderName = resolvedName
+		s.rt.Model = model
+	}
+
+	s.rt.ModelRoles = roleSelections
+	apiModel := modelcatalog.APIModel(ruleProviderCfg, model)
+	if explicitSelection && s.rt.Toolkit != nil {
+		s.rt.Toolkit.ConfigureSurfaceForProviderModel(ruleProviderName, apiModel, true)
+	}
+	if explicitSelection {
+		if err := s.rt.ReconfigureToolLoading(cfg.Agent, ruleProviderCfg, apiModel, selection.ProviderOptions); err != nil {
+			return fmt.Errorf("reconfigure tool loading: %w", err)
+		}
+	}
+	if explicitSelection {
+		if _, err := s.rt.RefreshSystemPrompt(resolvedName, apiModel); err != nil {
+			return err
+		}
+		modelBudget := runtime.ResolveModelBudget(model, ruleProviderCfg, cfg.Agent.MaxContextTokens)
+		s.rt.ModelBudget = modelBudget
+		s.rt.WorkerModelBudget = runtime.ResolveModelBudget(roleSelections.Worker.Model, roleSelections.Worker.RuleProviderConfig, cfg.Agent.MaxContextTokens)
+		if s.rt.StreamRunner != nil {
+			s.rt.StreamRunner.ProviderName = resolvedName
+			s.rt.StreamRunner.Model = model
+			s.rt.StreamRunner.APIModel = apiModel
+			s.rt.StreamRunner.MediaInput = providers.MediaInputPolicy{
+				Image:      roleSelections.Main.Capabilities.ImageInput,
+				File:       roleSelections.Main.Capabilities.FileInput,
+				ImageKnown: roleSelections.Main.Capabilities.ImageInputKnown,
+				FileKnown:  roleSelections.Main.Capabilities.FileInputKnown,
+				Video:      roleSelections.Main.Capabilities.VideoInput,
+				VideoKnown: roleSelections.Main.Capabilities.VideoInputKnown,
+			}
+			s.rt.StreamRunner.Effort = selection.LegacyEffort
+			s.rt.StreamRunner.Variant = selection.Variant
+			s.rt.StreamRunner.ProviderOptions = modelvariant.CloneOptions(selection.ProviderOptions)
+			s.rt.StreamRunner.ContextWindowOverride = modelBudget.ContextWindowTokens
+			s.rt.StreamRunner.MaxInputTokens = modelBudget.InputLimitTokens
+			s.rt.StreamRunner.OutputReserveTokens = modelBudget.OutputReserveTokens
+			s.rt.StreamRunner.CompactThresholdTokens = modelBudget.CompactThresholdTokens
+		}
+	}
+	if connectionChanged {
+		// Connection credentials/endpoints are workspace configuration, so every
+		// cached runtime must rebuild before its next turn. Running turns keep
+		// their admitted snapshot until they settle.
+		s.resetThreadRuntimesForGeneralSettings("")
+	}
+	return s.recordPublishedConfig(cfg)
+}
+
+func providerClientConfigChanged(previous, next config.ProviderConfig) bool {
+	return strings.TrimSpace(previous.Type) != strings.TrimSpace(next.Type) ||
+		strings.TrimSpace(previous.BaseURL) != strings.TrimSpace(next.BaseURL) ||
+		strings.TrimSpace(previous.API) != strings.TrimSpace(next.API) ||
+		strings.TrimSpace(previous.NPM) != strings.TrimSpace(next.NPM) ||
+		strings.TrimSpace(previous.WireAPI) != strings.TrimSpace(next.WireAPI) ||
+		strings.TrimSpace(previous.APIKey) != strings.TrimSpace(next.APIKey) ||
+		strings.TrimSpace(previous.APIKeyEnv) != strings.TrimSpace(next.APIKeyEnv) ||
+		strings.TrimSpace(previous.AuthToken) != strings.TrimSpace(next.AuthToken) ||
+		strings.TrimSpace(previous.AuthTokenEnv) != strings.TrimSpace(next.AuthTokenEnv) ||
+		previous.ChatGPTAccountID != next.ChatGPTAccountID ||
+		previous.ReuseCodexCredentials != next.ReuseCodexCredentials ||
+		previous.ReuseGrokCredentials != next.ReuseGrokCredentials ||
+		previous.NativeCompactionEnabled() != next.NativeCompactionEnabled() ||
+		previous.StreamConnectTimeoutMS != next.StreamConnectTimeoutMS ||
+		previous.StreamHeaderTimeoutMS != next.StreamHeaderTimeoutMS ||
+		previous.StreamIdleTimeoutMS != next.StreamIdleTimeoutMS ||
+		strings.TrimSpace(previous.StreamTransport) != strings.TrimSpace(next.StreamTransport) ||
+		previous.CacheCreationInputTokensOmitted != next.CacheCreationInputTokensOmitted ||
+		previous.InputTokensIncludeCacheRead != next.InputTokensIncludeCacheRead ||
+		!reflect.DeepEqual(previous.Headers, next.Headers)
+}
+
+func (s *Server) currentConfigModelUpdateResult() ConfigModelUpdateResult {
+	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
+	return ConfigModelUpdateResult{
+		ModelAliases:     s.currentModelAliasSummaries(),
+		Provider:         s.rt.ProviderName,
+		Model:            s.rt.Model,
+		Effort:           s.currentDisplayEffort(),
+		Variant:          s.currentVariant(),
+		MaxParallel:      s.rt.MaxParallel(),
+		Permissions:      s.currentPermissionSummary(),
+		ExtensionTrust:   s.currentExtensionTrustSummary(),
+		ModelProfile:     modelProfile,
+		ToolSurface:      toolSurface,
+		ModelRoles:       s.currentModelRoleSummaries(),
+		Providers:        s.providerSummaries(),
+		AdvancedSettings: s.currentAdvancedSettingsSummary(),
+	}
+}
+
+func (s *Server) handleConfigCodexCredentials(req Request) error {
+	var params ConfigCodexModelsParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
+	if err := admit(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	services, release, err := s.modelServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	if _, err := codex.OAuthStatus(context.Background(), services.Credentials, true); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	before, err := services.Config.Read(context.Background())
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	committed, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) {
+		return config.UseCodexCredentialsSource(source, strings.TrimSpace(params.Provider))
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	// An explicit write must publish even before the watcher has a baseline.
+	if committed.Revision != before.Revision {
+		if err := s.refreshRuntimeAfterProviderEdit(services, true); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+	}
+	// Explicitly discard idle snapshots even when reuse was already enabled.
+	// In-flight turns retain their admitted configuration until completion.
+	s.resetThreadRuntimesForGeneralSettings("")
+	return s.writeResponse(req.ID, struct {
+		Providers []ProviderSummary `json:"providers"`
+	}{s.providerSummaries()}, nil)
+}
+
+func (s *Server) handleConfigCodexModels(ctx context.Context, req Request) error {
+	var params ConfigCodexModelsParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	providerName := strings.TrimSpace(params.Provider)
+	if providerName == "" {
+		providerName = s.rt.ProviderName
+	}
+	services, release, err := s.modelServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	providerCfg, resolvedName, err := cfg.ResolveProvider(providerName)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if !isCodexProviderType(providerCfg.Type) {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("provider %s uses type %s; Codex models require openai-codex", resolvedName, providerCfg.Type))
+	}
+	client, err := codex.New(codex.ClientConfig{
+		Credentials:           services.Credentials,
+		BaseURL:               providerCfg.BaseURL,
+		APIKey:                explicitProviderAPIKey(providerCfg),
+		Headers:               providerCfg.Headers,
+		ReuseCodexCredentials: providerCfg.ReuseCodexCredentials,
+		NativeCompaction:      providerCfg.NativeCompaction,
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	models, err := client.Models(ctx)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	s.cacheCodexModels(resolvedName, models)
+	out := codexModelSummaries(models)
+	providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
+	ruleProviderName, ruleProviderCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, providerCfg.Model)
+	selection := modelvariant.ResolveForProvider(ruleProviderName, ruleProviderCfg, providerCfg.Model, cfg.Agent.Variant, cfg.Agent.Effort)
+	effort := selection.DisplayEffort
+	variant := selection.Variant
+	if resolvedName == s.rt.ProviderName {
+		effort = s.currentDisplayEffort()
+		variant = s.currentVariant()
+	}
+	return s.writeResponse(req.ID, ConfigCodexModelsResult{
+		Providers: s.providerSummaries(),
+		Provider:  resolvedName,
+		Model:     providerCfg.Model,
+		Effort:    effort,
+		Variant:   variant,
+		Models:    out,
+	}, nil)
+}
+
+func (s *Server) handleConfigProviderRemove(req Request) error {
+	var params ConfigProviderRemoveParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	providerName := strings.TrimSpace(params.Provider)
+	if providerName == "" {
+		return s.writeResponse(req.ID, nil, errors.New("provider is required"))
+	}
+	admit, unlock := s.lockModelConfiguration()
+	defer unlock()
+	if err := admit(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	services, release, err := s.modelServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	existing, resolvedName, lookupErr := cfg.ResolveProvider(providerName)
+	if lookupErr != nil {
+		return s.writeResponse(req.ID, nil, lookupErr)
+	}
+	if threadID, inUse := s.runningTurnUsingProvider(resolvedName); inUse {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("cannot remove provider %q while it is used by a running turn in thread %q", resolvedName, threadID))
+	}
+	// Refuse to remove the last remaining provider when no fallback is
+	// supplied — config.RemoveProvider would surface a similar error but
+	// doing the check here gives the renderer a clearer 4xx-style error.
+	if len(cfg.Providers) <= 1 && strings.TrimSpace(params.FallbackProvider) == "" {
+		return s.writeResponse(req.ID, nil, errors.New("cannot remove the last configured provider"))
+	}
+	removedWasDefault := cfg.DefaultProvider == providerName
+	if removedWasDefault {
+		fallbackName := strings.TrimSpace(params.FallbackProvider)
+		if fallbackName == "" {
+			names := make([]string, 0, len(cfg.Providers)-1)
+			for name := range cfg.Providers {
+				if name != resolvedName {
+					names = append(names, name)
+				}
+			}
+			sort.Strings(names)
+			if len(names) > 0 {
+				fallbackName = names[0]
+			}
+		}
+		fallback, ok := cfg.Providers[fallbackName]
+		if !ok || fallbackName == resolvedName {
+			return s.writeResponse(req.ID, nil, errors.New("choose another configured provider before removing the default provider"))
+		}
+		fallbackModel := strings.TrimSpace(params.FallbackModel)
+		if fallbackModel == "" {
+			fallbackModel = strings.TrimSpace(fallback.Model)
+		}
+		if fallbackModel == "" || fallback.Models[fallbackModel].Disabled {
+			return s.writeResponse(req.ID, nil, errors.New("choose an available model for the replacement provider"))
+		}
+		// Validate the replacement before touching the removed connection's
+		// credentials. An invalid or unauthenticated fallback must be a no-op.
+		_, ruleCfg := modelcatalog.EnrichProvider(fallbackName, fallback, fallbackModel)
+		if err := s.validateModelConfigurationWithServices(services, ruleCfg, fallbackName); err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("replacement provider is not ready: %w", err))
+		}
+		params.FallbackProvider, params.FallbackModel = fallbackName, fallbackModel
+	}
+	authStore := authstorage.NewBound(context.Background(), services.Credentials)
+	// Subscription connections share one account-level sign-in. Removing a
+	// connection is not an account sign-out, including when the connection's
+	// name is the credential store's type key.
+	removeCredential := (!config.IsXAISubscriptionProvider(existing.Type) || resolvedName != xaisub.AuthProviderID) &&
+		(!isCodexProviderType(existing.Type) || resolvedName != codex.AuthProviderID)
+
+	credentials, authErr := authStore.Load()
+	if authErr != nil && !errors.Is(authErr, authstorage.ErrNotFound) {
+		return s.writeResponse(req.ID, nil, authErr)
+	}
+	// Remove configuration first. A failed or uncertain credential cleanup
+	// must not replay a stale value over a concurrent credential rotation.
+	source, err := editableConfigSource(view)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	next, newDefault, err := config.RemoveProviderSource(source, providerName, params.FallbackProvider, params.FallbackModel)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	committedView, removeErr := services.Config.CompareExchange(context.Background(), view.Revision, next)
+	if removeErr != nil {
+		return s.writeResponse(req.ID, nil, removeErr)
+	}
+	if err := configActivationError(committedView); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, exists := credentials.Providers[resolvedName]; removeCredential && exists {
+		if err := authStore.DeleteProvider(resolvedName); err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("provider was removed from configuration, but credential cleanup failed: %w", err))
+		}
+	}
+	if !removedWasDefault {
+		// Keep the main selection, but rebuild roles and idle snapshots that
+		// could still refer to the removed provider.
+		if err := s.refreshRuntimeAfterProviderEdit(services, true); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeResponse(req.ID, ConfigProviderRemoveResult{
+			ModelAliases:     s.currentModelAliasSummaries(),
+			Provider:         s.rt.ProviderName,
+			Model:            s.rt.Model,
+			Variant:          s.currentVariant(),
+			Permissions:      s.currentPermissionSummary(),
+			ExtensionTrust:   s.currentExtensionTrustSummary(),
+			ModelProfile:     nil,
+			ToolSurface:      nil,
+			ModelRoles:       s.currentModelRoleSummaries(),
+			Providers:        s.providerSummaries(),
+			AdvancedSettings: s.currentAdvancedSettingsSummary(),
+		}, nil)
+	}
+	// The committed removal already selected and saved its fallback. Rebuild
+	// under the same admission fence rather than reentering the update handler.
+	if strings.TrimSpace(newDefault) == "" {
+		return s.writeResponse(req.ID, nil, errors.New("provider removal left no default_provider configured"))
+	}
+	if err := s.applyExternalConfigChangeLocked(committedView.Config); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	return s.writeResponse(req.ID, s.currentConfigModelUpdateResult(), nil)
+}
+
+func (s *Server) runningTurnUsingProvider(providerName string) (string, bool) {
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, th := range s.threads {
+		th.mu.Lock()
+		running := th.running
+		runningProvider := strings.TrimSpace(th.runningProviderName)
+		if running && runningProvider == "" {
+			runningProvider = strings.TrimSpace(th.ModelProvider)
+		}
+		threadID := th.ID
+		th.mu.Unlock()
+		if running && runningProvider == providerName {
+			return threadID, true
+		}
+	}
+	return "", false
+}
+
+func (s *Server) handleSkillList(ctx context.Context, req Request) error {
+	var params SkillListParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	catalog, root, err := s.currentSkillCatalog(ctx, params.ThreadID, false)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	return s.writeResponse(req.ID, SkillListResult{Skills: s.skillSummaries(catalog, root)}, nil)
+}
+
+func (s *Server) skillCatalog(threadID string) ([]skills.Skill, string, error) {
+	return s.currentSkillCatalog(context.Background(), threadID, false)
+}
+
+func (s *Server) currentSkillCatalog(ctx context.Context, threadID string, force bool) ([]skills.Skill, string, error) {
+	if strings.TrimSpace(threadID) == "" {
+		if s.rt.Toolkit != nil {
+			items, err := s.rt.Toolkit.CurrentSkills(ctx, force)
+			return tools.FilterSkillsForSurface(items, s.rt.Toolkit.ActiveSurface()), s.rt.RootDir, err
+		}
+		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
+	}
+	var binding *runtime.State
+	var threadRuntime *runtime.ThreadRuntime
+	var engineID agentengine.EngineID
+	var root, baseRepo string
+	// Native skill availability during admitted work uses that work's binding. Loading
+	// a new state projection would collide with its execution lease after reload.
+	// Retain the state before releasing the thread lock so retirement cannot close
+	// the catalog's provider while discovery is in progress.
+	s.mu.Lock()
+	if s.closed.Load() {
+		s.mu.Unlock()
+		return nil, "", errServerClosed
+	}
+	if th := s.threads[threadID]; th != nil {
+		th.mu.Lock()
+		if th.execRuntime != nil && (threadAdmissionProjectionBusyLocked(th) || s.activeExecutionRunID(threadID) != "") {
+			binding = th.state.Retain()
+			threadRuntime = th.execRuntime
+			engineID, root, baseRepo = agentengine.NormalizeEngineID(th.EngineID), th.CWD, th.WorktreeBaseRepo
+		}
+		th.mu.Unlock()
+	}
+	s.mu.Unlock()
+	if threadRuntime == nil {
+		var err error
+		binding, err = s.rt.RetainState()
+		if err != nil {
+			return nil, "", err
+		}
+		defer binding.Close()
+		th, err := s.ensureThreadLoaded(binding, threadID)
+		if err != nil {
+			return nil, "", err
+		}
+		threadRuntime, err = s.ensureThreadRuntime(th)
+		if err != nil {
+			return nil, "", err
+		}
+		th.mu.Lock()
+		engineID, root, baseRepo = agentengine.NormalizeEngineID(th.EngineID), th.CWD, th.WorktreeBaseRepo
+		th.mu.Unlock()
+	} else {
+		defer binding.Close()
+	}
+	// The external host toolkit describes only browser/CUA capabilities, not
+	// the engine's native tools or its ability to use explicitly selected skills.
+	if threadRuntime.Toolkit != nil && engineID == agentengine.EngineWuu {
+		root = threadRuntime.Toolkit.RootDir()
+		if skillDiscoveryRoot(root) != skillDiscoveryRoot(s.rt.RootDir) &&
+			(baseRepo == "" || sessionWorkspacePath(baseRepo) != sessionWorkspacePath(s.rt.RootDir)) {
+			root = ""
+		}
+		items, err := threadRuntime.Toolkit.CurrentSkills(ctx, force)
+		if err != nil {
+			return nil, root, err
+		}
+		return tools.FilterSkillsForSurface(items, threadRuntime.Toolkit.ActiveSurface()), root, nil
+	}
+	if sessionWorkspacePath(root) == sessionWorkspacePath(s.rt.RootDir) {
+		return s.rt.ExtensionSnapshot().Skills, s.rt.RootDir, nil
+	}
+	// External engines cannot resolve a different checkout's host skill catalog.
+	return nil, root, nil
+}
+
+func (s *Server) skillSummaries(items []skills.Skill, root string) []SkillSummary {
+	out := make([]SkillSummary, 0, len(items))
+	for _, item := range items {
+		out = append(out, SkillSummary{
+			Name:                  item.Name,
+			Description:           item.Description,
+			WhenToUse:             item.WhenToUse,
+			TriggerCondition:      item.TriggerCondition,
+			Source:                item.Source,
+			Path:                  item.Path,
+			Project:               projectSkillIdentity(item, root, s.rt.RootDir),
+			ArgumentHint:          item.ArgumentHint,
+			Model:                 item.Model,
+			Context:               item.Context,
+			Agent:                 item.Agent,
+			AllowedTools:          append([]string(nil), item.AllowedTools...),
+			RequiredContext:       append([]string(nil), item.RequiredContext...),
+			Examples:              append([]string(nil), item.Examples...),
+			VerificationChecklist: append([]string(nil), item.VerificationChecklist...),
+			ProgressiveDisclosure: item.ProgressiveDisclosure,
+			UserInvocable:         item.UserInvocable,
+			DisableModelInvoke:    item.DisableModelInvoke,
+			Paths:                 append([]string(nil), item.Paths...),
+			Effort:                item.Effort,
+			Version:               item.Version,
+		})
+	}
+	return out
+}
+
+var errThreadRuntimeSelectionBusy = errors.New("cannot change model or permission mode")
+
+func (s *Server) beginThreadRuntimeSelectionMutation(threadID string) (*threadState, func(), error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return nil, func() {}, nil
+	}
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return nil, func() {}, err
+	}
+	owned := true
+	defer func() {
+		if owned {
+			_ = binding.Close()
+		}
+	}()
+	th, err := s.ensureThreadLoaded(binding, threadID)
+	if err != nil {
+		return nil, func() {}, err
+	}
+	th.mu.Lock()
+	busy := th.running || th.admissionReserved || th.runtimeSelectionMutation ||
+		(th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime))
+	if busy {
+		th.mu.Unlock()
+		return nil, func() {}, fmt.Errorf("%w while thread %q is running", errThreadRuntimeSelectionBusy, threadID)
+	}
+	th.runtimeSelectionMutation = true
+	persist := th.PersistHistory
+	th.mu.Unlock()
+
+	var mutationLease *session.DocumentThreadExecutionLease
+	if persist {
+		mutationLease, err = s.tryAcquireThreadMutationLease(binding, threadID)
+		if err != nil {
+			th.mu.Lock()
+			th.runtimeSelectionMutation = false
+			th.mu.Unlock()
+			if errors.Is(err, errThreadExecutionBusy) {
+				return nil, func() {}, fmt.Errorf("%w while thread %q is running", errThreadRuntimeSelectionBusy, threadID)
+			}
+			return nil, func() {}, err
+		}
+	}
+	owned = false
+	release := func() {
+		defer binding.Close()
+		releaseThreadMutationLease(threadID, mutationLease)
+		th.mu.Lock()
+		th.runtimeSelectionMutation = false
+		th.mu.Unlock()
+	}
+	return th, release, nil
+}
+
+func (s *Server) handleThreadModelSelection(req Request, params ConfigModelUpdateParams) error {
+	th, intent, release, err := s.selectThreadModel(params)
+	if err != nil {
+		if errors.Is(err, errThreadRuntimeSelectionBusy) {
+			return s.writeRunError(req.ID, "thread_busy", err)
+		}
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer release()
+	if intent != nil {
+		return s.writeThreadModelSelectionResponse(req, th, intent)
+	}
+	return s.writeThreadModelSelectionResponse(req, th)
+}
+
+func (s *Server) selectThreadModel(params ConfigModelUpdateParams) (selected *threadState, selectedIntent *session.Session, releaseSelection func(), resultErr error) {
+	begin := s.beginThreadRuntimeSelectionMutation
+	if params.ApplyAt == "next_step" {
+		begin = s.beginNextStepModelSelection
+	}
+	th, release, err := begin(params.ThreadID)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer func() {
+		if resultErr != nil {
+			release()
+		}
+	}()
+	th.mu.Lock()
+
+	provider, model := th.ModelProvider, th.Model
+	variant, effort, permission := th.ModelVariant, th.ModelEffort, th.PermissionMode
+	speed, engineID, approveForMe := th.Speed, th.EngineID, th.ApproveForMe
+	modelOptions := th.ModelOptions
+	th.mu.Unlock()
+	if params.ModelOptions != nil && len(*params.ModelOptions) > 0 {
+		entry, ok := enginecatalog.Lookup(engineID)
+		if !ok || entry.Protocol != "acp" && entry.Protocol != "opencode" {
+			return nil, nil, nil, errors.New("this engine does not expose additional model options")
+		}
+	}
+	if agentengine.NormalizeEngineID(engineID) == agentengine.EngineWuu && params.ResetModel {
+		return nil, nil, nil, errors.New("reset_model applies only to external engines")
+	}
+	if params.Speed != nil {
+		speed = strings.TrimSpace(*params.Speed)
+		if err := validateSpeed(speed); err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if params.ApplyAt != "next_step" && agentengine.NormalizeEngineID(engineID) != agentengine.EngineWuu {
+		if params.Provider != "" && params.Provider != provider {
+			return nil, nil, nil, errors.New("an external engine owns its provider selection")
+		}
+		if params.ResetModel {
+			model, effort, speed, modelOptions = "", "", "", nil
+		}
+		if params.Model != "" {
+			if model != params.Model {
+				effort, speed, modelOptions = "", "", nil
+			}
+			model = params.Model
+		}
+		if params.ModelOptions != nil {
+			modelOptions = *params.ModelOptions
+		}
+		if params.Speed != nil {
+			speed = strings.TrimSpace(*params.Speed)
+		}
+		if params.Effort != nil {
+			effort = *params.Effort
+		}
+		if params.PermissionMode != nil {
+			permission = config.NormalizePermissionMode(*params.PermissionMode)
+		}
+		if err := s.updateThreadRuntimeForModelUpdate(th, provider, model, "", effort, speed, permission, false, modelOptions); err != nil {
+			return nil, nil, nil, err
+		}
+		return th, nil, release, nil
+	}
+	if provider == "" {
+		provider = s.rt.ProviderName
+	}
+	if model == "" {
+		model = s.rt.Model
+	}
+	previousProvider, previousModel := provider, model
+	if strings.TrimSpace(params.Provider) != "" {
+		provider = strings.TrimSpace(params.Provider)
+	}
+	if strings.TrimSpace(params.Model) != "" {
+		model = strings.TrimSpace(params.Model)
+	}
+	services, err := th.state.Services()
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if params.ApplyAt != "next_step" {
+		cfg, err = s.registerDiscoveredProviderFromServices(cfg, provider, services)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	providerCfg, resolvedName, err := cfg.ResolveProvider(provider)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	providerCfg = s.withCachedCodexModels(resolvedName, providerCfg)
+	if providerCfg.Type == "chatgpt" {
+		selected := providerCfg
+		selected.Model = model
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		err := s.validateChatGPTModel(ctx, selected, services.ChatGPT)
+		cancel()
+		if err != nil {
+			return nil, nil, nil, err
+		}
+	}
+	if providerCfg.Models[model].Disabled {
+		return nil, nil, nil, fmt.Errorf("model %s is disabled", model)
+	}
+	ruleName, ruleCfg := modelcatalog.EnrichProvider(resolvedName, providerCfg, model)
+	if params.Variant != nil {
+		variant = strings.TrimSpace(*params.Variant)
+		effort = ""
+	}
+	if params.Effort != nil {
+		effort = strings.TrimSpace(*params.Effort)
+		if params.Variant == nil {
+			variant = effort
+		}
+	}
+	if (provider != previousProvider || model != previousModel) && variant == "" {
+		variant = effort
+	}
+	if variant != "" {
+		if _, ok := modelvariant.OptionsForProvider(ruleName, ruleCfg, model, variant); !ok {
+			if provider == previousProvider && model == previousModel && (params.Variant != nil || params.Effort != nil) {
+				return nil, nil, nil, fmt.Errorf("model %s does not support variant %s", model, variant)
+			}
+			variant, effort = "", ""
+		}
+	}
+	selection := modelvariant.ResolveForProvider(ruleName, ruleCfg, model, variant, effort)
+	if (provider != previousProvider || model != previousModel) && params.Speed == nil {
+		if supported, _ := modelvariant.SpeedSupport(ruleCfg, model); !supported {
+			speed = ""
+		}
+	}
+	if err := modelvariant.ApplySpeed(ruleCfg, model, speed, &selection); err != nil {
+		return nil, nil, nil, err
+	}
+	if permission == "" {
+		permission = config.NormalizePermissionMode(s.rt.Permissions.Mode)
+	}
+	if params.PermissionMode != nil {
+		permission = config.NormalizePermissionMode(*params.PermissionMode)
+	}
+	th.mu.Lock()
+	approveForMe = th.ApproveForMe
+	th.mu.Unlock()
+	if params.ApproveForMe != nil {
+		approveForMe = *params.ApproveForMe && approvefor.EnabledForMode(permission)
+	} else if !approvefor.EnabledForMode(permission) {
+		approveForMe = false
+	}
+	if params.ApplyAt == "next_step" {
+		intent, err := s.commitNextStepModelSelection(th, session.RuntimeSelection{Provider: resolvedName, Model: model, Variant: selection.Variant, Effort: selection.LegacyEffort, Speed: speed, PermissionMode: permission, ApproveForMe: approveForMe})
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return th, &intent, release, nil
+	}
+	if err := s.updateThreadRuntimeForModelUpdate(th, resolvedName, model, selection.Variant, selection.LegacyEffort, speed, permission, approveForMe, nil); err != nil {
+		return nil, nil, nil, err
+	}
+	return th, nil, release, nil
+}
+
+func (s *Server) writeThreadModelSelectionResponse(req Request, th *threadState, intents ...*session.Session) error {
+	modelProfile, toolSurface := s.currentModelSurfaceSummaries()
+	result := ConfigModelUpdateResult{
+		ModelAliases: s.currentModelAliasSummaries(),
+		Provider:     s.rt.ProviderName, Model: s.rt.Model,
+		Effort: s.currentDisplayEffort(), Variant: s.currentVariant(),
+		MaxParallel: s.rt.MaxParallel(), Permissions: s.permissionSummaryForThread(th),
+		ExtensionTrust: s.currentExtensionTrustSummary(), ModelProfile: modelProfile,
+		ToolSurface: toolSurface, ModelRoles: s.currentModelRoleSummaries(),
+		Providers: s.providerSummaries(), AdvancedSettings: s.currentAdvancedSettingsSummary(),
+	}
+	if len(intents) != 0 {
+		intent := intents[0]
+		result.ModelSelection = &ModelSelectionIntentSummary{Revision: intent.ModelSelectionRevision, ApplyAt: intent.ModelSelectionApplyAt, Provider: intent.Provider, Model: intent.Model}
+	}
+	return s.writeResponse(req.ID, result, nil)
+}
+
+func (s *Server) updateThreadRuntimeForModelUpdate(th *threadState, providerName, model, variant, effort, speed, permissionMode string, approveForMe bool, modelOptions map[string]string) error {
+	if th == nil {
+		return nil
+	}
+	selection := session.RuntimeSelection{
+		Provider:       providerName,
+		Model:          model,
+		Variant:        variant,
+		Effort:         effort,
+		Speed:          speed,
+		ModelOptions:   modelOptions,
+		PermissionMode: permissionMode,
+		ApproveForMe:   approveForMe,
+	}
+	if th.PersistHistory {
+		if _, err := th.state.Sessions.SetRuntimeSelection(th.ID, selection); err != nil {
+			return err
+		}
+	}
+	var detached detachedThreadRuntime
+	th.mu.Lock()
+	modelSelectionChanged := th.ModelProvider != strings.TrimSpace(selection.Provider) ||
+		th.Model != strings.TrimSpace(selection.Model) ||
+		th.ModelVariant != strings.TrimSpace(selection.Variant) ||
+		th.ModelEffort != strings.TrimSpace(selection.Effort) || th.Speed != selection.Speed || !reflect.DeepEqual(th.ModelOptions, selection.ModelOptions)
+	applyThreadRuntimeSelection(th, selection)
+	if modelSelectionChanged && th.execRuntime != nil {
+		detached = detachThreadRuntimeLocked(th)
+	}
+	thread := th.snapshotLocked()
+	th.mu.Unlock()
+	if detached.runtime != nil || detached.subscription != nil {
+		s.releaseDetachedThreadRuntime(detached)
+	}
+	return s.notifyThreadUpdated(th.state, thread)
+}
+
+func (s *Server) resetThreadRuntimesForGeneralSettings(systemPrompt string) {
+	if s == nil || s.rt == nil {
+		return
+	}
+	var releases []detachedThreadRuntime
+	s.mu.Lock()
+	for _, th := range s.threads {
+		th.mu.Lock()
+		if strings.TrimSpace(systemPrompt) != "" {
+			// The runtime prompt is ephemeral. Rewriting durable history here
+			// would renumber rows and race an active native turn's admission.
+			th.History = replaceBaseSystemPrompt(th.History, sessionSystemPrompt(systemPrompt, th.Instructions))
+		}
+		if th.execRuntime == nil {
+			th.pendingRuntimeReset = false
+			th.mu.Unlock()
+			continue
+		}
+		// A running root turn may still spawn workers, and already-started
+		// workers need this runtime's terminal finalizer and notification
+		// forwarding. Keep the runtime installed until no live work depends on
+		// it; the next admission consumes the reset before rebuilding.
+		if th.running || threadRuntimeHasOutstandingWork(th.ID, th.execRuntime) {
+			th.pendingRuntimeReset = true
+		} else {
+			releases = append(releases, detachThreadRuntimeLocked(th))
+		}
+		th.mu.Unlock()
+	}
+	s.mu.Unlock()
+	for _, detached := range releases {
+		s.releaseDetachedThreadRuntime(detached)
+	}
+}
+
+// updateIdleThreadAdvancedRuntime propagates an advanced-settings change to
+// idle cached runtimes without rebuilding them (which would churn their
+// prompt-cache prefixes). Advanced settings split into two kinds, and the split
+// is the whole point of this function (issue #81):
+//
+//   - Behavior knobs (MaxSteps, Temperature, compact percentage/keep-recent,
+//     auto-compact toggle) are workspace-uniform and copied verbatim.
+//   - Budgets and worker defaults are DERIVED from a conversation's own
+//     selection, so they are recomputed from each thread's pin — never copied
+//     from the workspace runtime. Copying s.rt's here would, for a thread
+//     pinned to a smaller-window model, swap in the workspace model's window
+//     (miscomputing compaction) and repoint the thread's worker at the
+//     workspace worker provider.
+func (s *Server) updateIdleThreadAdvancedRuntime(cfg config.Config) {
+	if s == nil || s.rt == nil || s.rt.StreamRunner == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, th := range s.threads {
+		th.mu.Lock()
+		if th.running || th.execRuntime == nil {
+			th.mu.Unlock()
+			continue
+		}
+		derivation, err := s.rt.DeriveThreadModel(cfg, th.execRuntime.Selection)
+		if err != nil {
+			// The thread pins a model that no longer resolves (e.g. a removed
+			// provider). Leave its existing derived budgets/worker in place;
+			// admission self-heals the dead pin on the next turn.
+			providers.DebugLogf("advanced update: re-derive thread %q model: %v", th.ID, err)
+			th.mu.Unlock()
+			continue
+		}
+		if th.execRuntime.StreamRunner != nil {
+			runner := th.execRuntime.StreamRunner
+			// Workspace behavior knobs: uniform, copied verbatim.
+			runner.MaxSteps = s.rt.StreamRunner.MaxSteps
+			runner.Temperature = s.rt.StreamRunner.Temperature
+			runner.CompactThresholdPct = s.rt.StreamRunner.CompactThresholdPct
+			runner.CompactKeepRecentTokens = s.rt.StreamRunner.CompactKeepRecentTokens
+			runner.DisableAutoCompact = s.rt.StreamRunner.DisableAutoCompact
+			// Derived budget: recomputed from this thread's own pin.
+			runner.ContextWindowOverride = derivation.ModelBudget.ContextWindowTokens
+			runner.MaxInputTokens = derivation.ModelBudget.InputLimitTokens
+			runner.OutputReserveTokens = derivation.ModelBudget.OutputReserveTokens
+			runner.CompactThresholdTokens = derivation.ModelBudget.CompactThresholdTokens
+		}
+		th.execRuntime.ModelBudget = derivation.ModelBudget
+		th.execRuntime.WorkerModelBudget = derivation.WorkerModelBudget
+		if th.execRuntime.AgentControl != nil {
+			th.execRuntime.AgentControl.UpdateWorkerDefaults(
+				derivation.WorkerClient,
+				derivation.WorkerAPIModel,
+				s.workerManagerOptionsForDerivation(derivation),
+			)
+		}
+		th.mu.Unlock()
+	}
+}
+
+// workerManagerOptionsForDerivation builds worker manager options from a
+// thread's own derived worker role, layering the workspace behavior knobs
+// (temperature, compaction cadence) that apply uniformly.
+func (s *Server) workerManagerOptionsForDerivation(derivation runtime.ThreadModelDerivation) subagent.ManagerOptions {
+	temperature := 0.0
+	compactPct := 0.0
+	keepRecent := 0
+	disableCompact := false
+	if s.rt != nil && s.rt.StreamRunner != nil {
+		temperature = s.rt.StreamRunner.Temperature
+		compactPct = s.rt.StreamRunner.CompactThresholdPct
+		keepRecent = s.rt.StreamRunner.CompactKeepRecentTokens
+		disableCompact = s.rt.StreamRunner.DisableAutoCompact
+	}
+	return subagent.ManagerOptions{
+		DefaultProviderName:     derivation.WorkerProvider,
+		DefaultEffort:           derivation.WorkerEffort,
+		DefaultProviderOptions:  derivation.WorkerOptions,
+		ContextWindowOverride:   derivation.WorkerModelBudget.ContextWindowTokens,
+		MaxInputTokens:          derivation.WorkerModelBudget.InputLimitTokens,
+		OutputReserveTokens:     derivation.WorkerModelBudget.OutputReserveTokens,
+		CompactThresholdTokens:  derivation.WorkerModelBudget.CompactThresholdTokens,
+		Temperature:             temperature,
+		CompactThresholdPct:     compactPct,
+		CompactKeepRecentTokens: keepRecent,
+		DisableAutoCompact:      disableCompact,
+	}
+}
+
+func (s *Server) currentEffort() string {
+	if s == nil || s.rt == nil || s.rt.StreamRunner == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.rt.StreamRunner.Effort)
+}
+
+func (s *Server) currentVariant() string {
+	if s == nil || s.rt == nil || s.rt.StreamRunner == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.rt.StreamRunner.Variant)
+}
+
+func (s *Server) currentDisplayEffort() string {
+	if variant := s.currentVariant(); variant != "" {
+		return variant
+	}
+	return s.currentEffort()
+}
+
+func (s *Server) currentSessionRuntimeSelection() session.RuntimeSelection {
+	selection := session.RuntimeSelection{}
+	if s != nil && s.rt != nil {
+		selection.Provider = s.rt.ProviderName
+		selection.Model = s.rt.Model
+		selection.Variant = s.currentVariant()
+		selection.Effort = s.currentEffort()
+		selection.PermissionMode = config.NormalizePermissionMode(s.rt.Permissions.Mode)
+	}
+	return selection
+}
+
+// pinLegacyRuntimeSelections backfills this workspace's persisted sessions
+// that predate per-session runtime selection. Defaults come from the durable
+// config rather than live runtime state so transient process overrides (e.g.
+// a one-shot CLI permission mode) are never pinned. Pinning is best-effort:
+// a bad row is logged and skipped instead of blocking initialization.
+func (s *Server) pinLegacyRuntimeSelections() {
+	if s == nil || s.rt == nil {
+		return
+	}
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		providers.DebugLogf("capture state to pin legacy runtime selections: %v", err)
+		return
+	}
+	defer binding.Close()
+	services, err := binding.Services()
+	if err != nil {
+		providers.DebugLogf("capture services to pin legacy runtime selections: %v", err)
+		return
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
+	if err != nil {
+		providers.DebugLogf("load config to pin legacy runtime selections: %v", err)
+		return
+	}
+	providerCfg, providerName, err := cfg.ResolveProvider("")
+	if err != nil {
+		providers.DebugLogf("resolve default provider to pin legacy runtime selections: %v", err)
+		return
+	}
+	defaults := session.RuntimeSelection{
+		Provider:       strings.TrimSpace(providerName),
+		Model:          strings.TrimSpace(providerCfg.Model),
+		Variant:        strings.TrimSpace(cfg.Agent.Variant),
+		Effort:         strings.TrimSpace(cfg.Agent.Effort),
+		PermissionMode: config.NormalizePermissionMode(cfg.Agent.PermissionMode),
+	}
+	if defaults.Provider == "" || defaults.Model == "" {
+		return
+	}
+	// Strict workspace scoping: DM and group sessions of other workspaces
+	// must keep their own defaults, so the DM-inclusive listing is wrong here.
+	sessions, err := binding.Sessions.ListForCWD(s.rt.RootDir, s.rt.WorkspaceID, 0)
+	if err != nil {
+		providers.DebugLogf("list sessions to pin legacy runtime selections: %v", err)
+		return
+	}
+	for _, sess := range sessions {
+		// External engines own their defaults; an empty model is an intentional
+		// native selection, not a legacy Wuu session that needs backfilling.
+		if agentengine.NormalizeEngineID(sess.EngineID) != agentengine.EngineWuu {
+			continue
+		}
+		selection := runtimeSelectionFromSession(sess)
+		legacySelection := selection.PermissionMode == ""
+		changed := false
+		if selection.Provider == "" || selection.Model == "" {
+			selection.Provider = defaults.Provider
+			selection.Model = defaults.Model
+			changed = true
+		}
+		if legacySelection && selection.Variant == "" && selection.Effort == "" {
+			selection.Variant = defaults.Variant
+			selection.Effort = defaults.Effort
+			changed = true
+		}
+		if selection.PermissionMode == "" {
+			selection.PermissionMode = defaults.PermissionMode
+			changed = true
+		}
+		if changed {
+			if _, err := binding.Sessions.SetRuntimeSelection(sess.ID, selection); err != nil {
+				providers.DebugLogf("pin runtime selection for session %q: %v", sess.ID, err)
+			}
+		}
+	}
+}
+
+func selectionConfigPointers(selection modelvariant.Selection, touched bool, previousVariant string) (*string, *string) {
+	if !touched && (strings.TrimSpace(previousVariant) == "" || selection.Variant != "") {
+		return nil, nil
+	}
+	if selection.Variant != "" {
+		empty := ""
+		variant := selection.Variant
+		return &empty, &variant
+	}
+	if selection.LegacyEffort != "" {
+		effort := selection.LegacyEffort
+		empty := ""
+		return &effort, &empty
+	}
+	emptyEffort := ""
+	emptyVariant := ""
+	return &emptyEffort, &emptyVariant
+}
+
+func (s *Server) providerSummaries() []ProviderSummary {
+	s.providerSummariesMu.Lock()
+	defer s.providerSummariesMu.Unlock()
+	services, release, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.lastProviderSummaries
+	}
+	defer release()
+	if s.chatGPTManager != nil {
+		services.ChatGPT = s.chatGPTManager
+	}
+	view, err := services.Config.Read(context.Background())
+	cfg := view.Config
+	if err != nil {
+		// Presentation only: execution and mutations still load and validate config.
+		return s.lastProviderSummaries
+	}
+	autoDiscovered := false
+	if provider, ok := selectedGrokBuildProvider(cfg, "grok-build", services.Credentials); ok {
+		providers := make(map[string]config.ProviderConfig, len(cfg.Providers)+1)
+		for name, configured := range cfg.Providers {
+			providers[name] = configured
+		}
+		providers["grok-build"] = provider
+		cfg.Providers = providers
+		autoDiscovered = true
+	}
+	// Discovery enriches the same inventory used by settings and selection;
+	// it must not mutate the persisted provider configuration.
+	enriched := make(map[string]config.ProviderConfig, len(cfg.Providers))
+	for name, provider := range cfg.Providers {
+		enriched[name] = s.withCachedCodexModels(name, provider)
+	}
+	cfg.Providers = enriched
+	summaries := selectedProviderSummariesFromConfig(cfg, services.Credentials)
+	if autoDiscovered {
+		for index := range summaries {
+			if summaries[index].Name == "grok-build" {
+				summaries[index].AutoDiscovered = true
+				break
+			}
+		}
+	}
+	s.enrichChatGPTSummaries(summaries, cfg, services.ChatGPT)
+	s.lastProviderSummaries = summaries
+	return summaries
+}
+
+// A conversation can select the same discovered connections shown in the
+// picker. Save only the connection so subsequent runtime builds and restarts
+// resolve the pin without changing workspace defaults or other conversations.
+func (s *Server) registerDiscoveredProvider(cfg config.Config, providerName string) (config.Config, error) {
+	services, release, err := s.rt.RetainStateServices()
+	if err != nil {
+		return cfg, err
+	}
+	defer release()
+	return s.registerDiscoveredProviderFromServices(cfg, providerName, services)
+}
+
+func (s *Server) registerDiscoveredProviderFromServices(cfg config.Config, providerName string, services *runtime.StateServices) (config.Config, error) {
+	providerName = strings.TrimSpace(providerName)
+	provider, discovered := selectedGrokBuildProvider(cfg, providerName, services.Credentials)
+	if !discovered {
+		return cfg, nil
+	}
+	view, err := updateConfigSourceClient(context.Background(), services.Config, func(source []byte) ([]byte, error) {
+		return config.AddProviderIfMissingSource(source, providerName, provider)
+	})
+	if err != nil {
+		return cfg, err
+	}
+	return view.Config, nil
+}
+
+func selectedGrokBuildProvider(cfg config.Config, providerName string, selected credentialstore.Store) (config.ProviderConfig, bool) {
+	if strings.TrimSpace(providerName) != "grok-build" {
+		return config.ProviderConfig{}, false
+	}
+	if _, exists := cfg.Providers[providerName]; exists {
+		return config.ProviderConfig{}, false
+	}
+	for _, provider := range cfg.Providers {
+		if config.IsGrokBuildProvider(provider.Type) {
+			return config.ProviderConfig{}, false
+		}
+	}
+	record, err := authstorage.ReadCLI(context.Background(), selected, "grok")
+	if err != nil || strings.TrimSpace(record.AccessToken) == "" {
+		return config.ProviderConfig{}, false
+	}
+	return config.ApplyGrokBuildProviderDefaults(config.ProviderConfig{Type: "grok-build"}), true
+}
+
+func selectedProviderSummariesFromConfig(cfg config.Config, selected credentialstore.Store) []ProviderSummary {
+	names := make([]string, 0, len(cfg.Providers))
+	for name := range cfg.Providers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	out := make([]ProviderSummary, 0, len(names))
+	for _, name := range names {
+		provider := cfg.Providers[name]
+		summary := ProviderSummary{
+			Name:             name,
+			ChatGPTAccountID: provider.ChatGPTAccountID,
+			Type:             provider.Type,
+			Model:            provider.Model,
+			BaseURL:          provider.BaseURL,
+			APIKeyConfigured: providerHasSelectedAuth(name, provider, selected),
+			ConnectionLocked: provider.Type == "chatgpt" || isCodexProviderType(provider.Type) || config.IsXAISubscriptionProvider(provider.Type) || config.IsGrokBuildProvider(provider.Type),
+			Models:           providerModelSummaries(name, provider),
+		}
+		if matched, ok := modelcatalog.MatchProvider(name, provider); ok {
+			summary.CatalogID, summary.CatalogName = matched.ID, matched.Name
+		}
+		for id, model := range provider.Models {
+			if model.Disabled && strings.TrimSpace(id) != "" {
+				summary.HiddenModels = append(summary.HiddenModels, strings.TrimSpace(id))
+			}
+		}
+		sort.Strings(summary.HiddenModels)
+		if isCodexProviderType(provider.Type) {
+			summary.ReuseCodexCredentials = provider.ReuseCodexCredentials
+			if explicitProviderAPIKey(provider) != "" {
+				summary.CodexCredentialSource = "explicit"
+			} else {
+				source, err := codex.OAuthStatus(context.Background(), selected, provider.ReuseCodexCredentials)
+				if err != nil && !provider.ReuseCodexCredentials {
+					// Discovery advertises an available account without authorizing reuse.
+					source, err = codex.OAuthStatus(context.Background(), selected, true)
+				}
+				if err == nil {
+					summary.CodexCredentialSource = source
+				}
+			}
+		}
+		out = append(out, summary)
+	}
+	return out
+}
+
+func providerHasSelectedAuth(name string, provider config.ProviderConfig, selected credentialstore.Store) bool {
+	if provider.Type == "chatgpt" {
+		return false
+	}
+	if isCodexProviderType(provider.Type) {
+		if strings.TrimSpace(provider.APIKey) != "" || configuredEnvValue(provider.APIKeyEnv) != "" {
+			return true
+		}
+		source, err := codex.OAuthStatus(context.Background(), selected, provider.ReuseCodexCredentials)
+		return err == nil && (source == "wuu-auth-store" || provider.ReuseCodexCredentials)
+	}
+	if config.IsXAISubscriptionProvider(provider.Type) {
+		_, err := xaisub.OAuthStatus(context.Background(), selected)
+		return err == nil
+	}
+	if config.IsGrokBuildProvider(provider.Type) {
+		if strings.TrimSpace(provider.APIKey) != "" || configuredEnvValue(provider.APIKeyEnv) != "" {
+			return true
+		}
+		if !provider.ReuseGrokCredentials {
+			return false
+		}
+		_, err := grokbuild.OAuthStatus(context.Background(), selected)
+		return err == nil
+	}
+
+	// Explicit bearer configuration is independent of saved model credentials.
+	if providerUsesAnthropicAuth(provider) && (strings.TrimSpace(provider.AuthToken) != "" || configuredEnvValue(provider.AuthTokenEnv) != "") {
+		return true
+	}
+	if _, err := providerfactory.ResolveAPIKey(provider, name, selected); err == nil {
+		return true
+	} else if !strings.Contains(err.Error(), "no API key found") {
+		return false
+	}
+	if !providerUsesAnthropicAuth(provider) {
+		return false
+	}
+	credentials, err := authstorage.NewBound(context.Background(), selected).Get(name)
+	if err != nil && !errors.Is(err, authstorage.ErrNotFound) {
+		return false
+	}
+	if strings.TrimSpace(credentials.AuthToken) != "" {
+		return true
+	}
+	return strings.TrimSpace(provider.AuthTokenEnv) == "" && configuredEnvValue("ANTHROPIC_AUTH_TOKEN") != ""
+}
+
+func configuredEnvValue(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	return strings.TrimSpace(os.Getenv(name))
+}
+
+func providerUsesAnthropicAuth(provider config.ProviderConfig) bool {
+	providerType := strings.ToLower(strings.TrimSpace(provider.Type))
+	providerType = strings.ReplaceAll(providerType, "_", "-")
+	if providerType == "anthropic" || providerType == "claude" || providerType == "anthropic-official" {
+		return true
+	}
+	npm := strings.ToLower(strings.TrimSpace(provider.NPM))
+	npm = strings.TrimPrefix(npm, "npm:")
+	return npm == "@ai-sdk/anthropic"
+}
+
+func providerModelSummaries(providerName string, provider config.ProviderConfig) []ProviderModelSummary {
+	if provider.Type == "chatgpt" {
+		models := make([]ProviderModelSummary, 0, len(provider.ChatGPTModels))
+		for _, model := range provider.ChatGPTModels {
+			models = append(models, chatGPTModelSummary(providerName, provider, model))
+		}
+		return models
+	}
+	if config.IsGrokBuildProvider(provider.Type) {
+		provider = config.ApplyGrokBuildProviderDefaults(provider)
+	}
+	ruleProviderName := providerName
+	ruleProvider := provider
+	var catalogProvider modelcatalog.Provider
+	hasCatalog := false
+	if matched, ok := modelcatalog.MatchProvider(providerName, provider); ok {
+		catalogProvider = matched
+		hasCatalog = true
+		ruleProviderName = matched.ID
+		ruleProvider = modelcatalog.MergeProvider(provider, matched)
+	} else if isCodexProviderType(provider.Type) {
+		if matched, ok := modelcatalog.CodexSubscriptionCatalogProvider(codexCatalogModelIDs(provider)...); ok {
+			catalogProvider = matched
+			hasCatalog = true
+			ruleProvider = modelcatalog.MergeProvider(provider, matched)
+		}
+	}
+	current := strings.TrimSpace(provider.Model)
+	selectedRuleProviderName := ruleProviderName
+	selectedRuleProvider := ruleProvider
+	if current != "" {
+		selectedRuleProviderName, selectedRuleProvider = modelcatalog.EnrichProvider(providerName, provider, current)
+	}
+
+	models := make(map[string]ProviderModelSummary, len(ruleProvider.Models)+1)
+	disabled := map[string]bool{}
+	for id, model := range provider.Models {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if model.Disabled {
+			disabled[id] = true
+			continue
+		}
+		modelRuleProviderName := ruleProviderName
+		modelRuleProvider := ruleProvider
+		if id == current {
+			modelRuleProviderName = selectedRuleProviderName
+			modelRuleProvider = selectedRuleProvider
+		}
+		model = modelRuleProvider.Models[id]
+		capabilities, behavior := modelroles.BuildFacts(modelRuleProviderName, modelRuleProvider, id)
+		models[id] = ProviderModelSummary{
+			ID:               id,
+			DisplayName:      strings.TrimSpace(model.Name),
+			DefaultEffort:    strings.TrimSpace(model.DefaultEffort),
+			DefaultVariant:   strings.TrimSpace(model.DefaultVariant),
+			SupportedEfforts: modelvariant.SupportedEffortsForProvider(modelRuleProviderName, modelRuleProvider, id, model),
+			Variants:         providerVariantSummaries(modelvariant.SummariesForProvider(modelRuleProviderName, modelRuleProvider, id)),
+			Capabilities:     capabilities,
+			Behavior:         behavior,
+			Source:           "config",
+		}
+	}
+	if hasCatalog {
+		for _, catalogModel := range catalogProvider.Models {
+			id := strings.TrimSpace(catalogModel.ID)
+			if id == "" || disabled[id] {
+				continue
+			}
+			if _, ok := models[id]; ok {
+				continue
+			}
+			model := ruleProvider.Models[id]
+			capabilities, behavior := modelroles.BuildFacts(ruleProviderName, ruleProvider, id)
+			models[id] = ProviderModelSummary{
+				ID:               id,
+				DisplayName:      strings.TrimSpace(model.Name),
+				DefaultEffort:    strings.TrimSpace(model.DefaultEffort),
+				DefaultVariant:   strings.TrimSpace(model.DefaultVariant),
+				SupportedEfforts: modelvariant.SupportedEffortsForProvider(ruleProviderName, ruleProvider, id, model),
+				Variants:         providerVariantSummaries(modelvariant.SummariesForProvider(ruleProviderName, ruleProvider, id)),
+				Capabilities:     capabilities,
+				Behavior:         behavior,
+				Source:           "models.dev",
+			}
+		}
+	}
+	if current != "" {
+		if _, ok := models[current]; !ok {
+			model := selectedRuleProvider.Models[current]
+			capabilities, behavior := modelroles.BuildFacts(selectedRuleProviderName, selectedRuleProvider, current)
+			models[current] = ProviderModelSummary{
+				ID:               current,
+				DisplayName:      strings.TrimSpace(model.Name),
+				DefaultEffort:    strings.TrimSpace(model.DefaultEffort),
+				DefaultVariant:   strings.TrimSpace(model.DefaultVariant),
+				SupportedEfforts: modelvariant.SupportedEffortsForProvider(selectedRuleProviderName, selectedRuleProvider, current, model),
+				Variants:         providerVariantSummaries(modelvariant.SummariesForProvider(selectedRuleProviderName, selectedRuleProvider, current)),
+				Capabilities:     capabilities,
+				Behavior:         behavior,
+				Source:           "selected",
+			}
+		}
+	}
+	out := make([]ProviderModelSummary, 0, len(models))
+	for _, model := range models {
+		modelRuleProviderName := ruleProviderName
+		modelRuleProvider := ruleProvider
+		if model.ID == current {
+			modelRuleProviderName = selectedRuleProviderName
+			modelRuleProvider = selectedRuleProvider
+		}
+		if len(model.Variants) == 0 {
+			model.Variants = providerVariantSummaries(modelvariant.SummariesForProvider(modelRuleProviderName, modelRuleProvider, model.ID))
+		}
+		if len(model.SupportedEfforts) == 0 {
+			model.SupportedEfforts = modelvariant.EffortIDs(modelVariantSummaries(model.Variants))
+		}
+		if model.DefaultVariant == "" && model.DefaultEffort != "" {
+			model.DefaultVariant = model.DefaultEffort
+		}
+		if model.DefaultVariant == "" {
+			model.DefaultVariant = modelvariant.DefaultVariantForProvider(modelRuleProviderName, modelRuleProvider, model.ID)
+		}
+		model.FastMode, model.DefaultSpeed = modelvariant.SpeedSupport(modelRuleProvider, model.ID)
+		out = append(out, model)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ID == current {
+			return true
+		}
+		if out[j].ID == current {
+			return false
+		}
+		return strings.ToLower(out[i].ID) < strings.ToLower(out[j].ID)
+	})
+	return out
+}
+
+func providerVariantSummaries(variants []modelvariant.Variant) []ProviderModelVariantSummary {
+	if len(variants) == 0 {
+		return nil
+	}
+	out := make([]ProviderModelVariantSummary, 0, len(variants))
+	for _, variant := range variants {
+		out = append(out, ProviderModelVariantSummary{
+			ID:      variant.ID,
+			Options: modelvariant.CloneOptions(variant.Options),
+		})
+	}
+	return out
+}
+
+func modelVariantSummaries(variants []ProviderModelVariantSummary) []modelvariant.Variant {
+	if len(variants) == 0 {
+		return nil
+	}
+	out := make([]modelvariant.Variant, 0, len(variants))
+	for _, variant := range variants {
+		out = append(out, modelvariant.Variant{
+			ID:      variant.ID,
+			Options: modelvariant.CloneOptions(variant.Options),
+		})
+	}
+	return out
+}
+
+func isCodexProviderType(providerType string) bool {
+	s := strings.ToLower(strings.TrimSpace(providerType))
+	s = strings.ReplaceAll(s, "_", "-")
+	return s == "openai-codex" || s == "codex-subscription" || s == "chatgpt-codex"
+}
+
+func (s *Server) cacheCodexModels(providerName string, models []codex.ModelInfo) {
+	providerName = strings.TrimSpace(providerName)
+	if s == nil || providerName == "" {
+		return
+	}
+	configs := codexLiveModelConfigs(models)
+	s.codexModelsMu.Lock()
+	defer s.codexModelsMu.Unlock()
+	if s.codexModelCache == nil {
+		s.codexModelCache = make(map[string]map[string]config.ProviderModelConfig)
+	}
+	s.codexModelCache[providerName] = configs
+}
+
+func (s *Server) withCachedCodexModels(providerName string, provider config.ProviderConfig) config.ProviderConfig {
+	if s == nil || !isCodexProviderType(provider.Type) {
+		return provider
+	}
+	providerName = strings.TrimSpace(providerName)
+	if providerName == "" {
+		return provider
+	}
+	s.codexModelsMu.Lock()
+	cached := cloneProviderModelConfigs(s.codexModelCache[providerName])
+	s.codexModelsMu.Unlock()
+	if len(cached) == 0 {
+		return provider
+	}
+	out := provider
+	out.Models = cloneProviderModelConfigs(provider.Models)
+	if out.Models == nil {
+		out.Models = make(map[string]config.ProviderModelConfig, len(cached))
+	}
+	for id, live := range cached {
+		merged := modelcatalog.MergeModelConfig(live, out.Models[id])
+		// User removals survive live discovery, just as they survive catalog refreshes.
+		merged.Disabled = out.Models[id].Disabled
+		// Live Codex model discovery is authoritative for adjustable reasoning
+		// levels. Do not retain catalog-only variants that the official model
+		// response omitted.
+		if len(live.SupportedEfforts) > 0 {
+			merged.SupportedEfforts = append([]string(nil), live.SupportedEfforts...)
+			merged.Variants = codexReasoningVariants(live.SupportedEfforts)
+		}
+		out.Models[id] = merged
+	}
+	return out
+}
+
+func codexLiveModelConfigs(models []codex.ModelInfo) map[string]config.ProviderModelConfig {
+	out := make(map[string]config.ProviderModelConfig, len(models))
+	for _, model := range models {
+		id := strings.TrimSpace(model.Slug)
+		if id == "" {
+			continue
+		}
+		out[id] = codexLiveModelConfig(model)
+		for _, alias := range modelcatalog.CodexSubscriptionModelAliases(id) {
+			aliasID := strings.TrimSpace(alias.ID)
+			if aliasID == "" {
+				continue
+			}
+			cfg := modelcatalog.MergeModelConfig(modelcatalog.ModelConfig(alias), out[id])
+			applyCodexSubscriptionLimit(aliasID, &cfg)
+			out[aliasID] = cfg
+		}
+	}
+	return out
+}
+
+func codexLiveModelConfig(model codex.ModelInfo) config.ProviderModelConfig {
+	id := strings.TrimSpace(model.Slug)
+	cfg := codexCatalogFallbackModelConfig(id)
+	cfg.ID = id
+	if name := strings.TrimSpace(model.DisplayName); name != "" {
+		cfg.Name = name
+	}
+	efforts := normalizedCodexEfforts(model.SupportedReasoning)
+	if len(efforts) > 0 || strings.TrimSpace(model.DefaultReasoningLevel) != "" {
+		reasoning := true
+		cfg.Reasoning = &reasoning
+	}
+	if len(efforts) > 0 {
+		cfg.SupportedEfforts = efforts
+		cfg.Variants = codexReasoningVariants(efforts)
+	}
+	if effort := strings.TrimSpace(model.DefaultReasoningLevel); effort != "" {
+		cfg.DefaultEffort = effort
+		cfg.DefaultVariant = effort
+	}
+	applyCodexSubscriptionLimit(id, &cfg)
+	return cfg
+}
+
+func codexCatalogModelIDs(provider config.ProviderConfig) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(provider.Models)+1)
+	add := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	add(provider.Model)
+	for id, model := range provider.Models {
+		add(id)
+		add(model.ID)
+	}
+	return out
+}
+
+func codexModelSummaries(models []codex.ModelInfo) []CodexModelSummary {
+	out := make([]CodexModelSummary, 0, len(models))
+	seen := map[string]bool{}
+	for _, model := range models {
+		id := strings.TrimSpace(model.Slug)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, codexModelSummaryFromLive(model))
+		for _, alias := range modelcatalog.CodexSubscriptionModelAliases(id) {
+			aliasID := strings.TrimSpace(alias.ID)
+			if aliasID == "" || seen[aliasID] {
+				continue
+			}
+			seen[aliasID] = true
+			out = append(out, codexModelSummaryFromCatalogAlias(alias, model))
+		}
+	}
+	return out
+}
+
+func codexModelSummaryFromLive(model codex.ModelInfo) CodexModelSummary {
+	return CodexModelSummary{
+		Slug:                  model.Slug,
+		DisplayName:           model.DisplayName,
+		DefaultReasoningLevel: model.DefaultReasoningLevel,
+		SupportedReasoning:    normalizedCodexEfforts(model.SupportedReasoning),
+		SupportedInAPI:        model.SupportedInAPI,
+	}
+}
+
+func codexModelSummaryFromCatalogAlias(alias modelcatalog.Model, base codex.ModelInfo) CodexModelSummary {
+	efforts := normalizedCodexEfforts(base.SupportedReasoning)
+	if len(efforts) == 0 {
+		efforts = codexReasoningEffortsFromCatalog(alias)
+	}
+	return CodexModelSummary{
+		Slug:                  strings.TrimSpace(alias.ID),
+		DisplayName:           strings.TrimSpace(alias.Name),
+		DefaultReasoningLevel: base.DefaultReasoningLevel,
+		SupportedReasoning:    efforts,
+		SupportedInAPI:        base.SupportedInAPI,
+	}
+}
+
+func codexReasoningEffortsFromCatalog(model modelcatalog.Model) []string {
+	for _, option := range model.ReasoningOptions {
+		if kind, _ := option["type"].(string); strings.TrimSpace(kind) != "effort" {
+			continue
+		}
+		switch values := option["values"].(type) {
+		case []any:
+			out := make([]string, 0, len(values))
+			for _, value := range values {
+				if effort, ok := value.(string); ok {
+					out = append(out, effort)
+				}
+			}
+			return normalizedCodexEfforts(out)
+		case []string:
+			return normalizedCodexEfforts(values)
+		}
+	}
+	return nil
+}
+
+func codexCatalogFallbackModelConfig(modelID string) config.ProviderModelConfig {
+	provider, ok := modelcatalog.MatchProvider("openai", config.ProviderConfig{Type: "openai"})
+	if !ok {
+		return config.ProviderModelConfig{ID: modelID}
+	}
+	for _, model := range provider.Models {
+		if strings.TrimSpace(model.ID) == modelID {
+			return modelcatalog.ModelConfig(model)
+		}
+	}
+	return config.ProviderModelConfig{ID: modelID}
+}
+
+func applyCodexSubscriptionLimit(modelID string, cfg *config.ProviderModelConfig) {
+	if cfg == nil {
+		return
+	}
+	inputCap := modelbudget.CodexSubscriptionInputCap(modelID, "openai-codex")
+	if inputCap <= 0 {
+		return
+	}
+	contextCap := modelbudget.CodexSubscriptionContextWindow(modelID, "openai-codex")
+	contextWindow := 0
+	if cfg.ContextWindow > 0 {
+		contextWindow = cfg.ContextWindow
+	}
+	inputLimit := inputCap
+	outputLimit := 128_000
+	if cfg.Limit != nil {
+		if cfg.Limit.Context > 0 && (contextWindow <= 0 || cfg.Limit.Context < contextWindow) {
+			contextWindow = cfg.Limit.Context
+		}
+		if cfg.Limit.Input > 0 && cfg.Limit.Input < inputLimit {
+			inputLimit = cfg.Limit.Input
+		}
+		if cfg.Limit.Output > 0 && cfg.Limit.Output < outputLimit {
+			outputLimit = cfg.Limit.Output
+		}
+	}
+	if contextWindow <= 0 {
+		contextWindow = contextCap
+	}
+	if contextCap > 0 && (contextWindow <= 0 || contextWindow > contextCap) {
+		contextWindow = contextCap
+	}
+	if contextWindow <= 0 {
+		return
+	}
+	cfg.ContextWindow = contextWindow
+	cfg.Limit = &config.ProviderModelLimitConfig{
+		Context: contextWindow,
+		Input:   inputLimit,
+		Output:  outputLimit,
+	}
+}
+
+func normalizedCodexEfforts(values []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		// The catalog can expose non-standard effort names that the provider API
+		// rejects when sent verbatim. Do not advertise those as request variants.
+		if value == "" || strings.EqualFold(value, "ultra") || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func codexReasoningVariants(efforts []string) map[string]map[string]any {
+	if len(efforts) == 0 {
+		return nil
+	}
+	out := make(map[string]map[string]any, len(efforts))
+	for _, effort := range efforts {
+		effort = strings.TrimSpace(effort)
+		if effort == "" {
+			continue
+		}
+		out[effort] = map[string]any{
+			"reasoningEffort":  effort,
+			"reasoningSummary": "auto",
+			"include":          []any{"reasoning.encrypted_content"},
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func cloneProviderModelConfigs(input map[string]config.ProviderModelConfig) map[string]config.ProviderModelConfig {
+	if len(input) == 0 {
+		return nil
+	}
+	out := make(map[string]config.ProviderModelConfig, len(input))
+	for key, value := range input {
+		out[key] = value
+	}
+	return out
+}
+
+func stringValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func explicitProviderAPIKey(provider config.ProviderConfig) string {
+	if key := strings.TrimSpace(provider.APIKey); key != "" {
+		return key
+	}
+	if envKey := strings.TrimSpace(provider.APIKeyEnv); envKey != "" {
+		return strings.TrimSpace(os.Getenv(envKey))
+	}
+	return ""
+}
+
+func validateSpeed(speed string) error {
+	switch speed {
+	case "", "standard", "fast":
+		return nil
+	}
+	return fmt.Errorf("unsupported speed %q", speed)
+}
+
+func chatGPTModelSummary(providerName string, provider config.ProviderConfig, model config.ChatGPTModelConfig) ProviderModelSummary {
+	capabilities, behavior := modelroles.BuildFacts(providerName, provider, model.ID)
+	return ProviderModelSummary{ID: model.ID, DisplayName: model.DisplayName, AccountDescriptor: model.AccountDescriptor, Source: "account", Capabilities: capabilities, Behavior: behavior}
+}

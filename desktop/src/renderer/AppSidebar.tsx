@@ -1,0 +1,2581 @@
+import { TruncatedText } from "./TruncatedText";
+import { showErrorToast } from "./Toast";
+import { PluginActionNotStartedError } from "../shared/PluginLifecycle";
+import { SidebarActivityIndicator } from "./SidebarActivityIndicator";
+import { useTabExitRetention } from "./TabMotion";
+import type { ApplicationNavigationActionMapV1, ApplicationNavigationViewV1 } from "../../../packages/plugin-sdk/src/ui-navigation";
+import type { UICompositionV1 } from "../../../packages/plugin-sdk/src/ui";
+import type { SessionOrganizationController } from "./SessionOrganization";
+import { hostSupports } from "./HostCapabilities";
+import { SidebarSettingsMenu } from "./SidebarSettingsMenu";
+import { DesktopUpdateButton } from "./DesktopUpdateButton";
+import { NavigationRibbon, type RibbonBrowserActions } from "./NavigationRibbon";
+import type { RibbonWebsite } from "./NavigationRibbonPreferences";
+import {
+  ChevronRight,
+  Folder,
+  FolderMinus,
+  FolderOpen,
+  FolderPlus,
+  MessageSquarePlus,
+  MessagesSquare,
+  Plus,
+  Search,
+  SquarePen,
+} from "./WuuIcons";
+import {
+  type PointerEvent as ReactPointerEvent,
+  type DragEvent as ReactDragEvent,
+  type CSSProperties,
+  type Dispatch,
+  type HTMLAttributes,
+  type ReactNode,
+  type RefObject,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import {
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  useDroppable,
+  useSensor,
+  useSensors,
+  type CollisionDetection,
+  type DragEndEvent,
+  type DragOverEvent,
+  type DragStartEvent,
+} from "@dnd-kit/core";
+import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { useDropAnimation, useSortableTransition } from "./SortableMotion";
+import type { DesktopProject, ExtensionInventoryRecord } from "../shared/protocol";
+import {
+  threadBelongsToWorkspace,
+  isThreadExecuting,
+  isThreadUnread,
+  sidebarThreadSortTime,
+  type ThreadSummary,
+} from "./AppState";
+import {
+  OrganizationThreadList,
+  ThreadRowTitle,
+  WorkspaceGroup,
+  type PendingConversation,
+} from "./ThreadSidebar";
+import { SidebarCollapseBody, SidebarSection } from "./SidebarSection";
+import { SidebarHoverFactsContext, type SidebarHoverFacts } from "./SidebarHoverCard";
+import { SidebarNameDialog } from "./SidebarNameDialog";
+import { confirmAction } from "./ConfirmDialog";
+import { ThreadContextMenu } from "./ThreadContextMenu";
+import {
+  SessionOrganizationProvider,
+  SESSION_FOLDER_DRAG_MIME,
+  useSessionOrganization,
+  type SessionGroup,
+} from "./SessionOrganization";
+import {
+  SidebarSectionDragPreview,
+  SortableSidebarSection,
+  reorderSidebarSections,
+  type SidebarSectionHeaderInfo,
+} from "./SortableSidebarSection";
+export { reorderSidebarSections } from "./SortableSidebarSection";
+import { SidebarPointerSensor } from "./SidebarPointerSensor";
+import { useSidebarConversationActivity } from "./SidebarConversationActivity";
+import { groupPluginFamilies } from "./pluginFamilies";
+import { PluginBlocksIcon } from "./PluginBlocksIcon";
+import { SkillsIcon } from "./SkillsIcon";
+import { pluginToggle } from "./extensionPackageState";
+import { PluginIcon } from "./PublicIcon";
+import { PluginAvatar } from "./PluginAvatar";
+import { SidebarBrand } from "./SidebarBrand";
+import { moveMenuFocus } from "./MenuKeyboardNavigation";
+import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./ComposerFloatingMenu";
+import { useI18n } from "./i18n";
+import {
+  desktopPluginHost,
+} from "./plugins/DesktopPluginRuntime";
+import type { PluginHost } from "./plugins/PluginHost";
+import { visibleWorkbenchView } from "./plugins/Workbench";
+import type { ApplicationWorkbenchV1 as WorkbenchController } from "../../../packages/plugin-sdk/src/ui-contributions";
+import { useOptionalApplicationWorkbench } from "./plugins/ApplicationWorkbenchContext";
+import type { SkillsCatalogSection } from "./SkillsCatalog";
+import { primaryViewNavigation } from "./plugins/PrimaryViewNavigation";
+import { createUIComposition } from "./plugins/ApplicationShell";
+import type { UISlotLayoutProps } from "../../../packages/plugin-sdk/src/ui";
+import { Tooltip } from "./Tooltip";
+import { ShellCanvasArtwork } from "./background/ShellCanvasArtwork";
+import { HoverRevealScopeContext, useRetainHoverOwner } from "./HoverReveal";
+
+/**
+ * Stable section identity key for the pinned functional group. The visible
+ * pinned group keeps its own persisted order/collapse state.
+ */
+export const SIDEBAR_SECTION_PINNED = "__wuu_pinned__";
+
+type AttentionRow = {
+  thread: ThreadSummary;
+  running: boolean;
+  unread: boolean;
+  time: number;
+};
+
+export type AttentionThreadPartition = {
+  running: ThreadSummary[];
+  unread: ThreadSummary[];
+  recent: ThreadSummary[];
+};
+
+/**
+ * Splits sidebar sessions into the attention view's three sections: everything
+ * that is running, settled sessions with an unread answer, then recently
+ * attended sessions that would otherwise drop out after being opened. Sort
+ * keys come from `sidebarThreadSortTime` so a running row cannot shuffle while
+ * its session streams.
+ */
+export function partitionAttentionThreads(
+  threads: readonly ThreadSummary[],
+  activeThreadID: string | undefined,
+  pendingThreadID: string | undefined,
+  lastViewedTurnByThreadID: Readonly<Record<string, string>>,
+  stickyThreadIDs: ReadonlySet<string> = new Set(),
+): AttentionThreadPartition {
+  const rows = threads
+    .filter((thread) => !thread.archived)
+    .map((thread): AttentionRow => {
+      const running = isThreadExecuting(thread);
+      const unread = (
+        !running &&
+        thread.id !== activeThreadID &&
+        thread.id !== pendingThreadID &&
+        isThreadUnread(thread, lastViewedTurnByThreadID[thread.id])
+      );
+      return { thread, running, unread, time: sidebarThreadSortTime(thread, running) };
+    });
+  const byNewest = (left: AttentionRow, right: AttentionRow): number => (
+    Number(Boolean(right.thread.pinned)) - Number(Boolean(left.thread.pinned))
+    || right.time - left.time
+  );
+  const running = rows.filter((row) => row.running).sort(byNewest).map((row) => row.thread);
+  const unread = rows.filter((row) => row.unread).sort(byNewest).map((row) => row.thread);
+  return {
+    running,
+    unread,
+    recent: rows
+      .filter((row) => (
+        !row.running &&
+        !row.unread &&
+        stickyThreadIDs.has(row.thread.id)
+      ))
+      .sort(byNewest)
+      .map((row) => row.thread),
+  };
+}
+
+export function attentionStickyThreadIDs(
+  threads: readonly ThreadSummary[],
+  activeThreadID: string | undefined,
+  pendingThreadID: string | undefined,
+  lastViewedTurnByThreadID: Readonly<Record<string, string>>,
+  current: ReadonlySet<string> = new Set(),
+): Set<string> {
+  const next = new Set(current);
+  if (activeThreadID) next.add(activeThreadID);
+  if (pendingThreadID) next.add(pendingThreadID);
+  for (const thread of threads) {
+    if (thread.archived) continue;
+    if (isThreadExecuting(thread) || isThreadUnread(thread, lastViewedTurnByThreadID[thread.id])) {
+      next.add(thread.id);
+    }
+  }
+  const liveIDs = new Set(threads.map((thread) => thread.id));
+  for (const id of next) {
+    if (!liveIDs.has(id)) next.delete(id);
+  }
+  return next;
+}
+
+const FOLDER_REMOVE_DROP_TARGET = "__wuu_remove_from_folder__";
+const FOLDER_SORTABLE_PREFIX = "__wuu_folder_sort__:";
+const PINNED_THREAD_SORTABLE_PREFIX = "__wuu_pinned_thread_sort__:";
+const PINNED_APPEND_DROP_ID = "__wuu_pinned_append_drop__";
+const PINNED_SESSION_DROP_TARGET = "__wuu_pinned_session_drop__";
+const WORKSPACE_SESSION_DROP_TARGET = "__wuu_workspace_session_drop__";
+const SIDEBAR_FUNCTIONAL_GROUP_ORDER_KEY = "wuu.desktop.sidebarFunctionalGroupOrder";
+const SIDEBAR_COLLAPSED_FUNCTIONAL_GROUPS_KEY = "wuu.desktop.sidebarCollapsedFunctionalGroups";
+const SIDEBAR_RECENTS_COLLAPSED_KEY = "wuu.desktop.sidebarRecentsCollapsed";
+const SIDEBAR_PINNED_ITEMS_KEY = "wuu.desktop.sidebarPinnedItems";
+const LEGACY_SIDEBAR_PINNED_CONTAINERS_KEY = "wuu.desktop.sidebarPinnedContainers";
+const SIDEBAR_FUNCTIONAL_GROUP_IDS = ["pinned", "folders", "workspace"] as const;
+type SidebarFunctionalGroupID = (typeof SIDEBAR_FUNCTIONAL_GROUP_IDS)[number];
+type SidebarPinnedItem = {
+  kind: "thread" | "folder" | "workspace";
+  id: string;
+};
+
+function pinnedItemSortableID(item: SidebarPinnedItem): string {
+  if (item.kind === "thread") return `${PINNED_THREAD_SORTABLE_PREFIX}${item.id}`;
+  if (item.kind === "folder") return `${FOLDER_SORTABLE_PREFIX}${item.id}`;
+  return item.id;
+}
+
+function moveSidebarItem(
+  order: string[],
+  activeID: string,
+  targetID: string,
+  position: "before" | "after",
+): string[] {
+  if (activeID === targetID || !order.includes(activeID) || !order.includes(targetID)) return order;
+  const next = order.filter((id) => id !== activeID);
+  const targetIndex = next.indexOf(targetID);
+  next.splice(targetIndex + (position === "after" ? 1 : 0), 0, activeID);
+  return next.every((id, index) => id === order[index]) ? order : next;
+}
+
+function loadSidebarPinnedItems(): SidebarPinnedItem[] {
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(SIDEBAR_PINNED_ITEMS_KEY)
+        ?? window.localStorage.getItem(LEGACY_SIDEBAR_PINNED_CONTAINERS_KEY)
+        ?? "[]",
+    );
+    if (!Array.isArray(parsed)) return [];
+    const seen = new Set<string>();
+    return parsed.flatMap((value) => {
+      if (!value || typeof value !== "object") return [];
+      const candidate = value as Partial<SidebarPinnedItem>;
+      if ((candidate.kind !== "thread"
+        && candidate.kind !== "folder"
+        && candidate.kind !== "workspace")
+        || typeof candidate.id !== "string"
+        || !candidate.id
+      ) return [];
+      const key = `${candidate.kind}:${candidate.id}`;
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ kind: candidate.kind, id: candidate.id }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function loadSidebarFunctionalGroupOrder(): SidebarFunctionalGroupID[] {
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(SIDEBAR_FUNCTIONAL_GROUP_ORDER_KEY) ?? "[]",
+    );
+    if (!Array.isArray(parsed)) return [...SIDEBAR_FUNCTIONAL_GROUP_IDS];
+    const order = [...new Set(parsed.filter(
+      (id): id is SidebarFunctionalGroupID =>
+        typeof id === "string"
+        && SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(id as SidebarFunctionalGroupID),
+    ))];
+    // Keep saved relative positions when adding groups.
+    return [...SIDEBAR_FUNCTIONAL_GROUP_IDS.filter((id) => !order.includes(id)), ...order];
+  } catch {
+    return [...SIDEBAR_FUNCTIONAL_GROUP_IDS];
+  }
+}
+
+function persistSidebarFunctionalGroupOrder(order: SidebarFunctionalGroupID[]): void {
+  try {
+    window.localStorage.setItem(SIDEBAR_FUNCTIONAL_GROUP_ORDER_KEY, JSON.stringify(order));
+  } catch (reason) {
+    console.warn("sidebar functional group order persistence failed", reason);
+  }
+}
+
+function loadCollapsedSidebarFunctionalGroups(): Set<SidebarFunctionalGroupID> {
+  try {
+    const parsed: unknown = JSON.parse(
+      window.localStorage.getItem(SIDEBAR_COLLAPSED_FUNCTIONAL_GROUPS_KEY) ?? "[]",
+    );
+    if (!Array.isArray(parsed)) return new Set();
+    return new Set(parsed.filter(
+      (id): id is SidebarFunctionalGroupID =>
+        typeof id === "string"
+        && SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(id as SidebarFunctionalGroupID),
+    ));
+  } catch {
+    return new Set();
+  }
+}
+
+function persistCollapsedSidebarFunctionalGroups(
+  collapsedIDs: Set<SidebarFunctionalGroupID>,
+): void {
+  try {
+    window.localStorage.setItem(
+      SIDEBAR_COLLAPSED_FUNCTIONAL_GROUPS_KEY,
+      JSON.stringify([...collapsedIDs]),
+    );
+  } catch (reason) {
+    console.warn("collapsed sidebar functional groups persistence failed", reason);
+  }
+}
+
+function loadSidebarRecentsCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_RECENTS_COLLAPSED_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function persistSidebarRecentsCollapsed(collapsed: boolean): void {
+  try {
+    window.localStorage.setItem(SIDEBAR_RECENTS_COLLAPSED_KEY, String(collapsed));
+  } catch (reason) {
+    console.warn("sidebar recents collapse persistence failed", reason);
+  }
+}
+
+/**
+ * Reconcile the persisted sidebar section order against the current
+ * project list. Pure function so it is directly testable.
+ *
+ * Rules:
+ *   1. Drop any stored key that is not a real project id (including stale
+ *      fixed, legacy, or retired conversation-workspace ids) once
+ *      `workspaceIDs` is known. When `workspaceIDs` is empty the real project
+ *      list has not been loaded yet, so stored keys are preserved — pruning
+ *      them against an empty list would destroy the user's persisted workspace
+ *      order on every launch.
+ *   2. Append newly-seen project ids in `workspaceIDs` order.
+ */
+export function reconcileSidebarSectionOrder(
+  stored: string[] | undefined,
+  workspaceIDs: string[],
+): string[] {
+  const workspaceIDsKnown = workspaceIDs.length > 0;
+  const knownIDs = new Set<string>(workspaceIDs);
+  const out: string[] = [];
+  if (Array.isArray(stored)) {
+    for (const key of stored) {
+      if (typeof key !== "string" || key.length === 0) continue;
+      if (key === SIDEBAR_SECTION_PINNED) continue;
+      if (workspaceIDsKnown && !knownIDs.has(key)) continue;
+      if (out.includes(key)) continue;
+      out.push(key);
+    }
+  }
+  for (const id of workspaceIDs) {
+    if (!out.includes(id)) {
+      out.push(id);
+    }
+  }
+  if (
+    stored &&
+    stored.length === out.length &&
+    stored.every((key, index) => key === out[index])
+  ) {
+    return stored;
+  }
+  return out;
+}
+
+/**
+ * Pure reorder helper: returns the order with `activeId` moved to the
+ * position of `overId`. Pure so the drag-end logic is testable without
+ * mounting the DOM or stubbing dnd-kit. Behavior contract:
+ *   - overId is null / empty / equal to activeId → returns the input
+ *     unchanged. dnd-kit occasionally emits "no over" when the pointer
+ *     releases outside any droppable; we treat that as a no-op.
+ *   - Either id absent from the order → returns the input unchanged.
+ *     This preserves the persisted order when something exotic happens
+ *     (e.g. the active section was removed from the reconcile result
+ *     while the drag was in flight).
+ */
+// Context that lets SidebarSection — a shared component used by both
+// the non-sortable pinned section and the sortable 对话 / 工作区
+// sections — pick up the dnd-kit activator listeners when it's inside a
+// SortableSection. Default value is null so non-sortable callsites
+// (the pinned section) fall through to the no-drag-handle path and the
+// header still works as a plain toggle.
+//
+// The context itself lives in SidebarSection so the consumer side
+// (SidebarSection) and provider side (SortableSection, below) share a
+// single import without a circular type dependency. SidebarSection
+// also exports the hook SidebarSection uses to read the handle.
+
+export interface SidebarNavigationService {
+  view: ApplicationNavigationViewV1;
+  invoke<A extends keyof ApplicationNavigationActionMapV1>(action: A, input: ApplicationNavigationActionMapV1[A]["input"], options?: { readonly signal?: AbortSignal }): Promise<ApplicationNavigationActionMapV1[A]["result"]>;
+  slots: UICompositionV1;
+  organization: SessionOrganizationController;
+}
+
+function ContextualSidebarLayout({ items, context }: UISlotLayoutProps): JSX.Element {
+  return <>{items.filter(item => item.pluginId === context.ownerPluginId).map(item => item.node)}</>;
+}
+
+export function AppSidebar({
+  navigation,
+  initialized,
+  activeContextKind,
+  activeSessionTabID,
+  selectedWorkspaceID,
+  extensionInventory,
+  lastViewedTurnByThreadID,
+  sidebarWorkspaces,
+  activeWorkspaceID,
+  pinnedThreads,
+  activeThreadID: nativeActiveThreadID,
+  pendingThreadID,
+  pendingWorkspaceID,
+  collapsedSidebarSectionIDs,
+  collapsedFolderIDs,
+  setCollapsedFolderIDs,
+  expandedSidebarSectionIDs,
+  loadingWorkspaceThreadIDs,
+  workspaceThreadsByWorkspaceID,
+  workspaceMenuOpen,
+  workspaceMenuRef,
+  searchOpen,
+  sectionOrder,
+  onStartNewThread,
+  onOpenSkillsTab,
+  onToggleConversationSearch,
+  pendingConversations = [],
+  draftConversations = [],
+  onSelectPendingConversation,
+  onSelectThread: selectNativeThread,
+  onTogglePinned,
+  onArchiveThread,
+  onDeleteThread,
+  onRenameThread,
+  onToggleWorkspaceMenu,
+  onCreateWorkspace,
+  onOpenWorkspaceFolder,
+  onToggleSidebarSectionCollapsed,
+  onLoadWorkspaceThreads,
+  onFocusWorkspace,
+  onStartNewThreadInWorkspace,
+  onSelectWorkspaceThread: selectNativeWorkspaceThread,
+  onRemoveWorkspace,
+  onRelocateWorkspace,
+  onReorderSections,
+  onPointerEnter,
+  onPointerLeave,
+  onOpenSettings,
+  onMarkThreadsViewed,
+  unreadViewOpen,
+  onToggleUnreadView,
+  attentionStickyIDs: attentionStickyIDsProp,
+  onAttentionStickyIDsChange,
+  pluginHost = desktopPluginHost,
+  workbenchController: suppliedWorkbenchController,
+  sidebarVisible = true,
+  sidebarCollapsed = false,
+  onShowConversations,
+  catalogActive = false,
+  settingsActive = false,
+  onLeaveSettings,
+  onRibbonPresenceChange,
+  catalogSection = "plugins",
+  onSelectCatalogSection,
+  onOpenCatalogPlugin,
+  activeWebsiteId,
+  onSelectWebsite,
+  websites,
+  onNewTab,
+  onCloseTab,
+  onPinTab,
+  onMuteTab,
+  onReorderTabs,
+}: {
+  // Remove legacy host access when the remaining direct AppSidebar callers use the selected surface.
+  navigation?: SidebarNavigationService;
+  initialized: boolean;
+  activeContextKind?: "project" | "no_project";
+  activeSessionTabID: string;
+  selectedWorkspaceID?: string;
+  extensionInventory?: readonly ExtensionInventoryRecord[];
+  lastViewedTurnByThreadID: Readonly<Record<string, string>>;
+  sidebarWorkspaces: DesktopProject[];
+  pendingConversations?: readonly PendingConversation[];
+  draftConversations?: readonly { id: string; title: string; pending: boolean; entering?: boolean }[];
+  onSelectPendingConversation?: (id: string) => void;
+  activeWorkspaceID?: string;
+  pinnedThreads: ThreadSummary[];
+  activeThreadID?: string;
+  pendingThreadID?: string;
+  pendingWorkspaceID?: string;
+  collapsedSidebarSectionIDs: Set<string>;
+  collapsedFolderIDs: ReadonlySet<string>;
+  setCollapsedFolderIDs: Dispatch<SetStateAction<Set<string>>>;
+  expandedSidebarSectionIDs: Set<string>;
+  loadingWorkspaceThreadIDs?: ReadonlySet<string>;
+  workspaceThreadsByWorkspaceID: Record<string, ThreadSummary[]>;
+  workspaceMenuOpen: boolean;
+  workspaceMenuRef: RefObject<HTMLDivElement | null>;
+  searchOpen: boolean;
+  // Order of reorderable workspace sections. The pinned section is rendered
+  // first (fixed position) and is NOT included.
+  sectionOrder: string[];
+  onStartNewThread: () => void;
+  onOpenSkillsTab: () => void;
+  onToggleConversationSearch: () => void;
+  onSelectThread: (id: string) => void;
+  onTogglePinned: (thread: ThreadSummary) => void;
+  onArchiveThread: (thread: ThreadSummary) => void;
+  onDeleteThread: (thread: ThreadSummary) => void;
+  onRenameThread: (thread: ThreadSummary, title: string) => void;
+  onToggleWorkspaceMenu: () => void;
+  onCreateWorkspace: () => void;
+  onOpenWorkspaceFolder: () => void;
+  onToggleSidebarSectionCollapsed: (id: string) => void;
+  onLoadWorkspaceThreads: (project: DesktopProject) => Promise<void>;
+  onFocusWorkspace?: (id: string) => void;
+  onStartNewThreadInWorkspace: (id: string) => void;
+  onSelectWorkspaceThread: (workspaceID: string, threadID: string) => void;
+  onRemoveWorkspace: (id: string) => void;
+  onRelocateWorkspace: (id: string) => void;
+  // Fires when the user drops a reorderable sidebar section in a new
+  // position. The next array is the FULL sectionOrder with the moved
+  // entry swapped into place. App.tsx persists this via the same
+  // sidebarSectionOrder effect that already exists. Optional so test
+  // harnesses and other consumers can render the sidebar without
+  // wiring persistence — production callers (App.tsx) always provide it.
+  onReorderSections?: (nextOrder: string[]) => void;
+  onPointerEnter?: () => void;
+  onPointerLeave?: (event: ReactPointerEvent<HTMLElement>) => void;
+  onOpenSettings: (page?: "providers" | "usage") => void;
+  onMarkThreadsViewed: (threads: readonly ThreadSummary[]) => void;
+  // The bell view is a sidebar navigation mode, so App owns the flag: faces
+  // that replace this component wholesale (settings, account) must bring the
+  // user back to the view they left, not to the session list.
+  unreadViewOpen: boolean;
+  onToggleUnreadView: () => void;
+  attentionStickyIDs?: ReadonlySet<string>;
+  onAttentionStickyIDsChange?: (ids: Set<string>) => void;
+  pluginHost?: PluginHost;
+  workbenchController?: WorkbenchController;
+  sidebarVisible?: boolean;
+  sidebarCollapsed?: boolean;
+  onShowConversations?: () => void;
+  catalogActive?: boolean;
+  settingsActive?: boolean;
+  onLeaveSettings?: () => void;
+  onRibbonPresenceChange?: (present: boolean) => void;
+  catalogSection?: SkillsCatalogSection;
+  onSelectCatalogSection?: (section: SkillsCatalogSection) => void;
+  onOpenCatalogPlugin?: (id: string) => void;
+  activeWebsiteId?: string | null;
+  onSelectWebsite?: (website: RibbonWebsite) => void;
+} & RibbonBrowserActions): JSX.Element {
+  const selectedWorkbench = useOptionalApplicationWorkbench();
+  const workbenchController = suppliedWorkbenchController ?? selectedWorkbench;
+  const { locale, t } = useI18n();
+  const localSlots = useMemo(() => createUIComposition(pluginHost), [pluginHost]);
+  const slots = navigation?.slots ?? localSlots;
+  const ribbonRef = useCallback((element: HTMLElement | null) => {
+    onRibbonPresenceChange?.(element !== null);
+  }, [onRibbonPresenceChange]);
+  const [attentionStickyIDsState, setAttentionStickyIDsState] = useState<Set<string>>(() => new Set());
+  const attentionStickyIDs = attentionStickyIDsProp ?? attentionStickyIDsState;
+  const attentionStickyIDsRef = useRef(attentionStickyIDs);
+  attentionStickyIDsRef.current = attentionStickyIDs;
+
+  function commitAttentionStickyIDs(next: Set<string>): void {
+    if (sameStringSet(attentionStickyIDsRef.current, next)) return;
+    if (onAttentionStickyIDsChange) {
+      onAttentionStickyIDsChange(next);
+      return;
+    }
+    setAttentionStickyIDsState(next);
+  }
+  const organizationSourceThreads = useMemo(() => {
+    const byID = new Map<string, ThreadSummary>();
+    for (const threads of Object.values(workspaceThreadsByWorkspaceID)) {
+      for (const thread of threads) byID.set(thread.id, thread);
+    }
+    for (const thread of pinnedThreads) byID.set(thread.id, thread);
+    return [...byID.values()];
+  }, [pinnedThreads, workspaceThreadsByWorkspaceID]);
+  const organization = useSessionOrganization(organizationSourceThreads, navigation?.organization);
+  const [pinnedItems, setPinnedItems] = useState<SidebarPinnedItem[]>(
+    loadSidebarPinnedItems,
+  );
+  const [functionalGroupOrder, setFunctionalGroupOrder] = useState<SidebarFunctionalGroupID[]>(
+    loadSidebarFunctionalGroupOrder,
+  );
+  const [collapsedFunctionalGroupIDs, setCollapsedFunctionalGroupIDs] =
+    useState<Set<SidebarFunctionalGroupID>>(loadCollapsedSidebarFunctionalGroups);
+  const [recentsCollapsed, setRecentsCollapsed] = useState(loadSidebarRecentsCollapsed);
+  const draftEntries = useTabExitRetention(draftConversations, draft => draft.id)
+    .filter(entry => !entry.closing || !entry.tab.pending);
+  // Consume entrance eligibility even when the fold is closed. Its children
+  // can remount later without a new navigation snapshot.
+  const presentedDraftIDs = useRef(new Set<string>());
+  useLayoutEffect(() => {
+    presentedDraftIDs.current = new Set(draftConversations.map(draft => draft.id));
+  });
+  const [draggingFunctionalGroupID, setDraggingFunctionalGroupID] =
+    useState<SidebarFunctionalGroupID>();
+  const [groupContextMenu, setGroupContextMenu] = useState<{
+    group: SessionGroup;
+    pinned: boolean;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [groupNameDialog, setGroupNameDialog] = useState<
+    | { action: "create"; thread?: ThreadSummary }
+    | { action: "rename"; group: SessionGroup }
+    | null
+  >(null);
+  const [groupName, setGroupName] = useState("");
+  const [groupNamePending, setGroupNamePending] = useState(false);
+  const [folderDragThreadID, setFolderDragThreadID] = useState<string>();
+  const [folderDropTargetID, setFolderDropTargetID] = useState<string>();
+  const folderDropTargetIDRef = useRef<string | undefined>(undefined);
+  const folderDragThread = folderDragThreadID
+    ? organizationSourceThreads.find((thread) => thread.id === folderDragThreadID)
+    : undefined;
+  const folderDragCanRemove = Boolean(
+    folderDragThreadID
+      && (folderDragThread?.pinned || organization.folderByThreadID[folderDragThreadID]),
+  );
+  const hasRuntimeContext = activeContextKind !== undefined;
+  const canStartNewThread = sidebarWorkspaces.some((project) => !project.missing);
+  const declaredPluginNavigationEntries = useSyncExternalStore(
+    (listener) => navigation ? () => {} : pluginHost.subscribe(listener),
+    () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
+    () => navigation ? navigation.view.destinations : pluginHost.getNavigationEntries(),
+  );
+  const workbenchSnapshot = useSyncExternalStore(
+    navigation ? () => () => {} : workbenchController?.subscribe ?? (() => () => {}),
+    () => navigation ? null : workbenchController?.getSnapshot() ?? null,
+    () => navigation ? null : workbenchController?.getSnapshot() ?? null,
+  );
+  const navigationInvoke = navigation?.invoke;
+  const loadPluginIcon = useMemo(() => navigationInvoke
+    ? (pluginId: string, fingerprint: string, path: string) => navigationInvoke("navigation.load-icon", { pluginId, fingerprint, path })
+    : undefined, [navigationInvoke]);
+  const publicActive = navigation?.view.activePluginView;
+  const activePluginMain = navigation ? (publicActive && { view: { id: publicActive.id, pluginId: publicActive.pluginId, viewTypeId: publicActive.viewTypeId, context: publicActive.context }, definition: { title: publicActive.title } }) : workbenchSnapshot ? visibleWorkbenchView(workbenchSnapshot, "primary") : undefined;
+  const activePluginMainView = activePluginMain?.view;
+  const pluginCatalogActive = !settingsActive && !activeWebsiteId && !activePluginMainView && catalogActive;
+  const conversationsActive = !settingsActive && !activeWebsiteId && !activePluginMainView && !pluginCatalogActive;
+  const activeThreadID = conversationsActive ? nativeActiveThreadID : undefined;
+  const [selectionOrigin, setSelectionOrigin] = useState<{ id: string; section: string }>();
+  const pluginNavigationEntries = useMemo(
+    () => navigation ? navigation.view.destinations : workbenchSnapshot ? primaryViewNavigation(declaredPluginNavigationEntries, workbenchSnapshot) : [],
+    [declaredPluginNavigationEntries, workbenchSnapshot, navigation],
+  );
+  const extensionCatalog = useMemo(() => {
+    if (navigation) return {
+      pluginCount: groupPluginFamilies(navigation.view.plugins.filter(row => row.kind === "plugin"), locale).length,
+      skillCount: navigation.view.plugins.filter(row => row.kind === "skill").length,
+      enabledPlugins: groupPluginFamilies(navigation.view.plugins.filter(row => row.kind === "plugin"), locale)
+        .filter(group => group.members.some(record => record.enabled)),
+    };
+    const records = extensionInventory ?? [];
+    const plugins = records.filter((record) => record.kind === "plugin");
+    return {
+      pluginCount: groupPluginFamilies(plugins, locale).length,
+      skillCount: records.filter((record) => record.kind === "skill").length,
+      enabledPlugins: groupPluginFamilies(plugins, locale)
+        .filter(group => group.members.some(record => pluginToggle(record).on)),
+    };
+  }, [locale, extensionInventory, navigation]);
+  const activateNative = useCallback((action: () => void, retainDraftIntent = false): void => {
+    if (navigation) void navigation.invoke("navigation.show-native", {}).then(action).catch(error => {
+      // The draft action has not run yet; let its owner carry the user's intent.
+      if (retainDraftIntent && error instanceof PluginActionNotStartedError) action();
+      else showErrorToast(error);
+    });
+    else { workbenchController?.deactivateRegion("primary"); action(); }
+  }, [workbenchController, navigation]);
+  // The navigation surface owns thread selection across provider handoffs.
+  const onSelectThread = useCallback((id: string) => {
+    setSelectionOrigin({ id, section: "organization" });
+    if (navigation) selectNativeThread(id);
+    else activateNative(() => selectNativeThread(id));
+  }, [activateNative, navigation, selectNativeThread]);
+  const onSelectWorkspaceThread = useCallback((workspaceID: string, threadID: string) => {
+    setSelectionOrigin({ id: threadID, section: workspaceID });
+    if (navigation) selectNativeWorkspaceThread(workspaceID, threadID);
+    else activateNative(() => selectNativeWorkspaceThread(workspaceID, threadID));
+  }, [activateNative, navigation, selectNativeWorkspaceThread]);
+  const openPluginNavigation = useCallback((pluginId: string, viewTypeId: string, instanceId?: string): void => {
+    onLeaveSettings?.();
+    if (navigation) { void navigation.invoke("navigation.open-plugin", { pluginId, viewTypeId, instanceId }).catch(showErrorToast); return; }
+    if (instanceId) {
+      workbenchController?.activateView(instanceId);
+      return;
+    }
+    void workbenchController?.openPluginView(pluginId, viewTypeId, {
+      region: "primary",
+      persistence: "durable",
+      reveal: true,
+    }).catch(() => workbenchController?.deactivateRegion("primary"));
+  }, [workbenchController, onLeaveSettings, navigation]);
+
+  // Drag-and-drop reorder wiring for the reorderable sections. The 6px
+  // activation distance lets plain clicks on the header (collapse toggle)
+  // and on threads inside the section pass through without triggering a
+  // drag — matches SessionTabs so the two surfaces share a feel.
+  const sensors = useSensors(
+    useSensor(SidebarPointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const dropAnimation = useDropAnimation();
+  const addWorkspaceTriggerRef = useRef<HTMLButtonElement>(null);
+  const addWorkspaceMenuRef = useRef<HTMLDivElement>(null);
+  useFloatingMenuFocus(addWorkspaceMenuRef, "workspace", workspaceMenuOpen);
+  useRetainHoverOwner(workspaceMenuOpen);
+  const [draggingSectionID, setDraggingSectionID] = useState<string | undefined>();
+  const [sidebarSortIndicator, setSidebarSortIndicator] = useState<{
+    id: string;
+    position: "before" | "after";
+  }>();
+  const sidebarDragStartClientYRef = useRef<number | undefined>(undefined);
+  // Each SortableSection calls back into this registry on every render
+  // with its id → header info. The DragOverlay reads from this map to
+  // render the right header for the currently dragged section. Using a
+  // ref (not state) avoids an extra render when a child mounts and
+  // keeps the lookup cheap during high-frequency drag pointer moves.
+  const sectionHeaderInfoByIDRef = useRef<Map<string, SidebarSectionHeaderInfo>>(new Map());
+  const registerSectionHeaderInfo = useCallback(
+    (id: string, info: SidebarSectionHeaderInfo | null): void => {
+      if (info === null) {
+        sectionHeaderInfoByIDRef.current.delete(id);
+      } else {
+        sectionHeaderInfoByIDRef.current.set(id, info);
+      }
+    },
+    [],
+  );
+  const draggingSectionInfo = draggingSectionID
+    ? sectionHeaderInfoByIDRef.current.get(draggingSectionID)
+    : undefined;
+  const folderSortableIDs = organization.folders.map((folder) => `${FOLDER_SORTABLE_PREFIX}${folder.id}`);
+  const availableFolderIDs = new Set(organization.folders.map((folder) => folder.id));
+  const availableWorkspaceIDs = new Set(sidebarWorkspaces.map((project) => project.id));
+  const availablePinnedThreadIDs = new Set(pinnedThreads.map((thread) => thread.id));
+  const validPinnedItems = pinnedItems.filter((entry) => {
+    if (entry.kind === "thread") return availablePinnedThreadIDs.has(entry.id);
+    if (entry.kind === "folder") return availableFolderIDs.has(entry.id);
+    return availableWorkspaceIDs.has(entry.id);
+  });
+  const knownPinnedThreadIDs = new Set(
+    validPinnedItems.filter((entry) => entry.kind === "thread").map((entry) => entry.id),
+  );
+  for (const thread of pinnedThreads) {
+    if (!knownPinnedThreadIDs.has(thread.id)) {
+      validPinnedItems.push({ kind: "thread", id: thread.id });
+    }
+  }
+  const pinnedItemSortableIDs = validPinnedItems.map(pinnedItemSortableID);
+  const pinnedItemBySortableID = new Map(
+    validPinnedItems.map((entry) => [pinnedItemSortableID(entry), entry]),
+  );
+  const validPinnedContainers = validPinnedItems.filter(
+    (entry): entry is SidebarPinnedItem & { kind: "folder" | "workspace" } =>
+      entry.kind === "folder" || entry.kind === "workspace",
+  );
+  const pinnedFolderIDs = new Set(
+    validPinnedContainers.filter((entry) => entry.kind === "folder").map((entry) => entry.id),
+  );
+  const pinnedWorkspaceIDs = new Set(
+    validPinnedContainers.filter((entry) => entry.kind === "workspace").map((entry) => entry.id),
+  );
+  const visibleFolderSortableIDs = folderSortableIDs.filter(
+    (id) => !pinnedFolderIDs.has(id.slice(FOLDER_SORTABLE_PREFIX.length)),
+  );
+  const visibleWorkspaceSectionOrder = sectionOrder.filter(
+    (id) => !pinnedWorkspaceIDs.has(id),
+  );
+
+  function updatePinnedItems(
+    updater: (current: SidebarPinnedItem[]) => SidebarPinnedItem[],
+  ): void {
+    setPinnedItems((current) => {
+      const next = updater(current);
+      window.localStorage.setItem(SIDEBAR_PINNED_ITEMS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+
+  function pinContainer(
+    entry: SidebarPinnedItem,
+    targetSortableID?: string,
+    position: "before" | "after" = "after",
+  ): void {
+    updatePinnedItems((current) => {
+      const next = [...current];
+      for (const existing of validPinnedItems) {
+        if (!next.some((candidate) =>
+          candidate.kind === existing.kind && candidate.id === existing.id
+        )) next.push(existing);
+      }
+      const alreadyPinned = next.some(
+        (candidate) => candidate.kind === entry.kind && candidate.id === entry.id,
+      );
+      const target = targetSortableID
+        ? pinnedItemBySortableID.get(targetSortableID)
+        : undefined;
+      if (!target) return alreadyPinned ? next : [...next, entry];
+      const withoutEntry = next.filter(
+        (candidate) => candidate.kind !== entry.kind || candidate.id !== entry.id,
+      );
+      const targetIndex = withoutEntry.findIndex(
+        (candidate) => candidate.kind === target.kind && candidate.id === target.id,
+      );
+      if (targetIndex === -1) return [...withoutEntry, entry];
+      withoutEntry.splice(targetIndex + (position === "after" ? 1 : 0), 0, entry);
+      return withoutEntry;
+    });
+    setCollapsedFunctionalGroupIDs((current) => {
+      if (!current.has("pinned")) return current;
+      const next = new Set(current);
+      next.delete("pinned");
+      persistCollapsedSidebarFunctionalGroups(next);
+      return next;
+    });
+  }
+
+  function unpinContainer(entry: SidebarPinnedItem): void {
+    updatePinnedItems((current) => current.filter(
+      (candidate) => candidate.kind !== entry.kind || candidate.id !== entry.id,
+    ));
+  }
+
+  function toggleThreadPinned(thread: ThreadSummary): void {
+    if (thread.pinned) {
+      unpinContainer({ kind: "thread", id: thread.id });
+    } else {
+      pinContainer({ kind: "thread", id: thread.id });
+    }
+    onTogglePinned(thread);
+  }
+
+  function functionalGroupForSortableID(id: string | undefined): SidebarFunctionalGroupID | undefined {
+    if (!id) return undefined;
+    if (SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(id as SidebarFunctionalGroupID)) {
+      return id as SidebarFunctionalGroupID;
+    }
+    if (id === PINNED_APPEND_DROP_ID) return "pinned";
+    if (pinnedItemBySortableID.has(id)) return "pinned";
+    if (id.startsWith(FOLDER_SORTABLE_PREFIX)) return "folders";
+    if (sectionOrder.includes(id)) return "workspace";
+    return undefined;
+  }
+
+  const sidebarCollisionDetection: CollisionDetection = (args) => {
+    const activeID = String(args.active.id);
+    const activePinnedEntry = pinnedItemBySortableID.get(activeID);
+    const allowed = (candidateID: string): boolean => {
+      if (SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(activeID as SidebarFunctionalGroupID)) {
+        return SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(candidateID as SidebarFunctionalGroupID);
+      }
+      if (activePinnedEntry) {
+        const returnsToEmptySource = activePinnedEntry.kind === "folder"
+          ? visibleFolderSortableIDs.length === 0 && candidateID === "folders"
+          : activePinnedEntry.kind === "workspace"
+            ? visibleWorkspaceSectionOrder.length === 0 && candidateID === "workspace"
+            : candidateID === "folders" || candidateID === "workspace";
+        return returnsToEmptySource
+          || candidateID === PINNED_APPEND_DROP_ID
+          || pinnedItemBySortableID.has(candidateID)
+          || (activePinnedEntry.kind === "folder"
+            ? visibleFolderSortableIDs.includes(candidateID)
+            : activePinnedEntry.kind === "workspace"
+              ? visibleWorkspaceSectionOrder.includes(candidateID)
+              : false);
+      }
+      if (activeID.startsWith(FOLDER_SORTABLE_PREFIX)) {
+        return candidateID === "folders"
+          || candidateID === PINNED_APPEND_DROP_ID
+          || pinnedItemBySortableID.has(candidateID)
+          || (candidateID.startsWith(FOLDER_SORTABLE_PREFIX)
+            && !pinnedItemBySortableID.has(candidateID));
+      }
+      if (sectionOrder.includes(activeID)) {
+        return candidateID === "workspace"
+          || candidateID === PINNED_APPEND_DROP_ID
+          || pinnedItemBySortableID.has(candidateID)
+          || (sectionOrder.includes(candidateID)
+            && !pinnedItemBySortableID.has(candidateID));
+      }
+      return true;
+    };
+    return closestCenter({
+      ...args,
+      droppableContainers: args.droppableContainers.filter(
+        (container) => allowed(String(container.id)),
+      ),
+    });
+  };
+
+  function handleSidebarDragStart(event: DragStartEvent): void {
+    const activeID = String(event.active.id);
+    const activatorClientY = (event.activatorEvent as MouseEvent).clientY;
+    sidebarDragStartClientYRef.current = typeof activatorClientY === "number"
+      ? activatorClientY
+      : undefined;
+    if (SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(activeID as SidebarFunctionalGroupID)) {
+      setDraggingFunctionalGroupID(activeID as SidebarFunctionalGroupID);
+    } else {
+      setDraggingSectionID(activeID);
+    }
+  }
+
+  function handleSidebarDragOver(event: DragOverEvent): void {
+    const activeID = String(event.active.id);
+    const overID = event.over ? String(event.over.id) : undefined;
+    const activePinnedEntry = pinnedItemBySortableID.get(activeID);
+    const activePinned = activePinnedEntry !== undefined;
+    const activeCanEnterPinned = activeID.startsWith(FOLDER_SORTABLE_PREFIX)
+      || sectionOrder.includes(activeID);
+    if ((activePinned || activeCanEnterPinned) && overID === PINNED_APPEND_DROP_ID) {
+      setSidebarSortIndicator({ id: PINNED_APPEND_DROP_ID, position: "after" });
+      return;
+    }
+    const returnTargets = activePinnedEntry?.kind === "folder"
+      ? visibleFolderSortableIDs
+      : activePinnedEntry?.kind === "workspace"
+        ? visibleWorkspaceSectionOrder
+        : undefined;
+    const returnGroup = activePinnedEntry?.kind === "folder"
+      ? "folders"
+      : activePinnedEntry?.kind === "workspace"
+        ? "workspace"
+        : undefined;
+    if (overID && returnTargets?.includes(overID)) {
+      const overRect = event.over?.rect;
+      const pointerY = sidebarDragStartClientYRef.current === undefined
+        ? undefined
+        : sidebarDragStartClientYRef.current + event.delta.y;
+      const position = overRect && pointerY !== undefined
+        ? pointerY < overRect.top + overRect.height / 2 ? "before" : "after"
+        : "before";
+      setSidebarSortIndicator({ id: overID, position });
+      return;
+    }
+    if (returnTargets?.length === 0 && overID === returnGroup && returnGroup) {
+      setSidebarSortIndicator({ id: returnGroup, position: "after" });
+      return;
+    }
+    if ((!activePinned && !activeCanEnterPinned)
+      || !overID
+      || !pinnedItemBySortableID.has(overID)
+    ) {
+      setSidebarSortIndicator(undefined);
+      return;
+    }
+    if (!activePinned) {
+      const activeRect = event.active.rect.current.translated;
+      const overRect = event.over?.rect;
+      const pointerY = sidebarDragStartClientYRef.current === undefined
+        ? undefined
+        : sidebarDragStartClientYRef.current + event.delta.y;
+      const position = overRect && (pointerY !== undefined || activeRect)
+        ? (pointerY ?? (activeRect ? activeRect.top + activeRect.height / 2 : overRect.top))
+            < overRect.top + overRect.height / 2
+          ? "before"
+          : "after"
+        : "before";
+      setSidebarSortIndicator({ id: overID, position });
+      return;
+    }
+    const activeIndex = pinnedItemSortableIDs.indexOf(activeID);
+    const overIndex = pinnedItemSortableIDs.indexOf(overID);
+    if (activeIndex === -1 || overIndex === -1 || activeIndex === overIndex) {
+      setSidebarSortIndicator(undefined);
+      return;
+    }
+    setSidebarSortIndicator({
+      id: overID,
+      position: activeIndex < overIndex ? "after" : "before",
+    });
+  }
+
+  function handleSidebarDragEnd(event: DragEndEvent): void {
+    const activeID = String(event.active.id);
+    const overID = event.over ? String(event.over.id) : undefined;
+    const activeGroup = functionalGroupForSortableID(activeID);
+    const overGroup = functionalGroupForSortableID(overID);
+
+    if (SIDEBAR_FUNCTIONAL_GROUP_IDS.includes(activeID as SidebarFunctionalGroupID)) {
+      const next = reorderSidebarSections(functionalGroupOrder, activeID, overGroup);
+      if (next !== functionalGroupOrder) {
+        const nextOrder = next as SidebarFunctionalGroupID[];
+        setFunctionalGroupOrder(nextOrder);
+        persistSidebarFunctionalGroupOrder(nextOrder);
+      }
+    } else if (activeGroup === "pinned") {
+      const entry = pinnedItemBySortableID.get(activeID);
+      const returnGroup = entry?.kind === "folder"
+        ? "folders"
+        : entry?.kind === "workspace"
+          ? "workspace"
+          : undefined;
+      if (entry?.kind === "thread" && (overGroup === "folders" || overGroup === "workspace")) {
+        const thread = pinnedThreads.find((candidate) => candidate.id === entry.id);
+        if (thread) toggleThreadPinned(thread);
+      } else if (entry && overGroup === returnGroup) {
+        if (entry.kind === "folder" && overID && visibleFolderSortableIDs.includes(overID)) {
+          const next = moveSidebarItem(
+            folderSortableIDs,
+            activeID,
+            overID,
+            sidebarSortIndicator?.id === overID ? sidebarSortIndicator.position : "before",
+          );
+          if (next !== folderSortableIDs) {
+            void organization.reorderFolders(next.map((id) => id.slice(FOLDER_SORTABLE_PREFIX.length)));
+          }
+        } else if (entry.kind === "workspace" && overID && visibleWorkspaceSectionOrder.includes(overID)) {
+          const next = moveSidebarItem(
+            sectionOrder,
+            activeID,
+            overID,
+            sidebarSortIndicator?.id === overID ? sidebarSortIndicator.position : "before",
+          );
+          if (next !== sectionOrder) onReorderSections?.(next);
+        }
+        unpinContainer(entry);
+      } else if (entry && overGroup === "pinned") {
+        const nextIDs = overID === PINNED_APPEND_DROP_ID
+          ? [...pinnedItemSortableIDs.filter((id) => id !== activeID), activeID]
+          : reorderSidebarSections(pinnedItemSortableIDs, activeID, overID);
+        if (nextIDs !== pinnedItemSortableIDs) {
+          const byID = pinnedItemBySortableID;
+          updatePinnedItems(() => nextIDs.flatMap((id) => {
+            const nextEntry = byID.get(id);
+            return nextEntry ? [nextEntry] : [];
+          }));
+        }
+      }
+    } else if (activeID.startsWith(FOLDER_SORTABLE_PREFIX)) {
+      const folderID = activeID.slice(FOLDER_SORTABLE_PREFIX.length);
+      if (overGroup === "pinned") {
+        pinContainer(
+          { kind: "folder", id: folderID },
+          overID,
+          sidebarSortIndicator && sidebarSortIndicator.id === overID
+            ? sidebarSortIndicator.position
+            : "after",
+        );
+      } else if (overGroup === "folders") {
+        const next = reorderSidebarSections(folderSortableIDs, activeID, overID);
+        if (next !== folderSortableIDs) {
+          void organization.reorderFolders(next.map((id) => id.slice(FOLDER_SORTABLE_PREFIX.length)));
+        }
+      }
+    } else if (sectionOrder.includes(activeID)) {
+      if (overGroup === "pinned") {
+        pinContainer(
+          { kind: "workspace", id: activeID },
+          overID,
+          sidebarSortIndicator && sidebarSortIndicator.id === overID
+            ? sidebarSortIndicator.position
+            : "after",
+        );
+      } else if (overGroup === "workspace") {
+        const next = reorderSidebarSections(sectionOrder, activeID, overID);
+        if (next !== sectionOrder) onReorderSections?.(next);
+      }
+    }
+
+    setDraggingFunctionalGroupID(undefined);
+    setDraggingSectionID(undefined);
+    setSidebarSortIndicator(undefined);
+    sidebarDragStartClientYRef.current = undefined;
+  }
+
+  function handleSidebarDragCancel(): void {
+    setDraggingFunctionalGroupID(undefined);
+    setDraggingSectionID(undefined);
+    setSidebarSortIndicator(undefined);
+    sidebarDragStartClientYRef.current = undefined;
+  }
+  function toggleFunctionalGroupCollapsed(groupID: SidebarFunctionalGroupID): void {
+    setCollapsedFunctionalGroupIDs((current) => {
+      const next = new Set(current);
+      if (next.has(groupID)) next.delete(groupID); else next.add(groupID);
+      persistCollapsedSidebarFunctionalGroups(next);
+      return next;
+    });
+  }
+  function toggleRecentsCollapsed(): void {
+    setRecentsCollapsed((current) => {
+      const next = !current;
+      persistSidebarRecentsCollapsed(next);
+      return next;
+    });
+  }
+  const pinnedRows = pinnedThreads;
+  const hasPinnedRows = validPinnedItems.length > 0;
+  // Temporary destinations overlay the list: inserting a group here moves
+  // the native drag source while Chromium is capturing it and cancels the drag.
+  const showEmptyPinnedDropTarget = !hasPinnedRows
+    && (folderDragThreadID !== undefined || draggingSectionID !== undefined);
+  const showEmptyFolderDropTarget = visibleFolderSortableIDs.length === 0 && folderDragCanRemove;
+  const pinnedHeadingDropTargetID = pinnedItemSortableIDs[0] ?? PINNED_APPEND_DROP_ID;
+  const pinnedHasRunning = pinnedRows.some((thread) => isThreadExecuting(thread));
+  const pinnedHasUnread = pinnedRows.some((thread) =>
+    sidebarThreadUnread(
+      thread,
+      lastViewedTurnByThreadID,
+    ),
+  );
+  const allSidebarThreads = useMemo(() => {
+    const byID = new Map<string, ThreadSummary>();
+    for (const threads of Object.values(workspaceThreadsByWorkspaceID)) {
+      for (const thread of threads) byID.set(thread.id, thread);
+    }
+    for (const thread of pinnedRows) byID.set(thread.id, thread);
+    return [...byID.values()];
+  }, [pinnedRows, workspaceThreadsByWorkspaceID]);
+  useEffect(() => {
+    if (!unreadViewOpen) {
+      commitAttentionStickyIDs(new Set());
+      return;
+    }
+    commitAttentionStickyIDs(attentionStickyThreadIDs(
+      organizationSourceThreads,
+      activeThreadID,
+      pendingThreadID,
+      lastViewedTurnByThreadID,
+      attentionStickyIDsRef.current,
+    ));
+  }, [
+    activeThreadID,
+    organizationSourceThreads,
+    pendingThreadID,
+    lastViewedTurnByThreadID,
+    unreadViewOpen,
+  ]);
+  const attentionThreads = useMemo(() => partitionAttentionThreads(
+    organizationSourceThreads,
+    activeThreadID,
+    pendingThreadID,
+    lastViewedTurnByThreadID,
+    attentionStickyIDs,
+  ), [
+    activeThreadID,
+    attentionStickyIDs,
+    organizationSourceThreads,
+    pendingThreadID,
+    lastViewedTurnByThreadID,
+  ]);
+  const runningThreads = attentionThreads.running;
+  const unreadThreads = attentionThreads.unread;
+  const recentThreads = attentionThreads.recent;
+  const attentionCount = runningThreads.length + unreadThreads.length;
+  const visibleFunctionalGroupOrder = useMemo(() => functionalGroupOrder.filter(
+    (id) => (id !== "pinned" || hasPinnedRows)
+      && (id !== "folders" || visibleFolderSortableIDs.length > 0),
+  ), [functionalGroupOrder, hasPinnedRows, visibleFolderSortableIDs.length]);
+  const conversationCandidates = useMemo(() => allSidebarThreads
+    .filter((thread) => !thread.archived && !thread.pinned),
+  [allSidebarThreads]);
+  const {
+    threads: recentConversations,
+    interactionProps: conversationInteractionProps,
+    onReorder: reorderRecentConversations,
+  } = useSidebarConversationActivity(
+    conversationCandidates, activeThreadID, pendingThreadID, lastViewedTurnByThreadID,
+  );
+  const visibleWorkspaceThreadsByWorkspaceID = useMemo(() => {
+    const next: Record<string, ThreadSummary[]> = {};
+    const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
+    for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
+      const project = sidebarWorkspaces.find((candidate) => candidate.id === workspaceID);
+      // Cached buckets can overlap while a fork's workspace metadata refreshes.
+      // Classify the same session snapshot in every bucket before publishing nodes.
+      next[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread).filter(
+        (thread) => !thread.pinned && !organization.folderByThreadID[thread.id] &&
+          project !== undefined && threadBelongsToWorkspace(thread, project),
+      );
+    }
+    return next;
+  }, [allSidebarThreads, organization.folderByThreadID, workspaceThreadsByWorkspaceID, sidebarWorkspaces]);
+  const selectedConversationID = activeThreadID ?? activeSessionTabID;
+  const recentSelectionVisible = !recentsCollapsed && (recentConversations.some(thread => thread.id === activeThreadID)
+    || draftConversations.some(draft => draft.id === activeSessionTabID));
+  const originVisible = selectionOrigin?.section === "recent" ? recentSelectionVisible
+    : selectionOrigin?.section === "organization" ? !recentSelectionVisible || Boolean(organization.folderByThreadID[activeThreadID ?? ""])
+    : expandedSidebarSectionIDs.has(selectionOrigin?.section ?? "")
+      && (visibleWorkspaceThreadsByWorkspaceID[selectionOrigin?.section ?? ""]?.some(thread => thread.id === activeThreadID)
+        || pendingConversations.some(draft => draft.id === activeSessionTabID
+          && draft.context.kind === "project" && draft.context.project_id === selectionOrigin?.section));
+  const selectionSection = !conversationsActive || onFocusWorkspace ? undefined
+    : selectionOrigin?.id === selectedConversationID && originVisible ? selectionOrigin.section
+    : recentSelectionVisible ? "recent"
+    : sidebarWorkspaces.find(project => expandedSidebarSectionIDs.has(project.id)
+      && visibleWorkspaceThreadsByWorkspaceID[project.id]?.some(thread => thread.id === activeThreadID))?.id ?? "organization";
+  const hoverFacts = useMemo<SidebarHoverFacts>(() => {
+    const byID = new Map(allSidebarThreads.map((thread) => [thread.id, thread]));
+    const threadsByWorkspaceID: Record<string, ThreadSummary[]> = {};
+    for (const [workspaceID, threads] of Object.entries(workspaceThreadsByWorkspaceID)) {
+      threadsByWorkspaceID[workspaceID] = threads.map((thread) => byID.get(thread.id) ?? thread);
+    }
+    return {
+      workspaces: sidebarWorkspaces,
+      threadsByWorkspaceID,
+      activeThreadID,
+      lastViewedTurnByThreadID: lastViewedTurnByThreadID,
+    };
+  }, [
+    activeThreadID,
+    allSidebarThreads,
+    sidebarWorkspaces,
+    lastViewedTurnByThreadID,
+    workspaceThreadsByWorkspaceID,
+  ]);
+  const folderThreadsByID = useMemo(() => {
+    const next: Record<string, ThreadSummary[]> = {};
+    for (const folder of organization.folders) next[folder.id] = [];
+    for (const thread of allSidebarThreads) {
+      const folderID = organization.folderByThreadID[thread.id];
+      // Pinning changes where an item is shown in the sidebar, not its domain
+      // ownership. Keep the membership, but do not duplicate pinned sessions
+      // inside their source folder.
+      if (folderID && next[folderID] && !thread.archived && !thread.pinned) {
+        next[folderID].push(thread);
+      }
+    }
+    return next;
+  }, [allSidebarThreads, organization.folderByThreadID, organization.folders]);
+  function createFolder(thread?: ThreadSummary): void {
+    setGroupName("");
+    setGroupNameDialog({ action: "create", thread });
+  }
+
+  function renameFolder(group: SessionGroup): void {
+    setGroupName(group.name);
+    setGroupNameDialog({ action: "rename", group });
+  }
+
+  function closeGroupNameDialog(): void {
+    setGroupNameDialog(null);
+    setGroupName("");
+  }
+
+  async function submitGroupNameDialog(): Promise<void> {
+    if (!groupNameDialog || groupNamePending) return;
+    const name = groupName.trim();
+    if (!name) return;
+    setGroupNamePending(true);
+    try {
+      if (groupNameDialog.action === "create") {
+        await organization.createFolder(name, groupNameDialog.thread?.id);
+      } else {
+        await organization.renameFolder(groupNameDialog.group.id, name);
+      }
+      closeGroupNameDialog();
+    } catch {
+      // The organization controller keeps the dialog open and reports the
+      // concrete failure through the product-wide toast surface.
+    } finally {
+      setGroupNamePending(false);
+    }
+  }
+
+  function acceptsSessionFolderDrag(event: ReactDragEvent<HTMLElement>): boolean {
+    return folderDragThreadID !== undefined
+      || Array.from(event.dataTransfer.types ?? []).includes(SESSION_FOLDER_DRAG_MIME);
+  }
+
+  function updateFolderDropTarget(folderID?: string): void {
+    if (folderDropTargetIDRef.current === folderID) return;
+    folderDropTargetIDRef.current = folderID;
+    setFolderDropTargetID(folderID);
+  }
+
+  function dragSessionOverFolder(event: ReactDragEvent<HTMLElement>, folderID: string): void {
+    if (!acceptsSessionFolderDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    updateFolderDropTarget(folderID);
+  }
+
+  function leaveSessionFolderTarget(event: ReactDragEvent<HTMLElement>, folderID: string): void {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    if (folderDropTargetIDRef.current === folderID) updateFolderDropTarget();
+  }
+
+  function dropSessionIntoFolder(event: ReactDragEvent<HTMLElement>, folderID: string): void {
+    if (!acceptsSessionFolderDrag(event)) return;
+    event.preventDefault();
+    const threadID = event.dataTransfer.getData(SESSION_FOLDER_DRAG_MIME) || folderDragThreadID;
+    updateFolderDropTarget();
+    setFolderDragThreadID(undefined);
+    if (threadID) {
+      setCollapsedFolderIDs((current) => {
+        if (!current.has(folderID)) return current;
+        const next = new Set(current);
+        next.delete(folderID);
+        return next;
+      });
+      const thread = allSidebarThreads.find((candidate) => candidate.id === threadID);
+      if (thread?.pinned) toggleThreadPinned(thread);
+      void organization.moveThreadToFolder(threadID, folderID);
+    }
+  }
+
+  function dragSessionOverPinned(
+    event: ReactDragEvent<HTMLElement>,
+    targetSortableID: string,
+    fixedPosition?: "before" | "after",
+  ): void {
+    if (!acceptsSessionFolderDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "move";
+    updateFolderDropTarget(PINNED_SESSION_DROP_TARGET);
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = fixedPosition
+      ?? (event.clientY < rect.top + rect.height / 2 ? "before" : "after");
+    setSidebarSortIndicator({ id: targetSortableID, position });
+  }
+
+  function leavePinnedSessionTarget(
+    event: ReactDragEvent<HTMLElement>,
+    targetSortableID: string,
+  ): void {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+    setSidebarSortIndicator((current) => current?.id === targetSortableID ? undefined : current);
+  }
+
+  function dropSessionIntoPinned(
+    event: ReactDragEvent<HTMLElement>,
+    targetSortableID: string,
+    fixedPosition?: "before" | "after",
+  ): void {
+    if (!acceptsSessionFolderDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const threadID = event.dataTransfer.getData(SESSION_FOLDER_DRAG_MIME) || folderDragThreadID;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const position = fixedPosition
+      ?? (event.clientY < rect.top + rect.height / 2 ? "before" : "after");
+    updateFolderDropTarget();
+    setFolderDragThreadID(undefined);
+    setSidebarSortIndicator(undefined);
+    if (!threadID) return;
+    const thread = allSidebarThreads.find((candidate) => candidate.id === threadID);
+    if (thread) {
+      pinContainer({ kind: "thread", id: thread.id }, targetSortableID, position);
+      if (!thread.pinned) onTogglePinned(thread);
+    }
+    setCollapsedFunctionalGroupIDs((current) => {
+      if (!current.has("pinned")) return current;
+      const next = new Set(current);
+      next.delete("pinned");
+      persistCollapsedSidebarFunctionalGroups(next);
+      return next;
+    });
+  }
+
+  function pinnedSessionDropProps(
+    targetSortableID: string,
+    fixedPosition?: "before" | "after",
+  ): HTMLAttributes<HTMLElement> {
+    return {
+      onDragEnter: (event) => dragSessionOverPinned(event, targetSortableID, fixedPosition),
+      onDragOver: (event) => dragSessionOverPinned(event, targetSortableID, fixedPosition),
+      onDragLeave: (event) => leavePinnedSessionTarget(event, targetSortableID),
+      onDrop: (event) => dropSessionIntoPinned(event, targetSortableID, fixedPosition),
+    };
+  }
+
+  function dragSessionOverWorkspace(event: ReactDragEvent<HTMLElement>): void {
+    if (!acceptsSessionFolderDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    updateFolderDropTarget(WORKSPACE_SESSION_DROP_TARGET);
+  }
+
+  function dropSessionIntoWorkspace(event: ReactDragEvent<HTMLElement>): void {
+    if (!acceptsSessionFolderDrag(event)) return;
+    event.preventDefault();
+    const threadID = event.dataTransfer.getData(SESSION_FOLDER_DRAG_MIME) || folderDragThreadID;
+    updateFolderDropTarget();
+    setFolderDragThreadID(undefined);
+    if (!threadID) return;
+    const thread = allSidebarThreads.find((candidate) => candidate.id === threadID);
+    if (thread?.pinned) toggleThreadPinned(thread);
+  }
+
+  function dragSessionOverFolderRemoval(event: ReactDragEvent<HTMLElement>): void {
+    if (!folderDragCanRemove || !acceptsSessionFolderDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    updateFolderDropTarget(FOLDER_REMOVE_DROP_TARGET);
+  }
+
+  function dropSessionOutOfFolder(event: ReactDragEvent<HTMLElement>): void {
+    if (!folderDragCanRemove || !acceptsSessionFolderDrag(event)) return;
+    event.preventDefault();
+    const threadID = event.dataTransfer.getData(SESSION_FOLDER_DRAG_MIME) || folderDragThreadID;
+    updateFolderDropTarget();
+    setFolderDragThreadID(undefined);
+    if (!threadID) return;
+    const thread = allSidebarThreads.find((candidate) => candidate.id === threadID);
+    if (thread?.pinned) {
+      onTogglePinned(thread);
+    } else {
+      void organization.moveThreadToFolder(threadID);
+    }
+  }
+
+  const organizationActions = {
+    ...organization,
+    togglePinned: (thread: ThreadSummary, _fallback: (thread: ThreadSummary) => void) => {
+      toggleThreadPinned(thread);
+    },
+    moveToFolder: (thread: ThreadSummary, folderID?: string) => {
+      organization.moveThreadToFolder(thread.id, folderID);
+    },
+    createFolderForThread: (thread: ThreadSummary) => createFolder(thread),
+    folderDragThreadID,
+    startFolderDrag: (threadID: string) => {
+      setFolderDragThreadID(threadID);
+      updateFolderDropTarget();
+    },
+    endFolderDrag: () => {
+      setFolderDragThreadID(undefined);
+      updateFolderDropTarget();
+      setSidebarSortIndicator(undefined);
+    },
+  };
+
+  function renderFolderSection(folder: SessionGroup, pinned: boolean): JSX.Element {
+    const collapsed = collapsedFolderIDs.has(folder.id);
+    const sortableID = `${FOLDER_SORTABLE_PREFIX}${folder.id}`;
+    const folderThreads = folderThreadsByID[folder.id] ?? [];
+    const folderHasRunning = folderThreads.some((thread) => isThreadExecuting(thread));
+    const folderHasUnread = folderThreads.some((thread) => sidebarThreadUnread(
+      thread,
+      lastViewedTurnByThreadID,
+    ));
+    return (
+      <SortableSidebarSection
+        id={sortableID}
+        className={`project-section session-folder-drop-target${folderDropTargetID === folder.id ? " drop-active" : ""}`}
+        key={sortableID}
+        ariaLabel={folder.name}
+        headerInfo={{ label: folder.name, iconKind: "project", CollapsedIcon: Folder, ExpandedIcon: FolderOpen }}
+        registerHeaderInfo={registerSectionHeaderInfo}
+        sortIndicator={sidebarSortIndicator?.id === sortableID
+          ? sidebarSortIndicator.position
+          : undefined}
+        containerProps={pinned
+          ? pinnedSessionDropProps(sortableID)
+          : {
+              onDragEnter: (event) => dragSessionOverFolder(event, folder.id),
+              onDragOver: (event) => dragSessionOverFolder(event, folder.id),
+              onDragLeave: (event) => leaveSessionFolderTarget(event, folder.id),
+              onDrop: (event) => dropSessionIntoFolder(event, folder.id),
+            }}
+      >
+        <SidebarSection
+          expanded={!collapsed}
+          iconKind="project"
+          CollapsedIcon={Folder}
+          ExpandedIcon={FolderOpen}
+          label={folder.name}
+          ariaLabel={t(collapsed ? "sidebar.expandSection" : "sidebar.collapseSection", { section: folder.name })}
+          running={folderHasRunning}
+          unread={folderHasUnread}
+          onToggle={() => setCollapsedFolderIDs((current) => {
+            const next = new Set(current);
+            if (next.has(folder.id)) next.delete(folder.id); else next.add(folder.id);
+            return next;
+          })}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            setGroupContextMenu({ group: folder, pinned, x: event.clientX, y: event.clientY });
+          }}
+        >
+          {folderThreads.length > 0 ? (
+            <OrganizationThreadList
+              threads={folderThreads}
+              activeID={activeThreadID}
+              selectedID={selectionSection === "organization" ? activeThreadID : null}
+              pendingThreadID={pendingThreadID}
+              lastViewedTurnByThreadID={lastViewedTurnByThreadID}
+              onSelect={onSelectThread}
+              onTogglePinned={onTogglePinned}
+              onArchive={onArchiveThread}
+              onDelete={onDeleteThread}
+              onRename={onRenameThread}
+            />
+          ) : null}
+        </SidebarSection>
+      </SortableSidebarSection>
+    );
+  }
+
+  function renderWorkspaceSection(project: DesktopProject, pinned: boolean): JSX.Element {
+    return (
+      <SortableSidebarSection
+        key={project.id}
+        id={project.id}
+        className="project-section"
+        ariaLabel={t("sidebar.workspaceNamed", { name: project.name })}
+        headerInfo={{
+          label: project.name,
+          iconKind: "project",
+          CollapsedIcon: Folder,
+          ExpandedIcon: FolderOpen,
+        }}
+        registerHeaderInfo={registerSectionHeaderInfo}
+        sortIndicator={sidebarSortIndicator?.id === project.id
+          ? sidebarSortIndicator.position
+          : undefined}
+        containerProps={pinned ? pinnedSessionDropProps(project.id) : undefined}
+      >
+        <WorkspaceGroup
+          project={project}
+          pendingConversations={pendingConversations.filter((pending) => pending.context.kind === "project"
+            && pending.context.project_id === project.id)}
+          activeSessionTabID={selectionSection === project.id ? activeSessionTabID : undefined}
+          onSelectPendingConversation={id => { setSelectionOrigin({ id, section: project.id }); onSelectPendingConversation?.(id); }}
+          activeID={conversationsActive && onFocusWorkspace ? activeWorkspaceID ?? selectedWorkspaceID : undefined}
+          pendingWorkspaceID={pendingWorkspaceID}
+          expandedSidebarSectionIDs={expandedSidebarSectionIDs}
+          loadingWorkspaceThreadIDs={loadingWorkspaceThreadIDs}
+          threadsByWorkspaceID={visibleWorkspaceThreadsByWorkspaceID}
+          activeThreadID={activeThreadID}
+          selectedThreadID={selectionSection === project.id ? activeThreadID : null}
+          pendingThreadID={pendingThreadID}
+          lastViewedTurnByThreadID={lastViewedTurnByThreadID}
+          onToggleSidebarSectionCollapsed={onToggleSidebarSectionCollapsed}
+          onFocusWorkspace={onFocusWorkspace}
+          onStartNewThread={onStartNewThreadInWorkspace}
+          onSelectThread={onSelectWorkspaceThread}
+          onToggleThreadPinned={onTogglePinned}
+          onArchiveThread={onArchiveThread}
+          onDeleteThread={onDeleteThread}
+          onRenameThread={onRenameThread}
+          onRemoveWorkspace={onRemoveWorkspace}
+          onRelocateWorkspace={onRelocateWorkspace}
+          workspacePinned={pinned}
+          onToggleWorkspacePinned={(id) => pinned
+            ? unpinContainer({ kind: "workspace", id })
+            : pinContainer({ kind: "workspace", id })}
+        />
+      </SortableSidebarSection>
+    );
+  }
+
+  const nativeSidebar = (
+    <>
+      <HoverRevealScopeContext.Provider value={null}>
+      <NavigationRibbon
+        onOpenExternal={navigation ? url => navigation.invoke("navigation.open-external", { url }) : undefined}
+        ribbonRef={ribbonRef}
+        websites={websites}
+        onNewTab={onNewTab}
+        onCloseTab={onCloseTab}
+        onPinTab={onPinTab}
+        onMuteTab={onMuteTab}
+        onReorderTabs={onReorderTabs}
+        activeWebsiteId={activeWebsiteId}
+        onSelectWebsite={onSelectWebsite}
+        items={[
+          {
+            id: "conversations",
+            title: t("sidebar.conversations"),
+            icon: <MessagesSquare aria-hidden="true" />,
+            active: conversationsActive,
+            component: "conversations-section",
+            onSelect: () => activateNative(() => onShowConversations?.()),
+          },
+          {
+            id: "catalog",
+            title: t("skills.sectionSkills"),
+            icon: <PluginBlocksIcon aria-hidden="true" />,
+            active: pluginCatalogActive,
+            disabled: !hasRuntimeContext,
+            onSelect: () => activateNative(onOpenSkillsTab),
+          },
+          ...pluginNavigationEntries.map((entry) => ({
+            id: `plugin:${JSON.stringify([entry.pluginId, entry.navigationId ?? entry.id])}`,
+            title: entry.title,
+            icon: <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey || entry.icon && "name" in entry.icon && entry.icon.name === "mascot" ? <PluginAvatar avatarKey={entry.avatarKey} motion="ambient" /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>,
+            active: !activeWebsiteId && activePluginMainView !== undefined && activePluginMainView.id === entry.instanceId,
+            component: "plugin-navigation-item",
+            pluginId: entry.pluginId,
+            onSelect: () => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId),
+          })),
+        ]}
+        footerLeading={<DesktopUpdateButton navigation={navigation} />}
+        footer={<SidebarSettingsMenu
+          disabled={!initialized}
+          onOpenSettings={(page) => activateNative(() => onOpenSettings(page))}
+        />}
+      />
+      </HoverRevealScopeContext.Provider>
+      <div className="sidebar-content" inert={!sidebarVisible || settingsActive} aria-hidden={settingsActive || undefined}>
+        <ShellCanvasArtwork />
+        <div className="traffic-spacer" />
+        {pluginCatalogActive ? (
+          <nav className="sidebar-section-navigation" aria-label={t("skills.catalogLabel")}>
+            <h2 className="sidebar-section-title">{t("skills.title")}</h2>
+            {(["plugins", "skills"] as const).map((section) => {
+              const label = t(section === "plugins" ? "skills.tabPlugins" : "skills.tabSkills");
+              const count = section === "plugins" ? extensionCatalog.pluginCount : extensionCatalog.skillCount;
+              return (
+                <button
+                  key={section}
+                  className="sidebar-section-item"
+                  type="button"
+                  aria-label={`${label} (${count})`}
+                  aria-current={catalogSection === section ? "page" : undefined}
+                  onClick={() => onSelectCatalogSection?.(section)}
+                >
+                  {section === "plugins" ? <PluginBlocksIcon aria-hidden="true" /> : <SkillsIcon />}
+                  <span className="sidebar-section-label">{label}</span>
+                  <span className="sidebar-section-count" data-count={count} aria-hidden="true" />
+                </button>
+              );
+            })}
+            {onOpenCatalogPlugin ? (
+              <div
+                className="sidebar-section-group sidebar-section-scroll"
+                role="group"
+                aria-labelledby="extensions-enabled-heading"
+              >
+                <h3 className="sidebar-subsection-title" id="extensions-enabled-heading">
+                  {t("skills.groupEnabled")}
+                </h3>
+                {extensionCatalog.enabledPlugins.length > 0 ? (
+                  extensionCatalog.enabledPlugins.map((record) => (
+                    <button
+                      key={record.id}
+                      className="sidebar-section-item sidebar-plugin-shortcut"
+                      type="button"
+                      onClick={() => onOpenCatalogPlugin(record.id)}
+                    >
+                      {record.family ? <PluginBlocksIcon aria-hidden="true" /> : <PluginIcon
+                        loadIcon={loadPluginIcon}
+                        icon={record.members[0].icon}
+                        pluginId={record.members[0].id}
+                        fingerprint={record.members[0].fingerprint ?? ""}
+                      />}
+                      <TruncatedText as="span" className="sidebar-section-label" text={record.name} />
+                    </button>
+                  ))
+                ) : (
+                  <p className="sidebar-subsection-empty">{t("skills.sidebarNoEnabled")}</p>
+                )}
+              </div>
+            ) : null}
+          </nav>
+        ) : activePluginMain && !settingsActive && !(navigation ? publicActive?.webPage : workbenchSnapshot!.webPageViewIds.includes(activePluginMain.view.id)) ? (
+          <nav className="sidebar-section-navigation" data-plugin-context-navigation="" aria-label={activePluginMain.definition.title}>
+            <h2 className="sidebar-section-title">{extensionInventory?.find((record) =>
+              record.provenance.plugin_id === activePluginMain.view.pluginId)?.name ?? activePluginMain.definition.title}</h2>
+            <div className="sidebar-section-scroll">
+              {pluginNavigationEntries.filter((entry) => entry.pluginId === activePluginMain.view.pluginId).map((entry) => (
+                <button
+                  key={`${entry.pluginId}:${entry.id}`}
+                  className="sidebar-section-item"
+                  type="button"
+                  data-wuu-component="plugin-context-navigation-item"
+                  aria-current={activePluginMain.view.id === entry.instanceId ? "page" : undefined}
+                  onClick={() => openPluginNavigation(entry.pluginId, entry.view, entry.instanceId)}
+                >
+                  <>{entry.avatarKey === null ? <span className="plugin-ui-avatar" aria-hidden="true" /> : entry.avatarKey || entry.icon && "name" in entry.icon && entry.icon.name === "mascot" ? <PluginAvatar avatarKey={entry.avatarKey} motion="ambient" /> : <PluginIcon loadIcon={loadPluginIcon} icon={entry.icon} pluginId={entry.pluginId} fingerprint={entry.generation} />}</>
+                  <span className="sidebar-section-label">{entry.title}</span>
+                </button>
+              ))}
+              <slots.Slot
+                name="wuu.default-navigation/sidebar.primary"
+                layout={ContextualSidebarLayout}
+                context={{
+                  ownerPluginId: activePluginMain.view.pluginId,
+                  viewTypeId: activePluginMain.view.viewTypeId,
+                  viewContext: activePluginMain.view.context,
+                }}
+              />
+            </div>
+          </nav>
+        ) : null}
+        <div className="sidebar-conversation-section" style={{ display: conversationsActive ? "contents" : "none" }} inert={!conversationsActive}>
+        <SidebarBrand
+          unreadViewOpen={unreadViewOpen}
+          attentionCount={attentionCount}
+          hasUnread={unreadThreads.length > 0}
+          onToggleUnreadView={onToggleUnreadView}
+          onClearUnread={() => onMarkThreadsViewed(unreadThreads)}
+        >
+          <button
+            className="icon-button conversation-search-trigger"
+            type="button"
+            aria-label={t("sidebar.searchConversations")}
+            aria-haspopup="dialog"
+            aria-expanded={searchOpen}
+            onClick={() => activateNative(onToggleConversationSearch)}
+            disabled={!hasRuntimeContext}
+          >
+            <Search className="icon-lg" />
+          </button>
+        </SidebarBrand>
+        {unreadViewOpen ? (
+          <section
+            className="sidebar-unread-view scrollbar-hidden"
+            data-scroll-fade=""
+            aria-label={t("sidebar.attentionConversations")}
+          >
+            {runningThreads.length > 0 ? (
+              <AttentionSection
+                headingID="sidebar-running-heading"
+                title={t("sidebar.runningConversations")}
+                count={runningThreads.length}
+              >
+                {runningThreads.map((thread) => (
+                  <AttentionThreadRow
+                    key={thread.id}
+                    thread={thread}
+                    running
+                    active={thread.id === activeThreadID}
+                    pending={thread.id === pendingThreadID}
+                    onSelect={onSelectThread}
+                  />
+                ))}
+              </AttentionSection>
+            ) : null}
+            {unreadThreads.length > 0 ? (
+              <AttentionSection
+                headingID="sidebar-unread-heading"
+                title={t("sidebar.unreadConversations")}
+                count={unreadThreads.length}
+                action={(
+                  <button
+                    className="sidebar-heading-text-action"
+                    type="button"
+                    data-attention-action="mark-read"
+                    onClick={() => onMarkThreadsViewed(unreadThreads)}
+                  >
+                    {t("sidebar.markAllRead")}
+                  </button>
+                )}
+              >
+                {unreadThreads.map((thread) => (
+                  <AttentionThreadRow
+                    key={thread.id}
+                    thread={thread}
+                    unread
+                    onSelect={onSelectThread}
+                  />
+                ))}
+              </AttentionSection>
+            ) : null}
+            {recentThreads.length > 0 ? (
+              <AttentionSection
+                headingID="sidebar-recent-heading"
+                title={t("sidebar.recentActivity")}
+                count={recentThreads.length}
+              >
+                {recentThreads.map((thread) => (
+                  <AttentionThreadRow
+                    key={thread.id}
+                    thread={thread}
+                    active={thread.id === activeThreadID}
+                    pending={thread.id === pendingThreadID}
+                    onSelect={onSelectThread}
+                  />
+                ))}
+              </AttentionSection>
+            ) : null}
+            {runningThreads.length === 0 && unreadThreads.length === 0 && recentThreads.length === 0 ? (
+              <p className="sidebar-unread-empty" role="status">{t("sidebar.attentionEmpty")}</p>
+            ) : null}
+          </section>
+        ) : (
+          <>
+        <nav className="primary-nav" aria-label={t("sidebar.mainNavigation")}>
+          <button
+            className="nav-item"
+            onClick={() => activateNative(onStartNewThread, true)}
+            disabled={!canStartNewThread}
+          >
+            <MessageSquarePlus className="icon-lg" />
+            <span>{t("sidebar.newConversation")}</span>
+          </button>
+        </nav>
+
+        <div className="sidebar-main scrollbar-hidden" data-scroll-fade="">
+          <DndContext
+            sensors={sensors}
+            collisionDetection={sidebarCollisionDetection}
+            modifiers={[restrictToVerticalAxis]}
+            onDragStart={handleSidebarDragStart}
+            onDragOver={handleSidebarDragOver}
+            onDragEnd={handleSidebarDragEnd}
+            onDragCancel={handleSidebarDragCancel}
+          >
+            {showEmptyPinnedDropTarget || showEmptyFolderDropTarget ? (
+              <div className="sidebar-drag-targets">
+                <div className="sidebar-drag-targets-content">
+                  {showEmptyPinnedDropTarget ? (
+                    <SidebarDragTarget
+                      id={PINNED_APPEND_DROP_ID}
+                      group="pinned"
+                      label={t("sidebar.pinned")}
+                      active={folderDropTargetID === PINNED_SESSION_DROP_TARGET}
+                      containerProps={pinnedSessionDropProps(PINNED_APPEND_DROP_ID, "after")}
+                    />
+                  ) : null}
+                  {showEmptyFolderDropTarget ? (
+                    <SidebarDragTarget
+                      id="folders"
+                      group="folders"
+                      label={t(folderDragThread?.pinned ? "sidebar.unpin" : "sidebar.removeFromFolderDrop")}
+                      active={folderDropTargetID === FOLDER_REMOVE_DROP_TARGET}
+                      containerProps={{
+                        onDragEnter: dragSessionOverFolderRemoval,
+                        onDragOver: dragSessionOverFolderRemoval,
+                        onDragLeave: (event) => leaveSessionFolderTarget(event, FOLDER_REMOVE_DROP_TARGET),
+                        onDrop: dropSessionOutOfFolder,
+                      }}
+                    />
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+            <SortableContext
+              items={visibleFunctionalGroupOrder}
+              strategy={verticalListSortingStrategy}
+            >
+              {visibleFunctionalGroupOrder.map((groupID) => groupID === "pinned" ? (
+                <SortableFunctionalGroup
+                  key={groupID}
+                  id={groupID}
+                  ariaLabel={t("sidebar.pinned")}
+                  headingProps={{
+                    onDragEnter: (event) => dragSessionOverPinned(
+                      event,
+                      pinnedHeadingDropTargetID,
+                      "before",
+                    ),
+                    onDragOver: (event) => dragSessionOverPinned(
+                      event,
+                      pinnedHeadingDropTargetID,
+                      "before",
+                    ),
+                    onDragLeave: (event) => leavePinnedSessionTarget(event, pinnedHeadingDropTargetID),
+                    onDrop: (event) => dropSessionIntoPinned(
+                      event,
+                      pinnedHeadingDropTargetID,
+                      "before",
+                    ),
+                  }}
+                  headingLabel={t("sidebar.pinned")}
+                  collapsed={collapsedFunctionalGroupIDs.has(groupID)}
+                  collapseLabel={t(
+                    collapsedFunctionalGroupIDs.has(groupID)
+                      ? "sidebar.expandSection"
+                      : "sidebar.collapseSection",
+                    { section: t("sidebar.pinned") },
+                  )}
+                  onToggleCollapsed={() => toggleFunctionalGroupCollapsed(groupID)}
+                  collapseDisabled={folderDragThreadID !== undefined}
+                  dragDisabled={folderDragThreadID !== undefined}
+                >
+                  <SortableContext items={pinnedItemSortableIDs} strategy={verticalListSortingStrategy}>
+                    <div
+                      className="sidebar-functional-group-body session-folder-list"
+                      data-folder-dragging={folderDragThreadID !== undefined || undefined}
+                    >
+                      {validPinnedItems.map((entry) => {
+                        if (entry.kind === "thread") {
+                          const thread = pinnedRows.find((candidate) => candidate.id === entry.id);
+                          return thread ? (
+                            <SortablePinnedThreadItem
+                              key={pinnedItemSortableID(entry)}
+                              id={pinnedItemSortableID(entry)}
+                              sortIndicator={sidebarSortIndicator?.id === pinnedItemSortableID(entry)
+                                ? sidebarSortIndicator.position
+                                : undefined}
+                              containerProps={pinnedSessionDropProps(pinnedItemSortableID(entry))}
+                            >
+                              <OrganizationThreadList
+                                threads={[thread]}
+                                activeID={activeThreadID}
+                                selectedID={selectionSection === "organization" ? activeThreadID : null}
+                                pendingThreadID={pendingThreadID}
+                                lastViewedTurnByThreadID={lastViewedTurnByThreadID}
+                                onSelect={onSelectThread}
+                                onTogglePinned={onTogglePinned}
+                                onArchive={onArchiveThread}
+                                onDelete={onDeleteThread}
+                                onRename={onRenameThread}
+                              />
+                            </SortablePinnedThreadItem>
+                          ) : null;
+                        }
+                        if (entry.kind === "folder") {
+                          const folder = organization.folders.find((candidate) => candidate.id === entry.id);
+                          return folder ? renderFolderSection(folder, true) : null;
+                        }
+                        const project = sidebarWorkspaces.find((candidate) => candidate.id === entry.id);
+                        return project ? renderWorkspaceSection(project, true) : null;
+                      })}
+                      <PinnedAppendDropZone
+                        nativeDropActive={sidebarSortIndicator?.id === PINNED_APPEND_DROP_ID}
+                        containerProps={pinnedSessionDropProps(PINNED_APPEND_DROP_ID, "after")}
+                      />
+                    </div>
+                  </SortableContext>
+                </SortableFunctionalGroup>
+              ) : groupID === "folders" ? (
+                <SortableFunctionalGroup
+                  key={groupID}
+                  id={groupID}
+                  ariaLabel={t("sidebar.folders")}
+                  itemDropIndicator={sidebarSortIndicator?.id === groupID
+                    ? sidebarSortIndicator.position
+                    : undefined}
+                  headingClassName={`sidebar-folder-heading${folderDragCanRemove ? " remove-drop-available" : ""}${folderDropTargetID === FOLDER_REMOVE_DROP_TARGET ? " drop-active" : ""}`}
+                  headingProps={{
+                    "data-folder-remove-drop": folderDragCanRemove || undefined,
+                    onDragEnter: dragSessionOverFolderRemoval,
+                    onDragOver: dragSessionOverFolderRemoval,
+                    onDragLeave: (event) => leaveSessionFolderTarget(event, FOLDER_REMOVE_DROP_TARGET),
+                    onDrop: dropSessionOutOfFolder,
+                  }}
+                  headingLabelClassName="sidebar-folder-heading-label"
+                  headingLabel={(
+                    <>
+                      {folderDragCanRemove ? <FolderMinus aria-hidden="true" /> : null}
+                      {t(folderDragThread?.pinned
+                        ? "sidebar.unpin"
+                        : folderDragCanRemove
+                          ? "sidebar.removeFromFolderDrop"
+                          : "sidebar.folders")}
+                    </>
+                  )}
+                  collapsed={collapsedFunctionalGroupIDs.has(groupID)}
+                  collapseLabel={t(
+                    collapsedFunctionalGroupIDs.has(groupID)
+                      ? "sidebar.expandSection"
+                      : "sidebar.collapseSection",
+                    { section: t("sidebar.folders") },
+                  )}
+                  onToggleCollapsed={() => toggleFunctionalGroupCollapsed(groupID)}
+                  collapseDisabled={folderDragCanRemove}
+                  dragDisabled={folderDragCanRemove}
+                  action={!folderDragCanRemove ? (
+                    <Tooltip asChild content={t("sidebar.newFolder")}><button
+                      className="sidebar-functional-action"
+                      type="button"
+                      aria-label={t("sidebar.newFolder")}
+                      onClick={() => createFolder()}
+                    >
+                      <Plus aria-hidden="true" />
+                    </button></Tooltip>
+                  ) : undefined}
+                >
+                  <div
+                    className="sidebar-functional-group-body session-folder-list"
+                    data-folder-dragging={folderDragThreadID !== undefined || undefined}
+                  >
+                    <SortableContext items={visibleFolderSortableIDs} strategy={verticalListSortingStrategy}>
+                      {organization.folders
+                        .filter((folder) => !pinnedFolderIDs.has(folder.id))
+                        .map((folder) => renderFolderSection(folder, false))}
+                    </SortableContext>
+                  </div>
+                </SortableFunctionalGroup>
+              ) : (
+                <SortableFunctionalGroup
+                  key={groupID}
+                  id={groupID}
+                  ariaLabel={t("sidebar.workspace")}
+                  itemDropIndicator={sidebarSortIndicator?.id === groupID
+                    ? sidebarSortIndicator.position
+                    : undefined}
+                  headingClassName={folderDropTargetID === WORKSPACE_SESSION_DROP_TARGET ? "drop-active" : ""}
+                  headingProps={{
+                    onDragEnter: dragSessionOverWorkspace,
+                    onDragOver: dragSessionOverWorkspace,
+                    onDragLeave: (event) => leaveSessionFolderTarget(event, WORKSPACE_SESSION_DROP_TARGET),
+                    onDrop: dropSessionIntoWorkspace,
+                  }}
+                  headingLabel={t("sidebar.workspace")}
+                  collapsed={collapsedFunctionalGroupIDs.has(groupID)}
+                  collapseLabel={t(
+                    collapsedFunctionalGroupIDs.has(groupID)
+                      ? "sidebar.expandSection"
+                      : "sidebar.collapseSection",
+                    { section: t("sidebar.workspace") },
+                  )}
+                  onToggleCollapsed={() => toggleFunctionalGroupCollapsed(groupID)}
+                  action={(
+                    <div
+                      className="sidebar-add-workspace"
+                      ref={workspaceMenuRef}
+                      onKeyDown={(event) => {
+                        if (!workspaceMenuOpen) return;
+                        if (moveMenuFocus(event, addWorkspaceMenuRef.current)) return;
+                        if (event.key === "Escape" || event.key === "Tab") {
+                          // Tab resumes the native order from the trigger.
+                          if (event.key === "Escape") {
+                            event.preventDefault();
+                            event.stopPropagation();
+                          }
+                          addWorkspaceTriggerRef.current?.focus();
+                          onToggleWorkspaceMenu();
+                        }
+                      }}
+                    >
+                      <Tooltip asChild content={t("sidebar.addOrganization")}><button
+                        ref={addWorkspaceTriggerRef}
+                        className="sidebar-functional-action"
+                        type="button"
+                        aria-label={t("sidebar.addOrganization")}
+                        aria-haspopup="menu"
+                        aria-expanded={workspaceMenuOpen}
+                        onClick={onToggleWorkspaceMenu}
+                      >
+                        <Plus aria-hidden="true" />
+                      </button></Tooltip>
+                      {workspaceMenuOpen ? (
+                        <FloatingMenuPortal
+                          anchorRef={addWorkspaceTriggerRef}
+                          owner="sidebar-workspace"
+                          onDismiss={onToggleWorkspaceMenu}
+                          placement="below"
+                          align="right"
+                          offset={4}
+                          width={composerMenuWidth(240)}
+                          flip
+                        >
+                          <div className="project-add-menu" role="menu" ref={addWorkspaceMenuRef}>
+                            <button role="menuitem" disabled={!(navigation ? navigation.view.canCreateWorkspace : hostSupports("createBlankProject"))} onClick={onCreateWorkspace}>
+                              <FolderPlus className="icon-xl" />
+                              <span>{t("sidebar.newBlankWorkspace")}</span>
+                            </button>
+                            <button role="menuitem" disabled={!(navigation ? navigation.view.canChooseWorkspace : hostSupports("chooseProjectFolder"))} onClick={onOpenWorkspaceFolder}>
+                              <FolderOpen className="icon-xl" />
+                              <span>{t("sidebar.useExistingFolder")}</span>
+                            </button>
+                            <button role="menuitem" onClick={() => { onToggleWorkspaceMenu(); createFolder(); }}>
+                              <FolderPlus className="icon-xl" />
+                              <span>{t("sidebar.newFolder")}</span>
+                            </button>
+                          </div>
+                        </FloatingMenuPortal>
+                      ) : null}
+                    </div>
+                  )}
+                >
+                  {visibleWorkspaceSectionOrder.length > 0 ? (
+                    <SortableContext
+                      items={visibleWorkspaceSectionOrder}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      <div className="sidebar-functional-group-body">
+                        {visibleWorkspaceSectionOrder.map((key) => {
+                          const project = sidebarWorkspaces.find((candidate) => candidate.id === key);
+                          return project ? renderWorkspaceSection(project, false) : null;
+                        })}
+                      </div>
+                    </SortableContext>
+                  ) : null}
+                </SortableFunctionalGroup>
+              ))}
+            </SortableContext>
+            {recentConversations.length > 0 || draftEntries.length > 0 ? (
+              <div className="sidebar-conversation-activity" {...conversationInteractionProps}>
+                <section
+                  className="sidebar-functional-group"
+                  data-conversation-section="recent"
+                  data-sidebar-recents=""
+                  data-collapsed={recentsCollapsed || undefined}
+                  aria-labelledby="sidebar-activity-recent-heading"
+                >
+                  <div className="sidebar-functional-heading sidebar-recents-heading">
+                    <button
+                      className="sidebar-functional-heading-toggle"
+                      type="button"
+                      aria-expanded={!recentsCollapsed}
+                      aria-label={t(
+                        recentsCollapsed ? "sidebar.expandSection" : "sidebar.collapseSection",
+                        { section: t("sidebar.recentActivity") },
+                      )}
+                      onClick={toggleRecentsCollapsed}
+                    >
+                      <span
+                        className="sidebar-functional-heading-label"
+                        id="sidebar-activity-recent-heading"
+                      >
+                        {t("sidebar.recentActivity")}
+                      </span>
+                      {recentsCollapsed ? (
+                        <span className="sidebar-recents-count" aria-hidden="true">
+                          {recentConversations.length + draftConversations.length}
+                        </span>
+                      ) : null}
+                      <ChevronRight
+                        className="sidebar-functional-heading-chevron"
+                        data-expanded={!recentsCollapsed || undefined}
+                        aria-hidden="true"
+                      />
+                    </button>
+                    <div className="sidebar-functional-heading-action">
+                      <button
+                        className="sidebar-row-icon-button sidebar-recents-new-thread"
+                        type="button"
+                        aria-label={t("sidebar.newConversation")}
+                        disabled={!canStartNewThread}
+                        onClick={() => {
+                          setRecentsCollapsed(false);
+                          persistSidebarRecentsCollapsed(false);
+                          activateNative(onStartNewThread, true);
+                        }}
+                      >
+                        <SquarePen className="icon" aria-hidden="true" />
+                      </button>
+                    </div>
+                  </div>
+                  <SidebarCollapseBody
+                    className="sidebar-functional-group-collapse"
+                    expanded={!recentsCollapsed}
+                  >
+                    <div className="sidebar-functional-group-body">
+                      {draftEntries.map(({ tab: draft, closing }) => (
+                        <div key={draft.id} className="motion-height-reveal sidebar-draft-reveal" data-enter={(draft.entering && !presentedDraftIDs.current.has(draft.id)) || undefined} data-state={closing ? "closing" : undefined} aria-hidden={closing || undefined} inert={closing}>
+                          <div data-draft-id={draft.id} className={`thread-row sidebar-session-row${draft.pending ? " running" : ""}${selectionSection === "recent" && draft.id === activeSessionTabID ? " active" : ""}`}>
+                            {draft.pending ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
+                            <button
+                              className="thread-row-main"
+                              type="button"
+                              aria-current={!closing && selectionSection === "recent" && draft.id === activeSessionTabID ? "page" : undefined}
+                              aria-busy={draft.pending || undefined}
+                              aria-label={draft.title}
+                              onClick={closing ? undefined : () => { setSelectionOrigin({ id: draft.id, section: "recent" }); activateNative(() => onSelectPendingConversation?.(draft.id)); }}
+                            >
+                              <ThreadRowTitle title={draft.title} />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                      <OrganizationThreadList
+                        threads={recentConversations}
+                        onReorder={reorderRecentConversations}
+                        activeID={activeThreadID}
+                        selectedID={selectionSection === "recent" ? activeThreadID : null}
+                        pendingThreadID={pendingThreadID}
+                        lastViewedTurnByThreadID={lastViewedTurnByThreadID}
+                        onSelect={id => { onSelectThread(id); setSelectionOrigin({ id, section: "recent" }); }}
+                        onTogglePinned={onTogglePinned}
+                        onArchive={onArchiveThread}
+                        onDelete={onDeleteThread}
+                        onRename={onRenameThread}
+                      />
+                    </div>
+                  </SidebarCollapseBody>
+                </section>
+              </div>
+            ) : null}
+            <DragOverlay dropAnimation={dropAnimation}>
+              {draggingFunctionalGroupID ? (
+                <div className="sidebar-functional-group-drag-overlay">
+                  <span>
+                    {t(
+                      draggingFunctionalGroupID === "pinned"
+                        ? "sidebar.pinned"
+                        : draggingFunctionalGroupID === "folders"
+                          ? "sidebar.folders"
+                          : "sidebar.workspace",
+                    )}
+                  </span>
+                </div>
+              ) : draggingSectionInfo ? (
+                <SidebarSectionDragPreview info={draggingSectionInfo} />
+              ) : null}
+            </DragOverlay>
+          </DndContext>
+        </div>
+        <slots.Slot
+          name="wuu.default-navigation/sidebar.primary"
+          context={{
+            initialized: Boolean(initialized),
+            hasActiveThread: activeThreadID !== undefined,
+            workspaceCount: sidebarWorkspaces.length,
+          }}
+        />
+          </>
+        )}
+        <div className="sidebar-settings">
+          <slots.Slot
+            name="wuu.default-navigation/sidebar.footer"
+            context={{ initialized: Boolean(initialized) }}
+          />
+        </div>
+        {groupContextMenu ? (
+          <ThreadContextMenu
+            x={groupContextMenu.x}
+            y={groupContextMenu.y}
+            items={[
+              {
+                label: t(groupContextMenu.pinned ? "sidebar.unpin" : "sidebar.pin"),
+                onSelect: () => groupContextMenu.pinned
+                  ? unpinContainer({ kind: "folder", id: groupContextMenu.group.id })
+                  : pinContainer({ kind: "folder", id: groupContextMenu.group.id }),
+              },
+              { separator: true },
+              {
+                label: t("sidebar.renameGroup"),
+                onSelect: () => {
+                  renameFolder(groupContextMenu.group);
+                },
+              },
+              { separator: true },
+              {
+                label: t("sidebar.deleteGroup"),
+                danger: true,
+                onSelect: async () => {
+                  const { group, pinned } = groupContextMenu;
+                  const confirmed = await confirmAction({
+                    title: t("sidebar.deleteGroupTitle", { name: group.name }),
+                    message: t("sidebar.deleteGroupConfirmation"),
+                    confirmLabel: t("common.delete"),
+                    tone: "danger",
+                  });
+                  if (!confirmed) return;
+                  if (pinned) unpinContainer({ kind: "folder", id: group.id });
+                  organization.deleteFolder(group.id);
+                },
+              },
+            ]}
+            onClose={() => setGroupContextMenu(null)}
+          />
+        ) : null}
+        <SidebarNameDialog
+          open={groupNameDialog !== null}
+          title={groupName}
+          onTitleChange={setGroupName}
+          onSubmit={() => { void submitGroupNameDialog(); }}
+          onClose={closeGroupNameDialog}
+          dialogTitle={groupNameDialog?.action === "rename"
+            ? t("sidebar.renameFolder")
+            : t("sidebar.newFolder")}
+          fieldLabel={t("sidebar.folderNamePrompt")}
+          placeholder={t("sidebar.folderNamePrompt")}
+          submitLabel={t(groupNameDialog?.action === "rename" ? "common.save" : "common.create")}
+          cancelLabel={t("common.cancel")}
+          submitDisabled={groupNamePending || groupName.trim().length === 0 || (
+            groupNameDialog?.action === "rename" && groupName.trim() === groupNameDialog.group.name.trim()
+          )}
+        />
+        </div>
+      </div>
+    </>
+  );
+  const organizedSidebar = (
+    <SessionOrganizationProvider value={{ ...organizationActions, revealThread: navigation?.view.canRevealThread ? threadId => navigation.invoke("navigation.reveal-thread", { threadId }) : undefined }}>
+      <SidebarHoverFactsContext.Provider value={hoverFacts}>{nativeSidebar}</SidebarHoverFactsContext.Provider>
+    </SessionOrganizationProvider>
+  );
+  return (
+    <aside className="sidebar" data-wuu-component="sidebar" data-workbench-region="navigation"
+      onPointerEnter={(event) => {
+        if (!(event.target instanceof Element) || !event.target.closest(".sidebar-ribbon, .ribbon-resizer")) {
+          onPointerEnter?.();
+        }
+      }}
+      onPointerLeave={onPointerLeave}
+    >{organizedSidebar}</aside>
+  );
+}
+
+function SidebarDragTarget({
+  id,
+  group,
+  label,
+  active,
+  containerProps,
+}: {
+  id: string;
+  group: "pinned" | "folders";
+  label: string;
+  active: boolean;
+  containerProps: HTMLAttributes<HTMLElement>;
+}): JSX.Element {
+  const { setNodeRef, isOver } = useDroppable({ id });
+  return (
+    <section ref={setNodeRef} className="sidebar-functional-group" data-functional-group-id={group}>
+      <div
+        {...containerProps}
+        className={`sidebar-functional-heading sidebar-drag-target${active || isOver ? " drop-active" : ""}`}
+      >
+        <span className="sidebar-functional-heading-label">{label}</span>
+      </div>
+    </section>
+  );
+}
+
+function PinnedAppendDropZone({
+  nativeDropActive,
+  containerProps,
+}: {
+  nativeDropActive?: boolean;
+  containerProps?: HTMLAttributes<HTMLElement>;
+}): JSX.Element {
+  const { setNodeRef, isOver } = useDroppable({ id: PINNED_APPEND_DROP_ID });
+  return (
+    <div
+      {...containerProps}
+      ref={setNodeRef}
+      className="pinned-append-drop-zone"
+      data-drop-over={isOver || nativeDropActive || undefined}
+      aria-hidden="true"
+    />
+  );
+}
+
+function SortablePinnedThreadItem({
+  id,
+  sortIndicator,
+  containerProps,
+  children,
+}: {
+  id: string;
+  sortIndicator?: "before" | "after";
+  containerProps?: HTMLAttributes<HTMLElement>;
+  children: ReactNode;
+}): JSX.Element {
+  const {
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+    isOver,
+  } = useSortable({ id, disabled: { draggable: true }, transition: useSortableTransition() });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  return (
+    <div
+      {...containerProps}
+      ref={setNodeRef}
+      className="pinned-sortable-thread"
+      data-dragging={isDragging || undefined}
+      data-drop-over={isOver || undefined}
+      data-sort-indicator={sortIndicator}
+      style={style}
+      {...listeners}
+    >
+      {children}
+    </div>
+  );
+}
+
+function SortableFunctionalGroup({
+  id,
+  ariaLabel,
+  itemDropIndicator,
+  headingClassName = "",
+  headingProps,
+  headingLabel,
+  headingLabelClassName = "",
+  action,
+  collapsed,
+  collapseLabel,
+  onToggleCollapsed,
+  collapseDisabled = false,
+  dragDisabled = false,
+  children,
+}: {
+  id: SidebarFunctionalGroupID;
+  ariaLabel: string;
+  itemDropIndicator?: "before" | "after";
+  headingClassName?: string;
+  headingProps?: HTMLAttributes<HTMLDivElement> & {
+    "data-empty"?: boolean;
+    "data-folder-remove-drop"?: boolean;
+  };
+  headingLabel: ReactNode;
+  headingLabelClassName?: string;
+  action?: ReactNode;
+  collapsed: boolean;
+  collapseLabel: string;
+  onToggleCollapsed: () => void;
+  collapseDisabled?: boolean;
+  dragDisabled?: boolean;
+  children: ReactNode;
+}): JSX.Element {
+  const {
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+    isOver,
+  } = useSortable({ id, disabled: dragDisabled, transition: useSortableTransition() });
+  const style: CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  };
+  return (
+    <section
+      ref={setNodeRef}
+      className="sidebar-functional-group sidebar-functional-group-sortable"
+      aria-label={ariaLabel}
+      data-functional-group-id={id}
+      data-dragging={isDragging || undefined}
+      data-drop-over={isOver || undefined}
+      data-item-drop-indicator={itemDropIndicator}
+      data-drag-disabled={dragDisabled || undefined}
+      style={style}
+    >
+      <div
+        {...headingProps}
+        ref={setActivatorNodeRef}
+        onPointerDown={(event) => listeners?.onPointerDown?.(event)}
+        className={`sidebar-functional-heading ${headingClassName}`.trim()}
+      >
+        <button
+          className="sidebar-functional-heading-toggle"
+          type="button"
+          aria-expanded={!collapsed}
+          aria-label={collapseLabel}
+          disabled={collapseDisabled}
+          onClick={() => {
+            if (!isDragging) onToggleCollapsed();
+          }}
+        >
+          <span
+            className={`sidebar-functional-heading-label ${headingLabelClassName}`.trim()}
+          >
+            {headingLabel}
+          </span>
+          <ChevronRight
+            className="sidebar-functional-heading-chevron"
+            data-expanded={!collapsed || undefined}
+            aria-hidden="true"
+          />
+        </button>
+        {action ? (
+          <div
+            className="sidebar-functional-heading-action"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            {action}
+          </div>
+        ) : null}
+      </div>
+      <SidebarCollapseBody
+        className="sidebar-functional-group-collapse"
+        expanded={!collapsed}
+      >
+        {children}
+      </SidebarCollapseBody>
+    </section>
+  );
+}
+
+function sidebarThreadLabel(thread: ThreadSummary): string {
+  return thread.title?.trim() || thread.preview?.trim() || thread.id;
+}
+
+function sidebarThreadUnread(
+  thread: ThreadSummary,
+  lastViewedTurnByThreadID: Readonly<Record<string, string>>,
+): boolean {
+  return isThreadUnread(thread, lastViewedTurnByThreadID[thread.id]);
+}
+
+function sameStringSet(left: ReadonlySet<string>, right: ReadonlySet<string>): boolean {
+  if (left.size !== right.size) return false;
+  for (const value of left) {
+    if (!right.has(value)) return false;
+  }
+  return true;
+}
+
+function AttentionSection({
+  headingID,
+  title,
+  count,
+  action,
+  children,
+}: {
+  headingID: string;
+  title: string;
+  count: number;
+  action?: ReactNode;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <section className="sidebar-attention-section" aria-labelledby={headingID}>
+      <header className="sidebar-unread-heading">
+        <h2 className="sidebar-unread-heading-label" id={headingID}>
+          {title}
+          <span className="sidebar-unread-count" aria-live="polite">{count}</span>
+        </h2>
+        {action}
+      </header>
+      <div className="sidebar-unread-list">{children}</div>
+    </section>
+  );
+}
+
+function AttentionThreadRow({
+  thread,
+  running = false,
+  unread = false,
+  active = false,
+  pending = false,
+  onSelect,
+}: {
+  thread: ThreadSummary;
+  running?: boolean;
+  unread?: boolean;
+  active?: boolean;
+  pending?: boolean;
+  onSelect: (id: string) => void;
+}): JSX.Element {
+  const label = sidebarThreadLabel(thread);
+  const className = [
+    "thread-row",
+    "sidebar-session-row",
+    "sidebar-unread-row",
+    running ? "running" : "",
+    unread ? "has-unread" : "",
+    active ? "active" : "",
+    pending ? "pending-switch" : "",
+  ].filter(Boolean).join(" ");
+  return (
+    <div className={className} aria-current={active ? "page" : undefined}>
+      {running ? <SidebarActivityIndicator className="thread-row-spinner" /> : null}
+      <button
+        className="thread-row-main"
+        type="button"
+        aria-busy={running || undefined}
+        aria-label={label}
+        onClick={() => onSelect(thread.id)}
+      >
+        <span className="thread-row-title">{label}</span>
+      </button>
+    </div>
+  );
+}

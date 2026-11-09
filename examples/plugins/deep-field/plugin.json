@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "id": "deep-field",
+  "name": "Deep Field",
+  "description": "Canvas-placement shell skin that renders your background image, or its own artwork, as a pixel screen behind the main area.",
+  "icon": "sparkles",
+  "version": "1.2.0",
+  "author": {
+    "name": "Wuu"
+  },
+  "minimumWuuVersion": "2026.11.8",
+  "interface": {
+    "displayName": "Deep Field",
+    "shortDescription": "Your picture as a pixel screen behind the main area.",
+    "developerName": "Wuu",
+    "category": "Appearance"
+  },
+  "contributes": {
+    "skins": [
+      {
+        "id": "deep-field",
+        "name": "Deep Field",
+        "placement": "canvas",
+        "userImage": true,
+        "light": {
+          "background": "#f3f4f6",
+          "foreground": "#17181b",
+          "hover": "#0000000f",
+          "active": "#0000001a",
+          "image": "deep-field-light.svg",
+          "veil": 0.66,
+          "dots": {
+            "pitch": 4,
+            "size": 3,
+            "shape": "square"
+          }
+        },
+        "dark": {
+          "background": "#0b0c0e",
+          "foreground": "#eceef1",
+          "hover": "#ffffff14",
+          "active": "#ffffff24",
+          "image": "deep-field-dark.svg",
+          "veil": 0.72,
+          "dots": {
+            "pitch": 4,
+            "size": 3,
+            "shape": "square"
+          }
+        }
+      }
+    ]
+  }
+}

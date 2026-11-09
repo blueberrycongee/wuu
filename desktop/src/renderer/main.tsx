@@ -1,0 +1,115 @@
+import "./ReactDevPerformance";
+import { flushTerminalCleanup } from "./RendererTerminalCleanup";
+import ReactDOM from "react-dom/client";
+import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
+import { StandaloneAccountWindow } from "./StandaloneAccountWindow";
+import { DesktopApplicationRoot } from "./plugins/DesktopApplicationRoot";
+import { desktopPluginRuntime, desktopCompositionRoot } from "./plugins/DesktopPluginRuntime";
+import { startAppearanceSync } from "./AppearancePreferences";
+import { applyMessageFlowFontSize } from "./MessageFlowFontSizeSection";
+import { ENABLE_ACCOUNT } from "./FeatureFlags";
+import { applyPlatformStamp } from "./platform";
+import { startRendererVisibilitySync } from "./RendererVisibility";
+import { applyMeasuredScrollbarWidth, startScrollbarWidthSync } from "./ScrollbarMetrics";
+import { startFocusModality } from "./FocusModality";
+import { startScrollbarReveal } from "./ScrollbarReveal";
+import { applyThemePreference, startThemePreferenceSync } from "./Theme";
+import "./styles.css";
+import { I18nProvider } from "./i18n";
+import { ToastViewport } from "./Toast";
+import { ConfirmDialogHost } from "./ConfirmDialog";
+import { WuuUIRoot } from "./ui/layers/UILayerHost";
+
+// The preload script already stamped data-theme for the first paint;
+// re-applying here takes over the "system" media-query subscription for
+// the lifetime of the window.
+applyThemePreference(window.wuu?.initialThemePreference ?? "system");
+
+// Theme changes made in any window reach every other window through the
+// main-process broadcast; keep this window's data-theme in step for the
+// rest of its lifetime.
+startThemePreferenceSync();
+startAppearanceSync();
+
+// Same story for data-platform: the preload stamps it pre-paint; this
+// covers boots whose preload was replaced (e2e mocks).
+applyPlatformStamp();
+
+// Stamp the platform's real scrollbar gutter width before React renders so
+// the dock composer and the message flow are centered in the same visible
+// content box from the very first paint.
+applyMeasuredScrollbarWidth();
+// Re-sync on focus for rare mid-session OS scrollbar-mode changes. Not on
+// resize: the gutter is constant during a live resize.
+startScrollbarWidthSync();
+
+// Paint a scroll container's thumb only while it actually scrolls, then let it
+// fade (styles/scrollbars.css). One capture-phase listener covers every surface,
+// including ones mounted later; hover never reveals a scrollbar.
+startScrollbarReveal();
+// Stamp pointer vs keyboard focus so click-selected fields keep the caret
+// without a ring; Tab still paints the shared keyboard outline.
+startFocusModality();
+
+// Pause ambient infinite animations while the native window is hidden or
+// minimized. Finite UI transitions remain untouched so their lifecycle events
+// can still complete normally.
+startRendererVisibilitySync();
+
+// Re-apply the message-stream font size in case the preload stamp was
+// dropped (e.g. user unset window.wuu during boot, or the file was
+// corrupted). Cheap and idempotent.
+applyMessageFlowFontSize(
+  window.wuu?.initialMessageFlowFontSize ?? MESSAGE_FLOW_FONT_SIZE_RANGE.default,
+);
+
+// Chromium's default for a file dropped anywhere without a drop handler is
+// to navigate the window to it, replacing the whole UI. Composers handle
+// (and prevent) their own file drops; this keeps stray file drops
+// everywhere else inert. Text drags pass through so native textarea
+// drag-and-drop keeps working.
+const ignoreStrayFileDrop = (event: DragEvent): void => {
+  if (event.dataTransfer?.types.includes("Files")) {
+    event.preventDefault();
+  }
+};
+window.addEventListener("dragover", ignoreStrayFileDrop);
+window.addEventListener("drop", ignoreStrayFileDrop);
+
+const rendererRoot = document.getElementById("root") as HTMLElement;
+rendererRoot.dataset.wuuUiRoot = "true";
+rendererRoot.dataset.wuuComponent = "ui-root";
+
+const originalConsoleError = console.error;
+console.error = (...args: unknown[]): void => {
+  originalConsoleError(...args);
+  if (args.some((arg) => typeof arg === "string" && arg.includes("Maximum update depth exceeded"))) {
+    originalConsoleError("[update-depth-stack]", new Error().stack);
+  }
+};
+
+const accountWindow = ENABLE_ACCOUNT && Boolean(window.wuu?.isAccountWindow);
+
+const root = ReactDOM.createRoot(rendererRoot);
+root.render(
+  <I18nProvider>
+    <WuuUIRoot>
+      {accountWindow
+        ? <StandaloneAccountWindow />
+        : <DesktopApplicationRoot />}
+      <ToastViewport />
+      <ConfirmDialogHost />
+    </WuuUIRoot>
+  </I18nProvider>,
+);
+
+window.wuu?.onPrepareToQuit?.(async () => {
+  root.unmount();
+  const results = await Promise.allSettled([desktopPluginRuntime.shutdown()]);
+  // Plugin shutdown fences the final writer before joining PTYs detached by
+  // earlier workspace handoffs. Keep the native bridge alive until they settle.
+  results.push(...await Promise.allSettled([flushTerminalCleanup()]));
+  await desktopCompositionRoot.fiber.dispose();
+  const failures = results.flatMap(result => result.status === "rejected" ? [result.reason] : []);
+  if (failures.length) throw new AggregateError(failures, "Renderer cleanup failed");
+});

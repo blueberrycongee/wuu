@@ -1,0 +1,2037 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"maps"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
+
+	"github.com/blueberrycongee/wuu/internal/activity"
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentcontrol"
+	"github.com/blueberrycongee/wuu/internal/capability"
+	"github.com/blueberrycongee/wuu/internal/codemode"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/executionenv"
+	"github.com/blueberrycongee/wuu/internal/mcp"
+	"github.com/blueberrycongee/wuu/internal/modelprofile"
+	proc "github.com/blueberrycongee/wuu/internal/process"
+	"github.com/blueberrycongee/wuu/internal/processsandbox"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/skills"
+	"github.com/blueberrycongee/wuu/internal/statepath"
+	"github.com/blueberrycongee/wuu/internal/stringutil"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
+	"github.com/blueberrycongee/wuu/internal/workspaces"
+)
+
+const (
+	browserToolName            = "wuu_browser"
+	defaultShellTimeoutSeconds = 300
+	maxShellTimeoutSeconds     = 3600
+	defaultMaxFileBytes        = 256 * 1024
+	defaultMaxEntries          = 1000
+	// Per-tool output size limits (in bytes). Shell/grep produce verbose,
+	// low-density output and get a tighter cap; other tools use a generous
+	// default.
+	maxShellOutputBytes = 30 * 1024  // 30 KB
+	maxGrepOutputBytes  = 20 * 1024  // 20 KB
+	maxToolOutputBytes  = 100 * 1024 // 100 KB — general cap for other tools
+)
+
+var contextWindowToolNames = []string{newContextToolName}
+
+// Toolkit executes local coding tools for the agent. It satisfies
+// agent.ToolExecutor via Definitions() + Execute().
+//
+// Internally it holds an Env (shared runtime state) and a Registry
+// (all registered tools). The old switch-case dispatch is replaced by
+// registry lookup.
+type Toolkit struct {
+	fileActionGate          FileActionGate
+	commandActionGate       CommandActionGate
+	permissionHookLocalOnly func() bool
+	fileChangedLocalOnly    func() bool
+	env                     *Env
+	sessionStore            *session.Store
+	registry                *Registry
+	nativeReplacements      map[string]func(Tool) Tool
+	replacementBindings     map[string]config.ToolReplacement
+	disabledTools           map[string]struct{}
+	toolPolicy              func(string) bool
+	exposureMu              sync.RWMutex
+	loadedDeferredTools     map[string]struct{}
+	toolSearchEnabled       bool
+	nativeDeferredDiscovery bool
+	boundary                WorkspaceBoundary
+	permissionRequestHook   func(context.Context, *Toolkit, ToolInfo, providers.ToolCall) error
+	authorizer              Authorizer
+	reviewer                Reviewer
+	approveForMe            bool
+	codeModeMu              sync.RWMutex
+	codeMode                *codemode.Service
+	ptcConfig               config.PTCConfig
+	codeModeAdditionalTools func() []providers.ToolDefinition
+	skillToolProvider       func() []providers.ToolDefinition
+	// mcpManager, when set, exposes MCP server tools alongside built-in
+	// tools. MCP tools are appended after built-ins to preserve prompt
+	// cache stability (the built-in prefix stays constant).
+	mcpManager           *mcp.Manager
+	mcpCatalogMu         sync.RWMutex
+	mcpCatalogGeneration uint64
+	mcpTools             []*mcp.MCPTool
+	// surfaceFreezeDepth pins the MCP catalog snapshot while model runs are
+	// in flight (see FreezeToolSurface) so asynchronous server events cannot
+	// reshape the provider tool list between rounds of one run. Guarded by
+	// mcpCatalogMu.
+	surfaceFreezeDepth            int
+	frozenReplacementAvailability map[string]bool
+	activityRegistry              *activity.Registry
+	mcpActivityBindings           map[string]MCPActivityBinding
+
+	// activeProfileMu guards activeProfile and activeSurface. Reads
+	// from Definitions() and Execute() take the RLock; SetActiveProfile
+	// takes the Lock.
+	activeProfileMu sync.RWMutex
+	// activeProfile is the most recently installed ModelProfile. The
+	// zero value means "no profile compiled yet" — Definitions() falls
+	// back to the legacy direct-tool surface in that case.
+	activeProfile modelprofile.Profile
+	// activeSurface is the compiled surface for activeProfile. It is
+	// the authoritative source for which tool names are direct,
+	// deferred, or hidden under the current profile.
+	activeSurface capability.Surface
+}
+
+// SetPermissionRequestHook installs the hook invoked immediately before the
+// workspace boundary makes its allow/deny decision.
+func (t *Toolkit) SetPermissionRequestHook(hook func(context.Context, *Toolkit, ToolInfo, providers.ToolCall) error, localOnly ...func() bool) {
+	t.permissionRequestHook = hook
+	t.permissionHookLocalOnly = nil
+	if len(localOnly) == 1 {
+		t.permissionHookLocalOnly = localOnly[0]
+	}
+}
+
+type permissionCheckedContextKey struct{}
+
+func (t *Toolkit) checkPermission(ctx context.Context, info ToolInfo, call providers.ToolCall) error {
+	if checked, _ := ctx.Value(permissionCheckedContextKey{}).(bool); checked {
+		return nil
+	}
+	if t.permissionRequestHook != nil {
+		if err := t.permissionRequestHook(ctx, t, info, call); err != nil {
+			return err
+		}
+	}
+	// The selected provider makes the policy decision before local enforcement
+	// or contextual review. Neither can turn its denial into an allowed action.
+	if t.authorizer != nil && !t.hasEffectAuthorization(ctx, info, call) {
+		decision, err := t.authorizer.Authorize(ctx, t.authorizationRequest(info, call))
+		if err != nil {
+			return authorizationDenied(info.Name, "authorization provider unavailable")
+		}
+		if strings.TrimSpace(decision.Outcome) != "allow" {
+			return authorizationDenied(info.Name, decision.Reason)
+		}
+	}
+	if err := t.boundary.Check(info, call); err != nil {
+		return err
+	}
+	// Host plugin code is not confined by the workspace process sandbox.
+	// Optional review must not silently turn into implicit execution trust.
+	if info.Name == "plugin_manager" && !info.ReadOnly && t.boundary.Enforce && (!t.approveForMe || t.reviewer == nil || config.NormalizePermissionMode(t.env.PermissionMode) != config.PermissionModeStandard) {
+		return reviewBlocked(info.Name, "plugin_trust_required", "host plugin execution requires configured Approve for me authorization or an explicitly unconfined session", "ask the user to authorize plugin management through their permission settings; do not bypass workspace restrictions")
+	}
+	if err := t.reviewToolCall(ctx, info, call); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *Toolkit) SetAuthorizer(authorizer Authorizer) { t.authorizer = authorizer }
+
+func (t *Toolkit) SetReviewer(reviewer Reviewer) { t.reviewer = reviewer }
+
+func (t *Toolkit) SetApproveForMe(enabled bool) { t.approveForMe = enabled }
+
+func (t *Toolkit) ApproveForMe() bool { return t != nil && t.approveForMe }
+
+// RefreshAuthorityFrom reapplies the parent's current policy before a dormant
+// worker resumes, including the reviewer bound to the current turn.
+func (t *Toolkit) RefreshAuthorityFrom(parent *Toolkit) {
+	if t == nil || parent == nil {
+		return
+	}
+	t.SetBoundary(parent.boundary)
+	if t.env != nil && parent.env != nil {
+		t.env.PermissionMode = parent.env.PermissionMode
+	}
+	t.approveForMe = parent.approveForMe
+	t.reviewer = parent.reviewer
+	t.fileActionGate = parent.fileActionGate
+	t.commandActionGate = parent.commandActionGate
+}
+
+func (t *Toolkit) ExecutionEnvironment() executionenv.Executor { return t.env.ExecutionEnvironment }
+
+func (t *Toolkit) SetExecutionEnvironment(executor executionenv.Executor) {
+	t.env.ExecutionEnvironment = executor
+}
+
+func (t *Toolkit) SetProcessSandboxProvider(provider processsandbox.Provider) {
+	t.env.ProcessSandboxProvider = provider
+}
+
+func (t *Toolkit) SetPermissionMode(mode string) { t.env.PermissionMode = strings.TrimSpace(mode) }
+
+func (t *Toolkit) AuthorizeTool(ctx context.Context, call providers.ToolCall, metadata agent.ToolMetadata) error {
+	if t.IsToolDisabled(call.Name) {
+		return fmt.Errorf("tool %q is disabled", call.Name)
+	}
+	return t.checkPermission(ctx, ToolInfo{
+		Name: call.Name, Kind: ToolKindPlugin, Exposure: ToolExposureDirect,
+		Risk: ToolRisk(metadata.Risk), ReadOnly: metadata.ReadOnly,
+		ConcurrencySafe: metadata.ConcurrencySafe, Destructive: metadata.Destructive, Reason: metadata.Reason,
+	}, call)
+}
+
+func markPermissionChecked(ctx context.Context) context.Context {
+	return context.WithValue(ctx, permissionCheckedContextKey{}, true)
+}
+
+// ExecutionActor exposes the generic identity bound to this tool surface so
+// external plugin tools can preserve parent/child execution relationships.
+func (t *Toolkit) ExecutionActor() (string, string) {
+	if t == nil || t.env == nil {
+		return "", ""
+	}
+	return strings.TrimSpace(t.env.AgentID), currentExecutionPath(t.env)
+}
+
+// New creates a tool executor rooted in a workspace.
+func New(rootDir string) (*Toolkit, error) {
+	if strings.TrimSpace(rootDir) == "" {
+		return nil, errors.New("root directory is required")
+	}
+	abs, err := filepath.Abs(rootDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve root directory: %w", err)
+	}
+	if ev, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = ev
+	}
+	wuuHome, err := statepath.Home("")
+	if err != nil {
+		return nil, fmt.Errorf("resolve wuu home: %w", err)
+	}
+	stateDir, err := statepath.WorkspaceDir(wuuHome, abs)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace state directory: %w", err)
+	}
+
+	env := &Env{
+		RootDir:            abs,
+		StateDir:           stateDir,
+		RuntimeHome:        wuuHome,
+		AllowMutations:     true,
+		boundaryConfigured: true,
+		ToolSearchEnabled:  true,
+	}
+	t := &Toolkit{
+		env: env,
+		disabledTools: map[string]struct{}{
+			newContextToolName: {},
+		},
+		toolSearchEnabled: true,
+		boundary:          StandardBoundary(),
+	}
+	t.rebuildRegistry()
+	return t, nil
+}
+
+// CloneForRoot returns a toolkit with the same configured dependencies but a
+// fresh per-session Env state. It is used by desktop app-server threads so
+// concurrent conversations do not share mutable tool state such as SessionID,
+// read tracking, plans, or telemetry.
+func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
+	if t == nil || t.env == nil {
+		return nil, errors.New("toolkit is not initialized")
+	}
+	cloneRoot := strings.TrimSpace(rootDir)
+	if cloneRoot == "" {
+		cloneRoot = t.env.RootDir
+	}
+	abs, err := filepath.Abs(cloneRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve root directory: %w", err)
+	}
+	if ev, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = ev
+	}
+	// Build a fresh Env from the source toolkit's configured dependencies.
+	// We must NOT do `env := *t.env`: Env embeds webEvidenceState, which holds a
+	// sync.RWMutex, and the sync package contract forbids copying a Mutex or
+	// RWMutex after first use (go vet's copylocks analyzer enforces this).
+	// The lock-bearing per-session state fields (readState,
+	// webState, toolTelemetry, gitAttributionShell) stay zero so each cloned session
+	// owns independent mutable state, matching the original intent.
+	env := Env{
+		ExecutionEnvironment:        t.env.ExecutionEnvironment,
+		RootDir:                     abs,
+		WorkspaceID:                 t.env.WorkspaceID,
+		RegisteredWorkspaces:        append([]workspaces.Workspace(nil), t.env.RegisteredWorkspaces...),
+		StateDir:                    t.env.StateDir,
+		RuntimeHome:                 t.env.RuntimeHome,
+		Unconfined:                  t.env.Unconfined,
+		PermissionMode:              t.env.PermissionMode,
+		AllowMutations:              t.env.AllowMutations,
+		boundaryConfigured:          t.env.boundaryConfigured,
+		externalCapabilitiesOnly:    t.env.externalCapabilitiesOnly,
+		conversationMCPServers:      maps.Clone(t.env.conversationMCPServers),
+		conversationPluginTools:     maps.Clone(t.env.conversationPluginTools),
+		turnConversationMCPServers:  maps.Clone(t.env.turnConversationMCPServers),
+		turnConversationPluginTools: maps.Clone(t.env.turnConversationPluginTools),
+		SessionID:                   t.env.SessionID,
+		CodeModeStateOwner:          t.env.CodeModeStateOwner,
+		SessionDir:                  t.env.SessionDir,
+		AgentID:                     t.env.AgentID,
+		AgentPath:                   t.env.AgentPath,
+		ToolSearchEnabled:           t.env.ToolSearchEnabled,
+		NativeDeferredToolDiscovery: t.env.NativeDeferredToolDiscovery,
+		GitAttributionDisabled:      t.env.GitAttributionDisabled,
+		GitWrapperExecutable:        t.env.GitWrapperExecutable,
+		ProcessMgr:                  t.env.ProcessMgr,
+		ShellEarlyHandoffDisabled:   t.env.ShellEarlyHandoffDisabled,
+		ProcessSandboxProvider:      t.env.ProcessSandboxProvider,
+		AgentControl:                t.env.AgentControl,
+		// Browser dependencies must be copied explicitly: every desktop thread
+		// runs through CloneForRoot, so omitting these here silently strips the
+		// bridge/tab store from every cloned session (the mcpActivityBindings
+		// precedent below is the same hazard).
+		BrowserBridge:             t.env.BrowserBridge,
+		BrowserTabs:               t.env.BrowserTabs,
+		BrowserHostFinalize:       t.env.BrowserHostFinalize,
+		ArtifactPublisher:         t.env.ArtifactPublisher,
+		PluginManager:             t.env.PluginManager,
+		WorkingNotesHome:          t.env.WorkingNotesHome,
+		FileScopeRoots:            append([]string(nil), t.env.FileScopeRoots...),
+		ProtectedPaths:            append([]string(nil), t.env.ProtectedPaths...),
+		Skills:                    t.env.Skills,
+		OnFileChanged:             t.env.OnFileChanged,
+		OnSessionWorkspaceChanged: t.env.OnSessionWorkspaceChanged,
+	}
+
+	catalog := t.env.skillCatalog.Load()
+	if catalog != nil && abs != t.env.RootDir {
+		rebound := *catalog
+		// Discovery closures belong to their configured root. Runtime callers
+		// bind destination discovery after installing that checkout's skills.
+		rebound.refresh, rebound.baseline = nil, ""
+		catalog = &rebound
+	}
+	env.skillCatalog.Store(catalog)
+
+	clone := &Toolkit{
+		replacementBindings:     t.ReplacementBindings(),
+		sessionStore:            t.sessionStore,
+		fileActionGate:          t.fileActionGate,
+		commandActionGate:       t.commandActionGate,
+		permissionHookLocalOnly: t.permissionHookLocalOnly,
+		fileChangedLocalOnly:    t.fileChangedLocalOnly,
+		env:                     &env,
+		boundary:                t.boundary,
+		permissionRequestHook:   t.permissionRequestHook,
+		authorizer:              t.authorizer,
+		reviewer:                t.reviewer,
+		approveForMe:            t.approveForMe,
+		mcpManager:              t.mcpManager,
+		activityRegistry:        t.activityRegistry,
+		mcpActivityBindings:     cloneMCPActivityBindings(t.mcpActivityBindings),
+	}
+	t.exposureMu.RLock()
+	clone.toolSearchEnabled = t.toolSearchEnabled
+	clone.nativeDeferredDiscovery = t.nativeDeferredDiscovery
+	t.exposureMu.RUnlock()
+	// Thread clones share the PTC lifecycle owner; programs remain independent.
+	t.codeModeMu.RLock()
+	clone.codeMode = t.codeMode
+	clone.ptcConfig = t.ptcConfig
+	t.codeModeMu.RUnlock()
+	clone.toolPolicy = t.toolPolicy
+	t.activeProfileMu.RLock()
+	clone.activeProfile = t.activeProfile
+	clone.activeSurface = cloneSurface(t.activeSurface)
+	t.activeProfileMu.RUnlock()
+	if len(t.disabledTools) > 0 {
+		clone.disabledTools = make(map[string]struct{}, len(t.disabledTools))
+		for name := range t.disabledTools {
+			clone.disabledTools[name] = struct{}{}
+		}
+	}
+	clone.rebuildRegistry()
+	clone.activeProfileMu.Lock()
+	clone.publishActiveSurfaceLocked()
+	clone.activeProfileMu.Unlock()
+	// Deferred tool loads are model-visible, per-conversation state created by
+	// tool_search. A cloned toolkit must not inherit them unless the clone's
+	// own model context has seen the loadable schema.
+	clone.refreshMCPToolSnapshot(true)
+	return clone, nil
+}
+
+// rebuildRegistry constructs the tool registry from the current Env.
+// Called at construction and whenever dependencies change.
+func (t *Toolkit) rebuildRegistry() {
+	e := t.env
+	e.skillSurface = t.ActiveSurface
+	registered := []Tool{
+		// File operations
+		NewReadFileTool(e),
+		NewWriteFileTool(e),
+		NewListFilesTool(e),
+		NewEditFileTool(e),
+		// Search
+		NewGrepTool(e),
+		NewGlobTool(e),
+		// bash runs bounded foreground commands and local verification;
+		// process owns the background-process lifecycle. Both are emitted by
+		// the model profile compiler.
+		NewBashTool(e),
+		// Git
+		NewGitTool(e),
+		// Web
+		NewWebSearchTool(e),
+		NewWebFetchTool(e),
+		// Skills
+		NewLoadSkillTool(e),
+		// Session/thread lookup (used after right-click "copy ID" on the
+		// desktop session tree — agents receive a thread ID and resolve it
+		// back to the full conversation via this tool).
+		NewThreadGetTool(t.sessionStore),
+		NewSetSessionWorkspaceTool(e),
+		&ListWorkspacesTool{env: e},
+		NewNewContextTool(e),
+		NewNotesTool(e),
+		NewHistoryReadTool(e, t.sessionStore),
+		NewHistorySearchTool(e, t.sessionStore),
+		// Recurring agent profiles
+		NewListAgentProfilesTool(e),
+		NewCreateAgentProfileTool(e),
+		// Embedded browser automation (default-enabled in New(); a session can
+		// still hide it with SetBrowserEnabled(false), including WUU_ENABLE_BROWSER=0).
+		NewBrowserTool(e),
+		// Deferred tool discovery
+		NewToolSearchTool(t),
+	}
+	if e.PluginManager != nil {
+		registered = append(registered, &PluginManagerTool{env: e})
+	}
+	if e.ArtifactPublisher != nil {
+		registered = append(registered, NewPresentArtifactTool(e))
+	}
+	// Register the PTC entry only with a session runtime; model exposure is
+	// separately controlled by the optional global and family settings.
+	t.codeModeMu.RLock()
+	hasCodeMode := t.codeMode != nil
+	t.codeModeMu.RUnlock()
+	if hasCodeMode {
+		registered = append(registered, NewCodeModeExecTool(t))
+	}
+	for i, tool := range registered {
+		if wrap := t.nativeReplacements[tool.Name()]; wrap != nil {
+			registered[i] = wrap(tool)
+		}
+	}
+	t.registry = NewRegistry(registered...)
+}
+
+// ReplacementBindings returns an owned snapshot for rebinding cloned toolkits.
+func (t *Toolkit) ReplacementBindings() map[string]config.ToolReplacement {
+	out := make(map[string]config.ToolReplacement, len(t.replacementBindings))
+	for name, binding := range t.replacementBindings {
+		out[name] = binding
+	}
+	return out
+}
+func (t *Toolkit) SetReplacementBindings(bindings map[string]config.ToolReplacement) {
+	t.replacementBindings = make(map[string]config.ToolReplacement, len(bindings))
+	for name, binding := range bindings {
+		t.replacementBindings[name] = binding
+	}
+}
+
+// SetNativeToolReplacements installs generation-bound replacements before the
+// toolkit is used. Every key must name a native registry entry.
+func (t *Toolkit) SetNativeToolReplacements(replacements map[string]func(Tool) Tool) error {
+	for name := range replacements {
+		if t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(name) {
+			return fmt.Errorf("tool replacement %q is unavailable in a remote execution environment", name)
+		}
+		if t.registry.Lookup(name) == nil {
+			return fmt.Errorf("unknown native tool %q", name)
+		}
+		if replacements[name] == nil {
+			return fmt.Errorf("missing replacement for %q", name)
+		}
+		original := t.registry.Lookup(name)
+		replacement := replacements[name](original)
+		if replacement == nil || replacement.Name() != name {
+			return fmt.Errorf("replacement for %q must preserve the native name", name)
+		}
+		nativeDefinition, replacementDefinition := original.Definition(), replacement.Definition()
+		nativeSchema, nativeErr := json.Marshal(nativeDefinition.InputSchema)
+		replacementSchema, replacementErr := json.Marshal(replacementDefinition.InputSchema)
+		if nativeErr != nil || replacementErr != nil || string(nativeSchema) != string(replacementSchema) || nativeDefinition.Freeform != replacementDefinition.Freeform || nativeDefinition.DirectOnly != replacementDefinition.DirectOnly {
+			return fmt.Errorf("replacement for %q must preserve the native input contract", name)
+		}
+	}
+	t.nativeReplacements = replacements
+	t.rebuildRegistry()
+	return nil
+}
+
+// SetCodeModeService attaches the session runtime. Setting nil removes its entry.
+func (t *Toolkit) SetCodeModeService(service *codemode.Service) {
+	t.codeModeMu.Lock()
+	t.codeMode = service
+	t.codeModeMu.Unlock()
+	t.rebuildRegistry()
+	t.activeProfileMu.Lock()
+	t.publishActiveSurfaceLocked()
+	t.activeProfileMu.Unlock()
+}
+
+// CodeModeService returns the session's code-mode runtime, if enabled.
+func (t *Toolkit) CodeModeService() *codemode.Service {
+	t.codeModeMu.RLock()
+	defer t.codeModeMu.RUnlock()
+	return t.codeMode
+}
+
+// ConfigurePTC updates optional tool presentation. Call only between turns.
+func (t *Toolkit) ConfigurePTC(service *codemode.Service, cfg config.PTCConfig) {
+	t.codeModeMu.Lock()
+	t.ptcConfig = cfg
+	t.codeModeMu.Unlock()
+	t.SetCodeModeService(service)
+}
+
+// CodeModeOnly reports whether this model uses programmatic tool calling.
+func (t *Toolkit) CodeModeOnly() bool {
+	t.codeModeMu.RLock()
+	defer t.codeModeMu.RUnlock()
+	return t.codeMode != nil && t.ptcConfig.Enabled
+}
+
+// ── Dependency setters ─────────────────────────────────────────────
+
+// SetAgentControl attaches the shared agent control runtime.
+func (t *Toolkit) SetAgentControl(c *agentcontrol.AgentControl) {
+	t.env.AgentControl = c
+}
+
+// SetImageInputSupported installs the active model's resolved image-input
+// capability for rich tool-result projection.
+func (t *Toolkit) SetImageInputSupported(supported bool) {
+	if t == nil || t.env == nil {
+		return
+	}
+	t.env.ImageInputSupported = &supported
+}
+
+// SetNativeDeferredToolDiscovery configures whether ordinary tool results may
+// attach provider-native discovered schemas. When false, tool_search remains
+// the only path that loads deferred schemas into the current tool surface.
+func (t *Toolkit) SetNativeDeferredToolDiscovery(enabled bool) {
+	if t == nil {
+		return
+	}
+	t.exposureMu.Lock()
+	t.nativeDeferredDiscovery = enabled
+	t.exposureMu.Unlock()
+	if t.env != nil {
+		t.env.NativeDeferredToolDiscovery = enabled
+	}
+}
+
+func (t *Toolkit) NativeDeferredToolDiscovery() bool {
+	return t.nativeDeferredToolDiscoveryEnabled()
+}
+
+func (t *Toolkit) SetToolSearchEnabled(enabled bool) {
+	if t == nil {
+		return
+	}
+	t.exposureMu.Lock()
+	t.toolSearchEnabled = enabled
+	t.exposureMu.Unlock()
+	if t.env != nil {
+		t.env.ToolSearchEnabled = enabled
+	}
+	t.activeProfileMu.Lock()
+	t.publishActiveSurfaceLocked()
+	t.activeProfileMu.Unlock()
+}
+
+func (t *Toolkit) ToolSearchEnabled() bool {
+	if t == nil {
+		return false
+	}
+	t.exposureMu.RLock()
+	defer t.exposureMu.RUnlock()
+	return t.toolSearchEnabled
+}
+
+func (t *Toolkit) nativeDeferredToolDiscoveryEnabled() bool {
+	if t == nil {
+		return false
+	}
+	t.exposureMu.RLock()
+	defer t.exposureMu.RUnlock()
+	return t.nativeDeferredDiscovery
+}
+
+// SetProcessManager attaches the process manager.
+func (t *Toolkit) SetProcessManager(m *proc.Manager) {
+	t.env.ProcessMgr = m
+}
+
+// SetShellEarlyHandoffEnabled controls whether foreground commands may yield
+// before their requested timeout. Disable it when the host cannot deliver a
+// promoted command's completion to this conversation.
+func (t *Toolkit) SetShellEarlyHandoffEnabled(enabled bool) {
+	t.env.ShellEarlyHandoffDisabled = !enabled
+}
+
+// SetStateDir sets the workspace-scoped runtime state directory.
+func (t *Toolkit) SetStateDir(dir string) {
+	t.env.StateDir = strings.TrimSpace(dir)
+}
+
+// SetRuntimeHome excludes the resolved runtime state root from workspace digests.
+func (t *Toolkit) SetRuntimeHome(dir string) {
+	t.env.RuntimeHome = strings.TrimSpace(dir)
+}
+
+// SetSkills publishes discovered skills while retaining the bound generation's
+// availability gate. Worker rediscovery must not revive revoked plugin skills.
+func (t *Toolkit) SetSkills(s []skills.Skill) {
+	catalog := &skillCatalog{skills: append([]skills.Skill(nil), s...)}
+	for {
+		previous := t.env.skillCatalog.Load()
+		if previous != nil {
+			catalog.available = previous.available
+			catalog.refresh = previous.refresh
+			catalog.baseline = previous.baseline
+		}
+		if t.env.skillCatalog.CompareAndSwap(previous, catalog) {
+			return
+		}
+	}
+}
+
+// SetSkillsWithAvailability binds an immutable catalog to a generation's live
+// availability gate. The callback must be safe for concurrent use. Passing nil
+// explicitly removes the gate; existing toolkit clones keep their original one.
+func (t *Toolkit) SetSkillsWithAvailability(s []skills.Skill, available func(skills.Skill) bool) {
+	t.env.skillCatalog.Store(&skillCatalog{skills: append([]skills.Skill(nil), s...), available: available})
+}
+
+// FilterAvailableSkills applies the bound generation's gate to newly discovered
+// skills, without replacing its catalog or applying the model surface filter.
+func (t *Toolkit) FilterAvailableSkills(s []skills.Skill) []skills.Skill {
+	return t.env.skillCatalog.Load().filter(s)
+}
+
+// Skills returns currently available skills, before model surface filtering.
+func (t *Toolkit) Skills() []skills.Skill {
+	return t.env.AvailableSkills()
+}
+
+// SetSessionID sets the current session ID.
+func (t *Toolkit) SetSessionID(id string) {
+	t.env.SessionID = id
+	t.env.CodeModeStateOwner = id
+}
+
+// SetCodeModeStateOwner binds state cleanup to a host-owned parent conversation.
+// Call after SetSessionID; the scope identity itself remains unchanged.
+func (t *Toolkit) SetCodeModeStateOwner(id string) {
+	t.env.CodeModeStateOwner = id
+}
+
+// SessionID returns the session currently bound to this toolkit.
+func (t *Toolkit) SessionID() string {
+	if t == nil || t.env == nil {
+		return ""
+	}
+	return t.env.SessionID
+}
+
+// SetSessionDir sets the session directory for result budgeting.
+func (t *Toolkit) SetSessionDir(dir string) {
+	t.env.SessionDir = dir
+}
+
+// SetSessionStore binds tools to the owning runtime's captured provider. Call
+// before admitting execution; existing clones retain their original binding.
+func (t *Toolkit) SetSessionStore(store *session.Store) {
+	t.sessionStore = store
+	t.rebuildRegistry()
+}
+
+// SetWorkingNotesHome binds native notes and legacy imports to this runtime.
+func (t *Toolkit) SetWorkingNotesHome(home string) {
+	t.env.WorkingNotesHome = strings.TrimSpace(home)
+}
+
+// SessionDir returns the session artifact directory currently bound to this toolkit.
+func (t *Toolkit) SessionDir() string {
+	if t == nil || t.env == nil {
+		return ""
+	}
+	return t.env.SessionDir
+}
+
+// SetAgentIdentity sets the current agent identity for relative agent-path
+// resolution inside orchestration tools.
+func (t *Toolkit) SetAgentIdentity(id, path string) {
+	t.env.AgentID = strings.TrimSpace(id)
+	t.env.AgentPath = strings.TrimSpace(path)
+}
+
+// SetOnFileChanged sets the callback fired after write_file/edit_file
+// successfully modifies a file. Used to dispatch FileChanged hooks.
+func (t *Toolkit) SetOnFileChanged(fn func(context.Context, string), localOnly ...func() bool) {
+	t.env.OnFileChanged = fn
+	t.fileChangedLocalOnly = nil
+	if len(localOnly) == 1 {
+		t.fileChangedLocalOnly = localOnly[0]
+	}
+}
+
+// SetOnSessionWorkspaceChanged attaches the app-server persistence and
+// notification hook used by set_session_workspace.
+func (t *Toolkit) SetOnSessionWorkspaceChanged(fn func(root string) error) {
+	t.env.OnSessionWorkspaceChanged = fn
+}
+
+// SetMCPManager attaches the MCP manager so its tools are exposed to the agent.
+func (t *Toolkit) SetMCPManager(m *mcp.Manager) {
+	t.mcpManager = m
+	t.refreshMCPToolSnapshot(true)
+}
+
+func (t *Toolkit) MCPManager() *mcp.Manager {
+	if t == nil {
+		return nil
+	}
+	return t.mcpManager
+}
+
+// SetBoundary installs the single authority gate for this runtime. It also
+// wires Env.Unconfined (path confinement) and Env.AllowMutations (per-path
+// mutation exemptions) so they both track the boundary.
+func (t *Toolkit) SetBoundary(boundary WorkspaceBoundary) {
+	if t == nil {
+		return
+	}
+	t.boundary = boundary
+	if t.env != nil {
+		t.env.Unconfined = !boundary.Enforce
+		t.env.AllowMutations = boundary.AllowMutations
+		t.env.boundaryConfigured = true
+	}
+}
+
+// Boundary returns the currently installed authority gate. Worker wake
+// paths use it to re-copy the parent runtime's live boundary onto a woken
+// worker's toolkit, the same inheritance CloneForRoot performs at spawn.
+func (t *Toolkit) Boundary() WorkspaceBoundary {
+	if t == nil {
+		return WorkspaceBoundary{}
+	}
+	return t.boundary
+}
+
+// AgentControl returns the attached agent control runtime, or nil.
+func (t *Toolkit) AgentControl() *agentcontrol.AgentControl {
+	return t.env.AgentControl
+}
+
+// ── Tool disabling ─────────────────────────────────────────────────
+
+// DisableTools removes specific tools from this toolkit instance.
+func (t *Toolkit) DisableTools(names ...string) {
+	if t.disabledTools == nil {
+		t.disabledTools = make(map[string]struct{}, len(names))
+	}
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		t.disabledTools[n] = struct{}{}
+	}
+}
+
+// SetToolPolicy binds an immutable session restriction before execution. Clones
+// retain it, including for tools discovered after the session was configured.
+func (t *Toolkit) SetToolPolicy(allowed func(string) bool) {
+	// The initial prompt was assembled before session attenuation. Preserve its
+	// catalog baseline so the next model boundary can append the corrected view.
+	for {
+		catalog := t.env.skillCatalog.Load()
+		if catalog == nil || catalog.baseline != "" {
+			break
+		}
+		next := *catalog
+		next.baseline = skills.FormatAvailable(t.env.VisibleSkills(), true)
+		if t.env.skillCatalog.CompareAndSwap(catalog, &next) {
+			break
+		}
+	}
+	t.toolPolicy = allowed
+}
+
+// EnableTools re-enables specific tools that were previously disabled.
+func (t *Toolkit) EnableTools(names ...string) {
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		if n == "" {
+			continue
+		}
+		delete(t.disabledTools, n)
+	}
+}
+
+// SetBrowserBridge attaches the desktop transport for the embedded browser
+// backend. Nil leaves the tool dependency-less so it returns a clear
+// execute-time error instead of panicking.
+func (t *Toolkit) SetBrowserBridge(bridge BrowserBridge) {
+	if t == nil || t.env == nil {
+		return
+	}
+	t.env.BrowserBridge = bridge
+}
+
+func (t *Toolkit) SetBrowserHostFinalize(enabled bool) {
+	if t != nil && t.env != nil {
+		t.env.BrowserHostFinalize = enabled
+	}
+}
+
+// SetBrowserTabs attaches the durable per-thread tab store. Nil keeps tab
+// addressing in-memory only.
+func (t *Toolkit) SetBrowserTabs(store BrowserTabStore) {
+	if t == nil || t.env == nil {
+		return
+	}
+	t.env.BrowserTabs = store
+}
+
+// BrowserTabStore returns the thread's durable browser records for authoritative
+// turn cleanup. The store serializes updates from tools and inherited workers.
+func (t *Toolkit) BrowserTabStore() BrowserTabStore {
+	if t == nil || t.env == nil {
+		return nil
+	}
+	return t.env.BrowserTabs
+}
+
+// SetBrowserEnabled gates the embedded browser tool. New toolkits keep it
+// enabled; the runtime can hide it per session (WUU_ENABLE_BROWSER=0). It
+// toggles disabledTools then republishes the surface so the catalog reflects
+// availability.
+func (t *Toolkit) SetBrowserEnabled(enabled bool) {
+	if t == nil {
+		return
+	}
+	if enabled {
+		t.EnableTools(browserToolName)
+	} else {
+		t.DisableTools(browserToolName)
+	}
+	t.activeProfileMu.Lock()
+	t.publishActiveSurfaceLocked()
+	t.activeProfileMu.Unlock()
+}
+
+// SetContextWindowToolsEnabled exposes host-owned context switching only when
+// the runtime can install a continuation checkpoint. History recovery tools are
+// independent of note compaction.
+func (t *Toolkit) SetContextWindowToolsEnabled(enabled bool) {
+	if t == nil {
+		return
+	}
+	if enabled {
+		t.EnableTools(contextWindowToolNames...)
+	} else {
+		t.DisableTools(contextWindowToolNames...)
+	}
+	t.activeProfileMu.Lock()
+	t.publishActiveSurfaceLocked()
+	t.activeProfileMu.Unlock()
+}
+
+// SetGitAttributionEnabled controls automatic WUU Agent co-author trailers
+// for commits created through both the structured git tool and bash.
+func (t *Toolkit) SetGitAttributionEnabled(enabled bool) {
+	if t == nil || t.env == nil {
+		return
+	}
+	t.env.GitAttributionDisabled = !enabled
+}
+
+// GitAttributionEnabled reports the effective commit-attribution state carried
+// by this toolkit. Runtime owners use it to verify that long-lived thread
+// toolkits have caught up with the persisted general setting.
+func (t *Toolkit) GitAttributionEnabled() bool {
+	return t != nil && t.env != nil && t.env.gitAttributionEnabled()
+}
+
+func (t *Toolkit) IsToolDisabled(name string) bool {
+	_, ok := t.disabledTools[name]
+	return ok || t.toolPolicy != nil && !t.toolPolicy(name) ||
+		t.env != nil && t.env.externalCapabilitiesOnly && !t.externalCapabilityAllowed(name)
+}
+
+// ── ToolExecutor interface ─────────────────────────────────────────
+
+// Definitions returns JSON-schema tool definitions for the current request.
+// In native deferred-loading mode, deferred tool declarations are sent with
+// DeferLoading=true so the provider can keep them out of the initial prompt
+// prefix. In Wuu tool_search mode, deferred tools stay hidden until
+// tool_search loads their schemas; once loaded, they are appended after the
+// stable direct-tool prefix so generic tool-calling providers can call them on
+// the next turn.
+//
+// When an active profile has been installed via SetActiveProfile,
+// the visible set is the per-profile compiled surface. Without an
+// active profile the toolkit falls back to the legacy direct-tool
+// surface: every direct tool the registry knows about, in the same
+// order the legacy code returned them. The legacy fallback exists so
+// callers that have not migrated yet (replay, debugging, internal
+// admin tools) keep working.
+func (t *Toolkit) Definitions() []providers.ToolDefinition {
+	if t.env != nil && t.env.externalCapabilitiesOnly {
+		return t.ExternalCapabilityDefinitions()
+	}
+	if t.CodeModeOnly() {
+		return t.codeModeEntryDefinitions()
+	}
+	t.refreshMCPToolSnapshot(false)
+	all := t.registry.Definitions()
+	surface := t.activeCompiledSurface()
+	hasSurface := surface.ProfileName != ""
+	stable := make([]providers.ToolDefinition, 0, len(all))
+	dynamic := make([]providers.ToolDefinition, 0)
+	nativeDeferred := t.nativeDeferredToolDiscoveryEnabled()
+	for _, d := range all {
+		if t.IsToolDisabled(d.Name) {
+			continue
+		}
+		exposure := t.toolExposure(d.Name)
+		if exposure == ToolExposureDirect {
+			if classifyToolKind(d.Name) == ToolKindMCP {
+				d.CacheStable = false
+				dynamic = append(dynamic, d)
+				continue
+			}
+			d.CacheStable = true
+			stable = append(stable, d)
+			continue
+		}
+		if exposure == ToolExposureDeferred && (nativeDeferred || t.isDeferredToolLoaded(d.Name)) {
+			d.CacheStable = false
+			if nativeDeferred {
+				d.DeferLoading = true
+			}
+			dynamic = append(dynamic, d)
+		}
+	}
+	out := make([]providers.ToolDefinition, 0, len(stable)+len(dynamic))
+	out = append(out, stable...)
+	out = append(out, dynamic...)
+	// Append direct MCP tools after built-ins to preserve prompt cache stability.
+	for _, tool := range t.mcpToolsSnapshot() {
+		name := tool.Name()
+		if hasSurface && !activeSurfaceAllowsKnownTool(surface, tool) {
+			continue
+		}
+		exposure := t.toolExposure(name)
+		if exposure == ToolExposureDirect || (exposure == ToolExposureDeferred && (nativeDeferred || t.isDeferredToolLoaded(name))) {
+			d := tool.Definition()
+			d.CacheStable = false
+			if nativeDeferred && exposure == ToolExposureDeferred {
+				d.DeferLoading = true
+			}
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// SupportsTool reports whether the active model surface can use the named
+// tool after any required progressive loading. Deferred tools return true here
+// even before tool_search loads their schema; Execute still enforces the
+// loaded-before-use rule.
+// FreezeToolSurface pins the MCP catalog snapshot so Definitions() keeps
+// returning the same provider tool list while a model run is in flight —
+// asynchronous server events (list_changed, connect, disconnect) would
+// otherwise reshape req.Tools between rounds and invalidate the prompt-cache
+// prefix for the whole request. Freezes nest; the deferred catalog change is
+// applied by the first Definitions() call after the last Unfreeze. Only
+// externally-driven changes are pinned — model-initiated deferred tool loads
+// still surface immediately.
+func (t *Toolkit) FreezeToolSurface() {
+	if t == nil {
+		return
+	}
+	// Refresh between runs before pinning; repeated nested freezes keep the pin.
+	t.refreshMCPToolSnapshot(false)
+	availability := make(map[string]bool, len(t.nativeReplacements))
+	for name := range t.nativeReplacements {
+		if tool := t.registry.Lookup(name); tool != nil {
+			if available, ok := tool.(ToolAvailability); ok {
+				availability[name] = available.ToolAvailable()
+			}
+		}
+	}
+	t.mcpCatalogMu.Lock()
+	if t.surfaceFreezeDepth == 0 {
+		t.frozenReplacementAvailability = availability
+	}
+	t.surfaceFreezeDepth++
+	t.mcpCatalogMu.Unlock()
+}
+
+// UnfreezeToolSurface releases one FreezeToolSurface pin.
+func (t *Toolkit) UnfreezeToolSurface() {
+	if t == nil {
+		return
+	}
+	t.mcpCatalogMu.Lock()
+	if t.surfaceFreezeDepth > 0 {
+		t.surfaceFreezeDepth--
+	}
+	if t.surfaceFreezeDepth == 0 {
+		t.frozenReplacementAvailability = nil
+	}
+	t.mcpCatalogMu.Unlock()
+}
+
+func (t *Toolkit) SupportsTool(name string) bool {
+	name = strings.TrimSpace(name)
+	if t == nil || name == "" || t.IsToolDisabled(name) || (name == codeModeExecToolName && !t.CodeModeOnly()) {
+		return false
+	}
+	if t.LookupTool(name) == nil {
+		return false
+	}
+	switch t.toolExposure(name) {
+	case ToolExposureDirect, ToolExposureDeferred:
+		return true
+	default:
+		return false
+	}
+}
+
+// SetRootDir re-roots the toolkit's execution environment (bash cwd,
+// relative-path resolution, search root, display paths) without rebuilding
+// the toolkit or touching other per-session state. The file-scope whitelist
+// (SetFileScopeRoots) is intentionally independent: changing the root changes
+// where tools work by default, not what they may touch. Callers
+// must only invoke this between turns, never while tools are executing.
+func (t *Toolkit) SetRootDir(rootDir string) {
+	if t == nil || t.env == nil {
+		return
+	}
+	rootDir = strings.TrimSpace(rootDir)
+	if rootDir == "" {
+		return
+	}
+	abs, err := filepath.Abs(rootDir)
+	if err != nil {
+		return
+	}
+	if ev, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = ev
+	}
+	t.env.RootDir = abs
+}
+
+// RootDir returns the workspace root the toolkit currently executes in.
+func (t *Toolkit) RootDir() string {
+	if t == nil || t.env == nil {
+		return ""
+	}
+	return t.env.RootDir
+}
+
+// SetWorkspaceID binds tools to the stable identity of their workspace.
+func (t *Toolkit) SetWorkspaceID(workspaceID string) {
+	if t == nil || t.env == nil {
+		return
+	}
+	t.env.WorkspaceID = strings.TrimSpace(workspaceID)
+}
+
+// SetFileScopeRoots installs (or clears, with an empty slice) the file-tool
+// whitelist for ordinary turns and scoped participant runs: agent home,
+// registered workspace roots, and the system temp directory. Empty roots
+// keep the ordinary single-RootDir confinement.
+func (t *Toolkit) SetFileScopeRoots(roots []string) {
+	if t == nil || t.env == nil {
+		return
+	}
+	cleaned := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if trimmed := strings.TrimSpace(root); trimmed != "" {
+			cleaned = append(cleaned, trimmed)
+		}
+	}
+	if len(cleaned) == 0 {
+		t.env.FileScopeRoots = nil
+		return
+	}
+	t.env.FileScopeRoots = cleaned
+}
+
+// SurfaceToolNames returns the registered built-in tools available to the
+// active model surface, including deferred tools before they are loaded.
+func (t *Toolkit) SurfaceToolNames() []string {
+	if t == nil || t.registry == nil {
+		return nil
+	}
+	surface := t.activeCompiledSurface()
+	out := make([]string, 0)
+	for _, tool := range t.registry.All() {
+		if tool == nil {
+			continue
+		}
+		name := tool.Name()
+		if t.IsToolDisabled(name) {
+			continue
+		}
+		if surface.ProfileName != "" {
+			if !activeSurfaceAllowsKnownTool(surface, tool) {
+				continue
+			}
+		} else if t.toolExposure(name) == ToolExposureHidden {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
+// ConfigureSurfaceForProviderModel compiles the surface for the given
+// provider/model and installs it as the toolkit's active profile. The
+// forMainAgent flag selects whether the compiled surface includes or hides
+// main-agent-only recovery tools consistently. Runtime defense-in-depth is
+// enforced by worker tool filtering and the tools' own main-agent path checks.
+func (t *Toolkit) ConfigureSurfaceForProviderModel(providerName, model string, forMainAgent bool) {
+	t.SetActiveProfile(modelprofile.Resolve(providerName, model), forMainAgent)
+}
+
+// SetActiveProfile installs the model profile that drives
+// Definitions(). The toolkit compiles the profile into a Surface and
+// uses it as the whitelist for visible tool names.
+//
+// Passing the zero value clears the active profile and restores the
+// legacy direct-tool surface. This is the right behavior for the
+// CLI's `wuu debug tools` path and for any admin caller that wants
+// to inspect every tool the registry knows about, regardless of
+// model context.
+//
+// forMainAgent must be true when configuring a main-agent kit so the surface
+// can include or hide main-agent-only recovery tools consistently. Worker kits
+// built via CloneForRoot pass false so the compiled surface omits them; the
+// same boundary is enforced at runtime by worker tool filtering and
+// tool-specific path checks.
+func (t *Toolkit) SetActiveProfile(p modelprofile.Profile, forMainAgent bool) {
+	kind := modelprofile.SurfaceWorker
+	if forMainAgent {
+		kind = modelprofile.SurfaceMain
+	}
+	t.setActiveProfileForSurface(p, kind)
+}
+
+func (t *Toolkit) setActiveProfileForSurface(p modelprofile.Profile, kind modelprofile.SurfaceKind) {
+	if t == nil {
+		return
+	}
+	t.activeProfileMu.Lock()
+	defer t.activeProfileMu.Unlock()
+	t.activeProfile = p
+	if (p == modelprofile.Profile{}) {
+		t.activeSurface = capability.Surface{}
+		t.publishActiveSurfaceLocked()
+		return
+	}
+	t.activeSurface = modelprofile.DefaultCompiler{}.Compile(p, kind)
+	t.publishActiveSurfaceLocked()
+}
+
+// ActiveProfile returns the currently installed model profile, or the
+// zero value if none is installed.
+func (t *Toolkit) ActiveProfile() modelprofile.Profile {
+	if t == nil {
+		return modelprofile.Profile{}
+	}
+	t.activeProfileMu.RLock()
+	defer t.activeProfileMu.RUnlock()
+	return t.activeProfile
+}
+
+// ActiveSurface returns the compiled surface for the active profile.
+// The returned value is a copy; callers can inspect it freely.
+func (t *Toolkit) ActiveSurface() capability.Surface {
+	if t == nil {
+		return capability.Surface{}
+	}
+	t.activeProfileMu.RLock()
+	surface := t.exposedSurfaceLocked()
+	t.activeProfileMu.RUnlock()
+	// Replacement owners may retire or be attenuated after profile compilation.
+	// Reflect the same admission used by discovery in prompt-facing facts.
+	removed := make(map[capability.Capability]bool)
+	replacementNames := make(map[string]bool, len(t.replacementBindings)+len(t.nativeReplacements))
+	for name := range t.replacementBindings {
+		replacementNames[name] = true
+	}
+	for name := range t.nativeReplacements {
+		replacementNames[name] = true
+	}
+	for name := range replacementNames {
+		if t.toolExposure(name) != ToolExposureHidden {
+			continue
+		}
+		for _, names := range []map[string]capability.Capability{surface.Tools, surface.DeferredTools, surface.NestedTools} {
+			if capName, ok := names[name]; ok {
+				removed[capName] = true
+				delete(names, name)
+			}
+		}
+	}
+	for _, names := range []map[string]capability.Capability{surface.Tools, surface.DeferredTools, surface.NestedTools} {
+		for _, capName := range names {
+			delete(removed, capName)
+		}
+	}
+	filterCaps := func(caps []capability.Capability) []capability.Capability {
+		out := caps[:0]
+		for _, c := range caps {
+			if !removed[c] {
+				out = append(out, c)
+			}
+		}
+		return out
+	}
+	surface.Capabilities = filterCaps(surface.Capabilities)
+	surface.DeferredCapabilities = filterCaps(surface.DeferredCapabilities)
+	// Resolve outside activeProfileMu: normal tool exposure acquires it too.
+	// MCP retains its in-flight catalog pin; plugin admission observes live
+	// revocation through the enclosing executor's generation-owned provider.
+	t.refreshMCPToolSnapshot(false)
+	surface.ContributedTools = make(map[string]struct{})
+	compiled := t.activeCompiledSurface()
+	for _, tool := range t.allKnownTools() {
+		if classifyToolKind(tool.Name()) == ToolKindMCP && !t.IsToolDisabled(tool.Name()) && activeSurfaceAllowsKnownTool(compiled, tool) {
+			surface.ContributedTools[tool.Name()] = struct{}{}
+		}
+	}
+	t.codeModeMu.RLock()
+	additional := t.skillToolProvider
+	t.codeModeMu.RUnlock()
+	if additional != nil {
+		for _, definition := range additional() {
+			if !t.IsToolDisabled(definition.Name) {
+				surface.ContributedTools[definition.Name] = struct{}{}
+			}
+		}
+	}
+	return surface
+}
+
+// exposedSurfaceLocked returns a defensive copy of the active surface as the
+// model actually sees it: the compiled surface projected for the current
+// tool-loading mode with disabled tools removed. Callers must hold
+// activeProfileMu (read or write).
+func (t *Toolkit) exposedSurfaceLocked() capability.Surface {
+	surface := t.withDisabledToolsRemoved(t.withCodeModeSurface(cloneSurface(t.surfaceForToolLoadingMode(t.activeSurface))))
+	surface.SystemFragment += "\nTool results may be bounded views. Check ranges, omitted fields and continuation metadata before treating a result as complete; follow the returned cursor or artifact reference when the missing evidence matters. An omitted item is not evidence of absence."
+	if t.CodeModeOnly() {
+		// Literal file tools remain directly callable and composable; lifecycle
+		// controls stay direct-only. Dispatch and discovery share this policy.
+		surface.NestedTools = surface.Tools
+		for name, capName := range surface.DeferredTools {
+			surface.NestedTools[name] = capName
+		}
+		surface.Tools = make(map[string]capability.Capability)
+		if !t.IsToolDisabled(codeModeExecToolName) {
+			surface.Tools[codeModeExecToolName] = capability.CapabilityCodeMode
+		}
+		for name, capName := range surface.NestedTools {
+			if t.CodeModeDirectCallAllowed(name) {
+				surface.Tools[name] = capName
+				if t.codeModeDirectOnly(name) {
+					delete(surface.NestedTools, name)
+				}
+			}
+		}
+		delete(surface.NestedTools, "tool_search")
+		surface.DeferredTools = nil
+		surface.DeferredCapabilities = nil
+		surface.Capabilities = nil
+		for _, name := range surface.ToolNames() {
+			capName := surface.Tools[name]
+			if !surfaceHasCapability(surface.Capabilities, capName) {
+				surface.Capabilities = append(surface.Capabilities, capName)
+			}
+		}
+		surface.SystemFragment += "\nUse run_code to compose tool calls and select evidence. Directly advertised file tools accept literal content without JavaScript evaluation and also remain available as tools bindings. Separately advertised interaction and lifecycle controls must be called directly. Use background process/task handles for long work; each program must await its own calls and cannot resume after it returns."
+		surface.SystemFragment += "\nInside PTC, use content or structured_content for filtering and computation, checking the producer's pagination; model_text is a display view, not the full data contract. Print the selected evidence or computed answer rather than entire result objects or media encodings. Forward a readable view when it is sufficient. Combined output is still bounded, so narrow or split unrelated large reads."
+
+	}
+	return surface
+}
+
+// publishActiveSurfaceLocked is the single write path for env.ActiveSurface.
+// Routing every update through it guarantees that surface consumers outside
+// the toolkit (skill filtering, prompt assembly, surface snapshots) never see
+// tools that Definitions() hides and Execute() rejects. Callers must hold
+// activeProfileMu for writing.
+func (t *Toolkit) publishActiveSurfaceLocked() {
+	if t.env == nil {
+		return
+	}
+	t.env.ActiveSurface = t.exposedSurfaceLocked()
+}
+
+// activeCompiledSurface is the internal helper Definitions() uses
+// to read the active surface under the read lock. Kept package-private
+// so the public ActiveSurface() getter can hand callers a copy
+// without contention on the hot Definitions() path.
+func (t *Toolkit) activeCompiledSurface() capability.Surface {
+	if t == nil {
+		return capability.Surface{}
+	}
+	t.activeProfileMu.RLock()
+	defer t.activeProfileMu.RUnlock()
+	return t.withDisabledToolsRemoved(t.withCodeModeSurface(t.surfaceForToolLoadingMode(t.activeSurface)))
+}
+
+func (t *Toolkit) withDisabledToolsRemoved(surface capability.Surface) capability.Surface {
+	if len(t.disabledTools) == 0 && t.toolPolicy == nil || surface.ProfileName == "" {
+		return surface
+	}
+	out := cloneSurface(surface)
+	for _, names := range []map[string]capability.Capability{out.Tools, out.DeferredTools, out.NestedTools, out.HiddenTools} {
+		for name := range names {
+			if t.IsToolDisabled(name) {
+				delete(names, name)
+			}
+		}
+	}
+	return out
+}
+
+func (t *Toolkit) surfaceForToolLoadingMode(surface capability.Surface) capability.Surface {
+	if surface.ProfileName == "" || t.toolSearchEnabledForSurface() {
+		return surface
+	}
+	out := cloneSurface(surface)
+	delete(out.Tools, "tool_search")
+	for name, capName := range out.DeferredTools {
+		out.Tools[name] = capName
+	}
+	out.DeferredTools = map[string]capability.Capability{}
+	for _, capName := range out.DeferredCapabilities {
+		if !surfaceHasCapability(out.Capabilities, capName) {
+			out.Capabilities = append(out.Capabilities, capName)
+		}
+	}
+	out.DeferredCapabilities = nil
+	return out
+}
+
+func (t *Toolkit) toolSearchEnabledForSurface() bool {
+	if t == nil {
+		return false
+	}
+	t.exposureMu.RLock()
+	defer t.exposureMu.RUnlock()
+	return t.toolSearchEnabled
+}
+
+func surfaceHasCapability(caps []capability.Capability, capName capability.Capability) bool {
+	for _, existing := range caps {
+		if existing == capName {
+			return true
+		}
+	}
+	return false
+}
+
+func cloneSurface(surface capability.Surface) capability.Surface {
+	out := surface
+	if surface.ContributedTools != nil {
+		out.ContributedTools = make(map[string]struct{}, len(surface.ContributedTools))
+		for name := range surface.ContributedTools {
+			out.ContributedTools[name] = struct{}{}
+		}
+	}
+	// Empty maps must also be copied: filtering and callers can mutate them.
+	if surface.Tools != nil {
+		out.Tools = make(map[string]capability.Capability, len(surface.Tools))
+		for name, cap := range surface.Tools {
+			out.Tools[name] = cap
+		}
+	}
+	if surface.DeferredTools != nil {
+		out.DeferredTools = make(map[string]capability.Capability, len(surface.DeferredTools))
+		for name, cap := range surface.DeferredTools {
+			out.DeferredTools[name] = cap
+		}
+	}
+	if surface.HiddenTools != nil {
+		out.HiddenTools = make(map[string]capability.Capability, len(surface.HiddenTools))
+		for name, cap := range surface.HiddenTools {
+			out.HiddenTools[name] = cap
+		}
+	}
+	if surface.NestedTools != nil {
+		out.NestedTools = make(map[string]capability.Capability, len(surface.NestedTools))
+		for name, cap := range surface.NestedTools {
+			out.NestedTools[name] = cap
+		}
+	}
+	out.Capabilities = append([]capability.Capability(nil), surface.Capabilities...)
+	out.DeferredCapabilities = append([]capability.Capability(nil), surface.DeferredCapabilities...)
+	out.HiddenCapabilities = append([]capability.Capability(nil), surface.HiddenCapabilities...)
+	return out
+}
+
+// Execute runs one tool call and returns JSON result. This is the
+// registry-based dispatch that replaces the old switch-case.
+//
+// Large results are automatically persisted to disk when a SessionDir
+// is configured, so the model receives a compact reference instead of a
+// truncated blob.
+func (t *Toolkit) Execute(ctx context.Context, call providers.ToolCall) (string, error) {
+	result, err := t.ExecuteResult(ctx, call)
+	return result.TextProjection(), err
+}
+
+// ExecuteResult runs one tool call without flattening images, structured
+// content, metadata, or Activity references. Legacy tools are wrapped as one
+// text content part until they migrate to RichTool.
+func (t *Toolkit) ExecuteResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	if _, bound := t.replacementBindings[call.Name]; bound && t.nativeReplacements[call.Name] == nil {
+		return toolresult.Result{}, fmt.Errorf("replacement for %q is not bound to this execution scope", call.Name)
+	}
+	if t.nativeReplacements[call.Name] != nil && t.env.ExecutionEnvironment != nil && executionenv.WorkspaceTool(call.Name) {
+		return toolresult.Result{}, fmt.Errorf("tool replacement %q is unavailable in a remote execution environment", call.Name)
+	}
+	if toolctx.IsNestedCall(ctx) && t.codeModeDirectOnly(call.Name) {
+		return toolresult.Result{}, fmt.Errorf("tool %q must be called directly", call.Name)
+	}
+	if t.CodeModeOnly() && !t.CodeModeDirectCallAllowed(call.Name) && !toolctx.IsNestedCall(ctx) {
+		return toolresult.Result{}, errors.New("PTC mode requires calling tools inside run_code")
+	}
+
+	if t.IsToolDisabled(call.Name) {
+		return toolresult.Result{}, fmt.Errorf("tool %q is disabled in this session", call.Name)
+	}
+	if err := t.ensureToolAvailableForExecution(ctx, call.Name); err != nil {
+		return toolresult.Result{}, err
+	}
+	tool := t.registry.Lookup(call.Name)
+	if tool == nil {
+		for _, mcpTool := range t.mcpToolsSnapshot() {
+			if mcpTool.Name() == call.Name {
+				return t.executeActivityBoundToolResult(ctx, call, mcpTool, mcpTool.ServerName())
+			}
+		}
+		return toolresult.Result{}, fmt.Errorf("unknown tool %q", call.Name)
+	}
+	// The built-in browser tool binds its tab-addressed actions to a KindBrowser
+	// activity lease, the same discipline MCP CUA tools get, via the shared spine.
+	if call.Name == browserToolName {
+		return t.executeBrowserToolResult(ctx, call, tool)
+	}
+	return t.executeKnownToolResult(ctx, call, tool)
+}
+
+func (t *Toolkit) ensureToolAvailableForExecution(ctx context.Context, name string) error {
+	surface := t.activeCompiledSurface()
+	exposure := t.toolExposure(name)
+	if surface.ProfileName != "" {
+		if !activeSurfaceAllowsKnownTool(surface, t.LookupTool(name)) {
+			return fmt.Errorf("tool %q is not available in the active model surface", name)
+		}
+		exposure = activeSurfaceToolExposure(surface, name)
+	}
+	if exposure != ToolExposureDeferred || t.isDeferredToolLoaded(name) || toolctx.IsNestedCall(ctx) || (t.CodeModeOnly() && t.CodeModeDirectCallAllowed(name)) {
+		return nil
+	}
+	// A rebuilt runtime starts with no loaded tools, but the resumed conversation
+	// can already contain their schemas, including compacted discovery metadata.
+	if _, loaded := providers.DiscoveredToolNamesFromMessages(agent.HistoryFromContext(ctx))[name]; loaded {
+		t.markDeferredToolsLoaded(name)
+		return nil
+	}
+	return fmt.Errorf("tool %q is deferred; call tool_search first to load it", name)
+}
+
+func activeSurfaceAllowsDynamicTool(surface capability.Surface, name string) bool {
+	if surface.ProfileName == "" {
+		return true
+	}
+	if _, ok := surface.Tools[name]; ok {
+		return true
+	}
+	if _, ok := surface.DeferredTools[name]; ok {
+		return true
+	}
+	if classifyToolKind(name) == ToolKindMCP && surfaceHasAvailableCapability(surface, capability.CapabilityMCP) {
+		return true
+	}
+	return false
+}
+
+func activeSurfaceAllowsKnownTool(surface capability.Surface, tool Tool) bool {
+	if tool == nil {
+		return false
+	}
+	if !activeSurfaceAllowsDynamicTool(surface, tool.Name()) {
+		return false
+	}
+	if classifyToolKind(tool.Name()) == ToolKindMCP &&
+		surfaceLacksTerminalExecution(surface) {
+		return mcpToolAllowedWithoutTerminalExecution(surface, tool)
+	}
+	return true
+}
+
+func mcpToolAllowedWithoutTerminalExecution(surface capability.Surface, tool Tool) bool {
+	if mcpToolMentionsTerminalOnlyPath(tool) {
+		return false
+	}
+	capName, ok := mcpToolCapability(tool)
+	if !ok {
+		return false
+	}
+	if !surfaceHasAvailableCapability(surface, capName) {
+		return false
+	}
+	if !isReadOnlyMCPProfileCapability(capName) {
+		return false
+	}
+	return tool.IsReadOnly()
+}
+
+func isReadOnlyMCPProfileCapability(capName capability.Capability) bool {
+	switch capName {
+	case capability.CapabilityFileRead,
+		capability.CapabilityFileList,
+		capability.CapabilitySearchGrep,
+		capability.CapabilitySearchGlob,
+		capability.CapabilitySearchAST,
+		capability.CapabilitySearchSemantic,
+		capability.CapabilityWebFetch,
+		capability.CapabilityWebSearch:
+		return true
+	default:
+		return false
+	}
+}
+
+func surfaceHasVisibleCapability(surface capability.Surface, capName capability.Capability) bool {
+	for _, existing := range surface.NestedTools {
+		if existing == capName {
+			return true
+		}
+	}
+	for _, existing := range surface.Capabilities {
+		if existing == capName {
+			return true
+		}
+	}
+	return false
+}
+
+func surfaceHasAvailableCapability(surface capability.Surface, capName capability.Capability) bool {
+	for _, existing := range surface.Capabilities {
+		if existing == capName {
+			return true
+		}
+	}
+	for _, existing := range surface.DeferredCapabilities {
+		if existing == capName {
+			return true
+		}
+	}
+	return false
+}
+
+func activeSurfaceToolExposure(surface capability.Surface, name string) ToolExposure {
+	if surface.ProfileName == "" {
+		return ToolExposureDirect
+	}
+	if _, ok := surface.Tools[name]; ok {
+		return ToolExposureDirect
+	}
+	if _, ok := surface.DeferredTools[name]; ok {
+		return ToolExposureDeferred
+	}
+	if classifyToolKind(name) == ToolKindMCP {
+		if surfaceHasVisibleCapability(surface, capability.CapabilityMCP) {
+			return ToolExposureDirect
+		}
+		if surfaceHasAvailableCapability(surface, capability.CapabilityMCP) {
+			return ToolExposureDeferred
+		}
+	}
+	return ToolExposureHidden
+}
+
+// LookupTool returns the Tool with the given name, or nil. This
+// allows callers (e.g. the agent loop) to inspect tool metadata
+// like IsReadOnly() and IsConcurrencySafe() for scheduling.
+func (t *Toolkit) LookupTool(name string) Tool {
+	if tool := t.registry.Lookup(name); tool != nil {
+		return tool
+	}
+	for _, tool := range t.mcpToolsSnapshot() {
+		if tool.Name() == name {
+			return tool
+		}
+	}
+	return nil
+}
+
+func (t *Toolkit) refreshMCPToolSnapshot(force bool) {
+	if t == nil {
+		return
+	}
+	manager := t.mcpManager
+	if manager == nil {
+		t.mcpCatalogMu.Lock()
+		t.mcpCatalogGeneration = 0
+		t.mcpTools = nil
+		t.mcpCatalogMu.Unlock()
+		return
+	}
+	generation := manager.Generation()
+	t.mcpCatalogMu.RLock()
+	current := t.mcpCatalogGeneration
+	frozen := t.surfaceFreezeDepth > 0
+	t.mcpCatalogMu.RUnlock()
+	// While the surface is frozen (a model run is in flight), asynchronous
+	// catalog generations are deliberately ignored: changing the tool list
+	// between rounds would invalidate the prompt-cache prefix mid-run. The
+	// pending generation is picked up on the first refresh after unfreeze.
+	if !force && (frozen || current == generation) {
+		return
+	}
+	native := manager.NativeTools()
+	tools := make([]*mcp.MCPTool, 0, len(native))
+	for _, item := range native {
+		// The client owns the same deadline reported by NativeTool.Timeout,
+		// including calls nested through PTC. Wrapping cannot reset it.
+		tools = append(tools, mcp.NewMCPTool(item.Client, item.Definition))
+	}
+	t.mcpCatalogMu.Lock()
+	t.mcpCatalogGeneration = generation
+	t.mcpTools = tools
+	t.mcpCatalogMu.Unlock()
+}
+
+func (t *Toolkit) mcpToolsSnapshot() []*mcp.MCPTool {
+	if t == nil {
+		return nil
+	}
+	t.mcpCatalogMu.RLock()
+	defer t.mcpCatalogMu.RUnlock()
+	return append([]*mcp.MCPTool(nil), t.mcpTools...)
+}
+
+// ToolMetadata implements agent.ToolMetadataProvider so the loop can
+// partition tool calls into concurrent (read-only) and serial (write)
+// batches without importing the tools package.
+func (t *Toolkit) ToolMetadata(call providers.ToolCall) (agent.ToolMetadata, bool) {
+	tool := t.LookupTool(call.Name)
+	if tool == nil {
+		return agent.ToolMetadata{}, false
+	}
+	info := buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments)
+	orchestrator := false
+	if marker, ok := tool.(OrchestratorTool); ok {
+		orchestrator = marker.IsOrchestrator(call.Arguments)
+	}
+	return agent.ToolMetadata{
+		Orchestrator:    orchestrator,
+		ReadOnly:        info.ReadOnly,
+		ConcurrencySafe: info.ConcurrencySafe,
+		Destructive:     info.Destructive,
+		Risk:            string(info.Risk),
+		Reason:          info.Reason,
+	}, true
+}
+
+// ── Shared utilities (used by individual tool files) ───────────────
+
+func nonInteractiveShellEnv() map[string]string {
+	return map[string]string{
+		"EDITOR":              "true",
+		"GIT_EDITOR":          "true",
+		"GIT_PAGER":           "cat",
+		"GIT_SEQUENCE_EDITOR": "true",
+		"GIT_TERMINAL_PROMPT": "0",
+		"GH_PAGER":            "cat",
+		"NO_COLOR":            "1",
+		"PAGER":               "cat",
+		"VISUAL":              "true",
+	}
+}
+
+func mergeEnv(base []string, overrides map[string]string) []string {
+	if len(overrides) == 0 {
+		return base
+	}
+	// Windows env names are case-insensitive (Path vs PATH); merging by
+	// exact key there would emit duplicates with undefined child behavior.
+	canon := func(key string) string {
+		if runtime.GOOS == "windows" {
+			return strings.ToUpper(key)
+		}
+		return key
+	}
+	merged := make(map[string]string, len(base)+len(overrides))
+	display := make(map[string]string, len(base)+len(overrides))
+	order := make([]string, 0, len(base)+len(overrides))
+	for _, entry := range base {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		ck := canon(key)
+		if _, exists := merged[ck]; !exists {
+			order = append(order, ck)
+			display[ck] = key
+		}
+		merged[ck] = value
+	}
+	for key, value := range overrides {
+		ck := canon(key)
+		if _, exists := merged[ck]; !exists {
+			order = append(order, ck)
+			display[ck] = key
+		}
+		merged[ck] = value
+	}
+	out := make([]string, 0, len(order))
+	for _, ck := range order {
+		out = append(out, display[ck]+"="+merged[ck])
+	}
+	return out
+}
+
+func decodeArgs(raw string, target any) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = "{}"
+	}
+	if err := json.Unmarshal([]byte(trimmed), target); err != nil {
+		return fmt.Errorf("invalid tool arguments: %w", err)
+	}
+	return nil
+}
+
+func mustJSON(v any) (string, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
+}
+
+// Keep a compact human view separate from structured data used by programs.
+func toolResultWithData(view, data any) (toolresult.Result, error) {
+	text, err := mustJSON(view)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	structured, err := json.Marshal(data)
+	if err != nil {
+		return toolresult.Result{}, err
+	}
+	result := toolresult.FromText(text)
+	result.StructuredContent = structured
+	return result, nil
+}
+
+func truncate(value string, maxBytes int) (string, bool) {
+	if len(value) <= maxBytes {
+		return value, false
+	}
+	return stringutil.Truncate(value, maxBytes, ""), true
+}
+
+func normalizeDisplayPath(rootDir, absPath string) string {
+	rel, err := filepath.Rel(rootDir, absPath)
+	if err != nil {
+		return absPath
+	}
+	if rel == "." {
+		return "."
+	}
+	return rel
+}
+
+func isSkippedDir(name string) bool {
+	switch name {
+	case ".git", ".wuu", ".hg", ".svn", "node_modules", "vendor", "__pycache__", ".tox", ".venv":
+		return true
+	}
+	return false
+}
+
+func isBinaryFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+
+	const binaryCheckSize = 8192
+	buf := make([]byte, binaryCheckSize)
+	n, _ := f.Read(buf)
+	checkBuf := buf[:n]
+
+	nonPrintable := 0
+	for _, b := range checkBuf {
+		if b == 0 {
+			return true
+		}
+		if b < 32 && b != 9 && b != 10 && b != 13 {
+			nonPrintable++
+		}
+	}
+
+	if len(checkBuf) > 0 && float64(nonPrintable)/float64(len(checkBuf)) > 0.1 {
+		return true
+	}
+	return false
+}
+
+// levenshtein returns the edit distance between two strings.
+func levenshtein(a, b string) int {
+	la, lb := len(a), len(b)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev := make([]int, lb+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr := make([]int, lb+1)
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			curr[j] = min(curr[j-1]+1, min(prev[j]+1, prev[j-1]+cost))
+		}
+		prev = curr
+	}
+	return prev[lb]
+}
+
+// suggestSimilarFile looks in the same directory for a filename within
+// Levenshtein distance 3 of the requested file. Returns "" if none found.
+func suggestSimilarFile(absPath string) string {
+	dir := filepath.Dir(absPath)
+	target := filepath.Base(absPath)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	bestDist := 4 // threshold + 1
+	bestName := ""
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		d := levenshtein(strings.ToLower(target), strings.ToLower(e.Name()))
+		if d < bestDist {
+			bestDist = d
+			bestName = e.Name()
+		}
+	}
+	return bestName
+}
+
+// ── Ripgrep helpers ────────────────────────────────────────────────
+
+type grepMatch struct {
+	File             string `json:"file"`
+	Line             int    `json:"line"`
+	Content          string `json:"content"`
+	ContentTruncated bool   `json:"content_truncated,omitempty"`
+}
+
+type grepOptions struct {
+	outputMode string
+	context    int
+	before     int
+	after      int
+	ignoreCase bool
+}
+
+type grepCountResult struct {
+	File  string `json:"file"`
+	Count int    `json:"count"`
+}
+
+type rgJSONEvent struct {
+	Type string `json:"type"`
+	Data struct {
+		Path struct {
+			Text string `json:"text"`
+		} `json:"path"`
+		Lines struct {
+			Text string `json:"text"`
+		} `json:"lines"`
+		LineNumber int `json:"line_number"`
+	} `json:"data"`
+}
+
+var (
+	rgLookupPath = exec.LookPath
+	rgCommand    = exec.CommandContext
+)
+
+func lookupRG() string {
+	path, err := rgLookupPath("rg")
+	if err != nil {
+		return ""
+	}
+	return path
+}
+
+func buildRGFilesCommand(ctx context.Context, pattern string) *exec.Cmd {
+	name := lookupRG()
+	if name == "" {
+		return nil
+	}
+	args := []string{"--no-config", "--files", "--hidden", "-0", "--glob", pattern, "."}
+	return rgCommand(ctx, name, args...)
+}
+
+func buildRGGrepCommand(ctx context.Context, pattern, searchRoot, include string, opts grepOptions) *exec.Cmd {
+	name := lookupRG()
+	if name == "" {
+		return nil
+	}
+	args := []string{"--no-config", "--json", "--hidden", "-H", "-n"}
+	if opts.ignoreCase {
+		args = append(args, "-i")
+	}
+	if opts.context > 0 {
+		args = append(args, "-C", fmt.Sprintf("%d", opts.context))
+	}
+	if opts.before > 0 {
+		args = append(args, "-B", fmt.Sprintf("%d", opts.before))
+	}
+	if opts.after > 0 {
+		args = append(args, "-A", fmt.Sprintf("%d", opts.after))
+	}
+	if include != "" {
+		args = append(args, "--glob", include)
+	}
+	args = append(args, "--", pattern)
+	if strings.TrimSpace(searchRoot) != "" {
+		args = append(args, searchRoot)
+	} else {
+		args = append(args, ".")
+	}
+	return rgCommand(ctx, name, args...)
+}
+
+// ExecuteEnvironmentResult checks worker authority and preserves the raw result.
+// The host owns the durable ledger, output budget and model-facing projection.
+func (t *Toolkit) ExecuteEnvironmentResult(ctx context.Context, call providers.ToolCall) (toolresult.Result, error) {
+	if !executionenv.WorkspaceTool(call.Name) {
+		return toolresult.Result{}, fmt.Errorf("tool %q is not an environment tool", call.Name)
+	}
+	tool := t.registry.Lookup(call.Name)
+	if tool == nil {
+		return toolresult.Result{}, fmt.Errorf("unknown environment tool %q", call.Name)
+	}
+	if err := validateToolArgumentsJSON(call.Arguments); err != nil {
+		return toolresult.Result{}, err
+	}
+	if err := t.checkPermission(ctx, buildToolInfoForArgs(tool, t.toolExposure(call.Name), call.Arguments), call); err != nil {
+		return toolresult.Result{}, err
+	}
+	if t.commandActionGate != nil && commandMutation(call) {
+		return t.commandActionGate(ctx, t, call)
+	}
+	if t.fileActionGate != nil && fileMutation(call.Name) {
+		return t.fileActionGate(ctx, t, call)
+	}
+	return executeToolResult(ctx, tool, call)
+}
+
+func executeToolResult(ctx context.Context, tool Tool, call providers.ToolCall) (toolresult.Result, error) {
+	if aware, ok := tool.(CallAwareRichTool); ok {
+		return aware.ExecuteResultCall(ctx, call)
+	}
+	if rich, ok := tool.(RichTool); ok {
+		return rich.ExecuteResult(ctx, call.Arguments)
+	}
+	text, err := tool.Execute(ctx, call.Arguments)
+	return toolresult.FromText(text), err
+}
+
+// RunEnvironmentCode runs the isolated interpreter in the selected environment;
+// nested tools return through the host execution scope and permission checks.
+func (t *Toolkit) RunEnvironmentCode(ctx context.Context, service *codemode.Service, request codemode.RunRequest, executor toolctx.NestedExecutor) (codemode.RunResult, error) {
+	policy, _, err := t.env.processSandboxPolicy(ctx)
+	if err != nil {
+		return codemode.RunResult{}, err
+	}
+	return service.Run(ctx, request, codemode.RunOptions{StateScope: t.codeModeStateScope(t.env.RootDir), StateOwner: t.env.CodeModeStateOwner, CWD: t.env.RootDir, Executor: executor, Sandbox: policy, SandboxProvider: t.env.ProcessSandboxProvider})
+}
+
+// SetRegisteredWorkspaces captures the catalog permitted by this runtime scope.
+func (t *Toolkit) SetRegisteredWorkspaces(list []workspaces.Workspace) {
+	t.env.RegisteredWorkspaces = append([]workspaces.Workspace(nil), list...)
+}
+
+// RegisteredWorkspaces returns this local execution scope's discoverable projects.
+func (t *Toolkit) RegisteredWorkspaces() []workspaces.Workspace {
+	if t.env.ExecutionEnvironment != nil {
+		return nil
+	}
+	return append([]workspaces.Workspace(nil), t.env.RegisteredWorkspaces...)
+}

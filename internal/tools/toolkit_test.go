@@ -1,0 +1,1825 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
+	"slices"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
+)
+
+func mustWriteFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir parent: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+}
+
+func mustReadFile(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	return string(content)
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+type richToolkitTool struct {
+	richCalls   int
+	legacyCalls int
+}
+
+func (t *richToolkitTool) Name() string { return "rich_test" }
+func (t *richToolkitTool) Definition() providers.ToolDefinition {
+	return providers.ToolDefinition{Name: t.Name(), InputSchema: map[string]any{"type": "object"}}
+}
+func (t *richToolkitTool) Execute(context.Context, string) (string, error) {
+	t.legacyCalls++
+	return "legacy path", nil
+}
+func (t *richToolkitTool) ExecuteResult(context.Context, string) (toolresult.Result, error) {
+	t.richCalls++
+	return toolresult.Result{
+		Content: []toolresult.ContentPart{
+			{Type: "text", Text: "rich text"},
+			{Type: "image", Data: "aW1hZ2U=", MIMEType: "image/png"},
+		},
+		StructuredContent: json.RawMessage(`{"ok":true}`),
+		Meta:              json.RawMessage(`{"internal":"kept"}`),
+	}, nil
+}
+func (t *richToolkitTool) IsReadOnly() bool        { return true }
+func (t *richToolkitTool) IsConcurrencySafe() bool { return true }
+
+func TestToolkitExecuteResultPrefersRichToolAndKeepsTextAdapter(t *testing.T) {
+	root := t.TempDir()
+	rich := &richToolkitTool{}
+	kit := &Toolkit{
+		env:      &Env{RootDir: root},
+		registry: NewRegistry(rich),
+		boundary: StandardBoundary(),
+	}
+	call := providers.ToolCall{ID: "call-rich", Name: rich.Name(), Arguments: `{}`}
+
+	result, err := kit.ExecuteResult(context.Background(), call)
+	if err != nil {
+		t.Fatalf("ExecuteResult: %v", err)
+	}
+	if rich.richCalls != 1 || rich.legacyCalls != 0 {
+		t.Fatalf("rich calls = %d, legacy calls = %d", rich.richCalls, rich.legacyCalls)
+	}
+	if len(result.Content) != 2 || len(result.StructuredContent) == 0 || len(result.Meta) == 0 {
+		t.Fatalf("rich result was flattened: %+v", result)
+	}
+
+	text, err := kit.Execute(context.Background(), providers.ToolCall{ID: "call-text", Name: rich.Name(), Arguments: `{"projection":true}`})
+	if err != nil {
+		t.Fatalf("Execute text adapter: %v", err)
+	}
+	if text != providers.ProjectToolResult(result).ToolText {
+		t.Fatalf("text adapter projection = %q", text)
+	}
+	if rich.richCalls != 2 || rich.legacyCalls != 0 {
+		t.Fatalf("rich calls = %d, legacy calls = %d", rich.richCalls, rich.legacyCalls)
+	}
+}
+
+func TestToolkit_WriteAndReadFile(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	writeResp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"dir/a.txt","content":"hello"}`,
+	})
+	if err != nil {
+		t.Fatalf("write_file: %v", err)
+	}
+	if !strings.Contains(writeResp, "written_bytes") {
+		t.Fatalf("unexpected write response: %s", writeResp)
+	}
+	var writeCreated struct {
+		WorkspaceRevision string `json:"workspace_revision"`
+		NewFileSHA        string `json:"new_file_sha"`
+	}
+	if err := json.Unmarshal([]byte(writeResp), &writeCreated); err != nil {
+		t.Fatalf("parse write response: %v", err)
+	}
+	if !strings.HasPrefix(writeCreated.WorkspaceRevision, "fs:worktree:") {
+		t.Fatalf("write_file response missing filesystem workspace revision: %+v", writeCreated)
+	}
+	if writeCreated.NewFileSHA != formatFileSHA(sha256Hex([]byte("hello"))) {
+		t.Fatalf("write_file response missing new content hash: %+v", writeCreated)
+	}
+
+	readResp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"dir/a.txt"}`,
+	})
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if !strings.Contains(readResp, "hello") {
+		t.Fatalf("unexpected read response: %s", readResp)
+	}
+	var readParsed struct {
+		WorkspaceRevision string `json:"workspace_revision"`
+		Content           string `json:"content"`
+		Range             struct {
+			StartLine int `json:"start_line"`
+			EndLine   int `json:"end_line"`
+		} `json:"range"`
+		OmittedRanges []map[string]int `json:"omitted_ranges"`
+	}
+	if err := decodeReadModelView(readResp, &readParsed); err != nil {
+		t.Fatalf("parse read response: %v", err)
+	}
+	if !strings.HasPrefix(readParsed.WorkspaceRevision, "fs:worktree:") {
+		t.Fatalf("read_file response missing filesystem workspace revision: %+v", readParsed)
+	}
+	if readParsed.Range.StartLine != 1 || readParsed.Range.EndLine != 1 || len(readParsed.OmittedRanges) != 0 {
+		t.Fatalf("unexpected read range metadata: %+v", readParsed)
+	}
+
+	repeatedResp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"dir/a.txt"}`,
+	})
+	if err != nil {
+		t.Fatalf("second read_file: %v", err)
+	}
+	if repeatedResp != readResp {
+		t.Fatalf("explicit reread must retain the same content and range: %s", repeatedResp)
+	}
+}
+
+func TestToolkit_ReadFileAllowsSessionArtifactRefs(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	sessionDir := filepath.Join(t.TempDir(), "session-artifacts")
+	kit.SetSessionDir(sessionDir)
+	artifactPath := filepath.Join(sessionDir, "harness", "artifacts", "worker-1", "result.md")
+	mustWriteFile(t, artifactPath, "artifact result\nsecond line\n")
+
+	readResp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"$SESSION_DIR/harness/artifacts/worker-1/result.md"}`,
+	})
+	if err != nil {
+		t.Fatalf("read_file session artifact: %v", err)
+	}
+	var parsed struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	}
+	if err := decodeReadModelView(readResp, &parsed); err != nil {
+		t.Fatalf("parse read response: %v", err)
+	}
+	if parsed.Path != "$SESSION_DIR/harness/artifacts/worker-1/result.md" || !strings.Contains(parsed.Content, "artifact result") {
+		t.Fatalf("unexpected session artifact read: %+v", parsed)
+	}
+
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: fmt.Sprintf(`{"path":%q,"content":"bad"}`, artifactPath),
+	}); err == nil || !strings.Contains(err.Error(), "escapes workspace") {
+		t.Fatalf("write_file should not write session artifacts, got err=%v", err)
+	}
+}
+
+func TestToolkit_WriteFileOverwritesExistingFilesWithoutPriorRead(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(root, "a.txt"), "old\n")
+
+	writeResp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"a.txt","content":"new\n"}`,
+	})
+	if err != nil {
+		t.Fatalf("write_file without prior read: %v", err)
+	}
+	var writeParsed struct {
+		WorkspaceRevision string `json:"workspace_revision"`
+	}
+	if err := json.Unmarshal([]byte(writeResp), &writeParsed); err != nil {
+		t.Fatalf("parse write response: %v", err)
+	}
+	if !strings.HasPrefix(writeParsed.WorkspaceRevision, "fs:worktree:") {
+		t.Fatalf("write_file response missing filesystem workspace revision: %+v", writeParsed)
+	}
+
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"a.txt","content":"newer\n"}`,
+	}); err != nil {
+		t.Fatalf("consecutive intentional overwrite: %v", err)
+	}
+	if got := mustReadFile(t, filepath.Join(root, "a.txt")); got != "newer\n" {
+		t.Fatalf("unexpected content after consecutive overwrite: %q", got)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"a.txt","content":"again\n","create_only":true}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected create_only to reject existing file, got: %v", err)
+	}
+
+	largeContent := strings.Repeat("large existing file line\n", 1800)
+	largePath := filepath.Join(root, "large.txt")
+	mustWriteFile(t, largePath, largeContent)
+	largeReadResp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"large.txt","offset":1,"limit":1}`,
+	})
+	if err != nil {
+		t.Fatalf("read large.txt: %v", err)
+	}
+	_ = largeReadResp
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"large.txt","content":"replacement\n"}`,
+	})
+	if err == nil ||
+		!strings.Contains(err.Error(), "error_kind=broad_overwrite") ||
+		!strings.Contains(err.Error(), "overwrite_policy") {
+		t.Fatalf("expected broad overwrite rejection, got: %v", err)
+	}
+	if got := mustReadFile(t, largePath); got != largeContent {
+		t.Fatalf("broad overwrite rejection should not mutate file: got %d bytes", len(got))
+	}
+	writeLargeResp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"large.txt","content":"replacement\n","overwrite_policy":"explicit_user_requested"}`,
+	})
+	if err != nil {
+		t.Fatalf("write_file explicit broad overwrite: %v", err)
+	}
+	var writeLarge struct {
+		Diff DiffResult `json:"diff"`
+	}
+	if err := json.Unmarshal([]byte(writeLargeResp), &writeLarge); err != nil {
+		t.Fatalf("parse broad overwrite response: %v\n%s", err, writeLargeResp)
+	}
+	if mustReadFile(t, largePath) != "replacement\n" {
+		t.Fatalf("explicit broad overwrite did not apply: %+v", writeLarge)
+	}
+	if !writeLarge.Diff.Truncated || writeLarge.Diff.OldLines <= 0 || writeLarge.Diff.NewLines != 1 || len(writeLarge.Diff.Hunks) != 0 {
+		t.Fatalf("broad overwrite should return compact diff summary: %+v", writeLarge.Diff)
+	}
+}
+
+func TestToolkit_WriteFileRejectsSensitivePaths(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":".env","content":"API_KEY=secret\n"}`,
+	})
+	if err == nil {
+		t.Fatal("expected sensitive path rejection")
+	}
+	if !strings.Contains(err.Error(), "write_file refuses") || !strings.Contains(err.Error(), "sensitive path") {
+		t.Fatalf("expected write_file sensitive path guidance, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "API_KEY") {
+		t.Fatalf("write_file sensitive path error leaked content: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".env")); !os.IsNotExist(statErr) {
+		t.Fatalf("write_file should not create sensitive file, stat err=%v", statErr)
+	}
+}
+
+func TestToolkit_ReadFileStreamsLargeFileRange(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var big strings.Builder
+	for i := 1; i <= 5000; i++ {
+		fmt.Fprintf(&big, "line-%04d %s\n", i, strings.Repeat("x", 80))
+	}
+	if big.Len() <= defaultMaxFileBytes {
+		t.Fatalf("fixture must exceed max file bytes: got %d", big.Len())
+	}
+	if err := os.WriteFile(filepath.Join(root, "big.txt"), []byte(big.String()), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"big.txt"}`,
+	})
+	if err == nil {
+		t.Fatal("expected no-limit read to reject oversized file")
+	}
+	if !strings.Contains(err.Error(), "too large") || !strings.Contains(err.Error(), "offset and limit") {
+		t.Fatalf("expected oversized guidance, got: %v", err)
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"big.txt","offset":3001,"limit":3}`,
+	})
+	if err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+
+	var parsed struct {
+		FileSHA string `json:"file_sha"`
+		Content string `json:"content"`
+		Range   struct {
+			StartLine int `json:"start_line"`
+			EndLine   int `json:"end_line"`
+		} `json:"range"`
+		NumLines      int              `json:"num_lines"`
+		StartLine     int              `json:"start_line"`
+		TotalLines    int              `json:"total_lines"`
+		Truncated     bool             `json:"truncated"`
+		OmittedRanges []map[string]int `json:"omitted_ranges"`
+	}
+	if err := decodeReadModelView(resp, &parsed); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if parsed.NumLines != 3 || parsed.StartLine != 3001 || parsed.TotalLines != 5000 || !parsed.Truncated {
+		t.Fatalf("unexpected metadata: %+v", parsed)
+	}
+	if parsed.Range.StartLine != 3001 || parsed.Range.EndLine != 3003 {
+		t.Fatalf("unexpected range metadata: %+v", parsed.Range)
+	}
+	wantOmitted := []map[string]int{
+		{"start_line": 1, "end_line": 3000},
+		{"start_line": 3004, "end_line": 5000},
+	}
+	if !reflect.DeepEqual(parsed.OmittedRanges, wantOmitted) {
+		t.Fatalf("omitted_ranges = %+v, want %+v", parsed.OmittedRanges, wantOmitted)
+	}
+	for _, want := range []string{"3001|line-3001", "\n|line-3002", "\n|line-3003"} {
+		if !strings.Contains(parsed.Content, want) {
+			t.Fatalf("expected content to include %q, got: %q", want, parsed.Content)
+		}
+	}
+	for _, unwanted := range []string{"line-3000", "line-3004"} {
+		if strings.Contains(parsed.Content, unwanted) {
+			t.Fatalf("content included line outside requested range %q: %q", unwanted, parsed.Content)
+		}
+	}
+
+	rangeResp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"big.txt","offset":42,"limit":3}`,
+	})
+	if err != nil {
+		t.Fatalf("read_file with range: %v", err)
+	}
+	var rangeParsed struct {
+		Content string `json:"content"`
+		Range   struct {
+			StartLine int `json:"start_line"`
+			EndLine   int `json:"end_line"`
+		} `json:"range"`
+		NumLines int `json:"num_lines"`
+	}
+	if err := decodeReadModelView(rangeResp, &rangeParsed); err != nil {
+		t.Fatalf("parse range response: %v", err)
+	}
+	if rangeParsed.NumLines != 3 || rangeParsed.Range.StartLine != 42 || rangeParsed.Range.EndLine != 44 {
+		t.Fatalf("unexpected range response metadata: %+v", rangeParsed)
+	}
+	for _, want := range []string{"42|line-0042", "\n|line-0043", "\n|line-0044"} {
+		if !strings.Contains(rangeParsed.Content, want) {
+			t.Fatalf("range response missing %q:\n%s", want, rangeParsed.Content)
+		}
+	}
+
+}
+
+func TestToolkit_ReadFileNormalizesProviderFilledEmptySelectors(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "config.json"), []byte("one\ntwo\nthree\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "all-zero.json"), []byte("alpha\nbeta\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"config.json","offset":1,"limit":3}`,
+	})
+	if err != nil {
+		t.Fatalf("read_file with provider-filled selectors: %v", err)
+	}
+	if !strings.Contains(resp, "one") || !strings.Contains(resp, "three") {
+		t.Fatalf("normalized read omitted content: %s", resp)
+	}
+
+	resp, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"all-zero.json","offset":0,"limit":0}`,
+	})
+	if err != nil {
+		t.Fatalf("read_file with all-zero provider selectors: %v", err)
+	}
+	if !strings.Contains(resp, "beta") {
+		t.Fatalf("whole-file normalized read omitted content: %s", resp)
+	}
+}
+
+func TestToolkit_ReadFileRejectsSensitivePaths(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(root, ".env"), "API_KEY=secret\n")
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":".env"}`,
+	})
+	if err == nil {
+		t.Fatal("expected sensitive path rejection")
+	}
+	if !strings.Contains(err.Error(), "sensitive path") {
+		t.Fatalf("expected sensitive path guidance, got: %v", err)
+	}
+}
+
+func TestToolkit_FileToolsRejectProtectedMetadataPaths(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	gitConfigContent := "remote = origin\n"
+	mustWriteFile(t, filepath.Join(root, ".git", "config"), gitConfigContent)
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":".git/config"}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "version-control metadata") {
+		t.Fatalf("expected read_file to reject VCS metadata, got: %v", err)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":".git/new.json","content":"{}\n"}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "version-control metadata") {
+		t.Fatalf("expected write_file to reject VCS metadata, got: %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".git", "new.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("write_file should not create protected VCS metadata, stat err=%v", statErr)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":".git/config","old_text":"remote = origin","new_text":"remote = changed"}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "version-control metadata") {
+		t.Fatalf("expected edit_file to reject VCS metadata, got: %v", err)
+	}
+	if got := mustReadFile(t, filepath.Join(root, ".git", "config")); got != gitConfigContent {
+		t.Fatalf("edit_file should not mutate protected VCS metadata: %q", got)
+	}
+
+}
+
+func TestToolkit_EditFileUsesCurrentContentAfterEarlierRead(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	path := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(path, []byte("alpha\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"a.txt"}`,
+	}); err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat file: %v", err)
+	}
+	originalModTime := info.ModTime()
+
+	if err := os.WriteFile(path, []byte("bravo\n"), 0o644); err != nil {
+		t.Fatalf("external write: %v", err)
+	}
+	if err := os.Chtimes(path, originalModTime, originalModTime); err != nil {
+		t.Fatalf("preserve modtime: %v", err)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"a.txt","old_text":"bravo","new_text":"BRAVO"}`,
+	})
+	if err != nil {
+		t.Fatalf("edit_file should match current content at execution time: %v", err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read final file: %v", err)
+	}
+	if string(got) != "BRAVO\n" {
+		t.Fatalf("unexpected final content: %q", got)
+	}
+}
+
+func TestToolkit_ReadThenEditPreservesLineEndings(t *testing.T) {
+	for _, tc := range []struct {
+		name, ending string
+		finalNewline bool
+	}{
+		{"LF", "\n", true},
+		{"CRLF", "\r\n", true},
+		{"CRLF without final newline", "\r\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			kit, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "source.txt")
+			before := strings.Join([]string{"header", "\tconst first = 1;", "\tconst second = left | right;", "footer"}, tc.ending)
+			if tc.finalNewline {
+				before += tc.ending
+			}
+			mustWriteFile(t, path, before)
+			read, err := kit.Execute(context.Background(), providers.ToolCall{
+				Name: "read_file", Arguments: `{"path":"source.txt","offset":2,"limit":2}`,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var excerpt struct {
+				Content string `json:"content"`
+			}
+			if err := decodeReadModelView(read, &excerpt); err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSuffix(excerpt.Content, "\n"), "\n")
+			for i, line := range lines {
+				_, content, ok := strings.Cut(line, "|")
+				if !ok {
+					t.Fatalf("missing read metadata separator: %q", line)
+				}
+				lines[i] = content
+			}
+			oldText := strings.Join(lines, "\n")
+			newText := strings.Replace(oldText, "first = 1", "first = 10", 1)
+			result, editErr := kit.Execute(context.Background(), providers.ToolCall{
+				Name: "edit_file", Arguments: mustMarshalMap(map[string]any{
+					"path": "source.txt", "old_text": oldText, "new_text": newText,
+				}),
+			})
+			after := mustReadFile(t, path)
+			t.Logf("before=%q read=%s old_text=%q result=%s error=%v after=%q", before, read, oldText, result, editErr, after)
+			if editErr != nil {
+				t.Fatalf("edit from current read evidence: %v", editErr)
+			}
+			want := strings.Replace(before, "first = 1", "first = 10", 1)
+			if after != want {
+				t.Fatalf("edited bytes = %q, want %q", after, want)
+			}
+			var edited struct {
+				OldFileSHA string `json:"old_file_sha"`
+				NewFileSHA string `json:"new_file_sha"`
+			}
+			if err := json.Unmarshal([]byte(result), &edited); err != nil {
+				t.Fatal(err)
+			}
+			if edited.OldFileSHA != formatFileSHA(sha256Hex([]byte(before))) || edited.NewFileSHA != formatFileSHA(sha256Hex([]byte(after))) {
+				t.Fatalf("edit hashes must describe the actual file bytes: %+v", edited)
+			}
+		})
+	}
+}
+
+func TestToolkit_EditFileLineEndingMatchSafety(t *testing.T) {
+	for _, tc := range []struct {
+		name, before, oldText, newText, want, wantError string
+		replaceAll                                      bool
+	}{
+		{
+			name: "ambiguous CRLF excerpt", before: "first\r\nsecond\r\nfirst\r\nsecond\r\n",
+			oldText: "first\nsecond", newText: "changed\nsecond", wantError: "ambiguous_old_text",
+		},
+		{
+			name: "replace all CRLF excerpts", before: "first\r\nsecond\r\nfirst\r\nsecond\r\n",
+			oldText: "first\nsecond", newText: "changed\nsecond", replaceAll: true,
+			want: "changed\r\nsecond\r\nchanged\r\nsecond\r\n",
+		},
+		{
+			name: "stale CRLF excerpt", before: "first\r\ncurrent\r\n",
+			oldText: "first\nsecond", newText: "changed\nsecond", wantError: "old_text_not_found",
+		},
+		{
+			name: "CRLF indentation still exact", before: "\tfirst\r\n\tsecond\r\n",
+			oldText: "    first\n    second", newText: "changed\nsecond", wantError: "old_text_not_found",
+		},
+		{
+			name: "delete CRLF lines", before: "first\r\nsecond\r\nfooter\r\n",
+			oldText: "first\nsecond\n", newText: "", want: "footer\r\n",
+		},
+		{
+			name: "explicit CRLF input", before: "first\r\nsecond\r\n",
+			oldText: "first\r\nsecond", newText: "changed\r\nsecond", want: "changed\r\nsecond\r\n",
+		},
+		{
+			name: "insert lines into CRLF file", before: "first\r\nfooter\r\n",
+			oldText: "first", newText: "changed\nadded", want: "changed\r\nadded\r\nfooter\r\n",
+		},
+		{
+			name: "equivalent endings are not a change", before: "first\r\nsecond\r\n",
+			oldText: "first\nsecond", newText: "first\r\nsecond", wantError: "identical",
+		},
+		{
+			name: "mixed endings remain exact", before: "first\r\nsecond\nfooter\r\n",
+			oldText: "first\r\nsecond\n", newText: "changed\r\nnext\n", want: "changed\r\nnext\nfooter\r\n",
+		},
+		{
+			name: "mixed endings reject normalized anchor", before: "first\r\nsecond\nfooter\r\n",
+			oldText: "first\nsecond\n", newText: "changed\nnext\n", wantError: "old_text_not_found",
+		},
+		{
+			name: "bare CR prevents normalization", before: "header\rfirst\r\nsecond\r\n",
+			oldText: "first\nsecond", newText: "changed\nsecond", wantError: "old_text_not_found",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			kit, err := New(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(root, "source.txt")
+			mustWriteFile(t, path, tc.before)
+			result, err := kit.Execute(context.Background(), providers.ToolCall{
+				Name: "edit_file", Arguments: mustMarshalMap(map[string]any{
+					"path": "source.txt", "old_text": tc.oldText, "new_text": tc.newText, "replace_all": tc.replaceAll,
+				}),
+			})
+			after := mustReadFile(t, path)
+			t.Logf("before=%q old_text=%q new_text=%q result=%s error=%v after=%q", tc.before, tc.oldText, tc.newText, result, err, after)
+			want := tc.want
+			if tc.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+					t.Errorf("expected %s rejection, got %v", tc.wantError, err)
+				}
+				want = tc.before
+			} else if err != nil {
+				t.Errorf("edit_file: %v", err)
+			}
+			if after != want {
+				t.Fatalf("edited bytes = %q, want %q", after, want)
+			}
+		})
+	}
+}
+
+func TestToolkit_EditFileDoesNotRequirePriorRead(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(root, "a.txt"), "alpha\n")
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"a.txt","old_text":"alpha","new_text":"bravo"}`,
+	})
+	if err != nil {
+		t.Fatalf("edit_file without prior read: %v", err)
+	}
+	var parsed struct {
+		WorkspaceRevision string `json:"workspace_revision"`
+		OldFileSHA        string `json:"old_file_sha"`
+		NewFileSHA        string `json:"new_file_sha"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse edit response: %v", err)
+	}
+	if !strings.HasPrefix(parsed.WorkspaceRevision, "fs:worktree:") {
+		t.Fatalf("edit_file response missing filesystem workspace revision: %+v", parsed)
+	}
+	if parsed.OldFileSHA != formatFileSHA(sha256Hex([]byte("alpha\n"))) || parsed.NewFileSHA != formatFileSHA(sha256Hex([]byte("bravo\n"))) {
+		t.Fatalf("edit_file response missing before/after content hashes: %+v", parsed)
+	}
+	if got := mustReadFile(t, filepath.Join(root, "a.txt")); got != "bravo\n" {
+		t.Fatalf("unexpected edited content: %q", got)
+	}
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"a.txt","old_text":"bravo","new_text":"charlie"}`,
+	}); err != nil {
+		t.Fatalf("consecutive exact edit: %v", err)
+	}
+	if got := mustReadFile(t, filepath.Join(root, "a.txt")); got != "charlie\n" {
+		t.Fatalf("unexpected content after consecutive edit: %q", got)
+	}
+
+}
+
+func TestToolkit_EditFileReportsRecoverableTextMatchErrors(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	content := "alpha\nbravo\ncharlie\nbravo\n"
+	mustWriteFile(t, filepath.Join(root, "a.txt"), content)
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "read_file",
+		Arguments: `{"path":"a.txt"}`,
+	}); err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"a.txt","old_text":"bravx","new_text":"BRAVX"}`,
+	})
+	if err == nil {
+		t.Fatal("expected old_text not found error")
+	}
+	if !strings.Contains(err.Error(), "old_text_not_found") ||
+		!strings.Contains(err.Error(), "candidates") ||
+		!strings.Contains(err.Error(), "2|bravo") ||
+		!strings.Contains(err.Error(), "safe_retry") {
+		t.Fatalf("expected recoverable old_text guidance, got: %v", err)
+	}
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"a.txt","old_text":"bravo","new_text":"BRAVO"}`,
+	})
+	if err == nil {
+		t.Fatal("expected ambiguous old_text error")
+	}
+	if !strings.Contains(err.Error(), "ambiguous_old_text") ||
+		!strings.Contains(err.Error(), "matched 2 locations") ||
+		!strings.Contains(err.Error(), "lines 2-2") ||
+		!strings.Contains(err.Error(), "lines 4-4") ||
+		!strings.Contains(err.Error(), "replace_all=true") {
+		t.Fatalf("expected ambiguous old_text guidance, got: %v", err)
+	}
+	if got := mustReadFile(t, filepath.Join(root, "a.txt")); got != content {
+		t.Fatalf("failed edit should not mutate file: %q", got)
+	}
+}
+
+func TestToolkit_EditFileRejectsSensitivePaths(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(root, ".env"), "API_KEY=secret\n")
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":".env","old_text":"API_KEY=secret","new_text":"API_KEY=changed"}`,
+	})
+	if err == nil {
+		t.Fatal("expected sensitive path rejection")
+	}
+	if !strings.Contains(err.Error(), "edit_file refuses") || !strings.Contains(err.Error(), "sensitive path") {
+		t.Fatalf("expected edit_file sensitive path guidance, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "API_KEY") {
+		t.Fatalf("edit_file sensitive path error leaked content: %v", err)
+	}
+	if got := mustReadFile(t, filepath.Join(root, ".env")); got != "API_KEY=secret\n" {
+		t.Fatalf("edit_file should not mutate sensitive file: %q", got)
+	}
+}
+
+func TestToolkit_ListFilesRejectsAndFiltersProtectedPaths(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(root, "visible.txt"), "hello\n")
+	mustWriteFile(t, filepath.Join(root, ".env"), "API_KEY=secret\n")
+	mustWriteFile(t, filepath.Join(root, ".git", "config"), "remote = origin\n")
+	mustWriteFile(t, filepath.Join(root, ".hg", "store", "data"), "{}\n")
+
+	_, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "list_files",
+		Arguments: `{"path":".hg"}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "version-control metadata") {
+		t.Fatalf("expected direct VCS list rejection, got: %v", err)
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "list_files",
+		Arguments: `{}`,
+	})
+	if err != nil {
+		t.Fatalf("list_files root: %v", err)
+	}
+	var parsed struct {
+		OmittedProtected int `json:"omitted_protected"`
+		Entries          []struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse list_files response: %v\n%s", err, resp)
+	}
+	if parsed.OmittedProtected != 3 {
+		t.Fatalf("expected three protected entries omitted, got %+v from %s", parsed, resp)
+	}
+	if len(parsed.Entries) != 1 || parsed.Entries[0].Name != "visible.txt" || parsed.Entries[0].Path != "visible.txt" {
+		t.Fatalf("list_files should only return visible entries: %+v", parsed.Entries)
+	}
+	if strings.Contains(resp, ".hg") || strings.Contains(resp, ".git") || strings.Contains(resp, ".env") || strings.Contains(resp, "secret") {
+		t.Fatalf("list_files leaked protected entry names or content: %s", resp)
+	}
+}
+
+func TestToolkit_ListFilesReturnsEntryPaths(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(root, "dir", "a.txt"), "hello\n")
+	if err := os.MkdirAll(filepath.Join(root, "dir", "sub"), 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "list_files",
+		Arguments: `{"path":"dir"}`,
+	})
+	if err != nil {
+		t.Fatalf("list_files: %v", err)
+	}
+	var parsed struct {
+		Path              string `json:"path"`
+		WorkspaceRevision string `json:"workspace_revision"`
+		Total             int    `json:"total"`
+		OmittedEntryCount int    `json:"omitted_entry_count"`
+		Entries           []struct {
+			Name  string `json:"name"`
+			Path  string `json:"path"`
+			IsDir bool   `json:"is_dir"`
+			Size  int64  `json:"size,omitempty"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse list_files response: %v", err)
+	}
+	if parsed.Path != "dir" || parsed.Total != 2 || parsed.OmittedEntryCount != 0 {
+		t.Fatalf("unexpected list_files metadata: %+v", parsed)
+	}
+	if !strings.HasPrefix(parsed.WorkspaceRevision, "fs:worktree:") {
+		t.Fatalf("list_files response missing filesystem workspace revision: %+v", parsed)
+	}
+	wantPaths := []string{"dir/a.txt", "dir/sub"}
+	gotPaths := make([]string, 0, len(parsed.Entries))
+	for _, entry := range parsed.Entries {
+		gotPaths = append(gotPaths, entry.Path)
+	}
+	if !reflect.DeepEqual(gotPaths, wantPaths) {
+		t.Fatalf("entry paths = %+v, want %+v", gotPaths, wantPaths)
+	}
+}
+
+func TestToolkit_FileToolTelemetryRecordsResultActions(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	mustWriteFile(t, filepath.Join(root, "a.txt"), "one\n")
+
+	if _, err := kit.Execute(toolctx.WithStepIndex(context.Background(), 2), providers.ToolCall{Name: "read_file", Arguments: `{"path":"a.txt"}`}); err != nil {
+		t.Fatalf("read_file: %v", err)
+	}
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{Name: "list_files", Arguments: `{}`}); err != nil {
+		t.Fatalf("list_files: %v", err)
+	}
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{Name: "write_file", Arguments: `{"path":"new.txt","content":"new\n"}`}); err != nil {
+		t.Fatalf("write_file create: %v", err)
+	}
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "edit_file",
+		Arguments: `{"path":"a.txt","old_text":"one","new_text":"two"}`,
+	}); err != nil {
+		t.Fatalf("edit_file: %v", err)
+	}
+	if _, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"a.txt","content":"three\n"}`,
+	}); err != nil {
+		t.Fatalf("write_file overwrite: %v", err)
+	}
+
+	records := kit.ToolTelemetry()
+	if len(records) != 5 {
+		t.Fatalf("expected five telemetry records, got %+v", records)
+	}
+	got := make([]string, 0, len(records))
+	for _, record := range records {
+		got = append(got, record.Name+":"+record.ResultAction)
+	}
+	want := []string{"read_file:read", "list_files:list", "write_file:create", "edit_file:edit", "write_file:overwrite"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("file tool result actions = %+v, want %+v", got, want)
+	}
+	if records[0].StepIndex == nil || *records[0].StepIndex != 2 {
+		t.Fatalf("read_file step index = %+v, want 2", records[0].StepIndex)
+	}
+	if records[1].StepIndex != nil {
+		t.Fatalf("tool execution without step context should not record step index: %+v", records[1].StepIndex)
+	}
+}
+
+func TestToolkit_DisableTools_HidesDefinitionsAndBlocksExecute(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	kit.DisableTools("write_file", "edit_file", "bash")
+
+	defs := kit.Definitions()
+	for _, d := range defs {
+		if d.Name == "write_file" || d.Name == "edit_file" || d.Name == "bash" {
+			t.Fatalf("disabled tool %q should not appear in definitions", d.Name)
+		}
+	}
+
+	_, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "write_file",
+		Arguments: `{"path":"a.txt","content":"x"}`,
+	})
+	if err == nil {
+		t.Fatal("expected disabled write_file to error")
+	}
+	if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("expected disabled error, got: %v", err)
+	}
+
+	_, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"echo hi"}`,
+	})
+	if err == nil {
+		t.Fatal("expected disabled run_shell to error")
+	}
+	if !strings.Contains(err.Error(), "disabled") {
+		t.Fatalf("expected disabled error, got: %v", err)
+	}
+}
+
+func TestToolkit_RunShell(t *testing.T) {
+	root := t.TempDir()
+	kit := newShellTestToolkit(t, root)
+
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"echo hi","purpose":"confirm shell purpose metadata"}`,
+	})
+	if err != nil {
+		t.Fatalf("run_shell: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if parsed["exit_code"].(float64) != 0 {
+		t.Fatalf("unexpected exit code: %v", parsed["exit_code"])
+	}
+	if parsed["action"].(string) != "run" {
+		t.Fatalf("unexpected run_shell action: %+v", parsed)
+	}
+	if parsed["purpose"].(string) != "confirm shell purpose metadata" {
+		t.Fatalf("unexpected purpose: %+v", parsed)
+	}
+	if !strings.Contains(parsed["stdout_tail"].(string), "hi") {
+		t.Fatalf("unexpected stdout tail: %v", parsed["stdout_tail"])
+	}
+	if parsed["stderr_tail"].(string) != "" {
+		t.Fatalf("unexpected stderr tail: %v", parsed["stderr_tail"])
+	}
+	if parsed["duration_ms"].(float64) < 0 {
+		t.Fatalf("unexpected duration: %v", parsed["duration_ms"])
+	}
+	if revision, _ := parsed["workspace_revision"].(string); !strings.HasPrefix(revision, "fs:worktree:") {
+		t.Fatalf("run_shell response missing filesystem workspace revision: %+v", parsed)
+	}
+	if suggestions, ok := parsed["next_suggestions"].([]any); !ok || len(suggestions) == 0 {
+		t.Fatalf("run_shell response missing next_suggestions: %+v", parsed)
+	}
+	records := kit.ToolTelemetry()
+	if len(records) != 1 || records[0].ResultAction != "run" {
+		t.Fatalf("run_shell telemetry missing result action: %+v", records)
+	}
+}
+
+func TestToolkit_RunShellRedactsSensitiveOutput(t *testing.T) {
+	root := t.TempDir()
+	kit := newShellTestToolkit(t, root)
+	sessionDir := filepath.Join(t.TempDir(), "session")
+	kit.SetSessionDir(sessionDir)
+
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"printf 'API_KEY=secret-value-1234567890\nAuthorization: Bearer abcdefghijklmnop\nsk-testsecret123456\n'","purpose":"diagnose TOKEN=purpose-secret-value-1234567890"}`,
+	})
+	if err != nil {
+		t.Fatalf("run_shell: %v", err)
+	}
+
+	for _, leaked := range []string{"secret-value", "abcdefghijklmnop", "sk-testsecret", "purpose-secret"} {
+		if strings.Contains(resp, leaked) {
+			t.Fatalf("run_shell response leaked %q: %s", leaked, resp)
+		}
+	}
+	if strings.Count(resp, "[REDACTED]") < 3 {
+		t.Fatalf("expected redaction markers, got: %s", resp)
+	}
+	var parsed struct {
+		FullLogRef        string `json:"full_log_ref"`
+		FullLogBytes      int    `json:"full_log_bytes"`
+		WorkspaceRevision string `json:"workspace_revision"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse run_shell response: %v\n%s", err, resp)
+	}
+	if !strings.HasPrefix(parsed.WorkspaceRevision, "fs:worktree:") {
+		t.Fatalf("run_shell response missing filesystem workspace revision: %+v", parsed)
+	}
+	if parsed.FullLogRef == "" || parsed.FullLogBytes <= 0 {
+		t.Fatalf("run_shell response missing full log artifact: %+v", parsed)
+	}
+	if !strings.HasPrefix(parsed.FullLogRef, filepath.Join(sessionDir, "tool-results", "shell-logs")) {
+		t.Fatalf("full log ref outside session dir: %q", parsed.FullLogRef)
+	}
+	logData, err := os.ReadFile(parsed.FullLogRef)
+	if err != nil {
+		t.Fatalf("read full log artifact: %v", err)
+	}
+	logText := string(logData)
+	for _, leaked := range []string{"secret-value", "abcdefghijklmnop", "sk-testsecret", "purpose-secret"} {
+		if strings.Contains(logText, leaked) {
+			t.Fatalf("run_shell full log leaked %q:\n%s", leaked, logText)
+		}
+	}
+	if !strings.Contains(logText, "purpose: diagnose TOKEN=[REDACTED]") {
+		t.Fatalf("full log artifact missing redacted purpose:\n%s", logText)
+	}
+	if strings.Count(logText, "[REDACTED]") < 3 || !strings.Contains(logText, "exit_code: 0") {
+		t.Fatalf("full log artifact missing redacted evidence:\n%s", logText)
+	}
+	if !strings.Contains(logText, "workspace_revision: "+parsed.WorkspaceRevision) {
+		t.Fatalf("full log artifact missing workspace revision:\n%s", logText)
+	}
+	records := kit.ToolTelemetry()
+	if len(records) != 1 || !containsString(records[0].ArtifactRefs, parsed.FullLogRef) {
+		t.Fatalf("tool telemetry missing shell log artifact ref: records=%+v full_log_ref=%q", records, parsed.FullLogRef)
+	}
+}
+
+func TestToolkit_RunShellStructuredFailureOutput(t *testing.T) {
+	root := t.TempDir()
+	kit := newShellTestToolkit(t, root)
+
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"printf out; printf err >&2; exit 7"}`,
+	})
+	if err != nil {
+		t.Fatalf("run_shell: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if parsed["exit_code"].(float64) != 7 {
+		t.Fatalf("unexpected exit code: %v", parsed["exit_code"])
+	}
+	if got := parsed["stdout_tail"].(string); got != "out" {
+		t.Fatalf("stdout_tail = %q, want out", got)
+	}
+	if got := parsed["stderr_tail"].(string); got != "err" {
+		t.Fatalf("stderr_tail = %q, want err", got)
+	}
+	if got := parsed["stdout_bytes"].(float64); got != 3 {
+		t.Fatalf("stdout_bytes = %v, want 3", got)
+	}
+	if got := parsed["stderr_bytes"].(float64); got != 3 {
+		t.Fatalf("stderr_bytes = %v, want 3", got)
+	}
+	if parsed["stdout_tail_truncated"].(bool) || parsed["stderr_tail_truncated"].(bool) {
+		t.Fatalf("short output should not be tail-truncated: %+v", parsed)
+	}
+}
+
+func TestToolkit_RunShellSetsNonInteractiveEnv(t *testing.T) {
+	root := t.TempDir()
+	kit := newShellTestToolkit(t, root)
+
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"printf '%s|%s|%s|%s|%s|%s|%s|%s' \"$GIT_EDITOR\" \"$GIT_SEQUENCE_EDITOR\" \"$EDITOR\" \"$VISUAL\" \"$PAGER\" \"$GIT_PAGER\" \"$GH_PAGER\" \"$GIT_TERMINAL_PROMPT\""}`,
+	})
+	if err != nil {
+		t.Fatalf("run_shell: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse response: %v", err)
+	}
+	if got := parsed["stdout_tail"].(string); got != "true|true|true|true|cat|cat|cat|0" {
+		t.Fatalf("unexpected shell env: %q", got)
+	}
+}
+
+func TestToolkit_RunShellAllowsSafeGitCommands(t *testing.T) {
+	kit, root := setupGitRepo(t)
+	enableShellExecutionForTest(kit.env)
+	kit.env.GitWrapperExecutable = buildWuuForGitWrapper(t)
+	kit.SetSessionDir(t.TempDir())
+
+	for _, command := range []string{
+		"git status --short",
+		"command git status --short",
+		"env FOO=bar git status --short",
+		"nice git status --short",
+		"cd . && git status --short",
+	} {
+		resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+			Name:      "bash",
+			Arguments: fmt.Sprintf(`{"command":%q,"timeout_seconds":10}`, command),
+		})
+		if err != nil {
+			t.Fatalf("expected safe git shell command %q to run: %v", command, err)
+		}
+		var parsed struct {
+			ExitCode       int                `json:"exit_code"`
+			Classification ToolClassification `json:"classification"`
+		}
+		if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+			t.Fatalf("parse run_shell response for %q: %v\n%s", command, err, resp)
+		}
+		if parsed.ExitCode != 0 || !parsed.Classification.ReadOnly || parsed.Classification.Risk != ToolRiskLow {
+			t.Fatalf("safe git shell response for %q = %+v, want successful low-risk read-only", command, parsed)
+		}
+	}
+
+	mustWriteFile(t, filepath.Join(root, "hello.txt"), "updated\n")
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"git add hello.txt && git commit -m \"update hello\"","timeout_seconds":10}`,
+	})
+	if err != nil {
+		t.Fatalf("expected explicit git add + commit shell command to run: %v", err)
+	}
+	var parsed struct {
+		ExitCode       int                `json:"exit_code"`
+		Classification ToolClassification `json:"classification"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse add+commit response: %v\n%s", err, resp)
+	}
+	if parsed.ExitCode != 0 || parsed.Classification.ReadOnly || parsed.Classification.Risk != ToolRiskMedium {
+		t.Fatalf("git add+commit shell response = %+v, want successful medium-risk write", parsed)
+	}
+
+	mustWriteFile(t, filepath.Join(root, "hello.txt"), "updated again\n")
+	resp, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"git add hello.txt && git commit -m \"Sweep the whole process cluster row when it's running\" -m \"Body includes \\\"still working\\\" and punctuation; still a message.\"","timeout_seconds":10}`,
+	})
+	if err != nil {
+		t.Fatalf("expected repeated -m commit with escaped quotes to run: %v", err)
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse repeated -m response: %v\n%s", err, resp)
+	}
+	if parsed.ExitCode != 0 || parsed.Classification.ReadOnly || parsed.Classification.Risk != ToolRiskMedium {
+		t.Fatalf("repeated -m shell response = %+v, want successful medium-risk write", parsed)
+	}
+
+	mustWriteFile(t, filepath.Join(root, "hello.txt"), "updated from file\n")
+	mustWriteFile(t, filepath.Join(root, "commit-message.txt"), "Message from file\n\nBody\n")
+	resp, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"git add hello.txt && git commit -F commit-message.txt","timeout_seconds":10}`,
+	})
+	if err != nil {
+		t.Fatalf("expected -F commit to run: %v", err)
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse -F response: %v\n%s", err, resp)
+	}
+	if parsed.ExitCode != 0 || parsed.Classification.ReadOnly || parsed.Classification.Risk != ToolRiskMedium {
+		t.Fatalf("-F shell response = %+v, want successful medium-risk write", parsed)
+	}
+
+	resp, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"git commit --amend -m \"Amended shell subject\"","timeout_seconds":10}`,
+	})
+	if err != nil {
+		t.Fatalf("expected --amend -m commit to run: %v", err)
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse --amend response: %v\n%s", err, resp)
+	}
+	if parsed.ExitCode != 0 || parsed.Classification.ReadOnly || parsed.Classification.Risk != ToolRiskMedium {
+		t.Fatalf("--amend shell response = %+v, want successful medium-risk write", parsed)
+	}
+}
+
+type execCommandFunc func(context.Context, string, ...string) *exec.Cmd
+
+func withRGTestHooks(t *testing.T, lookup func(string) (string, error), cmd execCommandFunc) {
+	t.Helper()
+	origLookup := rgLookupPath
+	origCmd := rgCommand
+	rgLookupPath = lookup
+	if cmd != nil {
+		rgCommand = cmd
+	}
+	t.Cleanup(func() {
+		rgLookupPath = origLookup
+		rgCommand = origCmd
+	})
+}
+
+func TestRipgrepCommandsUseExplicitRootAndIgnoreHostConfig(t *testing.T) {
+	withRGTestHooks(t, func(string) (string, error) { return "/usr/bin/rg", nil }, exec.CommandContext)
+
+	grepCmd := buildRGGrepCommand(context.Background(), "needle", "", "*.go", grepOptions{})
+	if grepCmd == nil {
+		t.Fatal("grep command was not built")
+	}
+	grepArgs := grepCmd.Args[1:]
+	if len(grepArgs) == 0 || grepArgs[0] != "--no-config" || grepArgs[len(grepArgs)-1] != "." {
+		t.Fatalf("grep args do not bind config and root explicitly: %q", grepArgs)
+	}
+	separator := slices.Index(grepArgs, "--")
+	if separator < 0 || separator+1 >= len(grepArgs) || grepArgs[separator+1] != "needle" {
+		t.Fatalf("grep pattern is not protected by --: %q", grepArgs)
+	}
+
+	globCmd := buildRGFilesCommand(context.Background(), "*.go")
+	if globCmd == nil {
+		t.Fatal("glob command was not built")
+	}
+	globArgs := globCmd.Args[1:]
+	if len(globArgs) == 0 || globArgs[0] != "--no-config" || globArgs[len(globArgs)-1] != "." {
+		t.Fatalf("glob args do not bind config and root explicitly: %q", globArgs)
+	}
+}
+
+func TestToolkit_GlobRipgrepIncludesHiddenFiles(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	for path, content := range map[string]string{
+		".env":          "TOKEN=abc\n",
+		"visible.env":   "TOKEN=visible\n",
+		"dir/.env.test": "TOKEN=nested\n",
+	} {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "glob",
+		Arguments: `{"pattern":"*.env*"}`,
+	})
+	if err != nil {
+		t.Fatalf("glob *.env*: %v", err)
+	}
+	var parsed struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse glob response: %v", err)
+	}
+	if !reflect.DeepEqual(parsed.Files, []string{".env", "dir/.env.test", "visible.env"}) {
+		t.Fatalf("unexpected hidden glob matches: %+v", parsed.Files)
+	}
+}
+
+func TestToolkit_GrepRipgrepIncludesHiddenFiles(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	for path, content := range map[string]string{
+		".env":        "API_KEY=secret\n",
+		"visible.env": "API_KEY=visible\n",
+	} {
+		fullPath := filepath.Join(root, path)
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"API_KEY","include":"*.env"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep *.env: %v", err)
+	}
+	var parsed struct {
+		Matches []grepMatch `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse grep response: %v", err)
+	}
+	want := []grepMatch{
+		{File: ".env", Line: 1, Content: "[REDACTED: sensitive file content]"},
+		{File: "visible.env", Line: 1, Content: "[REDACTED: sensitive file content]"},
+	}
+	if !reflect.DeepEqual(parsed.Matches, want) {
+		t.Fatalf("unexpected hidden grep matches: got %+v want %+v", parsed.Matches, want)
+	}
+	if strings.Contains(resp, "API_KEY=secret") || strings.Contains(resp, "API_KEY=visible") {
+		t.Fatalf("grep response leaked sensitive file content: %s", resp)
+	}
+}
+
+func TestToolkit_SearchCursorReusesMaterializedResult(t *testing.T) {
+	root := t.TempDir()
+	for i := 0; i < globPageSize+20; i++ {
+		if err := os.WriteFile(filepath.Join(root, fmt.Sprintf("f%04d.go", i)), []byte("package p\n"), 0o644); err != nil {
+			t.Fatalf("write fixture: %v", err)
+		}
+	}
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	sessionDir := t.TempDir()
+	kit.SetSessionDir(sessionDir)
+
+	first, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "glob",
+		Arguments: `{"pattern":"*.go"}`,
+	})
+	if err != nil {
+		t.Fatalf("first glob: %v", err)
+	}
+	var firstParsed struct {
+		Files   []string `json:"files"`
+		Total   int      `json:"total"`
+		HasMore bool     `json:"has_more"`
+		Page    struct {
+			Offset int `json:"offset"`
+			Next   struct {
+				Offset           int    `json:"offset"`
+				ExpectedRevision string `json:"expected_revision"`
+			} `json:"next"`
+		} `json:"page"`
+	}
+	if err := json.Unmarshal([]byte(first), &firstParsed); err != nil {
+		t.Fatalf("parse first glob response: %v", err)
+	}
+	if firstParsed.Total != globPageSize+20 || !firstParsed.HasMore || firstParsed.Page.Next.Offset != globPageSize {
+		t.Fatalf("first glob page metadata = %+v", firstParsed)
+	}
+	cursors, _ := filepath.Glob(filepath.Join(sessionDir, "tool-results", "search-cursors", "*.json"))
+	if len(cursors) != 1 {
+		t.Fatalf("expected one materialized search cursor, got %d", len(cursors))
+	}
+
+	second, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name: "glob",
+		Arguments: mustMarshalMap(map[string]any{
+			"pattern":           "*.go",
+			"offset":            firstParsed.Page.Next.Offset,
+			"expected_revision": firstParsed.Page.Next.ExpectedRevision,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("second glob: %v", err)
+	}
+	var secondParsed struct {
+		Files   []string `json:"files"`
+		Total   int      `json:"total"`
+		HasMore bool     `json:"has_more"`
+		Offset  int      `json:"offset"`
+	}
+	if err := json.Unmarshal([]byte(second), &secondParsed); err != nil {
+		t.Fatalf("parse second glob response: %v", err)
+	}
+	if secondParsed.Offset != globPageSize || secondParsed.Total != globPageSize+20 || len(secondParsed.Files) != 20 || secondParsed.HasMore {
+		t.Fatalf("second glob page metadata = %+v", secondParsed)
+	}
+}
+
+func TestToolkit_GrepLargeContentReturnsValidBudgetedJSON(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var content strings.Builder
+	for i := 0; i < 120; i++ {
+		fmt.Fprintf(&content, "target-%03d %s\n", i, strings.Repeat("x", 500))
+	}
+	if err := os.WriteFile(filepath.Join(root, "large.txt"), []byte(content.String()), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"target"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep: %v", err)
+	}
+	if len(resp) > maxGrepOutputBytes {
+		t.Fatalf("grep response length = %d, want <= %d", len(resp), maxGrepOutputBytes)
+	}
+	var parsed struct {
+		Total              int         `json:"total"`
+		Truncated          bool        `json:"truncated"`
+		Matches            []grepMatch `json:"matches"`
+		OmittedMatchCount  int         `json:"omitted_match_count"`
+		ReturnedMatchCount int         `json:"returned_match_count"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("grep response must stay valid JSON after budgeting: %v\n%s", err, resp)
+	}
+	if !parsed.Truncated || parsed.OmittedMatchCount == 0 || parsed.ReturnedMatchCount != len(parsed.Matches) || parsed.ReturnedMatchCount >= parsed.Total {
+		t.Fatalf("unexpected budgeted grep metadata: %+v", parsed)
+	}
+}
+
+func TestGrepRipgrepOversizedRecordDoesNotDeadlock(t *testing.T) {
+	if lookupRG() == "" {
+		t.Skip("ripgrep is not available")
+	}
+
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "large.txt"), "needle"+strings.Repeat("x", 2*maxRGRecordBytes))
+	mustWriteFile(t, filepath.Join(root, "normal.txt"), "needle after oversized record\n")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	started := time.Now()
+	matches, err := grepWithRipgrep(ctx, nil, root, "needle", root, "", grepOptions{}, 0)
+	if err != nil {
+		t.Fatalf("grep oversized record: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("grep oversized matches = %+v, want placeholder and normal match", matches)
+	}
+	if matches[0].File != "large.txt" || !matches[0].ContentTruncated || !strings.Contains(matches[0].Content, "match omitted") {
+		t.Fatalf("oversized match placeholder = %+v", matches[0])
+	}
+	if matches[1].File != "normal.txt" || matches[1].Line != 1 || matches[1].ContentTruncated {
+		t.Fatalf("normal match after oversized record = %+v", matches[1])
+	}
+	result, err := grepContentResultJSON("needle", matches, 0, "revision")
+	if err != nil {
+		t.Fatalf("build oversized grep result: %v", err)
+	}
+	var envelope struct {
+		ContentTruncated bool        `json:"content_truncated"`
+		Matches          []grepMatch `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(result), &envelope); err != nil {
+		t.Fatalf("parse oversized grep result: %v", err)
+	}
+	if !envelope.ContentTruncated || len(envelope.Matches) != 2 || !envelope.Matches[0].ContentTruncated {
+		t.Fatalf("oversized grep envelope = %+v", envelope)
+	}
+	if elapsed := time.Since(started); elapsed > 2*time.Second {
+		t.Fatalf("grep oversized record took %s; child process likely blocked on a full output pipe", elapsed)
+	}
+}
+
+func TestGrepRipgrepSkipsOversizedContextRecord(t *testing.T) {
+	if lookupRG() == "" {
+		t.Skip("ripgrep is not available")
+	}
+
+	root := t.TempDir()
+	content := "needle first\n" + strings.Repeat("x", 2*maxRGRecordBytes) + "\nneedle last\n"
+	mustWriteFile(t, filepath.Join(root, "context.txt"), content)
+
+	matches, err := grepWithRipgrep(context.Background(), nil, root, "needle", root, "", grepOptions{context: 1}, 0)
+	if err != nil {
+		t.Fatalf("grep oversized context record: %v", err)
+	}
+	if len(matches) != 2 || matches[0].Line != 1 || matches[1].Line != 3 {
+		t.Fatalf("matches around oversized context = %+v, want lines 1 and 3", matches)
+	}
+	for _, match := range matches {
+		if match.ContentTruncated {
+			t.Fatalf("oversized context should not create a match placeholder: %+v", matches)
+		}
+	}
+}
+
+func TestToolkit_GlobRipgrepFirst(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	files := map[string]string{
+		"src/app/main.ts": "export const main = true\n",
+		"src/lib/util.ts": "export const util = true\n",
+		"src/lib/util.js": "export const util = true\n",
+		"README.md":       "# readme\n",
+	}
+	for path, content := range files {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "glob",
+		Arguments: `{"pattern":"*.md"}`,
+	})
+	if err != nil {
+		t.Fatalf("glob *.md: %v", err)
+	}
+	var parsed struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse glob response: %v", err)
+	}
+	if len(parsed.Files) != 1 || parsed.Files[0] != "README.md" {
+		t.Fatalf("unexpected matches for *.md: %+v", parsed.Files)
+	}
+
+	resp, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "glob",
+		Arguments: `{"pattern":"src/**/*.ts"}`,
+	})
+	if err != nil {
+		t.Fatalf("glob src/**/*.ts: %v", err)
+	}
+	parsed.Files = nil
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse glob response: %v", err)
+	}
+	want := []string{"src/app/main.ts", "src/lib/util.ts"}
+	if !reflect.DeepEqual(parsed.Files, want) {
+		t.Fatalf("unexpected matches for src/**/*.ts: got %+v want %+v", parsed.Files, want)
+	}
+}
+
+func TestToolkit_GlobRequiresRG(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withRGTestHooks(t, func(string) (string, error) { return "", exec.ErrNotFound }, nil)
+	_, err = kit.Execute(context.Background(), providers.ToolCall{Name: "glob", Arguments: `{"pattern":"*.ts"}`})
+	if !errors.Is(err, errRipgrepUnavailable) {
+		t.Fatalf("expected missing ripgrep error, got %v", err)
+	}
+}
+
+func TestToolkit_GlobIncludesHiddenDirectories(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for path, content := range map[string]string{
+		".hidden/config/app.yaml": "name: hidden\n",
+		"visible/config/app.yaml": "name: visible\n",
+		".git/config/app.yaml":    "name: skipped\n",
+		".ignore":                 ".git/\n",
+	} {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "glob",
+		Arguments: `{"pattern":"**/*.yaml"}`,
+	})
+	if err != nil {
+		t.Fatalf("glob hidden fallback: %v", err)
+	}
+	var parsed struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse glob response: %v", err)
+	}
+	want := []string{".hidden/config/app.yaml", "visible/config/app.yaml"}
+	if !reflect.DeepEqual(parsed.Files, want) {
+		t.Fatalf("unexpected hidden fallback matches: got %+v want %+v", parsed.Files, want)
+	}
+}
+
+func TestToolkit_GrepIncludesHiddenDirectories(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	for path, content := range map[string]string{
+		".hidden/app.env":    "API_KEY=hidden\n",
+		"visible/app.env":    "API_KEY=visible\n",
+		"node_modules/x.env": "API_KEY=skipped\n",
+		".ignore":            "node_modules/\n",
+	} {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"API_KEY","include":"**/*.env"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep hidden fallback: %v", err)
+	}
+	var parsed struct {
+		Matches []grepMatch `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse grep response: %v", err)
+	}
+	want := []grepMatch{
+		{File: ".hidden/app.env", Line: 1, Content: "[REDACTED: sensitive file content]"},
+		{File: "visible/app.env", Line: 1, Content: "[REDACTED: sensitive file content]"},
+	}
+	if !reflect.DeepEqual(parsed.Matches, want) {
+		t.Fatalf("unexpected hidden grep fallback matches: got %+v want %+v", parsed.Matches, want)
+	}
+	if strings.Contains(resp, "API_KEY=hidden") || strings.Contains(resp, "API_KEY=visible") {
+		t.Fatalf("grep fallback response leaked sensitive file content: %s", resp)
+	}
+}
+
+func TestToolkit_GrepIncludeMatchesRelativePaths_Ripgrep(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	files := map[string]string{
+		"internal/a.go":   "package internal\nvar target = true\n",
+		"internal/a.txt":  "target\n",
+		"src/app/main.ts": "const target = true;\n",
+		"src/app/util.js": "const target = true;\n",
+	}
+	for path, content := range files {
+		fullPath := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(fullPath, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+
+	resp, err := kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"target","include":"internal/*.go"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep internal/*.go: %v", err)
+	}
+	var parsed struct {
+		Matches []grepMatch `json:"matches"`
+	}
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse grep response: %v", err)
+	}
+	if len(parsed.Matches) != 1 || parsed.Matches[0].File != "internal/a.go" {
+		t.Fatalf("unexpected matches for internal/*.go: %+v", parsed.Matches)
+	}
+
+	resp, err = kit.Execute(context.Background(), providers.ToolCall{
+		Name:      "grep",
+		Arguments: `{"pattern":"target","include":"src/**/*.ts"}`,
+	})
+	if err != nil {
+		t.Fatalf("grep src/**/*.ts: %v", err)
+	}
+	parsed.Matches = nil
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse grep response: %v", err)
+	}
+	if len(parsed.Matches) != 1 || parsed.Matches[0].File != "src/app/main.ts" {
+		t.Fatalf("unexpected matches for src/**/*.ts: %+v", parsed.Matches)
+	}
+}
+
+// Decode the model observation independently of the canonical rich result.
+func decodeReadModelView(view string, out any) error {
+	header, content, rendered := strings.Cut(view, "\n")
+	if !rendered {
+		return json.Unmarshal([]byte(view), out)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(header), &metadata); err != nil {
+		return err
+	}
+	metadata["content"], _ = json.Marshal(content)
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, out)
+}

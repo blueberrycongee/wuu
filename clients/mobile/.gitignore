@@ -1,0 +1,39 @@
+# ============================================================
+# Expo / React Native specifics for clients/mobile
+# ============================================================
+# Categories like node_modules, dist, .DS_Store, and .env*.local
+# are handled by the repo root .gitignore and are not repeated
+# here. This file only carries rules that are unique to an
+# Expo / React Native project (or that the mobile shell needs
+# before expo prebuild produces the first /ios and /android).
+
+.expo/
+web-build/
+expo-env.d.ts
+
+# Native build & signing intermediates
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# Debug / package-manager logs
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# Mobile-specific cert noise (general TLS keys are not committed)
+*.pem
+
+# TypeScript incremental builds
+*.tsbuildinfo
+
+# Generated native folders (anchored to clients/mobile/)
+/ios
+/android

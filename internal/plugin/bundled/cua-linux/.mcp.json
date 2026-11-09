@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "computer": {
+      "command": "@wuu/official-helper:cua-linux",
+      "tool_overrides": {
+        "computer": {
+          "read_only": false,
+          "concurrency_safe": false,
+          "capability": "mcp",
+          "guidance": "The computer tool drives Linux (X11) app windows through screenshots and synthesized input:\n- Find the target with list_apps, then copy the exact linux:PID:XID:STARTTIME id into app. Give every call a short display_title; it names the visible activity.\n- observe returns a target-only screenshot and a snapshot_id. Coordinates and inputs are valid only against the latest snapshot, and each input consumes it. On stale_snapshot, call observe once and retry with the fresh id; do not replay the failed call.\n- Use sequence for multi-step input: every step needs risk, and non-safe steps need confirmed=true only after explicit user confirmation.\n- Set after to \"vision\" to return a fresh screenshot with the input result instead of a separate observe call. Input delivery does not prove the outcome; verify with observe when it matters."
+        }
+      }
+    }
+  }
+}

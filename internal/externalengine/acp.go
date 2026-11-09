@@ -1,0 +1,1401 @@
+package externalengine
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/enginecatalog"
+	"github.com/blueberrycongee/wuu/internal/mcp"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/toolresult"
+)
+
+// Bound on prompt-send → first sign of life on the wire. Healthy Grok
+// acknowledges within milliseconds (queue bookkeeping precedes model work),
+// so total silence past this window is a wedged agent. Extra-high reasoning
+// after that first frame may stay quiet for a long time.
+var grokPromptStall = 30 * time.Second
+
+// Handshake budgets. initialize is local process startup, so 30s of silence is
+// a wedged binary. Opening the session is different work: session/load replays
+// the agent's own history from disk, and a long conversation legitimately takes
+// longer. A too-tight budget here reads as a broken engine.
+var (
+	acpInitializeTimeout = 30 * time.Second
+	acpSessionTimeout    = 120 * time.Second
+	acpCloseTimeout      = 10 * time.Second
+	// Each advertised model's option probe gets a bounded slice of the
+	// discovery budget: a slow or wedged selection only strips that model's
+	// metadata instead of starving the rest of the catalog.
+	acpModelProbeTimeout = 15 * time.Second
+	// Probing stops once the remaining budget cannot fit another probe.
+	// Large advertised catalogs (Devin's fused models exceed a hundred) must
+	// still publish: membership is authoritative even when some models are
+	// listed without their option metadata.
+	acpCatalogProbeReserve = 1 * time.Second
+)
+
+// ACP v1's prompt response owns completion for standard agents. Grok also
+// emits a session prompt-complete extension that can arrive first when the
+// prompt RPC hangs after the turn actually finished. Later protocol versions
+// have different turn boundaries; accepting them without a separate driver is
+// unsafe.
+type acpInitialize struct {
+	Version      int          `json:"protocolVersion"`
+	AuthMethods  []AuthMethod `json:"authMethods"`
+	Capabilities struct {
+		Load    bool `json:"loadSession"`
+		Session struct {
+			Resume *struct{} `json:"resume"`
+			Close  *struct{} `json:"close"`
+			Delete *struct{} `json:"delete"`
+			// Fork is the unstable ACP sessionCapabilities.fork advertisement:
+			// when present the agent accepts session/fork to copy a session.
+			Fork *struct{} `json:"fork"`
+		} `json:"sessionCapabilities"`
+		Prompt struct {
+			Image bool `json:"image"`
+		} `json:"promptCapabilities"`
+		MCP struct {
+			HTTP bool `json:"http"`
+		} `json:"mcpCapabilities"`
+	} `json:"agentCapabilities"`
+}
+
+type acpSession struct {
+	ID     string `json:"sessionId"`
+	Models *struct {
+		Current   string `json:"currentModelId"`
+		Available []struct {
+			ID   string `json:"modelId"`
+			Name string `json:"name"`
+		} `json:"availableModels"`
+	} `json:"models"`
+	ConfigOptions         []acpConfigOption `json:"configOptions"`
+	configurationRevision uint64
+	asyncConfiguration    bool
+}
+
+// DiscoverModels probes a short-lived ACP session for the agent's advertised
+// catalog. Wuu never saves the probe reference or sends a prompt; the agent
+// may retain the session in its own persistent history.
+func (e *Engine) DiscoverModels(ctx context.Context) ([]DiscoveredModel, error) {
+	catalog, err := e.DiscoverCatalog(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return catalog.Models, nil
+}
+
+// DiscoveredCatalog is the session/new probe result used by the composer:
+// models plus the host permission modes that can be applied to this agent.
+type DiscoveredCatalog struct {
+	Models []DiscoveredModel
+	Modes  []HostPermissionMode
+}
+
+// DiscoverCatalog probes a short-lived ACP session for advertised models and
+// permission modes, without saving the probe reference or sending a prompt.
+func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog, err error) {
+	if e != nil && e.entry.Protocol == "opencode" {
+		return e.discoverOpenCodeCatalog(ctx)
+	}
+	if e == nil || e.entry.Protocol != "acp" {
+		return DiscoveredCatalog{}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return DiscoveredCatalog{}, err
+	}
+	p, err := startChild(e.binary, e.entry.LaunchArgs(e.binary), e.root, e.acpEnvironment())
+	if err != nil {
+		return DiscoveredCatalog{}, err
+	}
+	defer p.close()
+	r := &rpc{child: p, handle: func(_ context.Context, method string, _ json.RawMessage, request bool) (any, error) {
+		if request {
+			return nil, &rpcError{Code: -32601, Message: "unsupported engine request: " + method}
+		}
+		return nil, nil
+	}}
+	init, err := initializeACP(ctx, r)
+	if err != nil {
+		return DiscoveredCatalog{}, acpEngineError(e.entry, p, err)
+	}
+	cwd := e.root
+	if cwd == "" {
+		cwd, _ = os.Getwd()
+	}
+	session := acpSession{asyncConfiguration: e.entry.ID == "devin"}
+	defer func() {
+		err = errors.Join(err, r.closeACPSession(init, session.ID), r.deleteACPSession(init, session.ID))
+	}()
+	if err := r.session(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &session); err != nil {
+		// Settings surfaces this as the engine's model error, which is where a
+		// user discovers that the agent needs configuration of its own.
+		return DiscoveredCatalog{}, acpEngineError(e.entry, p, fmt.Errorf("session/new: %w", err))
+	}
+	restore := trackACPConfiguration(r, &session, session.ID)
+	defer restore()
+
+	if session.Models == nil && session.modelConfigOption() == nil {
+		return DiscoveredCatalog{Modes: permissionModesFromACPSession(session)}, enginecatalog.ErrCatalogUnsupported
+	}
+	models := modelsFromACPSession(session)
+	modes := permissionModesFromACPSession(session)
+	defaultID := ""
+	known := make(map[string]DiscoveredModel)
+	for _, model := range models {
+		if model.IsDefault {
+			defaultID = model.ID
+			known[model.ID] = model
+		}
+	}
+	for i := 0; i < len(models); i++ {
+		id := models[i].ID
+		if _, ok := known[id]; ok {
+			continue
+		}
+		probeTimeout := acpModelProbeTimeout
+		if deadline, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(deadline) - acpCatalogProbeReserve; remaining < probeTimeout {
+				probeTimeout = remaining
+			}
+		}
+		if probeTimeout <= 0 {
+			break
+		}
+		probeCtx, probeCancel := context.WithTimeout(ctx, probeTimeout)
+		err := session.selectModel(probeCtx, r, session.ID, id)
+		probeCancel()
+		if err != nil {
+			// A probe that only outlived its own slice leaves the advertised
+			// model listed without its option metadata; the rest of the
+			// catalog still gets probed. A refused switch is the agent's own
+			// answer, and an exhausted discovery budget must not let a
+			// capability-depleted catalog cache as ready.
+			if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
+				continue
+			}
+			return DiscoveredCatalog{Models: models, Modes: modes}, fmt.Errorf("discover model %q: %w", id, err)
+		}
+		updated := modelsFromACPSession(session)
+		for _, model := range updated {
+			if model.ID == id {
+				known[id] = model
+			}
+		}
+		if _, ok := known[id]; !ok {
+			return DiscoveredCatalog{Models: models, Modes: modes}, fmt.Errorf("model %q disappeared during discovery", id)
+		}
+		// Configuration updates may add or remove models. Preserve probed
+		// capabilities by ID while rebuilding membership from the live list.
+		models = updated
+		for j := range models {
+			if model, ok := known[models[j].ID]; ok {
+				models[j] = model
+			}
+			models[j].IsDefault = models[j].ID == defaultID
+		}
+		i = -1
+	}
+	return DiscoveredCatalog{Models: models, Modes: modes}, nil
+}
+
+func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *turn) (err error) {
+	p, err := startChild(s.engine.binary, s.engine.entry.LaunchArgs(s.engine.binary), s.binding.RootDir, s.engine.acpEnvironment())
+	if err != nil {
+		return err
+	}
+	defer p.close()
+	ref := s.binding.ExternalRef
+	prompting := false
+	promptID := ""
+	profile := acpProfileFor(s.engine.entry.ID)
+	var stallTimer *time.Timer
+	disarmStall := func() {
+		if stallTimer != nil {
+			stallTimer.Stop()
+			stallTimer = nil
+		}
+	}
+	r := &rpc{child: p}
+	r.handle = func(ctx context.Context, method string, params json.RawMessage, request bool) (any, error) {
+		if request {
+			disarmStall()
+			if method == "session/request_permission" {
+				return s.acpPermission(ctx, ref, params, t)
+			}
+			// Never leave an unknown blocking request unanswered. No filesystem
+			// or terminal capabilities are advertised by this client.
+			return nil, &rpcError{Code: -32601, Message: "unsupported engine request: " + method}
+		}
+		if prompting && profile.promptComplete {
+			if err := decodeACPPromptComplete(ref, promptID, method, params); err != nil {
+				return nil, err
+			}
+		}
+		// First non-boilerplate frame after session/prompt is the sign of life
+		// the Grok stall watches for. Grok's queue bookkeeping can ride
+		// `_x.ai/session_notification` rather than session/update; extra-high
+		// reasoning after that frame may stay silent for a long time.
+		if prompting && !isACPSessionBoilerplate(method, params) {
+			disarmStall()
+		}
+		if method == "session/update" {
+			if !prompting {
+				return nil, decodeACPUpdate(ref, params)
+			}
+			return nil, t.acpUpdate(ref, params)
+		}
+		return nil, nil
+	}
+	setupCtx, cancelSetup := context.WithTimeout(ctx, acpSessionTimeout)
+	defer cancelSetup()
+	initCtx, cancelInit := context.WithTimeout(ctx, acpInitializeTimeout)
+	init, err := initializeACP(initCtx, r)
+	cancelInit()
+	if err != nil {
+		return acpEngineError(s.engine.entry, p, err)
+	}
+	mcp := make([]map[string]any, 0, len(s.binding.MCPServers))
+	if init.Capabilities.MCP.HTTP {
+		for _, server := range s.binding.MCPServers {
+			mcp = append(mcp, map[string]any{"type": "http", "name": server.Name, "url": server.URL, "headers": []any{}})
+		}
+	} else if len(s.binding.MCPServers) > 0 {
+		t.emit(providers.StreamEvent{Type: providers.EventNotice, Notice: &providers.StreamNotice{
+			Code:    "mcp_unavailable",
+			Message: "Wuu browser and computer tools are unavailable because this agent does not advertise HTTP MCP support. Its native tools remain available.",
+		}})
+	}
+	params := map[string]any{"cwd": s.binding.RootDir, "mcpServers": mcp}
+	session := acpSession{asyncConfiguration: s.engine.entry.ID == "devin"}
+	defer func() {
+		prompting = false
+		err = errors.Join(err, r.closeACPSession(init, session.ID))
+	}()
+	resumeMethod := "session/load"
+	if init.Capabilities.Session.Resume != nil {
+		resumeMethod = "session/resume"
+	}
+	notice := ""
+	switch {
+	case ref == "":
+		if err := r.session(setupCtx, "session/new", params, &session); err != nil {
+			return acpEngineError(s.engine.entry, p, fmt.Errorf("session/new: %w", err))
+		}
+	case !init.Capabilities.Load && init.Capabilities.Session.Resume == nil:
+		// Refusing the turn would strand the thread: the saved reference can
+		// never be cleared from the UI, so every later turn would fail the same
+		// way. Start fresh and say so instead.
+		notice = engineResumeNotice(s.engine.entry.Name, "the agent does not support loading a saved session")
+		if err := r.session(setupCtx, "session/new", params, &session); err != nil {
+			return acpEngineError(s.engine.entry, p, fmt.Errorf("session/new: %w", err))
+		}
+	default:
+		loadParams := map[string]any{"cwd": s.binding.RootDir, "mcpServers": mcp, "sessionId": ref}
+		if err := r.session(setupCtx, resumeMethod, loadParams, &session); err != nil {
+			notice = engineResumeNotice(s.engine.entry.Name, acpRecoverableReason(err))
+			if retryErr := r.session(setupCtx, "session/new", params, &session); retryErr != nil {
+				return acpEngineError(s.engine.entry, p, fmt.Errorf("%s: %w; session/new: %w", resumeMethod, err, retryErr))
+			}
+		}
+	}
+	resumed := ref != "" && notice == ""
+	if ref == "" || notice != "" {
+		// A replacement session — the first one, or a load fallback — must
+		// become the thread's reference, or every later turn repeats the
+		// fallback.
+		ref = session.ID
+		if err := s.persist(ref); err != nil {
+			return err
+		}
+	}
+	if notice != "" {
+		t.content(notice, false)
+	}
+	if err := s.applyACPSelection(setupCtx, r, init, session, ref, resumed); err != nil {
+		return err
+	}
+	cancelSetup()
+	text, err := acpPromptMedia(s.binding.ThreadID, message)
+	if err != nil {
+		return err
+	}
+	blocks := make([]map[string]string, 0, 2)
+	instructions := strings.TrimSpace(s.binding.Instructions)
+	deliver := instructions != "" && s.engine.acpInstructionsDue(ref, instructions, resumed)
+	if deliver {
+		blocks = append(blocks, map[string]string{"type": "text", "text": "Session instructions supplied by the host:\n" + instructions})
+	}
+	if text != "" {
+		blocks = append(blocks, map[string]string{"type": "text", "text": text})
+	}
+	prompting = true
+	promptParams := map[string]any{"sessionId": ref, "prompt": blocks}
+	if profile.promptComplete {
+		promptID = "wuu-p1"
+		promptParams["_meta"] = map[string]string{"promptId": promptID, "requestId": promptID}
+	}
+	var response struct {
+		StopReason string `json:"stopReason"`
+	}
+	promptCtx := ctx
+	if profile.promptStall > 0 {
+		var cancelStall context.CancelFunc
+		promptCtx, cancelStall = context.WithCancel(ctx)
+		stallTimer = time.AfterFunc(profile.promptStall, cancelStall)
+		defer disarmStall()
+	}
+	err = r.call(promptCtx, "session/prompt", promptParams, &response)
+	t.flushACPDiagnostics()
+	if err == nil && deliver {
+		// A settled RPC means the block reached the agent's transcript, even if
+		// the stop reason is cancelled or refusal — record before checking ctx.
+		s.engine.acpInstructionsDelivered(ref, instructions)
+	}
+	if ctx.Err() != nil {
+		cancelCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = r.notify(cancelCtx, "session/cancel", map[string]string{"sessionId": ref})
+		return ctx.Err()
+	}
+	if err != nil {
+		if profile.promptStall > 0 && errors.Is(err, context.Canceled) && ctx.Err() == nil {
+			cancelCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			_ = r.notify(cancelCtx, "session/cancel", map[string]string{"sessionId": ref})
+			return fmt.Errorf("%s did not respond to the prompt at all (no wire activity for %s). %s", s.engine.entry.Name, profile.promptStall, profile.stallHint)
+		}
+		if t.apiError != "" && !strings.Contains(err.Error(), t.apiError) {
+			err = fmt.Errorf("%w: %s", err, t.apiError)
+		}
+		return acpEngineError(s.engine.entry, p, err)
+	}
+	return finishACPTurn(t, response.StopReason)
+}
+
+const (
+	acpImageOnlyPrompt = "See the attached image(s)."
+	acpImagePathHeader = "Attached images (local files — open them to view):"
+)
+
+// acpPromptMedia keeps user-supplied images in the turn. ACP session/prompt
+// here is text-only: Grok advertises promptCapabilities.image=false, and the
+// working host path is to write the bytes to local files and put those
+// absolute paths in the prompt so the agent's own read_file can see them.
+func acpPromptMedia(threadID string, message providers.ChatMessage) (string, error) {
+	text := message.Content
+	if len(message.Images) == 0 {
+		return text, nil
+	}
+	paths, err := writeACPImageFiles(threadID, message.Images)
+	if err != nil {
+		return "", err
+	}
+	return acpImagePathPrompt(text, paths), nil
+}
+
+func acpImagePathPrompt(text string, paths []string) string {
+	if len(paths) == 0 {
+		return text
+	}
+	body := strings.TrimSpace(text)
+	if body == "" {
+		body = acpImageOnlyPrompt
+	}
+	lines := make([]string, 0, len(paths))
+	for _, path := range paths {
+		lines = append(lines, "- "+path)
+	}
+	return body + "\n\n" + acpImagePathHeader + "\n" + strings.Join(lines, "\n")
+}
+
+func writeACPImageFiles(threadID string, images []providers.InputImage) ([]string, error) {
+	dir := acpImageDir(threadID)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("write image attachments: %w", err)
+	}
+	sweepACPImages(filepath.Dir(dir))
+	paths := make([]string, 0, len(images))
+	for i, image := range images {
+		raw, err := base64.StdEncoding.DecodeString(image.Data)
+		if err != nil {
+			return nil, fmt.Errorf("image %d: invalid base64: %w", i+1, err)
+		}
+		if len(raw) == 0 {
+			return nil, fmt.Errorf("image %d is empty", i+1)
+		}
+		path := filepath.Join(dir, fmt.Sprintf("%d-%d%s", time.Now().UnixNano(), i+1, acpImageExt(image.MediaType)))
+		if err := os.WriteFile(path, raw, 0o600); err != nil {
+			return nil, fmt.Errorf("write image attachments: %w", err)
+		}
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return nil, err
+		}
+		paths = append(paths, abs)
+	}
+	return paths, nil
+}
+
+// acpImageMaxAge bounds staged prompt images left in TMPDIR by turns that
+// never came back. Files younger than this stay readable for agents that
+// re-open an earlier attachment in a later turn.
+const acpImageMaxAge = 24 * time.Hour
+
+func sweepACPImages(root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-acpImageMaxAge)
+	for _, entry := range entries {
+		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.RemoveAll(filepath.Join(root, entry.Name()))
+		}
+	}
+}
+
+func acpImageDir(threadID string) string {
+	id := strings.TrimSpace(threadID)
+	id = strings.ReplaceAll(id, string(filepath.Separator), "-")
+	id = strings.ReplaceAll(id, "..", "")
+	if id == "" {
+		id = "thread"
+	}
+	return filepath.Join(os.TempDir(), "wuu-acp-images", id)
+}
+
+func acpImageExt(mediaType string) string {
+	mediaType = strings.ToLower(strings.TrimSpace(mediaType))
+	mediaType, _, _ = strings.Cut(mediaType, ";")
+	switch mediaType {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/gif":
+		return ".gif"
+	case "image/webp":
+		return ".webp"
+	default:
+		return ".png"
+	}
+}
+
+type acpProfile struct {
+	promptComplete bool
+	promptStall    time.Duration
+	stallHint      string
+}
+
+func acpProfileFor(id string) acpProfile {
+	switch strings.TrimSpace(id) {
+	case "grok":
+		return acpProfile{
+			promptComplete: true,
+			promptStall:    grokPromptStall,
+			stallHint:      "the agent process is likely wedged by a stale shared leader or a hung startup check",
+		}
+	default:
+		return acpProfile{}
+	}
+}
+
+type acpTurnSettled struct {
+	StopReason string
+}
+
+func (e *acpTurnSettled) Error() string {
+	if e == nil || e.StopReason == "" {
+		return "engine turn settled"
+	}
+	return "engine turn settled: " + e.StopReason
+}
+
+func applyACPTurnSettled(result any, settled *acpTurnSettled) error {
+	if settled == nil {
+		return errors.New("engine turn settled without a stop reason")
+	}
+	if result == nil {
+		return nil
+	}
+	data, err := json.Marshal(map[string]string{"stopReason": settled.StopReason})
+	if err != nil {
+		return err
+	}
+	if err := json.Unmarshal(data, result); err != nil {
+		return fmt.Errorf("decode session/prompt result: %w", err)
+	}
+	return nil
+}
+
+func decodeACPPromptComplete(ref, promptID, method string, raw json.RawMessage) error {
+	if !isACPPromptCompleteMethod(method) {
+		return nil
+	}
+	var notification struct {
+		SessionID  string `json:"sessionId"`
+		PromptID   string `json:"promptId"`
+		StopReason string `json:"stopReason"`
+	}
+	if err := json.Unmarshal(raw, &notification); err != nil {
+		return err
+	}
+	if notification.SessionID != ref {
+		return nil
+	}
+	if promptID != "" && notification.PromptID != "" && notification.PromptID != promptID {
+		return nil
+	}
+	stop := strings.TrimSpace(notification.StopReason)
+	if stop == "" {
+		stop = "end_turn"
+	}
+	return &acpTurnSettled{StopReason: stop}
+}
+
+func isACPPromptCompleteMethod(method string) bool {
+	switch method {
+	case "x.ai/session/prompt_complete", "_x.ai/session/prompt_complete":
+		return true
+	default:
+		return false
+	}
+}
+
+func isACPSessionBoilerplate(method string, raw json.RawMessage) bool {
+	if method != "session/update" {
+		return false
+	}
+	var notification struct {
+		Update struct {
+			Type string `json:"sessionUpdate"`
+		} `json:"update"`
+	}
+	if json.Unmarshal(raw, &notification) != nil {
+		return false
+	}
+	switch notification.Update.Type {
+	case "available_commands_update", "config_option_update", "current_mode_update":
+		return true
+	default:
+		return false
+	}
+}
+
+// acpEngineError appends the engine's stderr tail to a failure. The protocol
+// stream carries only a generic error, while the cause the user can act on — an
+// unconfigured provider, a refused login — is written to stderr.
+func acpEngineError(entry enginecatalog.Entry, p *child, err error) error {
+	if err == nil {
+		return nil
+	}
+	tail := p.stderrSummary()
+	if tail == "" {
+		return err
+	}
+	return fmt.Errorf("%w\n%s stderr:\n%s", err, entry.Name, tail)
+}
+
+// engineResumeNotice explains a fresh-session fallback in the transcript. The
+// agent's own context is gone, so the fallback is never silent.
+func engineResumeNotice(name, reason string) string {
+	return fmt.Sprintf("%s could not resume the saved agent session (%s). This turn started a new agent session, so the agent no longer has this conversation's earlier context.\n\n", name, reason)
+}
+
+// acpRecoverableReason turns a failed session/load into a short reason for the
+// notice: the agent's own error message is the useful part, and it is bounded
+// because it is quoted into the transcript.
+func acpRecoverableReason(err error) string {
+	reason := strings.TrimSpace(err.Error())
+	if reason == "" {
+		return "the agent did not load it"
+	}
+	return truncateUTF8(reason, 200)
+}
+
+func finishACPTurn(t *turn, stopReason string) error {
+	t.stopReason = stopReason
+	switch stopReason {
+	case "end_turn":
+		if err := t.acpDiagnosticError(); err != nil {
+			return err
+		}
+		return nil
+	case "cancelled":
+		return context.Canceled
+	case "max_tokens", "max_turn_requests", "refusal":
+		return fmt.Errorf("engine stopped: %s", stopReason)
+	default:
+		if err := t.acpDiagnosticError(); err != nil {
+			return err
+		}
+		return fmt.Errorf("engine returned an unknown stop reason %q", stopReason)
+	}
+}
+
+func (t *turn) acpDiagnosticError() error {
+	if t.terminatedErr != "" {
+		return errors.New(t.terminatedErr)
+	}
+	if t.reconnecting && t.apiError != "" {
+		return errors.New(t.apiError)
+	}
+	return nil
+}
+
+type acpPermission struct {
+	SessionID string `json:"sessionId"`
+	Tool      struct {
+		ID    string          `json:"toolCallId"`
+		Title string          `json:"title"`
+		Kind  string          `json:"kind"`
+		Input json.RawMessage `json:"rawInput"`
+	} `json:"toolCall"`
+	Options []struct {
+		ID   string `json:"optionId"`
+		Kind string `json:"kind"`
+	} `json:"options"`
+}
+
+func (s *Session) applyACPSelection(ctx context.Context, r *rpc, init acpInitialize, loaded acpSession, ref string, resumed bool) (err error) {
+	selected := loaded
+	if resumed {
+		// Loaded sessions retain previous overrides. A fresh, unprompted session
+		// supplies native defaults, including options dependent on the model.
+		selected = acpSession{asyncConfiguration: s.engine.entry.ID == "devin"}
+		defer func() {
+			err = errors.Join(err, r.closeACPSession(init, selected.ID), r.deleteACPSession(init, selected.ID))
+		}()
+		if err := r.session(ctx, "session/new", map[string]any{"cwd": s.binding.RootDir, "mcpServers": []any{}}, &selected); err != nil {
+			return fmt.Errorf("read configured model defaults: %w", err)
+		}
+	}
+	restore := trackACPConfiguration(r, &selected, selected.ID)
+	defer restore()
+	if err := selected.selectModelAndEffort(ctx, r, selected.ID, s.engine.entry.Name, s.binding.Model, ""); err != nil {
+		return err
+	}
+	if err := selected.selectModelOptions(ctx, r, s.binding.ModelOptions); err != nil {
+		return err
+	}
+	if err := selected.selectModelAndEffort(ctx, r, selected.ID, s.engine.entry.Name, "", s.binding.Effort); err != nil {
+		return err
+	}
+	if speed := s.binding.Speed; speed != "" {
+		option, on, off := selected.speedOption()
+		if option == nil {
+			return fmt.Errorf("%s does not advertise speed selection for this model", s.engine.entry.Name)
+		}
+		value := off
+		if speed == "fast" {
+			value = on
+		}
+		if option.Current != value {
+			if err := selected.setConfigOption(ctx, r, selected.ID, option.ID, value); err != nil {
+				return err
+			}
+		}
+	}
+	if resumed {
+		trackLoaded := trackACPConfiguration(r, &loaded, ref)
+		defer trackLoaded()
+		model := selected.firstClassCurrent()
+		if option := selected.modelConfigOption(); option != nil {
+			model = option.Current
+		}
+		if err := loaded.selectModelAndEffort(ctx, r, ref, s.engine.entry.Name, model, ""); err != nil {
+			return err
+		}
+		values := make(map[string]string)
+		for _, option := range selected.modelOptions() {
+			values[option.ID] = option.DefaultValue
+		}
+		if err := loaded.selectModelOptions(ctx, r, values); err != nil {
+			return err
+		}
+		if desired := selected.thoughtLevelOption(); desired != nil {
+			option := loaded.thoughtLevelOption()
+			if option == nil || !option.hasChoice(desired.Current) {
+				return fmt.Errorf("%s does not advertise the configured reasoning default", s.engine.entry.Name)
+			}
+			// An empty advertised value can mean provider default (DSH).
+			// Apply it explicitly when clearing a saved reasoning override.
+			if option.Current != desired.Current {
+				if err := loaded.setConfigOption(ctx, r, ref, option.ID, desired.Current); err != nil {
+					return err
+				}
+			}
+		}
+		if desired, _, _ := selected.speedOption(); desired != nil {
+			if err := loaded.setConfigOption(ctx, r, ref, desired.ID, desired.Current); err != nil {
+				return err
+			}
+		}
+		return loaded.selectHostPermissionMode(ctx, r, ref, s.engine.entry.Name, s.binding.PermissionMode)
+	}
+	return selected.selectHostPermissionMode(ctx, r, ref, s.engine.entry.Name, s.binding.PermissionMode)
+}
+
+// Re-read the complete configuration after each dependent option change.
+func (session *acpSession) selectModelOptions(ctx context.Context, r *rpc, values map[string]string) error {
+	pending := make(map[string]string, len(values))
+	for id, value := range values {
+		pending[id] = value
+	}
+	for len(pending) > 0 {
+		applied := false
+		for _, option := range session.modelOptions() {
+			value, ok := pending[option.ID]
+			if !ok {
+				continue
+			}
+			valid := false
+			for _, choice := range option.Choices {
+				valid = valid || choice.Value == value
+			}
+			if !valid {
+				return fmt.Errorf("model option %q does not advertise value %q", option.ID, value)
+			}
+			if option.DefaultValue != value {
+				if err := session.setConfigOption(ctx, r, session.ID, option.ID, value); err != nil {
+					return err
+				}
+			}
+			delete(pending, option.ID)
+			applied = true
+			break
+		}
+		if !applied {
+			return fmt.Errorf("engine does not advertise requested model options: %v", pending)
+		}
+	}
+	for id, value := range values {
+		confirmed := false
+		for _, option := range session.modelOptions() {
+			confirmed = confirmed || option.ID == id && option.DefaultValue == value
+		}
+		if !confirmed {
+			return fmt.Errorf("engine did not retain model option %q = %q", id, value)
+		}
+	}
+	return nil
+}
+
+func (session *acpSession) selectModelAndEffort(ctx context.Context, r *rpc, ref, engineName, model, effort string) error {
+	if model = strings.TrimSpace(model); model != "" {
+		if !session.hasAdvertisedModel(model) && engineName == "Devin" {
+			waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			err := r.wait(waitCtx, func() bool { return session.hasAdvertisedModel(model) })
+			cancel()
+			if err != nil {
+				return fmt.Errorf("wait for advertised model %q: %w", model, err)
+			}
+		}
+		if !session.hasAdvertisedModel(model) {
+			if session.Models == nil && session.modelConfigOption() == nil {
+				return errors.New("this engine does not advertise model selection; clear the model to use its configured default")
+			}
+			return fmt.Errorf("model %q is not advertised by this engine", model)
+		}
+		if err := session.selectModel(ctx, r, ref, model); err != nil {
+			return err
+		}
+	}
+	if effort = strings.TrimSpace(effort); effort != "" {
+		option := session.thoughtLevelOption()
+		if option == nil || !option.hasChoice(effort) {
+			return fmt.Errorf("%s does not expose reasoning effort through this integration; clear the effort selection", engineName)
+		}
+		if strings.TrimSpace(option.Current) != effort {
+			configID := strings.TrimSpace(option.ID)
+			if configID == "" {
+				configID = "reasoning_effort"
+			}
+			return session.setConfigOption(ctx, r, ref, configID, effort)
+		}
+	}
+	return nil
+}
+
+// Responses contain the complete configuration after dependent changes.
+func (session *acpSession) setConfigOption(ctx context.Context, r *rpc, ref, id, value string) error {
+	revision := session.configurationRevision
+	modelOption := session.modelConfigOption()
+	changingModel := modelOption != nil && modelOption.ID == id && modelOption.Current != value
+	params := map[string]any{"sessionId": ref, "configId": id, "value": value}
+	for _, option := range session.ConfigOptions {
+		if option.ID == id && option.Type == "boolean" {
+			if value != "true" && value != "false" {
+				return fmt.Errorf("invalid boolean value for %q", id)
+			}
+			params["type"], params["value"] = "boolean", value == "true"
+		}
+	}
+	var updated acpSession
+	if err := r.call(ctx, "session/set_config_option", params, &updated); err != nil {
+		return err
+	}
+	if updated.ConfigOptions != nil {
+		session.ConfigOptions = updated.ConfigOptions
+		session.configurationRevision++
+	} else if (session.asyncConfiguration || changingModel) && session.configurationRevision == revision {
+		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := r.wait(waitCtx, func() bool { return session.configurationRevision > revision }); err != nil {
+			return err
+		}
+	} else if session.configurationRevision == revision {
+		// Older ACP agents acknowledge without returning configuration. The
+		// successful response still confirms this value, but adds no capabilities.
+		for i := range session.ConfigOptions {
+			if session.ConfigOptions[i].ID == id {
+				session.ConfigOptions[i].Current = value
+			}
+		}
+	}
+	for _, option := range session.ConfigOptions {
+		if option.ID == id && option.Current == value {
+			return nil
+		}
+	}
+	return fmt.Errorf("engine did not apply configuration %q = %q", id, value)
+}
+
+// selectHostPermissionMode applies the host's access selection to the agent's
+// advertised `category=mode` option. Standard, Read only, and Unconfined map
+// onto prompting, plan/read-only, and bypass ids when the agent publishes
+// them. Missing native ids leave the agent's default: Standard still answers
+// session/request_permission in the host, Unconfined auto-accepts, and Read
+// only is refused because Wuu cannot enforce that boundary itself.
+func (s acpSession) selectHostPermissionMode(ctx context.Context, r *rpc, ref, engineName, hostMode string) error {
+	hostMode = strings.TrimSpace(hostMode)
+	if hostMode == "" {
+		return nil
+	}
+	selected, ok := hostPermissionMode(s, hostMode)
+	if hostMode == "read_only" && (!ok || selected.ID == "") {
+		return readOnlyUnsupportedError(engineName)
+	}
+	if !ok || selected.ID == "" {
+		return nil
+	}
+	option := s.modeOption()
+	if option == nil {
+		return nil
+	}
+	if strings.TrimSpace(option.Current) == selected.ID {
+		return nil
+	}
+	return r.call(ctx, "session/set_config_option", map[string]any{"sessionId": ref, "configId": option.ID, "value": selected.ID}, nil)
+}
+
+func (s *Session) acpPermission(ctx context.Context, ref string, raw json.RawMessage, t *turn) (any, error) {
+	cancelled := map[string]any{"outcome": map[string]string{"outcome": "cancelled"}}
+	var req acpPermission
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, err
+	}
+	if ref == "" || req.SessionID != ref {
+		return cancelled, nil
+	}
+	// ACP permission requests contain partial tool calls. DSH sends only the
+	// ID after its ordered tool updates, which own the action and input.
+	if call := t.tools[req.Tool.ID]; call != nil {
+		if req.Tool.Title == "" {
+			req.Tool.Title = call.Name
+		}
+		if len(req.Tool.Input) == 0 || string(req.Tool.Input) == "null" {
+			req.Tool.Input = json.RawMessage(call.Arguments)
+		}
+	}
+	if req.Tool.Kind == "" {
+		req.Tool.Kind = t.acpToolKinds[req.Tool.ID]
+	}
+	decision := agentengine.ApprovalDecline
+	if s.binding.PermissionMode == "unconfined" {
+		decision = agentengine.ApprovalAccept
+	} else if s.binding.RequestApproval != nil {
+		var err error
+		kind := agentengine.ApprovalPermissions
+		if req.Tool.Kind == "execute" {
+			kind = agentengine.ApprovalCommandExecution
+		}
+		if req.Tool.Kind == "edit" || req.Tool.Kind == "delete" {
+			kind = agentengine.ApprovalFileChange
+		}
+		decision, err = s.binding.RequestApproval(ctx, agentengine.ApprovalRequest{Kind: kind, EngineID: agentengine.EngineID(s.engine.entry.ID), ThreadID: s.binding.ThreadID, ItemID: req.Tool.ID, Reason: req.Tool.Title, CWD: s.binding.RootDir, Permissions: req.Tool.Input})
+		if err != nil {
+			return cancelled, nil
+		}
+	}
+	if ctx.Err() != nil || decision == agentengine.ApprovalCancel {
+		return cancelled, nil
+	}
+	// A session-scoped host approval must never become the agent's persisted
+	// "allow_always" rule. Select only an exact one-shot grant, or cancel.
+	wanted := "reject_once"
+	if decision == agentengine.ApprovalAccept || decision == agentengine.ApprovalAcceptForSession {
+		wanted = "allow_once"
+	}
+	for _, option := range req.Options {
+		if option.Kind == wanted && option.ID != "" {
+			return map[string]any{"outcome": map[string]string{"outcome": "selected", "optionId": option.ID}}, nil
+		}
+	}
+	return cancelled, nil
+}
+
+// acpMediaContent reports whether ACP tool content blocks carry anything
+// beyond plain text. Text-only results stay on the ordinary output string;
+// media blocks upgrade to the shared rich-result detail.
+func acpMediaContent(contents []mcp.ToolContent) bool {
+	for _, content := range contents {
+		if content.Type != "" && content.Type != toolresult.ContentTypeText {
+			return true
+		}
+	}
+	return false
+}
+
+func decodeACPUpdate(ref string, raw json.RawMessage) error {
+	return parseACPUpdate(ref, raw, nil)
+}
+
+func (t *turn) acpUpdate(ref string, raw json.RawMessage) error {
+	return parseACPUpdate(ref, raw, t)
+}
+
+func parseACPUpdate(ref string, raw json.RawMessage, t *turn) error {
+	var notification struct {
+		SessionID string          `json:"sessionId"`
+		Update    json.RawMessage `json:"update"`
+	}
+	if err := json.Unmarshal(raw, &notification); err != nil {
+		return err
+	}
+	if notification.SessionID != ref {
+		return nil
+	}
+	var update struct {
+		Type    string               `json:"sessionUpdate"`
+		ID      string               `json:"toolCallId"`
+		Title   string               `json:"title"`
+		Kind    string               `json:"kind"`
+		Status  string               `json:"status"`
+		Input   json.RawMessage      `json:"rawInput"`
+		Output  json.RawMessage      `json:"rawOutput"`
+		Content json.RawMessage      `json:"content"`
+		Entries []providers.TodoItem `json:"entries"`
+	}
+	if err := json.Unmarshal(notification.Update, &update); err != nil {
+		return err
+	}
+	switch update.Type {
+	case "agent_message_chunk", "agent_thought_chunk":
+		var content struct {
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Data     string `json:"data"`
+			MIMEType string `json:"mimeType"`
+		}
+		if err := json.Unmarshal(update.Content, &content); err != nil {
+			return err
+		}
+		if t == nil {
+			break
+		}
+		switch content.Type {
+		case "text":
+			if update.Type == "agent_thought_chunk" {
+				t.content(content.Text, true)
+			} else {
+				t.acpMessageChunk(content.Text)
+			}
+		case "image":
+			if update.Type == "agent_message_chunk" {
+				t.image(providers.InputImage{MediaType: content.MIMEType, Data: content.Data})
+			}
+		}
+	case "tool_call", "tool_call_update":
+		output := string(update.Output)
+		var detail *toolresult.Result
+		var blocks []struct {
+			Type    string          `json:"type"`
+			Content mcp.ToolContent `json:"content"`
+		}
+		if json.Unmarshal(update.Content, &blocks) == nil {
+			var text []string
+			var contents []mcp.ToolContent
+			for _, block := range blocks {
+				if block.Type != "content" {
+					continue
+				}
+				contents = append(contents, block.Content)
+				if block.Content.Text != "" {
+					text = append(text, block.Content.Text)
+				}
+			}
+			if output == "" || output == "null" {
+				output = strings.Join(text, "\n")
+			}
+			if acpMediaContent(contents) {
+				if mapped, err := mcp.MapCallToolResult(&mcp.CallToolResult{Content: contents}); err == nil {
+					detail = &mapped
+				}
+			}
+		}
+		if t != nil {
+			if len(update.Content) == 0 || string(update.Content) == "null" {
+				detail = t.acpToolDetails[update.ID]
+			} else {
+				if t.acpToolDetails == nil {
+					t.acpToolDetails = make(map[string]*toolresult.Result)
+				}
+				if detail != nil {
+					t.acpToolDetails[update.ID] = detail
+				} else {
+					delete(t.acpToolDetails, update.ID)
+				}
+			}
+			if update.Kind != "" {
+				if t.acpToolKinds == nil {
+					t.acpToolKinds = make(map[string]string)
+				}
+				t.acpToolKinds[update.ID] = update.Kind
+			}
+			if detail != nil && update.Status == "failed" {
+				detail.IsError = true
+			}
+			t.tool(update.ID, update.Title, string(update.Input), update.Status, output, detail)
+			if update.Status == "completed" || update.Status == "failed" {
+				delete(t.acpToolKinds, update.ID)
+				delete(t.acpToolDetails, update.ID)
+			}
+		}
+	case "plan":
+		if t != nil {
+			t.clearReconnect()
+			t.emit(providers.StreamEvent{Type: providers.EventTodoUpdate, TodoUpdate: &providers.TodoUpdate{Todos: update.Entries}})
+		}
+	}
+	return nil
+}
+
+// ACP agents such as Antigravity emit retry and termination diagnostics as
+// `agent_message_chunk` lines (`⚠ API error (attempt N): ...` and
+// `⚠ Agent execution terminated due to error.`) before returning end_turn.
+// Route those lines into Wuu's reconnect lifecycle and terminal error state
+// instead of polluting the assistant reply.
+func (t *turn) acpMessageChunk(chunk string) {
+	if chunk == "" {
+		return
+	}
+	for chunk != "" {
+		if t.diagBuf.Len() == 0 {
+			idx := strings.Index(chunk, "⚠")
+			if idx < 0 {
+				t.content(chunk, false)
+				return
+			}
+			prefix := chunk[:idx]
+			trimmedPrefix := strings.TrimRight(prefix, "\r\n")
+			if trimmedPrefix != "" {
+				t.content(trimmedPrefix, false)
+			}
+			t.diagBuf.WriteString(prefix[len(trimmedPrefix):])
+			chunk = chunk[idx:]
+		}
+		if nl := strings.IndexByte(chunk, '\n'); nl >= 0 {
+			t.diagBuf.WriteString(chunk[:nl+1])
+			chunk = chunk[nl+1:]
+			line := t.diagBuf.String()
+			t.diagBuf.Reset()
+			if !t.consumeACPDiagnosticLine(line) {
+				t.content(line, false)
+			}
+			continue
+		}
+		t.diagBuf.WriteString(chunk)
+		chunk = ""
+		candidate := t.diagBuf.String()
+		// ACP chunks are arbitrary text deltas, not line boundaries. Keep a
+		// possible diagnostic until its newline or prompt completion so a
+		// later fragment cannot leak into content and falsely clear recovery.
+		if !isACPDiagnosticPrefix(candidate) {
+			t.diagBuf.Reset()
+			t.content(candidate, false)
+		}
+	}
+}
+
+func (t *turn) flushACPDiagnostics() {
+	if t.diagBuf.Len() == 0 {
+		return
+	}
+	candidate := t.diagBuf.String()
+	t.diagBuf.Reset()
+	if !t.consumeACPDiagnosticLine(candidate) {
+		t.content(candidate, false)
+	}
+}
+
+func normalizeACPDiagnosticCandidate(raw string) (string, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "⚠") {
+		return "", false
+	}
+	rest := strings.TrimPrefix(trimmed, "⚠")
+	rest = strings.TrimPrefix(rest, "\ufe0f")
+	return strings.TrimSpace(rest), true
+}
+
+func (t *turn) consumeACPDiagnosticLine(raw string) bool {
+	rest, ok := normalizeACPDiagnosticCandidate(raw)
+	if !ok || rest == "" {
+		return false
+	}
+	lower := strings.ToLower(rest)
+	if strings.HasPrefix(lower, "api error") {
+		tail := strings.TrimSpace(rest[len("api error"):])
+		attempt := 0
+		if strings.HasPrefix(strings.ToLower(tail), "(attempt ") {
+			closeIdx := strings.IndexByte(tail, ')')
+			if closeIdx < 0 {
+				return false
+			}
+			numStr := strings.TrimSpace(tail[len("(attempt "):closeIdx])
+			n, err := strconv.Atoi(numStr)
+			if err != nil || n <= 0 {
+				return false
+			}
+			attempt = n
+			tail = strings.TrimSpace(tail[closeIdx+1:])
+		}
+		if !strings.HasPrefix(tail, ":") {
+			return false
+		}
+		reason := strings.TrimSpace(tail[1:])
+		if reason == "" {
+			return false
+		}
+		t.startReconnect(attempt, reason, 0)
+		return true
+	}
+	if strings.HasPrefix(lower, "agent execution terminated") {
+		tail := strings.TrimSpace(rest[len("agent execution terminated"):])
+		lowerTail := strings.ToLower(tail)
+		switch {
+		case strings.HasPrefix(lowerTail, "due to error"):
+			if t.apiError != "" {
+				t.terminatedErr = t.apiError
+			} else {
+				t.terminatedErr = "agent execution terminated due to error"
+			}
+			return true
+		case strings.HasPrefix(tail, ":"):
+			reason := strings.TrimSpace(tail[1:])
+			if reason == "" {
+				return false
+			}
+			t.terminatedErr = reason
+			return true
+		}
+	}
+	return false
+}
+
+func isACPDiagnosticPrefix(raw string) bool {
+	rest, ok := normalizeACPDiagnosticCandidate(raw)
+	if !ok {
+		return false
+	}
+	if rest == "" {
+		return true
+	}
+	lower := strings.ToLower(rest)
+	for _, prefix := range []string{"api error", "agent execution terminated"} {
+		if strings.HasPrefix(prefix, lower) || strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// session retains configuration notifications sent before session/new or load
+// responds. The returned session ID scopes them; updates for other sessions
+// must never leak into this session's selection.
+func (r *rpc) session(ctx context.Context, method string, params map[string]any, session *acpSession) error {
+	previous := r.handle
+	updates := make(map[string][]acpConfigOption)
+	r.handle = func(ctx context.Context, method string, raw json.RawMessage, request bool) (any, error) {
+		if !request && method == "session/update" {
+			var notification struct {
+				ID     string `json:"sessionId"`
+				Update struct {
+					Kind    string            `json:"sessionUpdate"`
+					Options []acpConfigOption `json:"configOptions"`
+				} `json:"update"`
+			}
+			if err := json.Unmarshal(raw, &notification); err != nil {
+				return nil, err
+			}
+			if notification.Update.Kind == "config_option_update" {
+				updates[notification.ID] = notification.Update.Options
+			}
+		}
+		if previous != nil {
+			return previous(ctx, method, raw, request)
+		}
+		return nil, nil
+	}
+	defer func() { r.handle = previous }()
+	if err := r.call(ctx, method, params, session); err != nil {
+		return err
+	}
+	if method == "session/load" || method == "session/resume" {
+		session.ID, _ = params["sessionId"].(string)
+	}
+	if session.asyncConfiguration && session.ConfigOptions == nil {
+		// Older Devin CLI publishes its model configuration only through a
+		// config_option_update notification after session/new; current builds
+		// inline configOptions in the response and only re-send the
+		// notification when the configuration later changes. Waiting
+		// unconditionally would stall every turn for the full timeout.
+		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := r.wait(waitCtx, func() bool { _, ok := updates[session.ID]; return ok }); err != nil {
+			return fmt.Errorf("wait for native model configuration: %w", err)
+		}
+	}
+	if options, ok := updates[session.ID]; ok {
+		session.ConfigOptions = options
+		session.configurationRevision++
+	}
+	return nil
+}
+
+// closeACPSession lets an agent flush persistent state and dispose descendants
+// before its process is killed. Cleanup also runs after cancellation, with a
+// separate deadline, and must never open a new permission prompt.
+func (r *rpc) closeACPSession(init acpInitialize, ref string) error {
+	if init.Capabilities.Session.Close == nil || ref == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), acpCloseTimeout)
+	defer cancel()
+	previous := r.handle
+	r.handle = func(ctx context.Context, method string, params json.RawMessage, request bool) (any, error) {
+		if request && method == "session/request_permission" {
+			return map[string]any{"outcome": map[string]string{"outcome": "cancelled"}}, nil
+		}
+		return previous(ctx, method, params, request)
+	}
+	defer func() { r.handle = previous }()
+	if err := r.call(ctx, "session/close", map[string]string{"sessionId": ref}, nil); err != nil {
+		return fmt.Errorf("session/close: %w", err)
+	}
+	return nil
+}
+
+// deleteACPSession removes a disposable probe session from the agent's
+// persistent history after closeACPSession releases its locks. Agents that
+// persist every session/new (Devin) would otherwise accumulate one entry per
+// catalog probe and default-model probe. Real conversation sessions are never
+// deleted; only sessions Wuu created solely for discovery call this.
+func (r *rpc) deleteACPSession(init acpInitialize, ref string) error {
+	if init.Capabilities.Session.Delete == nil || ref == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), acpCloseTimeout)
+	defer cancel()
+	if err := r.call(ctx, "session/delete", map[string]string{"sessionId": ref}, nil); err != nil {
+		return fmt.Errorf("session/delete: %w", err)
+	}
+	return nil
+}
+
+// ACP agents may publish model-dependent options through notifications before
+// acknowledging set_model, or in the complete set_config_option response.
+func trackACPConfiguration(r *rpc, session *acpSession, ref string) func() {
+	previous := r.handle
+	r.handle = func(ctx context.Context, method string, raw json.RawMessage, request bool) (any, error) {
+		if !request && method == "session/update" {
+			var notification struct {
+				SessionID string `json:"sessionId"`
+				Update    struct {
+					Kind    string            `json:"sessionUpdate"`
+					Options []acpConfigOption `json:"configOptions"`
+				} `json:"update"`
+			}
+			if err := json.Unmarshal(raw, &notification); err != nil {
+				return nil, err
+			}
+			if notification.SessionID == ref && notification.Update.Kind == "config_option_update" {
+				session.ConfigOptions = notification.Update.Options
+				session.configurationRevision++
+			}
+		}
+		if previous != nil {
+			return previous(ctx, method, raw, request)
+		}
+		return nil, nil
+	}
+	return func() { r.handle = previous }
+}
+
+func (session *acpSession) selectModel(ctx context.Context, r *rpc, ref, model string) error {
+	revision := session.configurationRevision
+	dependentOptions := session.thoughtLevelOption() != nil || len(session.modelOptions()) > 0
+	if speed, _, _ := session.speedOption(); speed != nil {
+		dependentOptions = true
+	}
+	var updated acpSession
+	switch {
+	case session.modelConfigOption() != nil && session.modelConfigOption().hasChoice(model):
+		option := session.modelConfigOption()
+		if strings.TrimSpace(option.Current) == model {
+			return nil
+		}
+		return session.setConfigOption(ctx, r, ref, option.ID, model)
+	case session.firstClassHasModel(model):
+		if session.firstClassCurrent() == model {
+			return nil
+		}
+		if err := r.call(ctx, "session/set_model", map[string]any{"sessionId": ref, "modelId": model}, &updated); err != nil {
+			return err
+		}
+		session.Models.Current = model
+	default:
+		option := session.modelConfigOption()
+		if option == nil {
+			return errors.New("engine does not advertise model selection")
+		}
+		if strings.TrimSpace(option.Current) == model {
+			return nil
+		}
+		return session.setConfigOption(ctx, r, ref, option.ID, model)
+	}
+	if updated.ConfigOptions != nil {
+		session.ConfigOptions = updated.ConfigOptions
+		session.configurationRevision++
+	} else if dependentOptions && session.configurationRevision == revision {
+		// A successful legacy set_model response confirms the model, but cannot
+		// confirm that the previous model's dependent configuration still applies.
+		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := r.wait(waitCtx, func() bool { return session.configurationRevision > revision }); err != nil {
+			return fmt.Errorf("wait for model-dependent configuration: %w", err)
+		}
+	}
+	return nil
+}

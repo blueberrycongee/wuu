@@ -1,0 +1,72 @@
+/* Session design tokens + shared layout class.
+ *
+ * This file is the SINGLE source of truth for session-level design tokens.
+ * Touch ONLY this file (and nothing else) when adjusting:
+ *   - Session outer width                  (--session-outer-width)
+ *   - Session horizontal padding rhythm    (--session-outer-padding-inline)
+ *   - Base reading/composer width          (--session-composer-width)
+ *   - Composer horizontal overhang         (--session-composer-inline-outset)
+ *   - Composer dialog corner radius        (--session-composer-radius)
+ *
+ * Both the empty-session welcome (.empty-home-inner) and the historical
+ * conversation (.conversation-width) consume these tokens via the
+ * .session-flow class. View-specific rules (vertical padding, row-gap,
+ * justify-items, contain, position, ...) stay in the view classes.
+ */
+
+:root {
+  /* Ease toward a compact inset as the pane grows, without a breakpoint
+   * jump. The composer derives its overhang from this reading-column inset. */
+  --session-outer-padding-inline: max(
+    clamp(var(--space-3), 3cqi, var(--space-6)),
+    env(safe-area-inset-left, 0px),
+    env(safe-area-inset-right, 0px)
+  );
+  --session-composer-width: 800px;
+  /* IM message frames overhang the reading column on both sides. The composer
+   * mirrors that inset so the sent query and the draft share one width. */
+  --session-im-inline-outset: min(
+    clamp(var(--space-2), calc(var(--session-outer-padding-inline) - var(--space-2)), var(--space-3)),
+    calc(var(--session-outer-padding-inline) - max(var(--space-3), env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px)))
+  );
+  --session-im-text-padding: max(var(--space-2), var(--session-im-inline-outset));
+  /* The draft can overhang the reading column while retaining a comfortable
+   * edge gap. Narrow panes converge to the reading width; notches stay clear. */
+  --session-composer-inline-outset: clamp(
+    0px,
+    calc(var(--session-outer-padding-inline) - max(var(--space-3), env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px))),
+    var(--space-3)
+  );
+  --session-outer-width: calc(
+    var(--session-composer-width) + var(--session-outer-padding-inline) +
+      var(--session-outer-padding-inline)
+  );
+  /* Give the input a gentler corner while honoring themed panel geometry. */
+  --session-composer-radius: var(--wuu-radius-panel, 24px);
+}
+
+:root[data-message-style="im"] {
+  /* Enclose the outer message frames, including their reading-column overhang. */
+  --session-composer-inline-outset: var(--session-im-inline-outset);
+}
+
+/* Shared outer rhythm + 12-col grid for the session views.
+ * Applied via className on .empty-home-inner and .conversation-width
+ * so their outer width, horizontal padding, and column tracks stay
+ * aligned when switching between empty and populated sessions. */
+.session-flow {
+  display: grid;
+  width: 100%;
+  max-width: var(--session-outer-width);
+  padding-inline: var(--session-outer-padding-inline);
+  grid-template-columns: repeat(var(--wuu-grid-cols), minmax(0, 1fr));
+  column-gap: var(--wuu-grid-gutter);
+  margin-inline: auto;
+}
+
+/* The opt-in messaging transport uses a compact reading measure; Coding keeps
+   the shared session geometry and saved typography preferences. */
+.plugin-conversation[data-presentation="bubbles"] {
+  --session-composer-width: 640px;
+  --session-outer-width: calc(640px + var(--session-outer-padding-inline) * 2);
+}

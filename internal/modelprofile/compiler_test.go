@@ -1,0 +1,179 @@
+package modelprofile
+
+import (
+	"sort"
+	"testing"
+
+	"github.com/blueberrycongee/wuu/internal/capability"
+)
+
+func TestResolveProfileKey(t *testing.T) {
+	cases := []struct {
+		provider string
+		model    string
+		want     ProfileKey
+	}{
+		{provider: "openai", model: "gpt-5-codex", want: ProfileOpenAICodex},
+		{provider: "openai", model: "gpt-5.5", want: ProfileOpenAIGPT},
+		{provider: "openai", model: "gpt-4.1-mini", want: ProfileOpenAIGPT},
+		{provider: "openai", model: "gpt-oss-120b", want: ProfileOpenAIGPT},
+		{provider: "anthropic", model: "claude-sonnet-4-5", want: ProfileAnthropicClaude},
+		{provider: "anthropic", model: "claude-opus-4-7", want: ProfileAnthropicClaude},
+		{provider: "google", model: "gemini-2.5-pro", want: ProfileGeneric},
+		{provider: "moonshot", model: "kimi-k2", want: ProfileGeneric},
+		{provider: "deepseek", model: "deepseek-v3.2", want: ProfileGeneric},
+		{provider: "dashscope", model: "qwen3-coder-plus", want: ProfileGeneric},
+		{provider: "ollama", model: "llama-coder", want: ProfileGeneric},
+		{provider: "custom", model: "local-model", want: ProfileGeneric},
+	}
+	for _, tt := range cases {
+		got := ResolveProfileKey(Resolve(tt.provider, tt.model))
+		if got != tt.want {
+			t.Fatalf("ResolveProfileKey(%s, %s) = %s, want %s", tt.provider, tt.model, got, tt.want)
+		}
+	}
+}
+
+func TestOpenAICodexSurface(t *testing.T) {
+	s := DefaultCompiler{}.Compile(Resolve("openai", "gpt-5-codex"), SurfaceMain)
+
+	// Bash-first: bash is visible.
+	if _, ok := s.Tools["bash"]; !ok {
+		t.Fatalf("Codex surface must include bash as a visible tool")
+	}
+	if !hasCapability(s.Capabilities, capability.CapabilityCommandBackground) {
+		t.Fatalf("Codex surface must advertise command.background through bash, got caps=%v", s.Capabilities)
+	}
+	if !hasCapability(s.DeferredCapabilities, capability.CapabilityMCP) {
+		t.Fatalf("Codex surface must defer mcp capability for tool_search-gated extensions, got caps=%v", s.DeferredCapabilities)
+	}
+
+	// The direct request prefix stays small: core file/search/edit/command,
+	// planning, skill loading, and tool discovery.
+	mustVisible := []string{
+		"read_file", "list_files",
+		"grep", "glob",
+		"web_search", "web_fetch",
+		"bash", "edit_file", "write_file",
+		"load_skill", "tool_search",
+	}
+	for _, name := range mustVisible {
+		if _, ok := s.Tools[name]; !ok {
+			t.Fatalf("Codex surface must include %s, got tools=%v", name, sortedKeys(s.Tools))
+		}
+	}
+	mustDeferred := []string{
+		"thread_get", "wuu_browser",
+	}
+	for _, name := range mustDeferred {
+		if _, ok := s.Tools[name]; ok {
+			t.Fatalf("Codex surface must not directly advertise deferred tool %s, got tools=%v", name, sortedKeys(s.Tools))
+		}
+		if _, ok := s.DeferredTools[name]; !ok {
+			t.Fatalf("Codex surface must defer %s, got deferred=%v", name, sortedKeys(s.DeferredTools))
+		}
+	}
+}
+
+func TestAnthropicClaudeSurface(t *testing.T) {
+	s := DefaultCompiler{}.Compile(Resolve("anthropic", "claude-sonnet-4-5"), SurfaceMain)
+
+	// Editing primitive is edit_file (+ write_file as whole-file fallback).
+	tool, ok := s.ToolForCapability(capability.CapabilityFileEdit)
+	if !ok || tool != "edit_file" {
+		t.Fatalf("Claude file.edit must map to edit_file, got tool=%q ok=%v", tool, ok)
+	}
+	if _, has := s.Tools["write_file"]; !has {
+		t.Fatalf("Claude surface must include write_file")
+	}
+
+	// Bash-first: bash is visible.
+	if _, ok := s.Tools["bash"]; !ok {
+		t.Fatalf("Claude surface must include bash")
+	}
+	if !hasCapability(s.Capabilities, capability.CapabilityCommandBackground) {
+		t.Fatalf("Claude surface must advertise command.background through bash, got caps=%v", s.Capabilities)
+	}
+	if !hasCapability(s.DeferredCapabilities, capability.CapabilityMCP) {
+		t.Fatalf("Claude surface must defer mcp capability for tool_search-gated extensions, got caps=%v", s.DeferredCapabilities)
+	}
+	// The same direct core capabilities as Codex.
+	for _, name := range []string{
+		"read_file", "list_files", "grep", "glob",
+		"web_search", "web_fetch",
+		"load_skill", "tool_search",
+	} {
+		if _, ok := s.Tools[name]; !ok {
+			t.Fatalf("Claude surface must include %s, got tools=%v", name, sortedKeys(s.Tools))
+		}
+	}
+	if _, ok := s.DeferredTools["wuu_browser"]; !ok {
+		t.Fatal("Claude surface must defer the browser tool")
+	}
+}
+
+func TestGenericSurfaceForOpenAISHapedBYOK(t *testing.T) {
+	for _, tt := range []struct {
+		provider string
+		model    string
+	}{
+		{provider: "google", model: "gemini-2.5-pro"},
+		{provider: "moonshot", model: "kimi-k2"},
+		{provider: "deepseek", model: "deepseek-v3.2"},
+		{provider: "dashscope", model: "qwen3-coder-plus"},
+	} {
+		s := DefaultCompiler{}.Compile(Resolve(tt.provider, tt.model), SurfaceMain)
+		if s.ProfileName != string(ProfileGeneric) {
+			t.Fatalf("%s/%s: ProfileName = %s, want generic", tt.provider, tt.model, s.ProfileName)
+		}
+		tool, ok := s.ToolForCapability(capability.CapabilityFileEdit)
+		if !ok || tool != "edit_file" {
+			t.Fatalf("%s/%s: generic file.edit must map to edit_file, got tool=%q ok=%v", tt.provider, tt.model, tool, ok)
+		}
+		if _, has := s.Tools["bash"]; !has {
+			t.Fatalf("%s/%s: generic surface must include bash", tt.provider, tt.model)
+		}
+	}
+}
+
+func TestGenericSurfaceDropsBashForLocal(t *testing.T) {
+	s := DefaultCompiler{}.Compile(Resolve("ollama", "llama-coder"), SurfaceMain)
+	if s.ProfileName != string(ProfileGeneric) {
+		t.Fatalf("local profile must compile under generic, got %s", s.ProfileName)
+	}
+	// The local profile should not expose command.bash as a VISIBLE
+	// capability. HasCapability returns true for hidden capabilities
+	// too, so we iterate s.Capabilities directly.
+	if hasCapability(s.Capabilities, capability.CapabilityCommandBash) {
+		t.Fatalf("local profile must not advertise command.bash, got caps=%v", s.Capabilities)
+	}
+	if _, has := s.Tools["bash"]; has {
+		t.Fatalf("local profile must not include bash, got tools=%v", sortedKeys(s.Tools))
+	}
+	if _, has := s.Tools["edit_file"]; !has {
+		t.Fatalf("local generic profile must include edit_file so prompt and write_file guidance remain usable, got tools=%v", sortedKeys(s.Tools))
+	}
+	if _, has := s.Tools["write_file"]; !has {
+		t.Fatalf("local generic profile must include write_file, got tools=%v", sortedKeys(s.Tools))
+	}
+}
+
+// ── helpers ───────────────────────────────────────────────────────
+
+func hasCapability(caps []capability.Capability, want capability.Capability) bool {
+	for _, c := range caps {
+		if c == want {
+			return true
+		}
+	}
+	return false
+}
+
+func sortedKeys(m map[string]capability.Capability) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}

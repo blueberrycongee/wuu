@@ -1,0 +1,102 @@
+/*
+ * TruncatedText.
+ *
+ * Single-line (or line-clamped) text that reveals its full content on
+ * hover — but ONLY when CSS truncation is actually hiding part of it.
+ * The old pattern put `title={fullText}` on every truncated element,
+ * which meant the hint fired even when nothing was hidden, and a parent
+ * element's `title` leaked the same popup onto every child.
+ *
+ * Truncation is measured against the element's own box (scrollWidth vs
+ * clientWidth, with the scrollHeight variant for line-clamped blocks)
+ * and re-measured on resize and text change, so responsive layouts arm
+ * and disarm the tooltip as the available width changes.
+ */
+import { type ElementType, type ReactNode, useLayoutEffect, useRef, useState } from "react";
+import { Tooltip } from "./Tooltip";
+import { observeAppearance } from "./AppearancePreferences";
+import {
+  createWindowResizeSettleScheduler,
+  isWindowResizing,
+} from "./WindowResizeState";
+
+export function TruncatedText({
+  text,
+  className,
+  as = "span",
+  children,
+  nativeTooltip = false,
+  fade = false,
+  measureKey,
+  measureRef,
+  ...rest
+}: {
+  text: string;
+  /** Optional styled rendering of the same text, measured as one text box. */
+  children?: ReactNode;
+  /** Use native overlays when the text is beside an embedded browser. */
+  nativeTooltip?: boolean;
+  /** Fade the trailing edge only while the text is actually truncated. */
+  fade?: boolean;
+  /** Optional render-state key for animated children that change their width. */
+  measureKey?: string;
+  /** Optional access to the measured element for callers coordinating animation. */
+  measureRef?: (element: HTMLElement | null) => void;
+  className?: string;
+  /** Host tag for the text box. Keeps block-level semantics (div/h2/strong). */
+  as?: "span" | "div" | "strong" | "h2";
+} & Record<string, unknown>): JSX.Element {
+  const ref = useRef<HTMLElement | null>(null);
+  const [truncated, setTruncated] = useState(false);
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) {
+      return;
+    }
+    const readTruncation = (): boolean => (
+      element.scrollWidth > element.clientWidth + 1 ||
+      element.scrollHeight > element.clientHeight + 1
+    );
+    const measure = (): void => {
+      if (isWindowResizing()) {
+        settle.schedule();
+        return;
+      }
+      setTruncated(readTruncation());
+    };
+    const settle = createWindowResizeSettleScheduler(() => {
+      setTruncated(readTruncation());
+    });
+    measure();
+    // Font changes can alter text overflow without changing the grid cell's box.
+    const stopObservingAppearance = observeAppearance(measure);
+    document.fonts?.addEventListener("loadingdone", measure);
+    const observer = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(measure);
+    observer?.observe(element);
+    return () => {
+      settle.cancel();
+      observer?.disconnect();
+      stopObservingAppearance();
+      document.fonts?.removeEventListener("loadingdone", measure);
+    };
+  }, [text, measureKey]);
+
+  const Tag = as as ElementType;
+  return (
+    <Tooltip asChild content={text} disabled={!truncated} native={nativeTooltip}>
+      <Tag
+        ref={(element: HTMLElement | null) => {
+          ref.current = element;
+          measureRef?.(element);
+        }}
+        className={className}
+        data-text={text}
+        data-truncated={fade && truncated ? "true" : undefined}
+        {...rest}
+      >
+        {children ?? text}
+      </Tag>
+    </Tooltip>
+  );
+}

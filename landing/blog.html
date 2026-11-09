@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f0eee6" />
+    <title>Blog — Wuu</title>
+    <meta
+      name="description"
+      content="Notes on building and working with Wuu."
+    />
+    <link rel="icon" href="assets/brand/wuu.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="mascot-motion.mjs"></script>
+    <script type="module" src="site-nav.mjs"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <div class="site-header-shell">
+      <header class="site-header wrap">
+        <a class="wordmark" href="./" aria-label="Wuu home"
+          ><img
+            src="assets/brand/wuu.svg"
+            width="36"
+            height="36"
+            alt=""
+          />wuu</a
+        >
+        <nav aria-label="Main navigation">
+          <a
+            class="language-switch"
+            href="zh-blog.html"
+            lang="zh-CN"
+            hreflang="zh-CN"
+            aria-label="切换到当前页面的中文版"
+            >中文</a
+          >
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="product"
+          >
+            <summary>Product</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">Wuu</span>
+                  <p>
+                    A workspace for turning your ideas into working code with
+                    AI.
+                  </p>
+                </div>
+                <div class="nav-destinations">
+                  <a class="nav-featured" href="features.html"
+                    >Explore Wuu <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="blog">
+            <summary aria-current="page">Blog</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a class="nav-featured" href="blog.html"
+                    >The Wuu blog <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a href="context-projection.html"
+                    >How much should the first read return?</a
+                  ><a href="note-compaction.html"
+                    >A fresh window, the same work</a
+                  >
+                </div>
+            
+
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="docs">
+            <summary>Docs</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a
+                    class="nav-featured"
+                    href="https://blueberrycongee.github.io/wuu/en/"
+                    >Documentation <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    href="https://blueberrycongee.github.io/wuu/en/getting-started/first-task/"
+                    >Start your first task</a
+                  ><a
+                    href="https://blueberrycongee.github.io/wuu/en/getting-started/model-services/"
+                    >Connect a model</a
+                  ><a href="https://blueberrycongee.github.io/wuu/en/customize/"
+                    >Extend Wuu</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="download"
+          >
+            <summary class="button">Download</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">Desktop app</span>
+                  <p>Wuu for Mac</p>
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    class="nav-featured"
+                    href="https://github.com/blueberrycongee/wuu/releases/latest"
+                    >Download for Mac <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+        </nav>
+      </header>
+      <div class="nav-backdrop" aria-hidden="true"></div>
+    </div>
+    <main id="main" class="wrap">
+      <section class="introduction">
+        <h1>Blog</h1>
+        <p>Notes on building and working with Wuu.</p>
+      </section>
+      <section class="editorial">
+        <div class="blog-index">
+          <a class="blog-entry" href="context-projection.html">
+            <h2>How much should the first read return?</h2>
+            <p>
+              How Wuu moved from limiting tool output to reading more only
+              when needed.
+            </p>
+          </a>
+          <a class="blog-entry" href="note-compaction.html">
+            <h2>A fresh window, the same work</h2>
+            <p>
+              Inside Wuu's Note Compaction: preparing a continuation before
+              context runs out, and keeping the original history within
+              reach.
+            </p>
+          </a>
+        </div>
+      </section>
+
+
+    </main>
+    <footer class="site-footer wrap">
+      <a class="wordmark" href="./"
+        ><img src="assets/brand/wuu.svg" width="32" height="32" alt="" />wuu</a
+      >
+      <nav aria-label="Footer">
+        <a href="features.html">Product</a><a href="blog.html">Blog</a
+        ><a href="https://github.com/blueberrycongee/wuu">GitHub ↗</a>
+      </nav>
+    </footer>
+  </body>
+</html>

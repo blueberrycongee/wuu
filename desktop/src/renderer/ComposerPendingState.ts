@@ -1,0 +1,891 @@
+import { applyPendingComposerUpdate, pendingComposerUpdateFromNotification } from "../shared/pendingComposerMessages";
+import { validPdfSelectionReference } from "./PdfSelection";
+import { useRef, useState, useSyncExternalStore, type MutableRefObject } from "react";
+import type {
+  MessageContentPart,
+  ServerEvent,
+  Thread,
+  ThreadResumeResult,
+} from "../shared/protocol";
+import {
+  activeThreadIDForState,
+  activeTurnIDForThread,
+  composerDraftHasContent,
+  resolveThreadRuntimeContext,
+  threadForTab,
+  threadFromRecord,
+  type AppState,
+  type ComposerDraftState,
+} from "./AppState";
+import {
+  composerContextFromMessage,
+  inputFilesFromComposer,
+  inputImagesFromComposer,
+  type QueuedComposerMessage,
+} from "./ComposerMessages";
+import {
+  appendPendingComposerMessage,
+  applyAuthoritativeComposerSnapshot,
+  emptyThreadPendingComposerMessages,
+  findPendingComposerMessage,
+  materializedComposerMessageIDs,
+  pendingComposerMessagesForThread,
+  reconcilePendingComposerMessagesForThread,
+  removePendingComposerMessagesByID,
+  threadPendingComposerMessagesIsEmpty,
+  type LocatedPendingComposerMessage,
+  type PendingComposerMessageRemovalScope,
+  type PendingComposerMessagesByThread,
+  type ThreadPendingComposerMessages,
+} from "./ComposerPendingMessages";
+import { isRecord, recordValue, stringValue } from "./ToolActivity";
+import { translateCurrent } from "./i18n";
+import { rememberCollapsedPromptParts } from "./ComposerCollapsedPrompt";
+import { showActionErrorToast, showErrorToast } from "./Toast";
+
+function heldComposerMessage(
+  value: unknown,
+  position: number,
+  held = true,
+): QueuedComposerMessage | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+  const id = stringValue(value, "id");
+  const origin = stringValue(value, "origin");
+  if (!id || (origin !== "queue" && origin !== "steer")) {
+    return undefined;
+  }
+  const images = (Array.isArray(value.images) ? value.images : []).flatMap(
+    (candidate, index) => {
+      if (!isRecord(candidate)) {
+        return [];
+      }
+      const mediaType = stringValue(candidate, "media_type");
+      const data = stringValue(candidate, "data");
+      return mediaType && data
+        ? [{ id: `${id}-held-image-${index}`, media_type: mediaType, data }]
+        : [];
+    },
+  );
+  const files = (Array.isArray(value.files) ? value.files : []).flatMap(
+    (candidate, index) => {
+      if (!isRecord(candidate)) {
+        return [];
+      }
+      const mediaType = stringValue(candidate, "media_type");
+      const data = stringValue(candidate, "data");
+      if (!mediaType || !data) {
+        return [];
+      }
+      const filename = stringValue(candidate, "filename");
+      return [
+        {
+          id: `${id}-held-file-${index}`,
+          media_type: mediaType,
+          data,
+          ...(filename ? { filename } : {}),
+        },
+      ];
+    },
+  );
+  const contentParts = (Array.isArray(value.content_parts) ? value.content_parts : []).flatMap<MessageContentPart>(
+    (candidate): MessageContentPart[] => {
+      if (!isRecord(candidate)) return [];
+      const type = stringValue(candidate, "type");
+      // Content is canonical model input: trimming breaks the folded prefix
+      // and can join a selection block directly to the following instruction.
+      const text = typeof candidate.text === "string" ? candidate.text : "";
+      if (type === "file_selection") {
+        const source = candidate.source;
+        const intent = candidate.intent;
+        if (
+          !text || typeof candidate.id !== "string" || !candidate.id.trim() ||
+          (intent !== "quote" && intent !== "comment" && intent !== "edit") ||
+          (candidate.comment !== undefined && typeof candidate.comment !== "string") ||
+          !isRecord(source) ||
+          typeof source.workspace !== "string" || !source.workspace.trim() ||
+          typeof source.path !== "string" || !source.path.trim() ||
+          typeof source.revision !== "string" || !source.revision.trim() ||
+          typeof source.quote !== "string" || !source.quote ||
+          (source.pdf !== undefined ? !validPdfSelectionReference(source.pdf)
+            || ![source.start_line, source.start_column, source.end_line, source.end_column].every(value => value === 0)
+            || (source.pdf.artifact_sha256 !== undefined && source.revision !== `sha256:${source.pdf.artifact_sha256}`)
+            : ![source.start_line, source.start_column, source.end_line, source.end_column]
+              .every((value) => typeof value === "number" && Number.isSafeInteger(value) && value > 0))
+        ) return [];
+        const startLine = source.start_line as number;
+        const startColumn = source.start_column as number;
+        const endLine = source.end_line as number;
+        const endColumn = source.end_column as number;
+        if (endLine < startLine || (endLine === startLine && endColumn < startColumn)) return [];
+        return [{
+          type,
+          id: candidate.id,
+          text,
+          intent,
+          ...(candidate.comment !== undefined ? { comment: candidate.comment } : {}),
+          source: {
+            workspace: source.workspace,
+            path: source.path,
+            revision: source.revision,
+            quote: source.quote,
+            start_line: startLine,
+            start_column: startColumn,
+            end_line: endLine,
+            end_column: endColumn,
+            ...(validPdfSelectionReference(source.pdf) ? { pdf: { ...source.pdf } } : {}),
+          },
+        }];
+      }
+      if (type === "response_selection" && isRecord(candidate.selection)) {
+        const selection = candidate.selection;
+        const source = selection.source;
+        if (typeof selection.id === "string" && typeof selection.text === "string" &&
+          (selection.comment === undefined || typeof selection.comment === "string") &&
+          isRecord(source) && typeof source.thread_id === "string" &&
+          typeof source.turn_id === "string" && typeof source.item_id === "string" &&
+          typeof source.start_offset === "number" && Number.isInteger(source.start_offset) && source.start_offset >= 0 &&
+          typeof source.end_offset === "number" && Number.isInteger(source.end_offset) && source.end_offset >= source.start_offset) {
+          return [{ type, text, selection: {
+            id: selection.id, text: selection.text,
+            ...(typeof selection.comment === "string" ? { comment: selection.comment } : {}),
+            source: {
+              thread_id: source.thread_id, turn_id: source.turn_id, item_id: source.item_id,
+              start_offset: source.start_offset, end_offset: source.end_offset,
+              ...(typeof source.range_text === "string" ? { range_text: source.range_text } : {}),
+            },
+          } }];
+        }
+      }
+      const title = stringValue(candidate, "title");
+      return type === "pasted_text"
+        ? [{ type: "pasted_text" as const, text, ...(title ? { title } : {}) }]
+        : [{ type: "text" as const, text }];
+    },
+  );
+  const activeDocumentPath = isRecord(value.active_document)
+    ? stringValue(value.active_document, "path")
+    : "";
+  return {
+    id,
+    text: typeof value.prompt === "string" ? value.prompt : "",
+    images,
+    files,
+    contentParts,
+    activeDocument: activeDocumentPath ? { path: activeDocumentPath } : undefined,
+    held,
+    ...(value.delivery_unconfirmed === true ? { deliveryUnconfirmed: true } : {}),
+    heldPosition: held ? position : undefined,
+    origin,
+  };
+}
+
+function heldComposerMessagesFromParams(
+  params: Record<string, unknown>,
+  method: string,
+): { threadID: string; messages: QueuedComposerMessage[] } | undefined {
+  const thread = recordValue(params, "thread");
+  const threadID =
+    stringValue(params, "thread_id") ||
+    (isRecord(thread) ? stringValue(thread, "id") : "");
+  if (!threadID) {
+    return undefined;
+  }
+  const heldRaw = params[
+    method === "thread/resumed" ? "held_user_messages" : "messages"
+  ];
+  const pendingRaw =
+    method === "thread/resumed" ? params.pending_user_messages : undefined;
+  if (method !== "thread/resumed" && !Array.isArray(heldRaw)) {
+    return undefined;
+  }
+  const heldMessages = (Array.isArray(heldRaw) ? heldRaw : []).flatMap((value, position) => {
+    const message = heldComposerMessage(value, position);
+    return message ? [message] : [];
+  });
+  const pendingMessages = (Array.isArray(pendingRaw) ? pendingRaw : []).flatMap(
+    (value, position) => {
+      const message = heldComposerMessage(value, position, false);
+      return message ? [message] : [];
+    },
+  );
+  return { threadID, messages: [...heldMessages, ...pendingMessages] };
+}
+
+/**
+ * Parse the authoritative pending and held snapshots carried by thread/resume.
+ * The desktop renderer restores pending composer messages from this
+ * on boot: the `thread/resumed` notification that the server emits alongside
+ * the response is filtered out while the app is still loading (the active
+ * context is not set yet), so a reload must not rely on it alone.
+ */
+export function heldComposerMessagesFromResumeResult(
+  result: ThreadResumeResult | undefined,
+): QueuedComposerMessage[] {
+  const heldRaw = result?.held_user_messages;
+  const pendingRaw = result?.pending_user_messages;
+  const threadID = result?.thread?.id ?? "";
+  const heldMessages = (Array.isArray(heldRaw) ? heldRaw : []).flatMap((value, position) => {
+    const message = heldComposerMessage({ ...value, thread_id: threadID }, position);
+    return message ? [message] : [];
+  });
+  const pendingMessages = (Array.isArray(pendingRaw) ? pendingRaw : []).flatMap(
+    (value, position) => {
+      const message = heldComposerMessage(
+        { ...value, thread_id: threadID },
+        position,
+        false,
+      );
+      return message ? [message] : [];
+    },
+  );
+  return [...heldMessages, ...pendingMessages];
+}
+
+export type ComposerPendingStateController = {
+  pendingComposerMessagesByThread: PendingComposerMessagesByThread;
+  pendingComposerMessagesByThreadRef: MutableRefObject<PendingComposerMessagesByThread>;
+  setPendingComposerMessagesByThreadNow: (
+    messagesByThread: PendingComposerMessagesByThread,
+  ) => void;
+  pendingComposerMessagesForThread: (
+    threadID: string | undefined,
+  ) => ThreadPendingComposerMessages;
+  updateThreadPendingComposerMessages: (
+    threadID: string,
+    update: (
+      previous: ThreadPendingComposerMessages,
+    ) => ThreadPendingComposerMessages,
+  ) => void;
+  clearThreadPendingComposerMessages: (threadID: string) => void;
+  removePendingComposerMessageByID: (
+    threadID: string | undefined,
+    id: string,
+    scope?: PendingComposerMessageRemovalScope,
+  ) => void;
+  syncPendingComposerMessagesFromServerEvent: (event: ServerEvent) => void;
+  reconcilePendingComposerMessagesForState: (state: AppState) => void;
+  seedHeldComposerMessages: (
+    threadID: string,
+    messages: QueuedComposerMessage[],
+  ) => void;
+  enqueueComposerMessage: (
+    threadID: string,
+    message: QueuedComposerMessage,
+  ) => void;
+  removeQueuedMessage: (id: string) => Promise<boolean>;
+  removeGuideMessage: (id: string) => Promise<boolean>;
+  editQueuedMessage: (id: string) => Promise<void>;
+  editGuideMessage: (id: string) => Promise<void>;
+  guideQueuedMessage: (id: string) => Promise<void>;
+  threadHasPendingComposerMessages: (threadID: string) => boolean;
+};
+
+type ComposerPendingStateOptions = {
+  getAppState: () => AppState;
+  getComposerDraftForThread: (threadID: string) => ComposerDraftState;
+  restoreComposerDraftForThread: (
+    threadID: string,
+    draft: ComposerDraftState,
+  ) => void;
+  preserveFailedComposerMessage: (threadID: string, message: QueuedComposerMessage) => void;
+  setStatus: (status: string) => void;
+  sendComposerMessageToThread: (
+    message: QueuedComposerMessage,
+    targetThread: Thread,
+  ) => Promise<boolean>;
+};
+
+export function useComposerPendingState(options: ComposerPendingStateOptions): ComposerPendingStateController {
+  const latest = useRef(options);
+  latest.current = options;
+  const [owner] = useState(() => createComposerPendingState({
+    getAppState: () => latest.current.getAppState(),
+    getComposerDraftForThread: id => latest.current.getComposerDraftForThread(id),
+    restoreComposerDraftForThread: (id, draft) => latest.current.restoreComposerDraftForThread(id, draft),
+    preserveFailedComposerMessage: (id, message) => latest.current.preserveFailedComposerMessage(id, message),
+    setStatus: status => latest.current.setStatus(status),
+  }));
+  useSyncExternalStore(owner.subscribe, () => owner.pendingComposerMessagesByThread);
+  return owner;
+}
+
+/** Host-owned queue state does not depend on a mounted composer. */
+export function createComposerPendingState({
+  getAppState,
+  getComposerDraftForThread,
+  restoreComposerDraftForThread,
+  preserveFailedComposerMessage,
+  setStatus,
+}: Omit<ComposerPendingStateOptions, "sendComposerMessageToThread">): ComposerPendingStateController & { subscribe: (listener: () => void) => () => void } {
+  const listeners = new Set<() => void>();
+  const pendingComposerMessagesByThreadRef = { current: {} as PendingComposerMessagesByThread };
+  // Accepted queue input held by this client when a Core process exited. The
+  // new Core has no memory of it, so its resume snapshot must not erase the
+  // only remaining copy.
+  const heldAcrossCoreExitRef = { current: {} as Record<string, QueuedComposerMessage[]> };
+
+  function setPendingComposerMessagesByThreadNow(
+    messagesByThread: PendingComposerMessagesByThread,
+  ): void {
+    pendingComposerMessagesByThreadRef.current = messagesByThread;
+    for (const listener of listeners) listener();
+  }
+
+  function updateThreadPendingComposerMessages(
+    threadID: string,
+    update: (
+      previous: ThreadPendingComposerMessages,
+    ) => ThreadPendingComposerMessages,
+  ): void {
+    const previousByThread = pendingComposerMessagesByThreadRef.current;
+    const previous =
+      previousByThread[threadID] ?? emptyThreadPendingComposerMessages();
+    const nextForThread = update(previous);
+    const nextByThread = { ...previousByThread };
+    if (threadPendingComposerMessagesIsEmpty(nextForThread)) {
+      delete nextByThread[threadID];
+    } else {
+      nextByThread[threadID] = nextForThread;
+    }
+    setPendingComposerMessagesByThreadNow(nextByThread);
+  }
+
+  function clearThreadPendingComposerMessages(threadID: string): void {
+    const previousByThread = pendingComposerMessagesByThreadRef.current;
+    if (!previousByThread[threadID]) {
+      return;
+    }
+    const nextByThread = { ...previousByThread };
+    delete nextByThread[threadID];
+    setPendingComposerMessagesByThreadNow(nextByThread);
+  }
+
+  function removePendingComposerMessageByID(
+    threadID: string | undefined,
+    id: string,
+    scope: PendingComposerMessageRemovalScope = "all",
+  ): void {
+    setPendingComposerMessagesByThreadNow(
+      removePendingComposerMessagesByID(
+        pendingComposerMessagesByThreadRef.current,
+        threadID,
+        id,
+        scope,
+      ),
+    );
+  }
+
+  async function reholdQueuedMessages(
+    threadID: string,
+    messages: QueuedComposerMessage[],
+  ): Promise<void> {
+    const state = getAppState();
+    const thread = threadForTab(state, threadID);
+    // One at a time: the new Core appends held input in call order.
+    for (const message of messages) {
+      try {
+        await window.wuu.queueTurn(
+          threadID,
+          message.text.trim(),
+          inputImagesFromComposer(message.images),
+          message.id,
+          inputFilesFromComposer(message.files),
+          thread?.permission_mode,
+          message.activeDocument,
+          message.contentParts,
+          thread ? resolveThreadRuntimeContext(thread, state.projects) : undefined,
+          true,
+        );
+        updateThreadPendingComposerMessages(threadID, (previous) => ({
+          ...previous,
+          queued: previous.queued.map((candidate) =>
+            candidate.id === message.id
+              ? { ...candidate, held: true, operationState: undefined }
+              : candidate,
+          ),
+        }));
+      } catch (error) {
+        removePendingComposerMessageByID(threadID, message.id, "queue");
+        preserveFailedComposerMessage(threadID, message);
+        showErrorToast(error, translateCurrent("app.queueFailed"));
+      }
+    }
+  }
+
+  function syncPendingComposerMessagesFromServerEvent(
+    event: ServerEvent,
+  ): void {
+    if (event.kind === "server-exit") {
+      const next = { ...heldAcrossCoreExitRef.current };
+      for (const [threadID, pending] of Object.entries(
+        pendingComposerMessagesByThreadRef.current,
+      )) {
+        const accepted = pending.queued.filter(
+          (message) =>
+            !message.held &&
+            (!message.operationState || message.operationState === "sending"),
+        );
+        if (accepted.length > 0) next[threadID] = accepted;
+      }
+      heldAcrossCoreExitRef.current = next;
+      return;
+    }
+    if (event.kind !== "notification") {
+      return;
+    }
+    const method = event.message.method;
+    if (
+      method !== "turn/held" &&
+      method !== "thread/resumed" &&
+      method !== "turn/queued" &&
+      method !== "turn/steered" &&
+      method !== "turn/unsteered" &&
+      method !== "turn/started" &&
+      method !== "turn/dequeued" &&
+      method !== "item/completed"
+    ) {
+      return;
+    }
+    const params = isRecord(event.message.params)
+      ? event.message.params
+      : undefined;
+    if (!params) {
+      return;
+    }
+    if (method !== "thread/resumed") {
+      const update = pendingComposerUpdateFromNotification(event.message, heldComposerMessage);
+      if (!update) return;
+      if (update.kind === "remove") {
+        removePendingComposerMessageByID(update.threadID, update.id, update.scope);
+      } else {
+        updateThreadPendingComposerMessages(update.threadID, previous => applyPendingComposerUpdate(previous, update));
+      }
+      if (method === "turn/held") {
+        const reason = stringValue(params, "error");
+        if (reason) showErrorToast(reason);
+      }
+      return;
+    }
+    const snapshot = heldComposerMessagesFromParams(
+      params,
+      method,
+    );
+    if (!snapshot) {
+      return;
+    }
+    const survivors = heldAcrossCoreExitRef.current[snapshot.threadID];
+    let lost: QueuedComposerMessage[] = [];
+    if (survivors) {
+      heldAcrossCoreExitRef.current = Object.fromEntries(
+        Object.entries(heldAcrossCoreExitRef.current).filter(([threadID]) => threadID !== snapshot.threadID),
+      );
+      const known = new Set([
+        ...snapshot.messages.map((message) => message.id),
+        ...materializedComposerMessageIDs(threadFromRecord(recordValue(params, "thread"))),
+      ]);
+      const current = pendingComposerMessagesByThreadRef.current[snapshot.threadID]?.queued ?? [];
+      lost = survivors.filter(
+        (message) => !known.has(message.id) && current.some((candidate) => candidate.id === message.id),
+      );
+    }
+    updateThreadPendingComposerMessages(snapshot.threadID, (previous) => {
+      const lostIDs = new Set(lost.map((message) => message.id));
+      // Keep lost input visible while it is handed to the new Core.
+      return applyAuthoritativeComposerSnapshot(
+        {
+          ...previous,
+          queued: previous.queued.map((message) =>
+            lostIDs.has(message.id) ? { ...message, operationState: "sending" } : message,
+          ),
+        },
+        snapshot.messages,
+      );
+    });
+    if (lost.length > 0) {
+      void reholdQueuedMessages(snapshot.threadID, lost);
+    }
+  }
+
+  function reconcilePendingComposerMessagesForState(state: AppState): void {
+    const byThread = pendingComposerMessagesByThreadRef.current;
+    let next = byThread;
+    for (const threadID of Object.keys(byThread)) {
+      const thread = threadForTab(state, threadID);
+      if (thread) {
+        next = reconcilePendingComposerMessagesForThread(next, thread);
+      }
+    }
+    if (next !== byThread) {
+      setPendingComposerMessagesByThreadNow(next);
+    }
+  }
+
+  function enqueueComposerMessage(
+    threadID: string,
+    message: QueuedComposerMessage,
+  ): void {
+    updateThreadPendingComposerMessages(threadID, (previous) =>
+      appendPendingComposerMessage(previous, "queue", message),
+    );
+  }
+
+  function seedHeldComposerMessages(
+    threadID: string,
+    messages: QueuedComposerMessage[],
+  ): void {
+    updateThreadPendingComposerMessages(threadID, (previous) =>
+      applyAuthoritativeComposerSnapshot(previous, messages),
+    );
+  }
+
+  async function removeQueuedMessage(id: string): Promise<boolean> {
+    const target = findPendingComposerMessage(
+      pendingComposerMessagesByThreadRef.current,
+      id,
+      "queue",
+      activeThreadIDForState(getAppState()),
+    );
+    if (target?.message.deliveryUnconfirmed) {
+      showActionErrorToast(translateCurrent("composer.deliveryUnconfirmedDetails"));
+      return false;
+    }
+    if (!target) {
+      return false;
+    }
+    if (target.message.operationState === "preparing") {
+      updateThreadPendingComposerMessages(target.threadID, (previous) => ({
+        ...previous,
+        queued: previous.queued.filter((message) => message.id !== id),
+      }));
+      return true;
+    }
+    const restoreTargetIfAbsent = (): void => {
+      updateThreadPendingComposerMessages(target.threadID, (previous) => {
+        if (
+          previous.queued.some((message) => message.id === id) ||
+          previous.guides.some((message) => message.id === id)
+        ) {
+          return previous;
+        }
+        const insertAt = Math.min(target.index, previous.queued.length);
+        return {
+          ...previous,
+          queued: [
+            ...previous.queued.slice(0, insertAt),
+            target.message,
+            ...previous.queued.slice(insertAt),
+          ],
+        };
+      });
+    };
+    updateThreadPendingComposerMessages(target.threadID, (previous) => ({
+      ...previous,
+      queued: previous.queued.filter((message) => message.id !== id),
+    }));
+    try {
+      const result = await window.wuu.dequeueTurn(target.threadID, id);
+      if (!result.ok) {
+        const targetThread = threadForTab(getAppState(), target.threadID);
+        const materialized = materializedComposerMessageIDs(targetThread).has(id);
+        if (!materialized) {
+          restoreTargetIfAbsent();
+        }
+        showActionErrorToast(
+          translateCurrent(
+            materialized
+              ? "composer.queueAlreadyHandled"
+              : "composer.queueStillPending",
+          ),
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      restoreTargetIfAbsent();
+      showActionErrorToast(error, translateCurrent("composer.cancelQueueFailed"));
+      return false;
+    }
+  }
+
+  async function removeGuideMessage(id: string): Promise<boolean> {
+    const target = findPendingComposerMessage(
+      pendingComposerMessagesByThreadRef.current,
+      id,
+      "guide",
+      activeThreadIDForState(getAppState()),
+    );
+    if (target?.message.deliveryUnconfirmed) {
+      showActionErrorToast(translateCurrent("composer.deliveryUnconfirmedDetails"));
+      return false;
+    }
+    if (!target) {
+      return false;
+    }
+    if (target.message.operationState === "preparing") {
+      updateThreadPendingComposerMessages(target.threadID, (previous) => ({
+        ...previous,
+        guides: previous.guides.filter((message) => message.id !== id),
+      }));
+      return true;
+    }
+    updateThreadPendingComposerMessages(target.threadID, (previous) => ({
+      ...previous,
+      guides: previous.guides.filter((message) => message.id !== id),
+    }));
+    try {
+      const result = await window.wuu.unsteerTurn(target.threadID, id);
+      if (!result.ok) {
+        showActionErrorToast(translateCurrent("composer.guideAlreadyHandled"));
+        return false;
+      }
+      return true;
+    } catch (error) {
+      updateThreadPendingComposerMessages(target.threadID, (previous) => {
+        if (previous.guides.some((message) => message.id === id)) {
+          return previous;
+        }
+        const insertAt = Math.min(target.index, previous.guides.length);
+        return {
+          ...previous,
+          guides: [
+            ...previous.guides.slice(0, insertAt),
+            target.message,
+            ...previous.guides.slice(insertAt),
+          ],
+        };
+      });
+      showActionErrorToast(error, translateCurrent("composer.cancelGuideFailed"));
+      return false;
+    }
+  }
+
+  function restorePendingComposerMessage(
+    threadID: string,
+    message: QueuedComposerMessage,
+  ): void {
+    // Cancellation yields to the user: a new draft must not be replaced by
+    // the now-removed pending message when the server acknowledgement arrives.
+    if (composerDraftHasContent(getComposerDraftForThread(threadID))) {
+      preserveFailedComposerMessage(threadID, message);
+      return;
+    }
+    const context = composerContextFromMessage(message.text, message.contentParts);
+    rememberCollapsedPromptParts(threadID, context.prompt, context.contentParts);
+    restoreComposerDraftForThread(threadID, {
+      prompt: context.prompt,
+      ...(context.selections.length ? { selections: context.selections } : {}),
+      images: message.images.map((image) => ({ ...image })),
+      files: message.files.map((file) => ({ ...file })),
+    });
+  }
+
+  function canRestorePendingComposerMessage(threadID: string): boolean {
+    if (!composerDraftHasContent(getComposerDraftForThread(threadID))) {
+      return true;
+    }
+    showActionErrorToast(translateCurrent("composer.clearBeforeEditingQueue"));
+    return false;
+  }
+
+  async function editQueuedMessage(id: string): Promise<void> {
+    const target = findPendingComposerMessage(
+      pendingComposerMessagesByThreadRef.current,
+      id,
+      "queue",
+      activeThreadIDForState(getAppState()),
+    );
+    if (!target || !canRestorePendingComposerMessage(target.threadID)) {
+      return;
+    }
+    if (!(await removeQueuedMessage(id))) {
+      return;
+    }
+    restorePendingComposerMessage(target.threadID, target.message);
+    setStatus("ready");
+  }
+
+  async function editGuideMessage(id: string): Promise<void> {
+    const target = findPendingComposerMessage(
+      pendingComposerMessagesByThreadRef.current,
+      id,
+      "guide",
+      activeThreadIDForState(getAppState()),
+    );
+    if (!target || !canRestorePendingComposerMessage(target.threadID)) {
+      return;
+    }
+    if (await removeGuideMessage(id)) {
+      restorePendingComposerMessage(target.threadID, target.message);
+    }
+  }
+
+  async function guideQueuedMessage(id: string): Promise<void> {
+    const queuedTarget = findPendingComposerMessage(
+      pendingComposerMessagesByThreadRef.current,
+      id,
+      "queue",
+      activeThreadIDForState(getAppState()),
+    );
+    const guideTarget = findPendingComposerMessage(
+      pendingComposerMessagesByThreadRef.current,
+      id,
+      "guide",
+      activeThreadIDForState(getAppState()),
+    );
+    if (guideTarget && !guideTarget.message.held) {
+      await requeueGuideMessage(guideTarget);
+      return;
+    }
+    const target = queuedTarget ?? guideTarget;
+    if (target?.message.deliveryUnconfirmed) {
+      showActionErrorToast(translateCurrent("composer.deliveryUnconfirmedDetails"));
+      return;
+    }
+    if (!target) {
+      return;
+    }
+    if (target.message.operationState) {
+      return;
+    }
+    const currentState = getAppState();
+    const targetThread = threadForTab(currentState, target.threadID);
+    if (!targetThread) {
+      return;
+    }
+    const turnID = activeTurnIDForThread(targetThread) ?? "";
+    if (!turnID && !target.message.held) {
+      showActionErrorToast(translateCurrent("composer.noActiveTurnToGuide"));
+      return;
+    }
+    updateThreadPendingComposerMessages(target.threadID, (previous) => ({
+      ...previous,
+      queued: previous.queued.map((message) =>
+        message.id === id ? { ...message, operationState: "switching" } : message,
+      ),
+    }));
+    try {
+      const files = inputFilesFromComposer(target.message.files);
+      await window.wuu.steerTurn(
+        targetThread.id,
+        turnID,
+        target.message.text.trim(),
+        inputImagesFromComposer(target.message.images),
+        target.message.id,
+        files,
+        target.message.activeDocument,
+        ...(target.message.contentParts === undefined
+          ? []
+          : ([target.message.contentParts] as const)),
+      );
+      updateThreadPendingComposerMessages(target.threadID, (previous) => {
+        const withoutQueue = {
+          ...previous,
+          queued: previous.queued.filter((message) => message.id !== id),
+        };
+        return target.message.held
+          ? {
+              ...withoutQueue,
+              guides: previous.guides.filter((message) => message.id !== id),
+            }
+          : appendPendingComposerMessage(withoutQueue, "guide", {
+              ...target.message,
+              origin: "steer",
+              operationState: undefined,
+            });
+      });
+    } catch (error) {
+      updateThreadPendingComposerMessages(target.threadID, (previous) => ({
+        ...previous,
+        queued: previous.queued.map((message) =>
+          message.id === id ? { ...message, operationState: undefined } : message,
+        ),
+      }));
+      showActionErrorToast(error, translateCurrent("composer.guideFailed"));
+    }
+  }
+
+  async function requeueGuideMessage(
+    target: LocatedPendingComposerMessage,
+  ): Promise<void> {
+    if (target.message.deliveryUnconfirmed) {
+      showActionErrorToast(translateCurrent("composer.deliveryUnconfirmedDetails"));
+      return;
+    }
+    const { id } = target.message;
+    if (target.message.operationState) {
+      return;
+    }
+    updateThreadPendingComposerMessages(target.threadID, (previous) => ({
+      ...previous,
+      guides: previous.guides.map((message) =>
+        message.id === id ? { ...message, operationState: "switching" } : message,
+      ),
+    }));
+    try {
+      const result = await window.wuu.requeueTurn(target.threadID, id);
+      if (!result.ok) {
+        updateThreadPendingComposerMessages(target.threadID, (previous) => ({
+          ...previous,
+          guides: previous.guides.filter((message) => message.id !== id),
+        }));
+        showActionErrorToast(translateCurrent("composer.guideAlreadyHandled"));
+        return;
+      }
+      updateThreadPendingComposerMessages(target.threadID, (previous) => {
+        const withoutGuide = {
+          ...previous,
+          guides: previous.guides.filter((message) => message.id !== id),
+        };
+        return appendPendingComposerMessage(withoutGuide, "queue", {
+          ...target.message,
+          origin: "queue",
+          operationState: undefined,
+        });
+      });
+    } catch (error) {
+      updateThreadPendingComposerMessages(target.threadID, (previous) => ({
+        ...previous,
+        guides: previous.guides.map((message) =>
+          message.id === id ? { ...message, operationState: undefined } : message,
+        ),
+      }));
+      showActionErrorToast(error, translateCurrent("composer.requeueGuideFailed"));
+    }
+  }
+
+  function threadHasPendingComposerMessages(threadID: string): boolean {
+    return !threadPendingComposerMessagesIsEmpty(
+      pendingComposerMessagesForThread(
+        pendingComposerMessagesByThreadRef.current,
+        threadID,
+      ),
+    );
+  }
+
+  return {
+    subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    get pendingComposerMessagesByThread() { return pendingComposerMessagesByThreadRef.current; },
+    pendingComposerMessagesByThreadRef,
+    setPendingComposerMessagesByThreadNow,
+    pendingComposerMessagesForThread: (threadID) =>
+      pendingComposerMessagesForThread(
+        pendingComposerMessagesByThreadRef.current,
+        threadID,
+      ),
+    updateThreadPendingComposerMessages,
+    clearThreadPendingComposerMessages,
+    removePendingComposerMessageByID,
+    syncPendingComposerMessagesFromServerEvent,
+    reconcilePendingComposerMessagesForState,
+    seedHeldComposerMessages,
+    enqueueComposerMessage,
+    removeQueuedMessage,
+    removeGuideMessage,
+    editQueuedMessage,
+    editGuideMessage,
+    guideQueuedMessage,
+    threadHasPendingComposerMessages,
+  };
+}

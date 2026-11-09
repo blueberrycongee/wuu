@@ -1,0 +1,713 @@
+# App-server protocol
+
+App-server connects clients to Wuu's Go runtime. It owns session admission,
+execution, persistence, and notifications; a client supplies interaction and
+presentation. Start with the [integration guide](../automation/app-server.md) for
+a minimal exchange, or use [`wuu exec`](../automation/exec.md) for one-shot tasks.
+
+## Transport and initialization
+
+`wuu app-server` reads and writes newline-delimited JSON over stdio. Requests use
+`id`, `method`, and optional `params`; responses echo the ID. Errors have string
+codes rather than JSON-RPC numeric codes. There is no required `jsonrpc` field.
+
+```json
+{"id":"1","method":"initialize","params":{"protocol_version":"wuu-app-server/v0.1","client":{"name":"example-client","version":"1"}}}
+```
+
+Response envelopes and a notification look like this; their payloads are abbreviated:
+
+```json
+{"id":"1","result":{"protocol_version":"wuu-app-server/v0.1","status":"ready"}}
+{"id":"2","error":{"code":"invalid_params","message":"thread_id is required"}}
+{"method":"turn/completed","params":{"thread_id":"thread-id","turn":{"id":"turn-id"}}}
+```
+
+The current protocol version is `wuu-app-server/v0.1`. If a client supplies
+`protocol_version`, it must match exactly. Initialization returns `core` build
+identity, `runtime_host`, workspace and model summaries, permissions, extension
+inventory, feature flags, and effective `max_parallel`. `status: needs_setup`
+with `issues` means the connection works but runtime configuration needs attention.
+
+Clients may set `capabilities.deferred_notification_content: true` during
+initialization to receive large content as `thread/content/read` or
+`thread/attachment/read` references in thread snapshots and terminal turn
+notifications. Item identities, order, membership, and status remain complete;
+the capability does not change stored history or RPC response views. Clients
+must support these references before opting in. `wuu exec` enables this mode
+to keep large tool results out of its bounded completion-event queue.
+
+Correlate responses by ID and keep reading notifications while requests are
+outstanding. Do not assume every line is the response to the most recent request.
+The stdio scanner has a 64 MiB line buffer limit; attachment/provider limits are
+separate and may be lower. Keep stdout free of banners and debug logging.
+
+When an external configuration edit cannot be loaded, `config/error` carries a
+`message` describing the failure. The previous provider inventory remains
+available for display; it is not a fallback for configuration mutations or
+execution validation. An unchanged rejected document does not emit repeated
+errors. After repair, `config/changed` publishes the valid selection and inventory,
+including when the file was restored to its previous contents. Clients should
+clear the configuration error on that notification. Unknown configuration fields
+remain invalid; this is recovery behavior, not downgrade compatibility.
+
+## Session methods
+
+| Method | Input | Result |
+| --- | --- | --- |
+| `thread/start` | Optional `cwd`, `workspace_id`, `engine`, `provider`, `model`, `effort`, `permission_mode`, `approve_for_me`, `ephemeral`, `workspace`, `base_revision` | `{ "thread": ... }` |
+| `thread/resume` | Optional `session_id`, `response_only`, `history_page`, `conversation_history` | Thread snapshot and available held/pending user messages |
+| `thread/edit-message` | `thread_id`, `turn_id`, `item_id` | Rewound thread and draft restored from the selected user message |
+| `thread/fork` | `thread_id`; optional `turn_id`, `item_id`, `target`, `mode`, `history_page` | New thread and optional worktree information |
+| `thread/list`, `thread/listAll`, `thread/listArchived`, `thread/search` | Method-specific filters | Session metadata |
+| `thread/rename`, `thread/pin`, `thread/archive`, `thread/delete` | Target and method-specific changes | Updated state or operation result |
+
+`thread/listArchived` lists archived conversations across the configured session
+store, regardless of the caller's workspace. `thread/delete` takes `thread_id`
+and optional `only_if_archived: true`. Deletion is permanent and rejects running
+threads, active agents, and running side conversations. The archive-only option
+checks the persisted archive state in the deletion transaction: a conversation
+restored since the list was read is rejected without losing its history or side
+conversation. Omitting the option retains ordinary idle-conversation deletion.
+Clients deleting an archive snapshot should send one guarded request per ID and
+report individual failures; the operation is not an atomic batch. Successful
+requests return `{ "thread_id": "..." }`.
+
+`thread/search` accepts `query` and `limit` (at most 100). Its `results` contain
+thread metadata, a `snippet`, and an optional `message_seq` identifying the
+matching persisted message. Multiple rendered items may share that sequence;
+clients should use the query to distinguish them. Title and empty-query results
+omit the address. Older hosts may omit it for all results. A nonempty query
+includes archived conversations without changing their archive state; an empty
+query returns only unarchived suggestions. Plugin-private sessions and hidden
+messages are excluded.
+
+`thread/start` persists by default. `ephemeral: true` creates an in-memory session
+that cannot be restored after the server exits. Engine binding is fixed at
+creation. New external-engine sessions default to `unconfined` when permission
+mode is omitted; explicitly choose the intended mode. The built-in engine's
+`approve_for_me` review applies only in Standard mode.
+
+`workspace` is `shared` (the default) or `worktree`. A `worktree` session runs in
+a new detached Git worktree of the project, created from `base_revision` (a
+branch, tag, or commit; the project's `HEAD` when omitted) without checking
+anything out in the project. The thread's `cwd` is the worktree, and `worktree`
+reports its path, base commit, and base repository. `base_revision` requires
+`worktree`; ephemeral and handoff sessions cannot use it. A request that cannot
+be honored, such as outside a Git repository or with an unknown revision,
+fails without creating a session or a worktree.
+
+An omitted `session_id` in `thread/resume` selects the most recent visible session
+for the workspace. `response_only` avoids a duplicate resume broadcast to the
+requester. `history_page` requests bounded recent history rather than the full
+snapshot. Forks retain the source conversation and copy its selection.
+`thread/fork` also accepts `history_page`; both its result and `thread/started`
+notification then carry bounded recent history and a cursor for `thread/history/read`.
+The `mobile_activity` remote profile bounds unpaged thread snapshots as well.
+
+`conversation_history: true` on `thread/resume` opts into bounded conversation
+pages with settled process regions replaced by `process_summary` items and
+`items_view: "conversation"`. Their
+`activity` carries `last_item_id`, `item_count`, `tool_count`, and `failed_count`;
+the summary ID is its first source item ID. `has_final_answer` on a turn preserves
+folding context when paging splits the turn. Active turns retain their live items.
+Published attachments remain at their source addresses. Pass the opaque
+`history_cursor` back to `thread/history/read`; clients must not parse it.
+Conversation pages currently allow up to 100 turns and 1 MiB of serialized item
+data, compared with 20 turns and 256 KiB for ordinary item history. Only turns
+visited by the requested page are projected.
+
+`thread/activity/read` takes `thread_id`, `turn_id`, `item_id` (the summary ID),
+`last_item_id`, and an optional `cursor`. It returns `thread_id`, a `turn` with
+up to 100 detail items within a separate 256 KiB budget, and optional `next_cursor`.
+Detail pages run forward and do not affect the conversation cursor. Oversized
+items use the existing content and attachment references. A removed or regrouped
+boundary fails explicitly. Clients without the opt-in retain the original format;
+old hosts ignore the option. See [conversation paging](../automation/app-server.md#page-conversation-history).
+
+For published image snapshots, `thread/attachment/read` accepts `kind: "artifact"`
+with `thread_id`, `turn_id`, `item_id`, content `index`, and the stored `sha256`.
+The host resolves the URI from that message and validates the artifact's workspace,
+thread and immutable bytes. Clients cannot supply a filesystem path. `preview: true`
+returns a bounded JPEG thumbnail; original content uses base64 chunks of at most
+128 KiB with `offset`, `total` and `content_type`. The original digest covers decoded
+artifact bytes. Clients may request independent offsets concurrently, retain response
+order by offset, and verify the complete original before displaying it.
+
+For the built-in engine, `thread/edit-message` retracts the selected user message
+and later messages from the active conversation. Resuming and forking use that
+active branch, including valid history released from model context by compaction.
+The physical audit transcript remains append-only; editing does not erase its
+records. Retraction metadata is recorded for new edits; previously edited
+sessions without that metadata cannot reliably distinguish discarded branches
+from compacted history.
+
+For Codex, both operations create a bounded native branch before committing the
+new reference and Wuu history. Forks accept completed native turns or their final
+reply; edits exclude the selected prompt's whole native turn. Partial-turn cuts,
+unverifiable legacy identities, busy sources, unsupported adapters, or native
+responses that ignore the cutoff fail without changing the source. Empty native
+threads need no native copy. See [external engine history](../getting-started/external-engines.md#forking-and-editing-history)
+for supported boundaries and failure recovery. These operations never undo files.
+
+## Turns and execution runs
+
+Interactive clients start a turn with text or attachments:
+
+```json
+{"id":"10","method":"turn/start","params":{"thread_id":"thread-id","prompt":"review the current changes"}}
+```
+
+The response contains `turn`; consume `turn/started`, item updates,
+`turn/completed`, or `turn/error`. Each admitted turn keeps its model and permission
+snapshot. The legacy `permission_mode` request field must match the thread's
+selection rather than override it. `turn/queue`, `turn/update-queued`,
+`turn/dequeue`, `turn/steer`, and `turn/unsteer` manage pending user input;
+they are distinct from starting another concurrent turn. `turn/queue` accepts
+optional `hold: true` to persist input as held work without dispatching it, even
+when the interrupted turn has already settled. This lets clients retain messages
+whose preparation or admission finishes after a Stop request. Held input remains
+available through the existing pending-input controls and resume snapshots.
+
+`turn/completed` and `turn/error` may include `index_error` when the selected
+index provider did not confirm the trace append. This diagnostic is separate
+from the model turn's status: the index write may already have committed, and
+clients must not rerun the turn or replay tools to repair it. An absent
+`trace_path` alone is not an error; external index providers need not export a
+local trace file.
+
+For persistent conversations, human queue/steer acceptance and pending-input edits
+or cancellation commit before a successful RPC response. Reuse a stable
+`client_id` when retrying an ambiguous response: a pending queue duplicate returns
+the original accepted input, while consumed IDs are rejected across input methods.
+Cancellation fences retries in that delivery mode; explicitly switching between
+queue and steering supersedes the previous mode's cancellation. Updates use
+`turn/update-queued`; resubmitting `turn/queue` does not edit or restart input.
+A restarted server exposes unconsumed input through `held_user_messages` and never
+reconstructs an automatic runnable queue. Live input appears only in
+`pending_user_messages`. Explicitly send a held item with `turn/steer`.
+
+User-history admission atomically settles the recovery record. Human steering
+checkpoints the unpersisted transcript before the next model request, preserving
+message order and preventing a crash from making dispatched input replayable.
+On the built-in host loop, steering during an active model response closes the
+visible assistant item at that point, persists the prefix as a non-terminal
+steered fragment, admits the user item after it, and continues the same turn
+with the next model request. Steering while tools run is admitted at the next
+model step; tools that already started are not cancelled.
+A concurrent edit or cancellation fences stale admission. Permission selection
+is re-resolved at execution; saved input does not restore old permissions.
+These are local process-crash guarantees, not automatic recovery of uncertain
+tool effects. Ephemeral conversations retain their memory-only behavior.
+
+Persistent Codex conversations support active-turn human steering. Wuu binds
+`expected_turn_id` to the current host turn, and the adapter binds the native
+request to the active native turn ID. Attachments and stable `client_id` values
+use the ordinary input path; steering does not change tools or permissions.
+The RPC response acknowledges local acceptance, while the user item appears in
+history only after a matching native acknowledgement and a successful local
+history commit. Several supplements can belong to the same turn.
+
+The steering result's optional `delivery` field reports the planned path,
+`active_turn` or `queued`; it does not acknowledge native consumption.
+Engines without active-turn steering, and ephemeral native conversations, retain
+the next-turn queue behavior. A native method-not-found response also falls back
+to the ordinary queue. A native rejection instead returns the input as held work;
+it is never silently injected into a later turn.
+
+If delivery loses its acknowledgement, is cancelled after sending, or cannot
+commit its receipt, the held item has `delivery_unconfirmed: true`. Its stable ID
+cannot be edited, withdrawn, requeued or resent, including after restart. The
+desktop shows the reason and keeps the original content available to view or copy. Inspect
+the native conversation before deciding whether to submit replacement input.
+This prevents automatic duplicate work; it does not claim exactly-once external
+tool execution. New input accepted while a native turn is settling is held if
+that turn can no longer accept it.
+
+Failed Wuu-engine streams can include `turn.error.recovery`. Its `attempt_count`
+and `retry_count` count recovery-executor calls that actually started; a prepared
+retry that never runs is excluded. `submission_count` counts physical provider
+requests, including transport fallbacks, not token charges. These counters apply
+to the final failed logical stream, not the entire multi-step turn.
+`max_attempts` is its frozen attempt limit. `stop_reason` distinguishes
+`non_retryable`, `retry_limit`, `workflow_budget_exceeded`,
+`workflow_cost_indeterminate`, `replay_unsafe`, `recovery_unavailable`, and
+`recovery_failed`; `failure_category` and optional `budget_dimension` retain the
+decision's classification. `operation_id` identifies the stream in inference
+diagnostics. Clients must tolerate absent fields on older servers and unknown
+future reason values. Persisted terminal errors retain these facts on
+`thread/resume`; older history without recovery facts does not imply zero retries.
+
+For an invocation that can span automatic continuation or output-correction turns,
+use `run/start`:
+
+```json
+{
+  "id": "11",
+  "method": "run/start",
+  "params": {
+    "thread_id": "thread-id",
+    "prompt": "return a short repository summary",
+    "request": {"mode": "start"},
+    "output_schema": {
+      "type": "object",
+      "properties": {"summary": {"type": "string"}},
+      "required": ["summary"],
+      "additionalProperties": false
+    }
+  }
+}
+```
+
+Send the object on one line. `run/start` returns `{ "run": ... }`, followed by
+`run/started` and turn notifications. Wait for `run/updated` with the same run ID
+and a terminal status: `completed`, `failed`, `interrupted`, `timed_out`, or
+`cancelled`. `accepted` and `running` are nonterminal. The CLI's JSONL `timeout`
+status is a projection of this protocol's `timed_out`.
+
+A Run records `id`, `thread_id`, `request`, resolved `runtime`, `workspace`,
+ordered `turns`, timestamps, and optional `result` and `error`. `result` refers
+to the final turn/item and trace and records the exit code; it does not duplicate
+the whole conversation. `request` describes invocation intent. Fields such as
+`request.requested`, `max_turns`, or `timeout_ms` are not a substitute for configuring
+the runtime, selecting the thread model, or implementing client deadline handling.
+The CLI sets up those controls before recording its manifest.
+
+Only one active execution can own a thread. Handle admission errors such as
+`thread_busy` without starting a duplicate task. `run/start` rejects manual compact
+commands; use the dedicated session compaction interface instead.
+
+### Explicit continuation without new input
+
+For an idle Wuu engine thread, use the latest turn ID returned by the server:
+
+```json
+{"id":"continue-1","method":"turn/start","params":{"thread_id":"thread-id","resume_after_turn_id":"thread-id-turn-0001"}}
+```
+
+Omit prompt and attachments. The core acquires the thread execution lease, refreshes durable history, then compares `resume_after_turn_id` with the latest turn. A stale ID, competing execution, read-only thread, missing history, non-Wuu engine or unknown at-most-once tool outcome rejects admission. A successful response contains a new empty turn; no user message is inserted. Repeating the source ID is rejected even after the new turn completes or the server restarts. After an uncertain response, refresh the thread instead of substituting its new latest ID and replaying the request automatically.
+
+The durable `meta/turn_continue` boundary belongs to display history and never enters provider input. Completed tool results are recovered from the ledger before sampling. Display-only messages with cause `incomplete_stream_fragment` do not enter executable history. A process crash after admission leaves a distinct interrupted turn which the user can explicitly continue.
+
+Responses and Chat Completions use normalized client history, including ordered tool calls/results and compatible reasoning. Failed response identity is not reused. Responses provider-native state keeps its existing provider/model/scope checks. For Anthropic Messages, an assistant-ending explicit continuation adds a request-only user instruction to start a fresh response rather than assistant prefill; tool-result-ending history already maps to the required user role. This compatibility instruction is not a durable user message. See [Anthropic prefill restrictions](https://platform.claude.com/docs/en/api/errors#prefill-not-supported) and [Responses conversation state](https://developers.openai.com/api/docs/guides/conversation-state).
+
+### Attachments
+
+Both turn and run requests accept `images` and `files` arrays. Each image has
+`media_type`, base64 `data`, and optional `original`. Each file has `media_type`,
+base64 `data`, and optional `filename`; the file path supports PDFs and supported
+[video inputs](../customize/video-input.md).
+These are attachment bytes, not local path strings. Image normalization and model
+capability checks occur in the core. `turn/start` additionally supports
+`active_document` and ordered `content_parts` for interactive clients. An optional
+`client_id` is preserved as the user item's `source_id` in notifications, responses,
+and stored history so clients can reconcile a local send regardless of arrival
+order. It is a correlation identifier, not a promise of idempotent `turn/start`.
+Client waiting-time displays are separate from server execution timestamps.
+
+`content_parts` supports `text`, `pasted_text`, and `response_selection`. A response
+selection carries `selection: {id, text, comment?, source: {thread_id, turn_id,
+item_id, start_offset, end_offset, range_text?}}`. Offsets are UTF-16 code units in
+the rendered response's DOM text at capture time, not Markdown source. Streaming
+responses can be quoted before completion. When native
+selection adds readable paragraph or table separators, `text` retains that
+readable form and `source.range_text` holds the exact DOM slice. Source navigation
+must validate both identity and `range_text` (or `text` when absent) at those offsets.
+
+Its flattened part `text` is `Quoted assistant response (JSON):\n`, followed by
+JSON with `text` and `comment` strings, then a newline. Concatenating every part's
+`text` must match the request prompt after outer whitespace trimming. The host
+checks selection text/comment against that JSON before retaining rich metadata;
+invalid metadata falls back to ordinary text. Providers consume the flattened
+prompt, so quotes and comments remain model input without provider-specific
+support. Queue updates, steering, held work, history hydration, and forks retain
+valid metadata. Clients must render unknown parts using their `text` fallback.
+Older hosts may discard metadata during normalization or typed history rewrites,
+and older desktop clients may hide unknown parts; raw prompt text still survives.
+
+### Interruption
+
+`turn/interrupt` targets `thread_id` and can include `turn_id`. `run/interrupt`
+takes `run_id` and optional `reason`; `reason: timeout` records timeout settlement.
+A run already in a terminal state is returned as-is. A live run attached to a
+different app-server cannot be interrupted through this connection and returns
+`run_not_attached`.
+
+For built-in anonymous workers, interruption freezes the whole worker tree,
+cancels active work, clears queued spawns, and retains partial results. The next
+user turn receives the tree snapshot; workers do not all restart automatically.
+Natural turn completion, by contrast, can leave asynchronous work running.
+See [subagents](../desktop/subagents.md) for worker use and recovery.
+
+## Model and permission selection
+
+`config/model/update` has separate workspace and conversation scopes. Without
+`thread_id`, it updates defaults inherited by future conversations and requires
+`model`. Existing conversations keep their saved selections.
+
+With `thread_id`, selection-only requests change that conversation without
+changing workspace defaults. Omitted fields inherit its current selection.
+Selection changes return `thread_busy` while the conversation has active execution,
+including outstanding workers or a cross-process execution lease.
+
+```json
+{"id":"20","method":"config/model/update","params":{"thread_id":"thread-id","permission_mode":"read_only"}}
+```
+
+For external-engine conversations, `reset_model: true` clears the model, effort,
+speed and additional options before applying other supplied selection fields.
+Changing `model` also clears dependent selections. `model_options` replaces the
+whole string-to-string map; `{}` clears it, while omission preserves it. ACP
+select values retain native IDs; boolean values are encoded as `"true"` or
+`"false"`. OpenCode accepts `variant`. The same map is accepted by `thread/start`,
+returned on thread snapshots and preserved through resume and fork. Selections
+are validated against the native configuration when the next turn starts; native
+rejection fails that turn visibly. These fields do not change the Extension API.
+Existing session databases gain an additive `model_options_json` column with an
+empty-object default; existing conversations retain their selections.
+
+```json
+{"id":"20b","method":"config/model/update","params":{"thread_id":"thread-id","reset_model":true}}
+```
+
+Provider connection changes belong to workspace configuration. Save them separately
+from targeted conversation selection: a request combining those operations is
+rejected.
+
+A workspace request normally makes `provider` the default. With
+`keep_selection: true` it saves that provider's connection, model, and choices
+without changing the default: the response reports the unchanged workspace
+selection, and idle conversations using the provider pick up the new
+connection. It cannot be combined with `thread_id`, `variant`, `effort`, or
+`permission_mode`, and on the default provider it cannot change the workspace
+model. `remove_model` removes a model choice so catalog refreshes cannot restore
+it; the request must retain or supply a different selected `model`. Existing
+conversation, role, and alias selections retain their model metadata.
+`add_model` restores a removed choice or adds a model ID the catalog does not
+list. Model update and provider removal responses include `model_aliases`, including empty values, so clients can clear removed references.
+Provider summaries report removed choices as `hidden_models`, and
+`catalog_id` / `catalog_name` when the endpoint belongs to a model catalog
+service.
+
+```json
+{"id":"21","method":"config/model/update","params":{"provider":"deepseek","base_url":"https://api.deepseek.com","api_key":"sk-...","keep_selection":true}}
+```
+
+`initialize.catalog_providers` supplies the local connectable directory before
+clients open settings or onboarding. `config/model-catalog/refresh` returns the
+updated `catalog_providers` alongside configured `providers` and counts. Clients
+can keep the current directory visible until refresh succeeds. Older hosts may
+omit `catalog_providers`; request the directory separately in that case.
+
+`config/model-catalog/providers` lists catalog services that can be connected
+with an endpoint and a key, ordered by name, each with its `type`, `base_url`,
+`model_count`, and a suggested `default_model`. Services that need an account
+template or an unsupported SDK are left out. With `provider`, the result holds
+that service alone, including its `models`. The update response includes workspace model summaries; consume the
+`thread/updated` snapshot for the target conversation's effective selection rather
+than treating the top-level response model as its new model.
+
+Resuming restores the conversation selection; a fork copies the source selection.
+Worker/title model roles and context budgets derive from the owning conversation
+and role configuration. Process or call overrides do not mean that an unrelated
+workspace default should be read during execution.
+
+## Engine inventory and authentication
+
+`cli_version` is the observed installed CLI version (currently Codex and Claude Code); it is omitted on probe failure or for unsupported commands. The legacy `version` is an engine descriptor value and must not be displayed as the installed CLI version. `update_url`, when present, is a vendor installation/update guide, not an executable update action. Wuu accepts user-managed binary paths and does not own their installation or upgrade source. `engine/update` only changes Wuu settings.
+
+`engine/list` returns `{ engines, settings }`, including missing and disabled
+engines. Each entry has an `id`, `enabled`, and `binary_ok`; optional metadata
+includes `display_name`, `protocol`, `install_url`, `binary_path`, `error`,
+`models`, `models_status`, `models_error`, and `permission_modes`. `permission_modes` is the
+composer access menu for that engine: host `standard` / `read_only` /
+`unconfined` rows, with optional native `id` and `label` from an ACP
+`category=mode` option. Omitted rows are not offered. `enabled` describes runtime
+availability, while `settings.<id>.enabled` is the persisted opt-in/opt-out
+preference. Do not infer an installed program or authenticated account from the
+preference alone.
+
+`engine/list` accepts `{ "cwd": "/absolute/session/directory", "refresh_models": true }`.
+It also accepts `{ "include_models": false }` to return engine descriptors and
+settings without starting native model discovery. Every entry then reports
+`models_status: "deferred"`; the omitted catalog is neither empty nor unsupported.
+Clients can use this availability response for engine selection and thread
+creation, including native defaults and already known selections, then request
+the full catalog separately. Omitting `include_models` preserves full discovery.
+
+`cwd` defaults to the runtime root; pass the actual conversation/worktree directory
+when it differs. Refresh also rescans desktop installation and login-shell paths,
+reapplies persisted engine enable/disable choices to the live runtime, and bypasses
+each external engine's native discovery cache. Newly installed engines become usable
+without restarting; running turns retain their existing engine leases. Overlapping
+model probes for the same context share work. Successful catalogs expire
+after two minutes, failures retry after five seconds, and probes are bounded
+(Claude: 20-second outer budget; other engines: 30 seconds). Executable, environment
+and known native configuration/authentication metadata form the cache context;
+Claude also includes login status. The context is rechecked before publishing.
+Keychain-only and remote account changes require refresh or expiry.
+
+`models_status` distinguishes `ready`, authoritative `empty`, `unsupported`,
+`partial`, `error`, `stale`, and the lightweight-response `deferred` described
+above. `partial` means some model probes failed;
+`stale` retains previously successful data only for the same context.
+`models_error` describes failed, partial or stale discovery. An authoritative empty
+result replaces previous models. A missing catalog never falls back to Wuu's
+provider catalog.
+
+Model `id` is the executable native selection value. Claude's optional
+`resolved_model` reports its target without replacing that value. Codex uses
+`model/list`; ACP uses model/configuration responses and subsequent configuration
+updates; OpenCode uses connected providers from `/provider` and preserves
+`provider/model` IDs. Capabilities belong to individual models. Optional `options`
+contains `{ id, label, type, default_value, choices: [{ value, label }] }`, where
+`type` is `select` or `boolean`. OpenCode variants use option ID `variant`.
+Choosing an empty external model means native configured behavior, not a pinned
+catalog default. Resuming requires an exposed native default; OpenCode cannot
+resolve its unexposed recent-model fallback and asks for explicit configuration
+or selection in that case.
+
+For subscription views, `engine/list` accepts optional `{ "include_quota": true }`.
+It reads upstream allowances using the credentials of each configured provider
+and supported installed agents, and returns configured services in
+`subscription_providers`. Each provider or engine may contain `quota`:
+
+- `status`: `available`, `stale`, `unavailable`, `sign_in`, or `unsupported`.
+- `kind`: subscription, plan, or balance. `plan` is optional upstream metadata.
+- `account`: an opaque, source-scoped `id`, optional account `label`, and
+  credential `source`. Raw tokens and keys are never returned.
+- `checked_at`: latest attempt; `observed_at`: last successful observation;
+  `expires_at`: freshness deadline, currently five minutes after observation.
+- `windows`: `id`, optional `label`, `used_percent`, `window_minutes`, `resets_at`,
+  `model`, `scope`, `display`, and explicitly reported `unlimited`.
+- `balances`: currency and decimal-string `amount`; currencies and accounts
+  must remain separate. Optional `reset_credits` reports upstream reset credits.
+- `error_code`: safe failure category, not a raw upstream response.
+
+Set `include_activity` to `false` with `include_quota` to skip local history
+statistics when only the current account allowance is needed. Omitting it keeps
+the existing history-inclusive response.
+
+Adapters cover native ChatGPT/Codex and Grok Build subscriptions, Anthropic OAuth,
+Kimi Code and Zhipu/Z.ai plan windows, and DeepSeek/OpenRouter prepaid balances.
+External Codex uses its CLI account request; external Claude Code and Grok read
+their own local login. Default macOS Claude credentials may use Keychain; custom
+credential directories never borrow the default login. Browser SuperGrok,
+arbitrary compatible endpoints, and agents without an adapter are unsupported.
+
+Missing percentages are unknown, not zero or unlimited. Exhaustion may be
+reported at or above 100%. Clients must not infer account allowance from ACP
+context usage or local tokens, or refill a snapshot at its reset time. A
+transient failure retains a credential-scoped successful observation as `stale`
+when the reader can identify the account; observation and expiry times stay
+unchanged. Authentication rejection discards that account's cached allowance.
+Observations are persisted across server restarts and cannot move to another
+account when a service's credentials change. Collection is bounded to eight
+seconds across sources. Reading quota submits no inference and does not change
+model selection, workspace defaults, or routing policy.
+
+Only this opt-in subscription response reads historical statistics. `initialize`,
+configuration responses, ordinary `engine/list`, and `engine/update` omit
+`latest_request` and `local_usage`; clients needing them must load the subscription
+snapshot separately without blocking navigation. All requested sources share one
+history scan. A failed scan leaves those fields absent, not zero, while retaining
+the service inventory.
+
+Engines and subscription providers in this response may contain `local_usage`, the reported
+input/output/cache token totals and `reported_turns` in retained Wuu history.
+These values exclude unreported and external activity and are not billing totals.
+The optional `latest_request` contains the newest recorded request's `status`,
+`error`, `at`, `model`, and `usage_reported`, plus input/output/cache token counts
+when reported. Request time determines recency, not the session's last edit.
+Provider attribution uses durable records; absent fields remain unknown and
+usage must not be carried over from an earlier request.
+
+`engine/update` accepts `default_engine` and per-engine objects with `enabled`
+and `binary_path`. Omitted fields remain unchanged. It persists settings, updates
+runtime registration, and returns the same shape as `engine/list`. Discover engine
+IDs from the inventory instead of hardcoding a client allowlist. The update
+response reflects the new availability without starting native model discovery;
+every entry reports `models_status: "deferred"`. Request `engine/list` for the
+catalogs after the mutation resolves.
+
+ACP sign-in has separate explicit operations:
+
+| Method | Params | Result |
+|---|---|---|
+| `engine/auth/methods` | `engine_id` | `{ methods, authenticated: false }`; starts the agent and initializes ACP, but does not authenticate or create a chat session |
+| `engine/authenticate` | `engine_id`, `method_id` | `{ methods, authenticated: true }` on native authentication success |
+| `engine/auth/cancel` | `engine_id` | `{ ok: true }`; cancels any active authentication operation for that engine |
+
+Each method has `id`, `name`, optional `description`, and optional `type`.
+Only agent-driven methods are returned. Discovery does not report current login
+status. Authentication revalidates the selected method with the launched agent;
+unsupported methods and native failures return request errors. There is one active
+operation per engine per server, with a five-minute limit and a 30-second
+initialization limit. Cancellation and server shutdown clean up the child process;
+clients should wait for the original operation to settle before retrying.
+
+Do not call discovery automatically when rendering settings. The user must
+explicitly request discovery and then authentication, because the installed agent
+owns any browser interaction and credential persistence. These methods do not
+support Codex, Claude Code, or OpenCode; use their native login flows. See
+[external engines](../getting-started/external-engines.md) for installation,
+protocol versions, model selection, and permission boundaries.
+
+## Input Content Parts
+
+`turn/start`, `turn/queue`, `turn/update-queued`, and `turn/steer` accept optional
+`content_parts`, an ordered array of presentation metadata alongside `prompt`.
+Binary attachments remain in `images` / `files`.
+
+| `type` | Fields |
+| --- | --- |
+| `text` | `text: string` |
+| `pasted_text` | `text: string`, optional `title: string` |
+| `file_selection` | `text: string`, `source: FileSelectionSource`, `intent: "comment" \| "edit" \| "quote"`, `id: string`, optional `comment: string` |
+| `response_selection` | `text: string`, `selection: ResponseSelection` (see above) |
+
+`FileSelectionSource` contains `workspace`, `path`, `quote`, and `revision`
+(strings), plus `start_line`, `start_column`, `end_line`, and `end_column`
+(integers). Lines and UTF-16 columns are one-based; the end position is
+exclusive. `revision` identifies the captured file content, not necessarily a
+Git revision. The server checks required metadata, supported intent, positive
+coordinates, and range ordering; it does not read the file or verify its revision.
+
+PDF selections add optional `source.pdf` metadata with one-based `start_page`
+and `end_page` (inclusive). Their four line/column fields are zero; pages are
+never encoded as text lines. A delivered PDF also retains `artifact_uri`,
+`artifact_sha256`, and `artifact_thread_id` inside `pdf`, with `revision` set to
+`sha256:<artifact_sha256>`. Wuu checks the page ordering and delivery identity
+fields for consistency. These fields identify the quoted snapshot; they do not
+grant file access or prove that a quoted passage appears in it. The desktop's
+Quote and Comment actions add the excerpt to the current draft without sending.
+Workspace PDF revisions identify the file observed when the excerpt was captured.
+
+Each file-selection `text` must contain the complete model-visible serialized
+block, including source context, intent, and any comment. Clients concatenate
+part texts in order to form `prompt`. The server keeps valid metadata only when
+that concatenation matches the submitted prompt after outer-whitespace trimming;
+it does not reconstruct or parse the client's serialization. Unknown or invalid
+parts are discarded, and a mismatch discards the presentation metadata without
+changing the prompt. Providers and engines consume the canonical message text;
+Codex receives ordinary text input without special `text_elements`.
+
+Accepted metadata survives history and held-queue replay. Clients must tolerate
+unknown fields and part types, falling back to the full message `text` or queued
+`prompt` when they cannot render the metadata. Metadata must never be the only
+copy of context needed by the model.
+
+## Usage overview
+
+`usage/overview` summarizes token usage recorded in retained Wuu history. It
+returns `total_sessions` (sessions with at least one usage record), `metrics`
+(the same totals object as `settings/usage`, including `active_days`), and
+`days`, one entry per active calendar day in ascending order. It reads only
+usage records, not conversation content. Optional
+`{ "timezone": "America/Los_Angeles" }` selects the IANA zone for day
+boundaries; omitted means UTC, and an unknown zone is a request error. A store
+without records returns zero totals and an empty `days` list. Like
+`local_usage`, these values exclude unreported and external activity and are
+not billing totals. `settings/usage`, the desktop usage page's full snapshot,
+accepts the same optional `timezone`; the desktop sends its own so each daily
+bar lands on the day its calendar draws. Its `engine_breakdowns` attribute the
+same in-Wuu trail to each thread's bound agent engine and add an `outside`
+side per engine — token totals read from the engine's own local ledger
+(`~/.claude` transcripts, `~/.codex` rollouts, the OpenCode database, the
+Devin `sessions.db`) minus native sessions Wuu already claims, so the two
+columns never count the same work twice. Engines that never report usage to
+Wuu's trail — the ACP family, such as Devin — instead add their bound
+sessions' ledger rows to the `in_wuu` side, since that trail cannot cover
+them. `outside` is absent for engines without a readable local ledger or
+whose ledger failed to scan. The same ledger totals also land on the daily
+series — bound rows on the day's own token fields, outside rows on
+`days[].outside` — so the trend and heatmap color every day the page counts;
+turns and agents on each day stay untouched.
+
+## Notifications
+
+| Family | Client handling |
+| --- | --- |
+| `thread/started`, `thread/resumed`, `thread/updated` | Apply session snapshots by ID |
+| `run/started`, `run/updated` | Track the invocation and its terminal state |
+| `turn/started`, `turn/completed`, `turn/error` | Track individual turns, not the whole run |
+| `turn/queued`, `turn/dequeued`, `turn/steered`, `turn/unsteered`, `turn/held` | Update pending input state |
+| `item/started`, `item/completed`, `item/removed` | Add, settle, or retract a turn item |
+| `item/agentMessage/delta`, `item/agentMessage/replace` | Append text or replace accumulated text |
+| `item/toolCall/delta`, `item/toolCall/outputDelta` | Update tool arguments or output |
+| `item/reasoning/delta`, `item/reasoning/replace` | Interactive reasoning presentation; omitted by `wuu exec` JSONL |
+| `turn/usage`, `turn/event` | Cumulative usage snapshots and typed diagnostic/progress events |
+| `agent/updated`, `agent/mailbox` | Worker state and messages |
+| `mcp/status/updated` | MCP connection state |
+
+`item/removed` retracts an attempt-scoped item; remove its `item_id` from the
+indicated turn rather than inventing a completion status. `turn/usage` counts are
+cumulative, not increments. Worker clients must handle nonterminal `queued` and
+`waiting_children` states as well as running and terminal states. A worker waiting
+for children has not delivered its final result.
+
+## Server-initiated requests
+
+Reverse RPC is opt-in through `initialize.params.capabilities.reverse_rpc.methods`.
+The basic browser client advertises six methods: `browser/cdp`, `browser/screenshot`,
+`browser/open_tab`, `browser/close_tab`, `browser/set_visibility`, and
+`browser/list_tabs`. These travel from core to client; they are not client-to-core
+methods despite appearing beside other method constants in the source.
+
+Every browser request carries a core-assigned `thread_id` and `workdir`. The client must scope tab creation, listing, input, capture, and cleanup to that conversation. Page-opened tabs inherit their opener's ownership. Reject an existing tab owned by another conversation rather than navigating or adopting it.
+
+`browser/list_tabs` can additionally return `workspace_tabs`: live user-owned website/plugin candidates with `tab_id`, `url`, `title`, `workspace_id`, `source`, and `active`. These are discovery metadata, separate from the conversation's owned `tabs`; listing grants no page-content access. An explicit tool `attach` sends `browser/open_tab` with identical `tab_id` and `workspace_tab_id`, without `initial_url`, under the existing activity and execution lease. The host borrows the exact native view and rejects busy, closed, or foreign-window pages. It must never recreate a `workspace:` tab by navigation. `browser/close_tab` (tool `detach`), finalize, turn completion, takeover, stop, and owner teardown release the binding without closing the user's page. Released binding IDs are reported in `closed`, even though their native user pages remain open. Agent permission restrictions apply while borrowed; no capture or media permissions are expanded.
+
+A `request_id` identifies an in-flight browser operation. The `browser/request_cancelled` notification carries that ID with the same `thread_id` and `workdir` when the core stops waiting. Cancel only the matching operation, checking again after asynchronous work and before sending input. Activity takeover and stop revoke input for all tabs of that conversation. A later release grants fresh authority without resuming an old request.
+
+Desktop clients also advertise `browser/finalize` and `browser/turn_ended` for execution-scoped lifecycle support. Before the first browser request in a workspace, the core sends `browser/turn_started` with `workdir`, `thread_id`, `turn_id`, and an immutable `execution_id`. Every browser action in that execution carries the same tuple. A logical turn can resume with a new execution ID; reject requests and completion from an older execution even when its turn ID matches.
+
+`browser/finalize` atomically applies `keep: [{tab_id, status}]`, where status is `persistent`, `handoff`, or `deliverable`, and closes omitted temporary pages without ending the execution. Manual and user-taken pages remain persistent. Retained popups also protect their live same-task opener ancestry. Missing durable keep IDs may be absent after a host restart; a live ID owned by another task is an error.
+
+After completion or interruption, `browser/turn_ended` carries the execution tuple and retained records. Invalidate pending operations first, close temporary pages, and detach the debugger and clear input/cursor state on retained pages without replacing their live contents or current preview geometry. Cleanup must not delete screenshot artifacts referenced in history. On a durable keep-record read failure, `preserve_all: true` requests retaining all scoped pages instead of risking data loss. Both methods return `closed`, `kept`, and optional `tabs` with `tab_id`, `url`, `title`, and `status`; stale completion returns `stale: true` without modifying tabs. Hosts without the additional lifecycle methods retain the basic request contract.
+
+Reply with the server request's ID and a result or error while continuing to read
+the stream. Browser calls have a 30-second response timeout. Omitted capabilities
+do not authorize reverse requests. `wuu exec` does not advertise this interactive
+browser surface and makes permission decisions without a client approval exchange.
+
+## Background process triggers
+
+`process/list` accepts `thread_id` and returns only processes owned by that conversation. Each process may include `trigger` with `status` (`waiting`, `received`, `handled`, `cancelled`, or `stopped`), `on_exit`. `received` means an event is available for continuation; it does not assert that a new turn has started. Detached processes without a recorded cancellation omit `trigger`. Clients must tolerate its absence on older hosts.
+
+`process/cancel-notifications` accepts `thread_id` and `process_id`, checks ownership, and returns the updated `process`. It durably cancels future exit notifications without terminating the process. A continuation already admitted may finish. Use `process/stop` separately to stop a task. `process/read` is a read-only view of output and does not acknowledge the model-facing completion.
+
+## Hosted processes
+
+```bash
+WUU_HOME=/state/wuu wuu app-server \
+  --host cloud --instance-id instance_123 --workspace-id workspace_123 \
+  --workdir /workspace --config /run/wuu/config.json
+```
+
+Cloud mode requires explicit instance identity, workspace identity, and configuration;
+it does not create a starter configuration from ambient host state. Initialization
+reports `runtime_host.kind` and `instance_id`. This metadata does not create a
+container or authenticate a network connection. Transport authentication,
+tenant isolation, secret injection, and quotas remain responsibilities of the host.
+Wuu's own [tool permissions](../reference/permissions.md) still apply within it.
+
+## Types and diagnostics
+
+The method and payload definitions are in
+[`internal/appserver/protocol.go`](../../../internal/appserver/protocol.go), with
+shared TypeScript types in
+[`packages/protocol/src/index.ts`](../../../packages/protocol/src/index.ts).
+Other method families cover configuration, engines, plugins, session
+organization, processes, activities, and MCP. Consult the matching handler for
+validation and lifecycle behavior; a method constant alone does not imply direction
+or support on every host.
+
+Use `wuu debug app-server initialize` or `wuu debug app-server send` for a single
+local probe, and `wuu session trace` for stored events without rerunning a task.
+See the [CLI reference](../reference/cli-commands.md).
+
+Treat method names, field meanings, and notification handling as integration
+contracts. Tolerate additive fields, validate the protocol version, and test against
+the core revision you ship. Product CalVer and protocol version describe different
+compatibility concerns.

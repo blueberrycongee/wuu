@@ -1,0 +1,40 @@
+{
+  "revision": "08000266921da772f2ca999b8687f34fb4dbc911",
+  "source_url": "https://github.com/blueberrycongee/wuu/tree/08000266921da772f2ca999b8687f34fb4dbc911",
+  "sdk_version": "0.1.0",
+  "compiler": "typescript@5.9.3",
+  "origin": "Repository-distributed source and exact shipped TODO bundle; not an asserted npm registry release.",
+  "capture": "node scripts/capture-plugin-compatibility.mjs <new-directory>",
+  "source": {
+    "packages/plugin-sdk/embed.go": "d29abce2917aab906f3545f8629075947bfd7119cf56d011787ae237df510486",
+    "packages/plugin-sdk/package-lock.json": "2a9a0a54e9181f16ee58999816b8be836d56ffa4780f9eb8622c25cfd394bf43",
+    "packages/plugin-sdk/package.json": "e9bc1017bee071c4c59a170756d0b760afcf6d7907b2c79a3ba5439ad5c06ace",
+    "packages/plugin-sdk/src/bundle-contract.test.ts": "c0fcf9cafa32cd619d9ff7d18f7b7baeb8e765c90c0dc4c44ff56afdbb3a3f0e",
+    "packages/plugin-sdk/src/bundle-contract.ts": "a01777da5c587425381c65b1e2e4175d08e96e15d4c6966f7a9f9d6a32be24ab",
+    "packages/plugin-sdk/src/index.test.ts": "2d4e56f12d55c887c234292a508d593d112dd3c4c23619d58f04e30d108d0e4b",
+    "packages/plugin-sdk/src/index.ts": "ceae4682ee54aff04ad7e227a4fc9cc050fd0911b780663f861348156761595b",
+    "packages/plugin-sdk/src/model.ts": "66db649cb24d80109fba25c4222ebfe4ac2b93f86e6667edb42b176ec6713996",
+    "packages/plugin-sdk/src/process.ts": "65e2a86dfc6ee9a2a21f2811ae09f0c387572ca02883a7abe18a6d624b50cd2d",
+    "packages/plugin-sdk/src/runtime-composition.test.ts": "8fcedcf30e70cbce70493095f5a85c260b9555f67188dbd1e6ee9b363d2b2828",
+    "packages/plugin-sdk/src/theme-contract.generated.ts": "860342b9b5fd55eb9388134cb2420c9ca10a23acaa7e622e4a41e4215d940cbc",
+    "packages/plugin-sdk/tsconfig.json": "4441f081e48f3b2275e12352833e4b178dae2d1f2df6639db551664108edddec",
+    "internal/plugin/bundled/todo/runtime.mjs": "28a13187e0f3970b4db969072f8eae098d56e2df16917e2879bf1cb48dba67af",
+    "LICENSE": "3c7c8dbe49a5d9a2663c2a6b915b6763d20ff3d8bcf65f34f35ed7327e6dbf29"
+  },
+  "files": {
+    "sdk/dist/bundle-contract.d.ts": "0144eab05bf7ca97dd92cb07c850ed556abaff623837618fd163210f02d112db",
+    "sdk/dist/bundle-contract.js": "c38767467fddb3aaeffaa85124d5381a2a36413eeb2f9c12b73af61f4743b284",
+    "sdk/dist/index.d.ts": "74b10cd9ea502815f7d6bfd8d41b675acc73dcda8fef67e13a5867480fa31427",
+    "sdk/dist/index.js": "4b28bc0ac98c63a14c05d5e0f5814d41283a484367c1bff17eee2dbbd4abf97a",
+    "sdk/dist/model.d.ts": "2e5f7f96fca069efa0069e3d55967a16e094a22f193c4d4e1744eb18ffd8de7b",
+    "sdk/dist/model.js": "7a791c520e66336558031541b52b27840a09af74a0e50f2665699493a103a833",
+    "sdk/dist/process.d.ts": "f5b71da5466d9c87c9cf5593ad6fa49404551ba71fa17b1f63346ca826f5304f",
+    "sdk/dist/process.js": "f509ae8ae9a0e8cf0c251aa8bedab7286f70c6485613e08750b4372014617050",
+    "sdk/dist/theme-contract.generated.d.ts": "6ad2a7dd78afe70bcdb03723a980ca1886328434c172c1c79e0fda2888667e77",
+    "sdk/dist/theme-contract.generated.js": "b273a1dbc228df88699cfddff424c8d7da20be7b2029d1e5ecbc24671297fff0",
+    "sdk/package.json": "e9bc1017bee071c4c59a170756d0b760afcf6d7907b2c79a3ba5439ad5c06ace",
+    "todo.mjs": "28a13187e0f3970b4db969072f8eae098d56e2df16917e2879bf1cb48dba67af",
+    "LICENSE": "3c7c8dbe49a5d9a2663c2a6b915b6763d20ff3d8bcf65f34f35ed7327e6dbf29",
+    "sdk-package-lock.json": "2a9a0a54e9181f16ee58999816b8be836d56ffa4780f9eb8622c25cfd394bf43"
+  }
+}

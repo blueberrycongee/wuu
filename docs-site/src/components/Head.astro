@@ -1,0 +1,72 @@
+---
+import Default from "@astrojs/starlight/components/Head.astro"
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "")
+const chinese = Astro.url.pathname.split("/").includes("zh-cn")
+const ogImage = new URL(
+  `${base}/og-${chinese ? "zh" : "en"}.png`,
+  Astro.site ?? new URL(Astro.url.origin),
+).href
+const appIcon = new URL(
+  `${base}/site-assets/app-icon.png`,
+  Astro.site ?? new URL(Astro.url.origin),
+).href
+const ogImageAlt = chinese
+  ? "Wuu 文档：桌面应用里的对话、命令与 Git 审查"
+  : "Wuu documentation: a conversation, command record, and Git review in the desktop app"
+---
+
+<Default><slot /></Default>
+<link rel="apple-touch-icon" href={appIcon} />
+<meta property="og:image" content={ogImage} />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content={ogImageAlt} />
+<meta name="twitter:image" content={ogImage} />
+<meta name="twitter:image:alt" content={ogImageAlt} />
+
+<script>
+  const diagrams = new Map<HTMLElement, string>()
+  let renderGeneration = 0
+
+  async function renderMermaidDiagrams() {
+    const nodes = [...document.querySelectorAll<HTMLElement>(".mermaid")]
+    if (nodes.length === 0) return
+
+    const { default: mermaid } = await import("mermaid")
+    for (const node of nodes) {
+      if (!diagrams.has(node)) diagrams.set(node, node.textContent ?? "")
+    }
+
+    renderGeneration += 1
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: "strict",
+      theme: document.documentElement.dataset.theme === "dark" ? "dark" : "neutral",
+      fontFamily: "ui-sans-serif, system-ui, sans-serif",
+      flowchart: { curve: "basis", htmlLabels: false },
+    })
+
+    let index = 0
+    for (const [node, source] of diagrams) {
+      const id = `wuu-mermaid-${renderGeneration}-${index++}`
+      const { svg, bindFunctions } = await mermaid.render(id, source)
+      node.innerHTML = svg
+      node.removeAttribute("data-processed")
+      bindFunctions?.(node)
+    }
+  }
+
+  function startMermaid() {
+    void renderMermaidDiagrams()
+    document.addEventListener("wuu-theme-change", () =>
+      requestAnimationFrame(() => void renderMermaidDiagrams()),
+    )
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", startMermaid, { once: true })
+  } else {
+    startMermaid()
+  }
+</script>

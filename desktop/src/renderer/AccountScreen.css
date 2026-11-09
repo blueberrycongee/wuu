@@ -1,0 +1,42 @@
+.account-screen {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.account-screen-titlebar {
+  display: flex;
+  height: var(--window-titlebar-height);
+  min-height: var(--window-titlebar-height);
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 max(var(--window-titlebar-padding-inline), var(--window-controls-inset-right)) 0 var(--window-titlebar-padding-inline);
+  -webkit-app-region: drag;
+}
+
+.account-screen-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  -webkit-app-region: no-drag;
+}
+
+.account-screen-back:hover { background: var(--surface-1); color: var(--ink); }
+.account-screen-content { flex: 1; min-height: 0; overflow-y: auto; padding: clamp(20px, 4vh, 48px) 24px 48px; }
+.account-screen .account-panel { width: 100%; max-width: 480px; }
+
+.account-connected { display: flex; align-items: center; gap: 10px; max-width: 480px; margin: 0 auto 24px; padding: 16px; box-sizing: border-box; border: 1px solid var(--hairline-soft); border-radius: 12px; background: var(--surface-1); line-height: 1.6; }
+
+.account-screen-window .account-screen-titlebar { padding-inline: var(--window-titlebar-padding-inline); }
+.account-screen-window .account-screen-content { padding: 12px 32px 32px; }
+.account-window-done { display: block; width: 100%; max-width: 480px; margin: 20px auto 0; }
+
+.account-window-done button { width: 100%; }

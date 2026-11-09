@@ -1,0 +1,9 @@
+{
+  "name": "wuu-evidence-workflow-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "check": "tsc --noEmit", "start": "node runtime.ts" },
+  "dependencies": { "@wuu/plugin-sdk": "file:../../../packages/plugin-sdk" },
+  "devDependencies": { "@types/node": "^22.0.0", "typescript": "^5.9.0" }
+}

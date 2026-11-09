@@ -1,0 +1,914 @@
+/* Connected rows and catalog cells share a typographic identity rhythm;
+ * each surface distributes those identities within its own available width. */
+
+.model-services {
+  display: contents;
+}
+
+/* Connection targets are already laid out when navigation paints them. */
+.settings-page[data-wuu-page="providers"] {
+  animation: none;
+}
+
+/* --- Vendor marks ---------------------------------------------------------
+ * A vendor logo stands bare in its column; a tile behind a monochrome glyph
+ * carries no meaning. A monogram (a vendor without artwork) and the generic
+ * glyphs (more services, custom endpoint) keep a hairline square, so a lone
+ * letter or a UI glyph still reads as a mark rather than as text. */
+
+/* Marks keep their proportion to the text beside them at every UI size. */
+.provider-mark {
+  --provider-mark-size: round(up, calc(var(--font-ui) * 2.5), 2px);
+  display: grid;
+  width: var(--provider-mark-size);
+  height: var(--provider-mark-size);
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: var(--radius-xs);
+  color: var(--ink-strong);
+}
+
+.provider-mark[data-mark="monogram"] {
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.provider-mark svg,
+.provider-mark .provider-mark-engine {
+  width: 56%;
+  height: 56%;
+}
+
+.provider-mark .icon {
+  width: 50%;
+  height: 50%;
+}
+
+.provider-mark.is-quiet {
+  color: var(--ink-soft);
+  box-shadow: inset 0 0 0 1px var(--hairline);
+}
+
+.provider-mark-monogram {
+  font-size: calc(var(--provider-mark-size) * 0.42);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+}
+
+.model-service-card-meta[data-attention],
+[data-attention].model-service-value,
+[data-attention].model-service-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+:is(.model-service-card-meta[data-attention], [data-attention].model-service-value, [data-attention].model-service-status) .icon-sm {
+  flex: 0 0 auto;
+  color: var(--warning);
+}
+
+/* The same icon-to-text interval applies inside a full row and an equal cell. */
+.model-service-card,
+.model-service-tile {
+  column-gap: var(--space-3);
+}
+
+/* --- Connected services ----------------------------------------------------- */
+
+.model-service-card {
+  display: grid;
+  min-width: 0;
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: var(--settings-row-pad-block) 0;
+  text-align: left;
+}
+
+.model-service-card:hover .settings-disclosure-chevron {
+  color: var(--ink);
+}
+
+.model-service-card-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.model-service-card-title,
+.model-service-card-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-service-card-title {
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1.4;
+}
+
+.model-service-card-meta {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.45;
+}
+
+.model-service-badge {
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--selection-surface);
+  color: var(--ink);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.6;
+  padding: 0 var(--space-2);
+  white-space: nowrap;
+}
+
+/* --- Providers to add -------------------------------------------------------- */
+
+.model-service-catalog,
+.model-browse-list {
+  container-type: inline-size;
+  container-name: service-catalog;
+}
+
+/* The outer inset separates the equal cells from the surface and footer. */
+.model-service-catalog {
+  display: grid;
+  gap: var(--space-4);
+  border: 1px solid var(--hairline);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-bg);
+  padding: var(--card-padding);
+}
+
+.model-catalog-group {
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.model-catalog-heading {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.model-catalog-heading h3 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1.5;
+}
+
+.model-catalog-heading > span {
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.model-service-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-1) var(--space-4);
+}
+
+.model-service-tile {
+  display: flex;
+  margin-inline: calc(var(--space-2) * -1);
+  min-width: 0;
+  min-height: calc(var(--control-field-height) + var(--space-2));
+  align-items: center;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  padding: var(--space-1) var(--space-2);
+  text-align: left;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+/* Divide first, then apply the same inset inside every cell. Cell padding
+ * owns the horizontal gutter, including incomplete final rows. */
+.model-service-catalog .model-service-tiles {
+  column-gap: 0;
+}
+
+.model-service-catalog .model-service-tile {
+  margin-inline: 0;
+  padding-inline: var(--space-4);
+}
+
+:is(.model-service-card, .model-service-tile) > .provider-mark {
+  --provider-mark-size: 28px;
+  border-radius: 6px;
+  border: 1px solid var(--hairline-soft);
+  background: var(--surface-1);
+}
+
+/* Extra space belongs around the artwork, keeping its visual weight stable. */
+:is(.model-service-card, .model-service-tile) > .provider-mark svg,
+:is(.model-service-card, .model-service-tile) > .provider-mark .provider-mark-engine {
+  width: 15px;
+  height: 15px;
+}
+
+.model-service-tile:hover:not(:disabled) {
+  background: var(--ink-overlay-4);
+}
+
+.model-service-tile:disabled {
+  opacity: 0.55;
+}
+
+.model-service-tile-name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-catalog-name-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.model-catalog-state {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+}
+
+.model-catalog-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warning);
+}
+
+.model-catalog-state[data-ready] .model-catalog-state-dot {
+  background: var(--success);
+}
+
+.model-service-catalog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  border-top: 1px solid var(--hairline-soft);
+  padding-top: var(--space-4);
+}
+
+.model-service-custom-action {
+  color: var(--wuu-accent);
+}
+
+/* Start the footer action's icon on the mark column. */
+.model-service-catalog-actions > .model-service-custom-action {
+  margin-inline-start: calc(var(--control-padding-inline) * -1);
+}
+
+@container service-catalog (max-width: 36em) {
+  .model-service-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container service-catalog (max-width: 22em) {
+  .model-service-tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Each featured cell keeps about thirteen text widths for its insets, mark,
+ * reading gap and name. The browser retains its denser search layout. */
+@container service-catalog (max-width: 39em) {
+  .model-service-catalog .model-service-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container service-catalog (max-width: 26em) {
+  .model-service-catalog .model-service-tiles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* --- Service page --------------------------------------------------------- */
+
+.model-service-hero {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: calc(var(--settings-gap) * -0.5);
+}
+
+.model-service-hero > .provider-mark {
+  --provider-mark-size: round(up, calc(var(--font-ui) * 3.6), 2px);
+}
+
+.model-service-hero-copy {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.model-service-hero h1 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--font-heading);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-service-value {
+  min-width: 0;
+  max-width: min(26em, 100%);
+}
+
+.model-service-value-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-service-status {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* Prose values keep the shared value layout but not its monospace face. */
+.settings-row-control-value:is(.model-service-plain, .model-service-status) {
+  font-family: inherit;
+}
+
+.model-service-plain[data-empty] {
+  color: var(--ink-tertiary);
+}
+
+.model-service-status:not([data-attention]) .icon-sm {
+  color: var(--success);
+}
+
+.model-service-edit {
+  display: flex;
+  width: min(26em, 100%);
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.model-service-edit .settings-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* --- Model choices ---------------------------------------------------------- */
+
+.model-choice-list {
+  overflow: hidden;
+}
+
+/* Rows fill edge to edge on hover, so they reach through the group inset.
+ * Both ends give back their control's padding: the name's text and the
+ * trailing icon's glyph sit on the group padding, like other rows. */
+.model-choice {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+  margin-inline: calc(var(--card-padding) * -1);
+  padding-inline: calc(var(--card-padding) - var(--space-2)) calc(var(--card-padding) - (var(--control-field-height) - var(--icon-size)) / 2);
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.model-choice:hover {
+  background: var(--surface-1);
+}
+
+.model-choice-main {
+  display: flex;
+  min-width: 0;
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  background: transparent;
+  color: var(--ink);
+  padding: var(--space-2);
+  text-align: left;
+}
+
+.model-choice-main.is-static {
+  color: var(--ink-soft);
+}
+
+.model-choice-check {
+  display: grid;
+  place-items: center;
+  color: var(--ink-strong);
+}
+
+.model-choice-name {
+  overflow: hidden;
+  flex: 0 1 auto;
+  font-size: var(--font-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-choice[data-selected] .model-choice-name {
+  color: var(--ink-strong);
+  font-weight: var(--weight-medium);
+}
+
+.model-choice-id {
+  overflow: hidden;
+  flex: 0 1 auto;
+  color: var(--ink-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Keep the selection marker separate from the always-discoverable action. */
+.model-choice-action,
+.model-choice-check {
+  width: var(--control-field-height);
+  height: var(--control-field-height);
+  flex: 0 0 auto;
+}
+
+.model-choice-action {
+  color: var(--ink-tertiary);
+}
+
+.model-choice-add {
+  display: flex;
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
+  align-items: center;
+  gap: var(--space-2);
+  padding-block: var(--space-2);
+}
+
+.model-choice-add .settings-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.model-choice-add .settings-button,
+.model-service-edit .settings-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+:is(.model-choice-hidden, .model-connect-advanced, .connection-engine-advanced) > summary {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 2px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: var(--font-sm);
+  list-style: none;
+  /* The closed chevron's ink starts 7.625/24 into its box (x 8.5 less half
+   * the stroke); that ink, not the box, starts on the column edge. */
+  margin-inline-start: calc(var(--icon-size-sm) * -7.625 / 24);
+}
+
+:is(.model-choice-hidden, .model-connect-advanced, .connection-engine-advanced) > summary::-webkit-details-marker {
+  display: none;
+}
+
+:is(.model-choice-hidden, .model-connect-advanced, .connection-engine-advanced)[open] > summary .settings-disclosure-chevron {
+  transform: rotate(90deg);
+}
+
+:is(.model-choice-hidden, .connection-engine-advanced) > summary:hover {
+  color: var(--ink);
+}
+
+.model-choice-hidden > .settings-group {
+  margin-top: var(--space-2);
+}
+
+/* --- Dialogs ----------------------------------------------------------------- */
+
+.environment-dialog-icon:has(> .provider-mark) {
+  width: auto;
+  height: auto;
+  background: transparent;
+}
+
+.model-connect-dialog {
+  --environment-dialog-max-width: 480px;
+}
+
+.model-connect-body {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.model-connect-field {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.model-connect-field > span {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+}
+
+.model-connect-field .settings-select-trigger {
+  border: 1px solid var(--hairline);
+}
+
+/* The protocol choice is the shared segmented control, sized to its options. */
+.model-connect-field > .theme-segmented {
+  justify-self: start;
+}
+
+.model-connect-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  color: var(--ink);
+  font-size: var(--font-ui);
+}
+
+/* details does not lay its content out as a grid, so the body does. */
+.model-connect-advanced-body {
+  display: grid;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+
+.model-browse-dialog {
+  --environment-dialog-max-width: 900px;
+  height: min(82vh, 780px);
+  /* Title, search, independently scrolling catalog, custom endpoint. */
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  background: var(--settings-canvas);
+}
+
+.model-browse-list {
+  display: grid;
+  align-self: stretch;
+  align-content: start;
+  min-height: 0;
+  gap: var(--space-6);
+  overflow: auto;
+  margin-inline: calc(var(--space-2) * -1);
+  padding-inline: var(--space-2);
+  padding-block: var(--space-2);
+  scrollbar-gutter: stable;
+}
+
+.model-browse-dialog > .environment-dialog-footer {
+  justify-content: flex-start;
+  border-top: 1px solid var(--hairline-soft);
+  padding-top: var(--space-4);
+}
+
+.model-browse-copy {
+  display: grid;
+  min-width: 0;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+}
+
+.model-browse-copy > span,
+.model-browse-copy > small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-browse-copy > span {
+  font-size: var(--font-ui);
+}
+
+.model-browse-copy > small {
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+}
+
+.model-service-remove-dialog {
+  --environment-dialog-max-width: 440px;
+}
+
+/* Cards with and without a badge end their chevrons on one axis. */
+.model-service-card > .settings-disclosure-chevron {
+  grid-column: 4;
+}
+
+/* Icon, title, and close share one row instead of stacking. */
+.environment-dialog.model-dialog {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-4) var(--space-3);
+}
+
+.model-dialog > .environment-dialog-header {
+  display: contents;
+}
+
+.model-dialog > .environment-dialog-header > .environment-dialog-icon {
+  grid-row: 1;
+  grid-column: 1;
+}
+
+.model-dialog > .environment-dialog-header > span:empty {
+  display: none;
+}
+
+.model-dialog > .environment-dialog-header > .icon-button {
+  grid-row: 1;
+  grid-column: 3;
+}
+
+.model-dialog > h2 {
+  grid-row: 1;
+  grid-column: 2;
+  overflow: hidden;
+  font-size: var(--font-title);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-dialog:not(:has(.environment-dialog-icon)) > h2 {
+  grid-column: 1 / 3;
+}
+
+.model-dialog > :not(.environment-dialog-header, h2) {
+  grid-column: 1 / -1;
+}
+
+.connection-engine-row {
+  width: 100%;
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
+  padding-block: var(--settings-row-pad-block);
+}
+.connection-engine-row .settings-engine-row-name { color: var(--ink); }
+.connection-engine-row .settings-engine-row-icon { color: var(--ink-soft); }
+.connection-engine-row > .icon { flex: 0 0 auto; }
+.connection-engine-status { color: var(--ink-soft); text-align: end; }
+@media (max-width: 640px) {
+  .model-services .settings-page-header { flex-wrap: wrap; }
+}
+
+/* Connection navigation stays within the settings pane and its single scroll. */
+.connection-page, .connection-page-form {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.connection-page.model-browse-dialog {
+  height: auto;
+  overflow: visible;
+  background: transparent;
+}
+.connection-page-header { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.connection-page-title { margin: 0; font-size: var(--font-title); font-weight: var(--weight-medium); overflow-wrap: anywhere; }
+.connection-page-heading { min-width: 0; }
+.connection-page-body, .connection-detail-body { display: flex; flex-direction: column; gap: var(--settings-gap); min-width: 0; }
+.connection-page-footer { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.connection-page-back { align-self: start; margin-inline-start: calc(var(--control-padding-inline) * -1); }
+.connection-page .model-browse-list { overflow: visible; margin: 0; padding: 0; }
+.connection-page .model-service-tiles { grid-template-columns: minmax(0, 1fr); gap: 0; }
+.connection-page .model-service-tile { margin: 0; padding: var(--settings-row-pad-block) 0; border-radius: 0; border-bottom: 1px solid var(--hairline-soft); }
+.connection-page .model-service-tile:last-child { border-bottom: 0; }
+.connection-catalog-row { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-width: 0; min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2); padding: var(--settings-row-pad-block) 0; border-bottom: 1px solid var(--hairline-soft); background: transparent; color: var(--ink); text-align: start; }
+.connection-catalog-row:last-child { border-bottom: 0; }
+.connection-catalog-row:hover { background: var(--surface-1); }
+.connection-catalog-row > span { flex: 1; min-width: 0; }
+.connection-catalog-row > svg { width: 20px; height: 20px; flex-shrink: 0; }
+.connection-page .model-service-hero { justify-content: end; }
+.model-service-card-copy { white-space: normal; }
+
+/* Page-contained controls keep their complete hit area inside the column;
+ * the shared settings ghost-action bleed is for outer settings gutters. */
+.connection-page :is(.settings-section-actions, .settings-detail-actions) > .settings-button.settings-button-ghost:last-child {
+  margin-inline-end: 0;
+}
+.connection-page :is(.model-choice-hidden, .model-connect-advanced, .connection-engine-advanced) > summary {
+  margin-inline-start: 0;
+}
+
+/* Connections use the same grouped row rhythm as the other settings pages. */
+.connection-summary-list { display: flex; flex-direction: column; min-width: 0; }
+.connection-summary-list > [role="listitem"] { min-width: 0; }
+.connection-summary-list > [role="listitem"] + [role="listitem"] { border-top: 1px solid var(--hairline-soft); }
+.connection-summary-row {
+  --connection-icon-size: calc(var(--space-1) * 8);
+  display: grid;
+  grid-template-columns: var(--connection-icon-size) minmax(0, 1fr) var(--icon-size);
+  align-items: center;
+  gap: var(--space-3);
+  /* Include the group's gutters in both the hover surface and the hit area. */
+  width: calc(100% + var(--card-padding) * 2);
+  margin-inline: calc(-1 * var(--card-padding));
+  min-width: 0;
+  min-height: calc(var(--control-field-height) + var(--settings-row-pad-block) * 2);
+  padding: var(--settings-row-pad-block) var(--card-padding);
+  border: 0;
+  border-radius: 0;
+  color: var(--ink);
+  background: transparent;
+  text-align: start;
+}
+.connection-summary-list > [role="listitem"]:first-child > .connection-summary-row {
+  border-start-start-radius: calc(var(--settings-card-radius) - 1px);
+  border-start-end-radius: calc(var(--settings-card-radius) - 1px);
+}
+.connection-summary-list > [role="listitem"]:last-child > .connection-summary-row {
+  border-end-start-radius: calc(var(--settings-card-radius) - 1px);
+  border-end-end-radius: calc(var(--settings-card-radius) - 1px);
+}
+.connection-summary-row:hover { background: var(--surface-1); }
+html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+.connection-summary-row > .icon { color: var(--ink-soft); }
+.connection-summary-icon { display: grid; place-items: center; width: var(--connection-icon-size); height: var(--connection-icon-size); }
+/* Bare engine marks sit on a hairline tile like the provider marks' own. */
+.connection-summary-icon:has(> svg) {
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+.connection-summary-icon > svg { width: 58%; height: 58%; }
+.connection-summary-icon .provider-mark { --provider-mark-size: var(--connection-icon-size); }
+.connection-summary-icon .provider-mark :is(svg,.provider-mark-engine) { width: 100%; height: 100%; }
+.connection-summary-copy {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12em, 40%);
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2) var(--space-6);
+}
+.connection-summary-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1) var(--space-2); min-width: 0; }
+.connection-summary-name { min-width: 0; overflow-wrap: anywhere; white-space: normal; color: var(--ink-strong); font-size: var(--font-ui); font-weight: var(--weight-regular); line-height: 1.4; }
+.connection-summary-meta { min-width: 0; color: var(--ink-soft); font-size: var(--font-sm); overflow-wrap: anywhere; }
+.connection-summary-meta:empty { display: none; }
+.connection-summary-secondary { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--space-2); color: var(--ink-soft); font-size: var(--font-sm); line-height: 1.5; overflow-wrap: anywhere; text-align: end; }
+.connection-summary-secondary > .connection-summary-status { display: block; }
+.connection-summary-status { color: var(--ink-soft); }
+/* A small status dot leads the summary; color alone never carries the state
+ * (the status text or the usage numbers sit right beside it). */
+.connection-state-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-muted); }
+.connection-state-dot[data-tone="ok"] { background: var(--success); }
+.connection-state-dot[data-tone="warn"] { background: var(--warning); }
+.connection-state-dot[data-tone="danger"] { background: var(--danger); }
+.connection-summary-badge { flex: 0 0 auto; align-self: center; padding: 0 var(--space-2); border-radius: var(--radius-xs); background: var(--ink-overlay-6); color: var(--ink-soft); font-size: var(--font-xs); line-height: 1.6; }
+@container settings-page (max-width: 34em) {
+  .connection-summary-copy { grid-template-columns: minmax(0, 1fr); }
+  .connection-summary-secondary { justify-content: flex-start; text-align: start; }
+}
+.connection-usage-summary.connection-usage-inline { display: grid; gap: 2px; font: inherit; color: inherit; font-variant-numeric: tabular-nums; }
+.connection-usage-compact-window { display: grid; grid-template-columns: minmax(4.5em, max-content) minmax(1em, 1fr) 4.5ch; gap: var(--space-2); align-items: center; min-width: 0; }
+.connection-usage-compact-label { grid-column: 1; text-align: start; }
+.connection-usage-compact-value { grid-column: 3; grid-row: 1; text-align: end; color: var(--ink); }
+.connection-usage-compact-window[data-stale] { grid-template-columns: minmax(0, 1fr) 0 auto; }
+.connection-usage-compact-window[data-stale] .connection-usage-compact-value { color: var(--ink-soft); }
+.connection-usage-compact-value[data-warning="true"] { color: var(--warning); }
+.connection-usage-compact-value[data-exhausted="true"] { color: var(--danger); }
+.connection-usage-inline meter { appearance: none; grid-column: 2; grid-row: 1; min-width: 0; width: 100%; height: 3px; border: 0; background: var(--surface-3); }
+.connection-usage-inline meter::-webkit-meter-bar { border: 0; border-radius: 1px; background: var(--surface-3); }
+.connection-usage-inline meter::-webkit-meter-optimum-value { background: var(--ink-soft); }
+.connection-usage-inline meter[data-warning="true"]::-webkit-meter-optimum-value { background: var(--warning); }
+.connection-usage-inline meter[data-exhausted="true"]::-webkit-meter-optimum-value { background: var(--danger); }
+.connection-usage-inline meter::-moz-meter-bar { background: var(--ink-soft); }
+.connection-usage-inline meter[data-warning="true"]::-moz-meter-bar { background: var(--warning); }
+.connection-usage-inline meter[data-exhausted="true"]::-moz-meter-bar { background: var(--danger); }
+.connection-usage-amount { color: var(--ink); }
+.connection-usage-summary { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); min-width: 0; color: var(--ink-soft); font-size: var(--font-sm); }
+.connection-usage-window { display: grid; align-content: start; gap: var(--space-1); flex: 1 1 7em; min-width: 0; }
+.connection-usage-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+.connection-usage-value { color: var(--ink); font-size: var(--font-ui); }
+.connection-usage-period { font-size: var(--font-xs); }
+.connection-usage-window meter { width: 100%; height: 3px; border: 0; border-radius: 0; background: var(--surface-3); }
+.connection-usage-window meter::-webkit-meter-bar { background: var(--surface-3); border: 0; border-radius: 0; }
+.connection-usage-window meter::-webkit-meter-optimum-value { background: var(--ink-soft); }
+.connection-usage-window meter::-moz-meter-bar { background: var(--ink-soft); }
+.connection-usage-window meter[data-warning="true"]::-webkit-meter-optimum-value { background: var(--warning); }
+.connection-usage-window meter[data-warning="true"]::-moz-meter-bar { background: var(--warning); }
+.connection-usage-window meter[data-exhausted="true"]::-webkit-meter-optimum-value { background: var(--danger); }
+.connection-usage-window meter[data-exhausted="true"]::-moz-meter-bar { background: var(--danger); }
+.connection-usage-reset, .connection-usage-display { color: var(--ink-tertiary); font-size: var(--font-xs); overflow-wrap: anywhere; }
+.connection-usage-state { flex-basis: 100%; }
+.connection-page .model-choice { margin: 0; padding-inline: 0; border-radius: 0; }
+.connection-page .model-service-tile:hover { background: var(--surface-1); }
+.connection-fields { display: flex; flex-direction: column; min-width: 0; }
+.connection-page-icon { display: grid; place-items: center; flex: 0 0 48px; width: 48px; height: 48px; }
+.connection-page-icon > svg { width: 40px; height: 40px; }
+.connection-page-icon .provider-mark { --provider-mark-size: 48px; }
+.connection-page-icon .provider-mark :is(svg,.provider-mark-engine) { width: 36px; height: 36px; }
+.connection-page-subtitle { margin: var(--space-1) 0 0; color: var(--ink-soft); font-size: var(--font-sm); }
+.connection-page .model-service-hero { min-height: 0; }
+.connection-page .model-service-hero { display: flex; margin: 0; }
+
+
+/* One content column keeps actions attached to their connection and section. */
+.connection-page { width: 100%; align-self: flex-start; gap: var(--settings-gap); }
+.connection-page-header { flex-wrap: wrap; align-items: center; row-gap: var(--space-2); }
+.connection-page-heading { flex: 1 1 180px; }
+.connection-page-actions { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; margin-inline-start: auto; }
+.connection-page .settings-section-header { flex-wrap: wrap; }
+.connection-page-actions .model-service-hero-actions { gap: var(--space-1); }
+.connection-login { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.connection-login-feedback { flex-basis: 100%; font-size: var(--font-sm); color: var(--ink-soft); }
+.connection-auth-source { display: block; flex-basis: 100%; color: var(--ink-soft); font-size: var(--font-sm); }
+
+/* Connection details share one hierarchy; controls do not alter catalog identity. */
+.connection-title-edit { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.connection-title-edit .settings-icon-button { color: var(--ink-tertiary); }
+.connection-title-form { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.connection-title-form input { width: min(20em, 100%); }
+.connection-status-text { color: var(--ink-soft); }
+.connection-credential-menu { position: relative; font-size: var(--font-ui); }
+.connection-detail-quota { padding-block: var(--settings-row-pad-block); }
+.connection-detail-quota .connection-usage-summary { display: flex; flex-direction: column; gap: var(--space-4); }
+.connection-detail-quota .connection-usage-window { display: grid; grid-template-columns: 160px minmax(100px, 1fr) 180px; align-items: center; gap: var(--space-3); flex: none; }
+.connection-detail-quota .connection-usage-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; padding-inline-end: var(--space-4); }
+.connection-detail-quota .connection-usage-value { grid-column: 2; grid-row: 1; }
+.connection-detail-quota .connection-usage-period { grid-column: 1; grid-row: 1; }
+.connection-detail-quota .connection-usage-reset { text-align: end; }
+.connection-detail-quota .connection-usage-scope, .connection-detail-quota .connection-usage-display { grid-column: 1 / -1; }
+.connection-engine-advanced > :not(summary) { margin-top: var(--space-3); }
+/* A titled section inside the disclosure keeps the page's section spacing. */
+.connection-engine-advanced > :not(summary) ~ .settings-section { margin-top: var(--settings-gap); }
+@container settings-page (max-width: 42em) {
+  .connection-page-actions { margin-inline-start: 0; width: 100%; }
+  .connection-detail-quota .connection-usage-window { grid-template-columns: minmax(0, 1fr); }
+  .connection-detail-quota .connection-usage-heading { padding-inline-end: 0; }
+  .connection-detail-quota .connection-usage-reset { text-align: start; }
+}
+
+.connection-engine-version { font-size: var(--font-sm); color: var(--ink-soft); font-weight: var(--weight-regular); }
+
+/* --- Connection model list ------------------------------------------------
+ * One list per connection: optional search on top, rows that drag to reorder
+ * with the visibility switch on the trailing edge, and an add row at the end.
+ * Rows run edge to edge so hover fills and dividers span the whole group. */
+.settings-group.connection-model-list { padding-inline: 0; overflow: hidden; }
+.connection-model-list > * { padding-inline: var(--settings-card-pad-inline); }
+.connection-model-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: calc(var(--control-field-height) + var(--space-2) * 2);
+  padding-block: var(--space-2);
+  cursor: grab;
+  touch-action: pan-y;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.connection-model-row:hover { background: var(--surface-1); }
+.connection-model-row[data-dragging] { z-index: 1; cursor: grabbing; background: var(--settings-card-bg); box-shadow: var(--shadow-pop); }
+.connection-model-text { display: flex; flex: 1 1 auto; flex-direction: column; gap: 2px; min-width: 0; }
+.connection-model-name { display: flex; align-items: center; gap: var(--space-2); min-width: 0; color: var(--ink); overflow-wrap: anywhere; }
+.connection-model-id { min-width: 0; color: var(--ink-tertiary); font-family: var(--font-mono); font-size: var(--font-xs); overflow-wrap: anywhere; }
+.connection-model-badge { flex: 0 0 auto; padding: 0 var(--space-2); border-radius: var(--radius-xs); background: var(--ink-overlay-6); color: var(--ink-soft); font-size: var(--font-xs); line-height: 1.6; }
+.connection-model-enabled { flex: 0 0 auto; cursor: default; }
+.connection-model-search { display: flex; align-items: center; gap: var(--space-2); min-height: calc(var(--control-field-height) + var(--space-2) * 2); color: var(--ink-tertiary); cursor: text; }
+.connection-model-search > .icon { flex: 0 0 auto; }
+.connection-model-search > input { flex: 1 1 auto; min-width: 0; height: var(--control-field-height); border: 0; outline: 0; background: transparent; color: var(--ink); font: inherit; }
+.connection-model-search > input::placeholder { color: var(--ink-tertiary); }
+.connection-model-search:focus-within { color: var(--ink-soft); }
+.connection-model-add-trigger { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: calc(var(--control-field-height) + var(--space-2) * 2); background: transparent; color: var(--ink-soft); font: inherit; text-align: start; transition: background var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+.connection-model-add-trigger:hover:not(:disabled) { background: var(--surface-1); color: var(--ink); }
+.connection-model-add { display: flex; align-items: center; gap: var(--space-2); min-height: calc(var(--control-field-height) + var(--space-2) * 2); padding-block: var(--space-2); }
+.connection-model-add > .settings-input { flex: 1 1 auto; min-width: 0; }
+.connection-model-add > .settings-button { flex: 0 0 auto; white-space: nowrap; }
+.connection-model-list > .settings-group-empty { padding-block: var(--settings-row-pad-block); }
+.connection-detail-actions { display: flex; }
+.connection-detail-actions > .settings-button-danger { margin-inline-start: calc(var(--control-padding-inline) * -1); background: transparent; }
+.connection-detail-actions > .settings-button-danger:hover:not(:disabled) { background: var(--danger-soft); }

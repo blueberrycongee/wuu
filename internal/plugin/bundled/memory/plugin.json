@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "memory",
+  "name": "Memory",
+  "description": "Durable user memory notebook and viewer.",
+  "icon": { "path": "icon.webp" },
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "0.1.0",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
+  "desktop": { "entry": "desktop.js" },
+  "contributes": {
+    "settingsPages": [
+      { "id": "memory", "title": "Memory", "description": "Review durable memory", "view": "memory.settings", "icon": { "path": "icon.webp" }, "order": 30 }
+    ]
+  },
+  "interface": { "displayName": "Memory", "shortDescription": "Remember durable preferences, feedback, references, and lessons.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] },
+  "storageTransfers": {
+    "exports": [
+      {
+        "id": "personal-records-v1-owner",
+        "plugin": "personal",
+        "scope": "user",
+        "domain": "personal",
+        "keyPrefix": "personal.records.v1."
+      }
+    ]
+  }
+}

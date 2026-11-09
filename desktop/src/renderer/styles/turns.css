@@ -1,0 +1,6344 @@
+/* Component color tokens for turns.css. Light-theme values; the dark
+   theme overrides these in base.css theme blocks. */
+:root {
+  --turn-collapsed-focus-ring: var(--focus-ring);
+  /* A filled query separates the user from the open assistant response.
+     Keep the composer on its own raised surface. */
+  --user-message-bg-color: var(--wuu-message-user-background, var(--surface-2));
+  --user-message-radius: var(--wuu-message-user-radius, 16px);
+  --user-message-max-width: min(516px, 80%);
+  --user-message-fg-color: var(--ink);
+  --user-message-jump-flash-bg: var(--surface-3);
+  --user-message-link-color: var(--rich-link-color);
+  --user-message-link-hover-color: var(--rich-link-hover-color);
+  /* Inline editing derives its chrome from the outgoing bubble palette. */
+  --user-message-edit-border: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 16%,
+    transparent
+  );
+  --user-message-edit-border-strong: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 55%,
+    transparent
+  );
+  --user-message-edit-hover-bg: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 10%,
+    transparent
+  );
+  --user-message-edit-drop-bg: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 22%,
+    transparent
+  );
+  --user-message-edit-drop-ring: var(--wuu-message-user-color, var(--user-message-fg-color));
+  --message-copy-bg: rgba(255, 255, 255, 0.72);
+  --message-file-bg: rgba(255, 255, 255, 0.82);
+  --message-file-fg: var(--theme-override-color-text, var(--gray-800));
+  --message-image-overflow-bg: rgba(20, 24, 28, 0.62);
+  --message-image-overflow-bg-hover: rgba(20, 24, 28, 0.72);
+  --message-image-overflow-fg: #fff;
+  --instruction-files-error-fallback: var(--wuu-color-danger, #d3524f);
+  --stream-cursor-default-color: var(--ink);
+  --reasoning-stream-cursor-color: var(--theme-override-color-text-muted, var(--gray-500));
+  --turn-process-entry-color: var(--ink-tertiary);
+  --process-control-color-fallback: var(--ink-tertiary);
+  /* Turn headers, tool activity and standalone reasoning summaries share the
+     composer's placeholder ink in every running/settled state. */
+  --process-summary-color: var(--ink-quiet);
+  --process-active-highlight: var(--ink-muted);
+  --activity-toggle-hover-color: var(--theme-override-color-text-muted, var(--gray-650));
+  --activity-toggle-hover-color-alt: var(--theme-override-color-text-muted, var(--gray-600));
+  --activity-detail-color: var(--theme-override-color-text-muted, var(--gray-550));
+  /* A tool row's target (file, query, command) sits between the row's
+   * tertiary verb and prose ink, so a run of rows scans by what was touched
+   * without competing with the answer. */
+  --activity-target-color: color-mix(in srgb, var(--ink) 50%, var(--ink-soft));
+  /* Diff counts are status text: the status roles already pass contrast on
+   * the canvas, where the brighter diff greens did not. */
+  --diff-insert-color: var(--success);
+  --diff-delete-color: var(--danger);
+  /* Blue and a subtle underline identify links within prose. Hover uses
+   * strong ink and strengthens the underline; themes can override both. */
+  --rich-link-color: var(--wuu-color-link, var(--info));
+  --rich-link-hover-color: var(--wuu-color-link-hover, var(--ink-strong));
+  --rich-link-underline-color: color-mix(in srgb, currentColor 35%, transparent);
+  --rich-link-icon-color: var(--ink-muted);
+  /* Prose surfaces share the neutral ramp: blocks recede, inline code
+   * gets a small contrast step without resembling a selected control. */
+  --message-flow-card-bg: var(--surface-1);
+  /* Answer code is an inset in the reading flow: one tonal step, no frame. */
+  --rich-code-block-bg: var(--surface-1);
+  --message-flow-card-border: var(--hairline);
+  --message-flow-card-header-bg: var(--message-flow-card-bg);
+  --message-flow-card-hover-bg: var(--surface-2);
+  --message-flow-card-shadow: var(--shadow-soft);
+  /* Embedded cards use the same panel corner as settings and tools. */
+  --message-flow-card-radius: var(--radius-md);
+  --surface-chip: var(--surface-2);
+  --fork-worktree-focus-ring: var(--focus-ring);
+  --rich-blockquote-color: var(--theme-override-color-text-muted, var(--gray-650));
+  --rich-rule-color: var(--wuu-border-subtle, var(--hairline));
+  --pre-text-color: var(--theme-override-color-text, var(--gray-700));
+  --system-line-marker-color: var(--theme-override-color-text-muted, var(--gray-400));
+  --empty-home-action-border: var(--wuu-border-subtle, var(--hairline));
+  --empty-home-action-border-hover: var(--wuu-border-strong, var(--hairline-strong));
+  --empty-home-action-icon-color: var(--theme-override-color-text-muted, var(--gray-500));
+  /* The greeting belongs to the same readable UI family as the workbench. */
+  --empty-home-mascot-display: block;
+  --empty-home-title-font: var(--appearance-ui-font, system-ui, sans-serif);
+  --project-empty-content-color: var(--theme-override-color-text-muted, var(--gray-600));
+  --project-empty-actions-border: var(--wuu-border-subtle, var(--hairline));
+  --project-empty-actions-hover-bg: var(--surface-1);
+  --diff-insert-bg: color-mix(in srgb, var(--success) 8%, transparent);
+  --diff-delete-bg: color-mix(in srgb, var(--danger) 8%, transparent);
+  --artifact-preview-overlay-bg: rgba(8, 10, 12, 0.78);
+  --artifact-preview-shell-border: rgba(255, 255, 255, 0.14);
+  --artifact-preview-frame-bg: #fff;
+  /* Image-overlay controls keep the same contrast treatment in both themes. */
+  --artifact-gallery-control-glow: rgb(255 255 255 / 85%);
+  --artifact-gallery-control-fg: rgb(17 19 21 / 75%);
+  --artifact-gallery-control-fg-hover: rgb(17 19 21);
+}
+
+.turn {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
+  /* content-visibility's paint containment clips at the turn box, including
+   * on-screen turns during a window resize; answer tables may extend past
+   * it (message-reading.css). */
+  overflow-clip-margin: var(--conversation-table-outset);
+  display: flex;
+  flex-direction: column;
+  gap: var(--conversation-turn-item-gap);
+  font-family: var(--conversation-message-font-family);
+  font-weight: var(--conversation-message-font-weight);
+  /* The final turn uses the scroll region's composer clearance. */
+  margin-bottom: var(--conversation-turn-boundary-gap);
+}
+
+.conversation-width .turn[data-latest-turn="true"] {
+  margin-bottom: 0;
+}
+
+/*
+ * Off-screen turns skip layout and paint and keep the height they last
+ * rendered at. That height must be real, so a turn renders once before it may
+ * skip (`data-sized`): the 260px placeholder differs from the real height and
+ * would move the reader and the scrollbar when the turn finally renders.
+ * Turns around the viewport (`data-near`, see ConversationRenderWindow) render
+ * before Chromium's own relevance check catches up with a large scroll, which
+ * would otherwise paint the landing turns blank. The live turn always renders.
+ * Hovered and focused turns render because content-visibility implies paint
+ * containment, which would clip user-action overlays below the bubble.
+ * Persistent answer actions stay in flow and do not need this exception.
+ */
+.turn:not([data-sized]),
+.turn[data-near],
+.turn[data-turn-status="in_progress"],
+.conversation-width .turn[data-latest-turn="true"],
+.turn:hover,
+.turn:focus-within {
+  content-visibility: visible;
+}
+
+.turn-collapsed {
+  content-visibility: visible;
+  margin-bottom: 14px;
+}
+
+/* A live window or panel drag rewraps every rendered turn on each frame. For
+ * the drag, turns kept rendered only for being near or live may skip when
+ * off-screen, with their remembered height, and wrap once at the final width. */
+.window-resizing .turn:is([data-near], [data-turn-status="in_progress"], [data-latest-turn="true"]):not(:hover, :focus-within) {
+  content-visibility: auto;
+}
+
+.conversation-turn-history-loader {
+  justify-self: center;
+  margin: 4px 0 20px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  padding: 7px 11px;
+}
+
+.conversation-turn-history-loader:hover,
+.conversation-turn-history-loader:focus-visible {
+  border-color: var(--hairline);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.conversation-turn-history-loader:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.turn-collapsed-button {
+  display: grid;
+  width: 100%;
+  min-width: 0;
+  grid-template-columns: 8px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--ink);
+  cursor: pointer;
+  font: inherit;
+  padding: 12px 14px;
+  text-align: left;
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    border-color var(--motion-fast) var(--ease-out);
+}
+
+.turn-collapsed-button:hover,
+.turn-collapsed-button:focus-visible {
+  border-color: var(--hairline);
+  background: var(--surface-2);
+}
+
+.turn-collapsed-button:focus-visible {
+  outline: 2px solid var(--turn-collapsed-focus-ring);
+  outline-offset: 2px;
+}
+
+.turn-collapsed-marker {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-pill);
+  background: var(--ink-overlay-18);
+}
+
+.turn-collapsed-copy {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.turn-collapsed-query,
+.turn-collapsed-reply {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-collapsed-query {
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+}
+
+.turn-collapsed-reply {
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+}
+
+.turn-collapsed-action {
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+}
+
+.turn > .assistant-turn-shell {
+  /*
+   * User query → assistant reply is separated by whitespace alone — no
+   * hairline. Turn-to-turn separation already owns the single visible
+   * boundary (the --conversation-turn-boundary-gap band on .turn), so a
+   * full-width rule inside a turn duplicated that meaning while splitting one
+   * Q&A pair in two. The action row and turn boundary together separate
+   * rounds more than this query-to-reply gap.
+   */
+  margin-top: calc(
+    var(--conversation-user-rule-gap) - var(--conversation-turn-item-gap) -
+      var(--conversation-user-message-trailing-gap)
+  );
+}
+
+.assistant-turn-shell {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--conversation-process-answer-gap);
+}
+
+/* Placing a submission moves only what the user sent; the new turn's live
+ * status enters as the bubble lands (ConversationScrollState). */
+.scroll-region-content[data-submit-placing] .session-flow > .turn:last-of-type > .assistant-turn-shell {
+  opacity: 0;
+}
+
+.conversation-split-width .assistant-turn-shell {
+  width: 100%;
+}
+
+.turn-answer-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.turn-answer-body > * + * {
+  margin-block-start: var(--conversation-message-element-gap);
+}
+
+.turn-answer-body > .turn-artifact-inline-list + *,
+.turn-answer-body > * + .turn-artifact-inline-list {
+  margin-block-start: var(--conversation-image-gap);
+}
+
+.assistant-turn-shell:has(> .turn-answer-body > .turn-artifact-inline-list:first-child) {
+  gap: var(--conversation-image-gap);
+}
+
+.message {
+  max-width: min(var(--conversation-message-max-width), var(--conversation-message-max-inline));
+  border-radius: var(--radius-sm);
+  padding: 8px 16px;
+  font-size: var(--conversation-message-font-size);
+  line-height: var(--conversation-reading-line-height);
+}
+
+.user-message {
+  /* Grow with the text until --user-message-max-width, then wrap. */
+  width: fit-content;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  align-self: flex-end;
+  --wuu-inline-code-background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 14%,
+    transparent
+  );
+  --user-message-background: var(--wuu-message-user-background, var(--user-message-bg-color));
+  background: var(--user-message-background);
+  border: var(--wuu-message-user-border, 1px solid transparent);
+  box-shadow: var(--wuu-message-user-shadow, none);
+  color: var(--wuu-message-user-color, var(--user-message-fg-color));
+  border-radius: var(--user-message-radius);
+  /* The same framed-text inset as the composer draft it was sent from. */
+  padding: var(--conversation-framed-text-inset-block) var(--card-padding);
+}
+
+.user-message-block {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  max-width: var(--user-message-max-width);
+  align-self: flex-end;
+  justify-items: end;
+  gap: 8px;
+  /* The question belongs to its answer — keep them close so the big
+     break lands between turns, not inside one. */
+  margin-bottom: var(--conversation-user-message-trailing-gap);
+  border-radius: var(--radius-lg);
+  scroll-margin-top: 12px;
+}
+
+/* Animate the visual group without transforming its measured scroll anchor. */
+.user-message-motion {
+  display: grid;
+  grid-template-columns: inherit;
+  justify-items: inherit;
+  gap: inherit;
+  width: 100%;
+  min-width: 0;
+}
+
+.session-message-source {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: calc(var(--space-1) * 1.5);
+  min-width: 0;
+  max-width: 100%;
+  min-height: var(--control-size-roomy);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--message-flow-card-bg);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--font-ui);
+  line-height: 1.4;
+  text-align: start;
+  cursor: pointer;
+}
+
+.session-message-source svg {
+  flex: none;
+  width: var(--icon-size-xl);
+  height: var(--icon-size-xl);
+  color: var(--ink-soft);
+}
+.session-message-source span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-message-source:hover:not(:disabled) { background: var(--message-flow-card-hover-bg); }
+.session-message-source:active:not(:disabled) { background: var(--surface-3); }
+.session-message-source:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.session-message-source:disabled { cursor: default; }
+
+/*
+ * Edit state stretches the message block to the full row width — a "draft
+ * surface" needs every horizontal pixel of the conversation column, and
+ * inheriting the default max-width otherwise clamps it back to
+ * the bubble width. Override max-width explicitly so the textarea, image
+ * grid, and action row all line up with the assistant turn above and below.
+ */
+.user-message-block:has(.user-message-edit) {
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
+}
+
+.user-message-block:has(.user-message-long-card) {
+  width: var(--user-message-max-width);
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
+}
+
+.user-message-block:has(.user-message-attachments) {
+  width: var(--user-message-max-width);
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: end;
+}
+
+.user-message-block.user-message-jump-flash > .user-message-motion > .user-message,
+.user-message-block.user-message-jump-flash > .user-message-motion > .user-message-edit {
+  animation: user-message-jump-flash 800ms var(--ease-out);
+}
+
+@keyframes user-message-jump-flash {
+  0% {
+    background: var(--user-message-background, var(--user-message-bg-color));
+  }
+  18% {
+    background: var(--user-message-jump-flash-bg);
+  }
+  100% {
+    background: var(--user-message-background, var(--user-message-bg-color));
+  }
+}
+
+.agent-block.user-message-jump-flash {
+  animation: agent-message-jump-flash 800ms var(--ease-out);
+}
+
+@keyframes agent-message-jump-flash {
+  0%, 100% {
+    background: transparent;
+  }
+  18% {
+    background: var(--user-message-jump-flash-bg);
+  }
+}
+
+@container style(--motion-reduced: 1) {
+  .agent-block.user-message-jump-flash,
+  .user-message-block.user-message-jump-flash > .user-message-motion > .user-message,
+  .user-message-block.user-message-jump-flash > .user-message-motion > .user-message-edit {
+    animation: none;
+    background: var(--user-message-jump-flash-bg);
+  }
+}
+
+.user-message-block .user-message {
+  max-width: 100%;
+}
+
+.user-message.user-message-long-card,
+.user-message.long-card {
+  width: 100%;
+}
+
+.user-message-long-card {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  flex-direction: column;
+  align-items: flex-start;
+  border-radius: var(--user-message-radius);
+  overflow: hidden;
+  padding: 12px var(--card-padding);
+}
+
+.user-message-raw-query {
+  width: 100%;
+  min-width: 0;
+  color: inherit;
+  line-height: var(--conversation-reading-line-height);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.user-message-long-card.collapsed .user-message-raw-query {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
+}
+
+.user-message-expand-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 14px;
+  min-height: 24px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
+  cursor: pointer;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  padding: 0;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.user-message-expand-toggle:hover,
+.user-message-expand-toggle:focus-visible {
+  outline: 0;
+  opacity: 1;
+}
+
+.user-message-expand-toggle svg {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 auto;
+}
+
+.user-message-attachments {
+  display: grid;
+  width: 100%;
+  max-width: min(472px, 100%);
+  min-width: 0;
+  box-sizing: border-box;
+  justify-items: end;
+  gap: 8px;
+}
+
+/*
+ * Images, pasted-text pages, and file pages share one 72px-tall media row.
+ * The message-images/message-files wrappers dissolve so their children sit
+ * side by side in document order; anything wider (expanded paste card,
+ * selection cards) wraps onto its own line.
+ */
+.user-message-media-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.user-message-media-row > .message-images,
+.user-message-media-row > .message-files {
+  display: contents;
+}
+
+.user-message-content-parts {
+  display: grid;
+  min-width: 0;
+  gap: 10px;
+}
+
+.user-message-text-part {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.user-message-skill-invocation {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  gap: 6px;
+}
+
+.user-message-skill-arguments {
+  width: 100%;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * The collapsed paste is a page thumbnail in the media row — same 72px row
+ * height as image and file pages, same border/radius/shadow family. Its
+ * opening lines double as the preview, like the composer's folded prompt
+ * card.
+ */
+.user-message-pasted-thumb {
+  display: block;
+  width: 56px;
+  height: 72px;
+  padding: 7px 6px 0;
+  overflow: hidden;
+  border: 2px solid var(--hairline-strong);
+  border-radius: var(--radius-media);
+  background: var(--paper);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.user-message-pasted-thumb:hover {
+  border-color: var(--ink-faint);
+}
+
+.user-message-pasted-thumb:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.user-message-pasted-thumb-lines > span {
+  display: block;
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-size: 5px;
+  line-height: 1.9;
+  white-space: nowrap;
+}
+
+.user-message-pasted-text {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+
+.user-message-pasted-text-toggle {
+  display: grid;
+  width: 100%;
+  min-height: 48px;
+  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.user-message-pasted-text-toggle:hover {
+  background: var(--surface-2);
+}
+
+.user-message-pasted-text-toggle:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.user-message-pasted-text-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink-muted);
+}
+
+.user-message-pasted-text-icon svg,
+.user-message-pasted-text-toggle > svg {
+  width: 16px;
+  height: 16px;
+}
+
+.user-message-pasted-text-toggle > svg {
+  color: var(--ink-muted);
+}
+
+/*
+ * The card names the paste once, as the first line of the text itself: the
+ * file icon already says "attachment", so a "pasted text" label or character
+ * count would only restate what the row is. See the header comment on the
+ * system artifact cards for the same rule.
+ */
+.user-message-pasted-text-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-message-pasted-text-content {
+  max-height: min(320px, 42vh);
+  margin: 0;
+  overflow: auto;
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--hairline-soft);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--font-sm);
+  line-height: var(--conversation-reading-line-height);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Draft surface: mirrors the outgoing bubble palette so
+ * editing feels like working inside the query itself. The light border and
+ * the soft lift are what mark it as an active draft now that the background
+ * no longer differs from the bubble. The transition keeps the drag-over
+ * state feeling like a deliberate target, not a flash.
+ */
+.user-message-edit {
+  display: grid;
+  width: 100%;
+  max-width: 100%;
+  justify-self: stretch;
+  gap: 8px;
+  border-radius: var(--radius-lg);
+  background: var(--wuu-message-user-background, var(--user-message-bg-color));
+  border: 1px solid var(--user-message-edit-border);
+  padding: 10px 12px;
+  color: var(--wuu-message-user-color, var(--user-message-fg-color));
+  transition: background-color var(--motion-base) var(--ease-out), border-color var(--motion-base) var(--ease-out), box-shadow var(--motion-base) var(--ease-out);
+}
+
+.user-message-edit.user-message-edit-drop-active {
+  border-color: var(--user-message-edit-border-strong);
+  background: var(--user-message-edit-drop-bg);
+  box-shadow: inset 0 0 0 1px var(--user-message-edit-drop-ring);
+}
+
+.user-message-edit-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+
+.user-message-edit .message-images,
+.user-message-edit .message-files {
+  /*
+   * In a draft surface attachments read as "tools on the desk", so
+   * align them to the start edge instead of mirroring the static
+   * bubble's right edge.
+   */
+  justify-content: flex-start;
+  margin: 0;
+}
+
+/* File chips follow the draft palette. */
+.user-message-edit .message-file {
+  background: var(--user-message-edit-hover-bg);
+  color: var(--wuu-message-user-color, var(--user-message-fg-color));
+}
+
+.user-message-edit .message-file:hover {
+  background: var(--user-message-edit-drop-bg);
+}
+
+.user-message-edit .message-file-meta {
+  color: inherit;
+  opacity: 0.65;
+}
+
+.user-message-edit-input {
+  width: 100%;
+  min-width: 0;
+  min-height: 60px;
+  max-height: min(240px, 36vh);
+  field-sizing: content;
+  overflow-y: auto;
+  resize: none;
+  display: block;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  caret-color: var(--wuu-message-user-color, var(--user-message-fg-color));
+  font: inherit;
+  line-height: var(--conversation-reading-line-height);
+  padding: 6px 2px;
+}
+
+/*
+ * Toolbar mirrors the main composer bar's icon language: a paperclip attach
+ * button on the left, a flex spacer, then Cancel / Send on the right. No top
+ * hairline — whitespace alone separates the text from the actions, matching
+ * the composer where the action row floats below the textarea.
+ */
+.user-message-edit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.user-message-edit-spacer {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.user-message-edit-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+/*
+ * Toolbar controls reuse the composer's visual language: the attach button
+ * uses the Plus icon and composer-tool-button footprint; send uses the
+ * accent composer-send-button. The cancel text button is a low-key ghost.
+ * All are shrunk from 32px to 28px so the draft surface stays compact.
+ */
+.user-message-edit .user-message-edit-attach-button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
+}
+
+.user-message-edit .user-message-edit-attach-button:hover:not(:disabled) {
+  background: var(--user-message-edit-hover-bg);
+  color: inherit;
+  opacity: 1;
+}
+
+.user-message-edit .user-message-edit-attach-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.user-message-edit .user-message-edit-attach-button svg {
+  width: 16px;
+  height: 16px;
+  stroke-width: var(--icon-stroke);
+}
+
+.user-message-edit-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out);
+}
+
+.user-message-edit-button.secondary {
+  height: 28px;
+  min-width: 52px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  opacity: 0.65;
+}
+
+.user-message-edit-button.secondary:hover:not(:disabled) {
+  background: var(--user-message-edit-hover-bg);
+  opacity: 1;
+}
+
+.user-message-edit-button.secondary:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.message-copy-button {
+  --message-copy-rest-transform: translate3d(0, 2px, 0) scale(0.98);
+  --message-copy-visible-transform: translate3d(0, 0, 0) scale(1);
+  --message-copy-active-transform: translate3d(0, 0, 0) scale(0.96);
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border-radius: var(--radius-pill);
+  box-shadow: var(--shadow-soft);
+  background: var(--message-copy-bg);
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
+  line-height: 1;
+  opacity: 0;
+  padding: 0;
+  pointer-events: none;
+  transform: var(--message-copy-rest-transform);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.message-copy-button:hover,
+.message-copy-button:focus-visible {
+  outline: 0;
+  box-shadow: var(--shadow-card);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Copied state keeps the rest palette: the Check icon swap is the only
+ * visual change after clicking. Earlier this used --success-soft/--success
+ * for a celebratory tint, but it read as cheap next to the gray rest. */
+.message-copy-button.copied {
+  background: var(--message-copy-bg);
+  color: var(--ink-tertiary);
+}
+
+.message-copy-button.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.user-message-block-with-actions:hover .message-copy-button,
+.user-message-block-with-actions:focus-within .message-copy-button,
+.message-copy-button.copied,
+.message-copy-button.failed {
+  opacity: 1;
+  pointer-events: auto;
+  transform: var(--message-copy-visible-transform);
+}
+
+.message-copy-button:active {
+  transform: var(--message-copy-active-transform);
+}
+
+/* The overlay borrows trailing whitespace or floats outside the frame.
+ * Placement never changes the message's size or neighboring content. */
+.user-message-block-with-actions {
+  position: relative;
+}
+
+.message-actions.user-message-actions {
+  /* Compensate for the artwork's inset inside its 24-unit SVG canvas so
+   * the visible icon matches the adjacent message text. */
+  --conversation-message-action-icon-size: calc(var(--conversation-message-font-size) * 1.25);
+  --user-message-action-target-size: max(var(--conversation-user-action-size), var(--conversation-reading-line-height));
+  position: absolute;
+  top: 100%;
+  right: 0;
+  z-index: 2;
+  justify-content: flex-end;
+  min-height: var(--user-message-action-target-size);
+  width: max-content;
+  max-width: 100%;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  padding-inline: 4px;
+  border-radius: var(--radius-sm);
+  transform: none;
+}
+
+.message-actions.user-message-actions[data-placement]:not([data-placement="inline"]) {
+  background: var(--surface-raised);
+  box-shadow: var(--shadow-soft);
+}
+
+/* Bridge the gap so the pointer can reach either floating placement. */
+.message-actions.user-message-actions:is([data-placement="below"], [data-placement="above"])::before {
+  position: absolute;
+  inset: -4px 0;
+  content: "";
+  z-index: -1;
+}
+
+.message-actions.user-message-actions .message-action-button {
+  flex: none;
+  width: var(--user-message-action-target-size);
+  height: var(--user-message-action-target-size);
+}
+
+.message-time {
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+  line-height: var(--conversation-message-action-size);
+  white-space: nowrap;
+}
+
+.user-message-time {
+  font-family: var(--conversation-message-font-family);
+  font-size: var(--conversation-message-font-size);
+  font-weight: var(--weight-regular);
+  line-height: var(--conversation-reading-line-height);
+}
+
+.message-images {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 2px 0 8px;
+}
+
+/* Videos join the row at the same 72px height, keeping their 16:9 shape. */
+.user-message-media-row .video-attachment {
+  width: 128px;
+  height: 72px;
+  border: 2px solid var(--hairline-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.user-message-media-row .video-attachment-play-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.user-message-media-row .video-attachment-play-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.agent-text > .message-images {
+  justify-content: flex-start;
+}
+
+.message-images:only-child {
+  margin-bottom: 2px;
+}
+
+.message-image {
+  display: block;
+  width: 96px;
+  max-width: 100%;
+  height: 72px;
+  border: 2px solid var(--hairline-strong);
+  border-radius: var(--radius-media);
+  object-fit: cover;
+  background: var(--paper);
+  box-shadow: var(--shadow-card);
+}
+
+.message-image-overflow {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-media);
+  background: var(--message-image-overflow-bg);
+  color: var(--message-image-overflow-fg);
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: var(--weight-semibold);
+}
+
+.message-image-overflow:hover {
+  background: var(--message-image-overflow-bg-hover);
+}
+
+.message-image-overflow:focus-visible {
+  outline: 2px solid var(--paper);
+  outline-offset: -3px;
+}
+
+.message-files {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 2px 0 8px;
+}
+
+.message-file {
+  display: inline-flex;
+  align-items: center;
+  max-width: min(280px, 100%);
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--message-file-bg);
+  color: var(--message-file-fg);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
+}
+
+.message-file .icon {
+  flex: 0 0 auto;
+}
+
+.message-file-details {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.message-file-name {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.message-file-name-stem {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.message-file-name-extension {
+  flex: 0 0 auto;
+}
+
+.message-file-meta {
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * File page tile (sent user messages): a folded-corner page the size of the
+ * pasted-text page — 72x72 in the shared media row. The filename itself is
+ * the page's content, wrapped in small type across up to three lines; the
+ * kind/size line stays out of the tile and lives on the title tooltip.
+ */
+.message-files-tile .message-file {
+  position: relative;
+  display: flex;
+  width: 72px;
+  height: 72px;
+  max-width: none;
+  padding: 10px 9px 7px;
+  flex-direction: column;
+  gap: 0;
+  border: 2px solid var(--hairline-strong);
+  border-radius: var(--radius-media);
+  background:
+    linear-gradient(135deg, transparent 50%, var(--ink-overlay-8) 50%) right 2px top 2px / 12px 12px no-repeat,
+    var(--paper);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.message-files-tile .message-file > .icon,
+.message-files-tile .message-file-meta {
+  display: none;
+}
+
+.message-files-tile .message-file-details {
+  display: contents;
+}
+
+.message-files-tile .message-file-name {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 9px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.message-files-tile .message-file-name-stem,
+.message-files-tile .message-file-name-extension {
+  display: inline;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.message-attachment-more,
+.message-attachment-collapse {
+  display: inline-flex;
+  min-height: 30px;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-semibold);
+}
+
+.message-attachment-more:hover,
+.message-attachment-collapse:hover {
+  background: var(--ink-overlay-6);
+  color: var(--ink);
+}
+
+.message-attachment-more:focus-visible,
+.message-attachment-collapse:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.message-attachment-more svg,
+.message-attachment-collapse svg {
+  width: 14px;
+  height: 14px;
+}
+
+/*
+ * Attachment frame + remove X (only rendered in edit mode via
+ * MessageImageGrid / MessageFileList when `onRemove` is provided).
+ * The wrapper itself has no border or padding — it's a positioning
+ * context for the X button. That way the static bubble keeps its
+ * current pixel-perfect layout while the editor gains a delete
+ * affordance without any layout shift. The image X sits inside the
+ * frame: the grid gap is narrower than its overhang, so an outside
+ * badge would cross into the neighbouring preview.
+ */
+.message-image-frame,
+.message-file-frame {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.message-file-frame {
+  max-width: 100%;
+}
+
+.message-image-remove,
+.message-file-remove {
+  position: absolute;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  /* The shared button icon sizing can exceed the UA-padded content box, which
+   * leaves the glyph off-center. The circle owns the inset. */
+  padding: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-pill);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+
+.message-image-remove {
+  top: var(--space-1);
+  right: var(--space-1);
+  z-index: 1;
+}
+
+.message-file-remove {
+  top: -7px;
+  right: -7px;
+}
+
+.message-image-remove:hover,
+.message-file-remove:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+/*
+ * Editable variant: left-aligns attachments in the draft surface so
+ * they read as "tools on the desk" instead of mirroring the bubble's
+ * right edge. The .user-message-edit parent selector already covers
+ * this, but the explicit class lets the same component behave
+ * correctly when reused outside the editor in the future.
+ */
+.message-images-editable,
+.message-files-editable {
+  justify-content: flex-start;
+}
+
+.agent-block {
+  display: block;
+  width: 100%;
+  /*
+   * Answer prose is capped at the shared readable measure
+   * (--conversation-message-max-width, 720px) which equals the content
+   * column and the composer width, so the reply lines up flush with the
+   * input box that produced it. The cap only bites if the column is ever
+   * widened past the measure; today it matches the column exactly.
+   */
+  max-width: min(var(--conversation-message-max-width, 720px), 100%);
+  min-width: 0;
+  color: var(--ink);
+  font-size: var(--conversation-message-font-size);
+  line-height: var(--conversation-reading-line-height);
+}
+
+.conversation-split-width .agent-block {
+  max-width: min(var(--conversation-split-message-max-width, 760px), 100%);
+}
+
+/*
+ * System artifact cards (/context, /instructions)
+ *
+ * One flat container per card: a single hairline frame on surface-1 with a
+ * single padded grid inside — no header strip, no sub-borders, no nested
+ * boxes. The content identifies the card (the gauge reads as /context, the
+ * file rows as /instructions), so chrome that would restate it is omitted
+ * on purpose: a semantic appears once, as a figure or as a word, never
+ * both. The dismiss control reveals on hover/focus like message actions,
+ * keeping the resting card free of controls. All of both cards' styling
+ * lives here; nothing is split across other files.
+ */
+.context-composition-card,
+.instruction-files-card,
+.plugin-conversation-card {
+  width: 100%;
+  max-width: none;
+  margin: 0 0 var(--conversation-turn-boundary-gap);
+}
+
+/* The latest turn leaves its trailing gap to the composer clearance, so a
+ * card placed after it takes the turn boundary itself. */
+.conversation-width .turn[data-latest-turn="true"] + :is(.context-composition-card, .instruction-files-card, .plugin-conversation-card) {
+  margin-top: var(--conversation-turn-boundary-gap);
+}
+
+.plugin-conversation-card-shell {
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-lg);
+  background: var(--surface-1);
+}
+
+.plugin-conversation-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 10px 8px 16px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.plugin-conversation-card-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.plugin-conversation-card-heading strong {
+  overflow: hidden;
+  font-size: var(--font-sm);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-conversation-card-heading span {
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+}
+
+.plugin-conversation-card-content {
+  min-width: 0;
+  padding: 16px;
+}
+
+.plugin-conversation-card-error {
+  color: var(--error);
+  font-size: var(--font-sm);
+}
+
+/* Slash-command results are content cards in the reading flow, framed like
+ * code blocks and the failure card rather than like a panel. */
+.context-composition-card-inner,
+.instruction-files-card-inner {
+  position: relative;
+  display: grid;
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--message-flow-card-bg);
+  padding: var(--card-padding);
+}
+
+.context-composition-card-inner,
+.instruction-files-card-inner {
+  gap: var(--space-4);
+}
+
+.context-composition-dismiss,
+.instruction-files-dismiss {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 24px;
+  height: 24px;
+  color: var(--ink-tertiary);
+  opacity: 0;
+  transition:
+    opacity var(--motion-base) var(--ease-out),
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+.context-composition-card-inner:hover .context-composition-dismiss,
+.context-composition-card-inner:focus-within .context-composition-dismiss,
+.instruction-files-card-inner:hover .instruction-files-dismiss,
+.instruction-files-card-inner:focus-within .instruction-files-dismiss {
+  opacity: 1;
+}
+
+/* Loading / error / empty read as quiet inline notes, not boxed alerts —
+ * the card frame already carries the surface. */
+.context-composition-state,
+.instruction-files-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 22px;
+  font-size: var(--font-sm);
+  color: var(--ink-tertiary);
+}
+
+.context-composition-state .icon,
+.instruction-files-state .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--ink-muted);
+}
+
+.context-composition-state.error,
+.instruction-files-state.error {
+  color: var(--danger, var(--instruction-files-error-fallback));
+}
+
+.context-composition-state.error .icon,
+.instruction-files-state.error .icon {
+  color: inherit;
+}
+
+/* --- /context: occupancy gauge --- */
+
+.context-composition-gauge {
+  display: grid;
+  gap: 10px;
+}
+
+.context-composition-headline {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.context-composition-headline strong {
+  font-size: var(--font-display);
+  font-weight: var(--weight-semibold);
+  line-height: 1.05;
+  color: var(--ink-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The slash gets air on both sides and steps back in color so the two
+ * figures read as separate numbers at a glance. */
+.context-composition-headline-divider {
+  margin: 0 7px;
+  color: var(--ink-muted);
+  font-weight: var(--weight-medium);
+}
+
+.context-composition-headline-percent {
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Slim segmented gauge: the track is free capacity, the flat tone segments
+ * are the fill. 2px notches keep category boundaries readable without
+ * per-segment chrome; the legend rows below carry the detail. min-width
+ * keeps a sliver-sized category visible instead of vanishing at 0px. */
+.context-composition-bar {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--ink-overlay-6);
+}
+
+.context-composition-segment {
+  flex: 0 0 auto;
+  height: 100%;
+  min-width: 2px;
+  background: var(--ink-overlay-18);
+}
+
+.context-composition-segment.tone-system,
+.context-category-row.tone-system .context-category-swatch {
+  background: var(--env-tone-system);
+}
+
+.context-composition-segment.tone-stable,
+.context-category-row.tone-stable .context-category-swatch {
+  background: var(--env-tone-stable);
+}
+
+.context-composition-segment.tone-turn,
+.context-category-row.tone-turn .context-category-swatch {
+  background: var(--env-tone-turn);
+}
+
+.context-composition-segment.tone-tail,
+.context-category-row.tone-tail .context-category-swatch {
+  background: var(--env-tone-tail);
+}
+
+.context-composition-segment.tone-dynamic,
+.context-category-row.tone-dynamic .context-category-swatch {
+  background: var(--env-tone-dynamic);
+}
+
+.context-composition-segment.tone-tools,
+.context-category-row.tone-tools .context-category-swatch {
+  background: var(--env-tone-tools);
+}
+
+.context-composition-segment.tone-deferred,
+.context-category-row.tone-deferred .context-category-swatch {
+  background: var(--env-tone-deferred);
+}
+
+.context-composition-summary-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.context-composition-meta-item {
+  font-size: var(--font-xs);
+  color: var(--ink-tertiary);
+  white-space: nowrap;
+}
+
+.context-composition-meta-item strong {
+  font-weight: var(--weight-medium);
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-composition-runtime {
+  margin-left: auto;
+  font-size: var(--font-xs);
+  color: var(--ink-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- /context: category legend --- */
+
+.context-category-list {
+  display: grid;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.context-category-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.context-category-row.is-excluded .context-category-label,
+.context-category-row.is-excluded .context-category-tokens {
+  color: var(--ink-tertiary);
+}
+
+.context-category-row.is-excluded .context-category-swatch {
+  opacity: 0.45;
+}
+
+.context-category-swatch {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-circle);
+  background: var(--ink-overlay-18);
+}
+
+.context-category-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-ui);
+  color: var(--ink);
+}
+
+/* Badge recipe shared with the model services Default badge. */
+.context-category-tag {
+  flex-shrink: 0;
+  padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--selection-surface);
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.context-category-tokens {
+  flex-shrink: 0;
+  min-width: 3.5em;
+  text-align: right;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-category-percent {
+  flex-shrink: 0;
+  min-width: 2.8em;
+  text-align: right;
+  font-size: var(--font-xs);
+  color: var(--ink-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* --- /instructions: grouped file list --- */
+
+.instruction-files-groups {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.instruction-files-group {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.instruction-files-group-label {
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  color: var(--ink-tertiary);
+}
+
+.instruction-files-list {
+  display: grid;
+}
+
+/* Rows are borderless; the hover/expanded tint is the only chrome. The
+ * negative margin lets the tint bleed past the text column so the row
+ * reads as a full-width control while the type stays on the card grid. */
+.instruction-file-toggle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: calc(100% + 16px);
+  margin: 0 -8px;
+  padding: 7px 8px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.instruction-file-toggle:hover,
+.instruction-file-row.expanded .instruction-file-toggle {
+  background: var(--ink-overlay-4);
+}
+
+.instruction-file-toggle:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.instruction-file-chevron {
+  width: 13px;
+  height: 13px;
+  color: var(--ink-muted);
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.instruction-file-row.expanded .instruction-file-chevron {
+  transform: rotate(90deg);
+}
+
+.instruction-file-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--ink-muted);
+}
+
+.instruction-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--font-sm);
+}
+
+.instruction-file-size {
+  flex-shrink: 0;
+  font-size: var(--font-xs);
+  color: var(--ink-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The preview is a soft inset block, not a bordered well; the left inset
+ * aligns it under the file name column (chevron 13px + row gap 9px). */
+.instruction-file-preview {
+  margin: 4px 0 6px 22px;
+  padding: 10px 12px;
+  max-height: 300px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--ink-overlay-4);
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--font-xs);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink-soft);
+}
+
+@media (max-width: 760px) {
+  /* The percent column repeats the ratio the tokens column and headline
+   * already carry; it is the first thing to go at narrow widths. */
+  .context-category-percent {
+    display: none;
+  }
+}
+
+.agent-block-with-action-slot {
+  position: relative;
+  min-width: 0;
+}
+
+/* Keep actions and their streaming placeholder in flow so completion and
+ * large touch targets cannot overlap following content. */
+.agent-block-with-action-slot > .agent-message-actions {
+  min-height: calc(var(--conversation-message-action-size) + var(--conversation-answer-hover-action-gap));
+  position: relative;
+  /* The first glyph's icon box sits on the prose edge, as toolbar glyphs do
+   * on the pane inset; the button's larger target reaches past it. Themes
+   * can still set their own offset. */
+  margin-inline-start: var(--wuu-message-actions-inline-offset, calc((var(--conversation-message-action-icon-size, 15px) - var(--conversation-message-action-size)) / 2));
+  padding-top: var(--conversation-answer-hover-action-gap);
+  /* Button padding supplies the visible icon-to-icon gap. Adding a flex
+   * gap here would count that whitespace twice. */
+  gap: var(--wuu-message-actions-control-gap, 0px);
+}
+
+.agent-message-actions > .message-time:not(:first-child) {
+  /* Text has no button padding. Complete the same visible gap after the
+   * last control, including larger touch targets and theme overrides. */
+  margin-inline-start: max(0px, calc((var(--conversation-message-action-size) - var(--conversation-message-action-icon-size)) / 2));
+}
+
+/* Continue the live answer's reading order through its actions and time.
+ * Animate the children without moving their slots; historical turns never
+ * receive the entrance marker. The short initial pause lets the stream
+ * cursor begin settling before the staggered rise and fade. */
+.agent-actions-enter .agent-message-actions:not([data-reveal-finished]) > * {
+  animation: agent-actions-reveal 1000ms var(--ease-out)
+    calc(80ms + var(--agent-action-index, 0) * 300ms) both;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(2) {
+  --agent-action-index: 1;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(3) {
+  --agent-action-index: 2;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(4) {
+  --agent-action-index: 3;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(5) {
+  --agent-action-index: 4;
+}
+
+/* Two direct plugin actions and their overflow control can extend the row
+ * to seven slots, including the timestamp and trigger. */
+.agent-actions-enter .agent-message-actions > :nth-child(6) {
+  --agent-action-index: 5;
+}
+
+.agent-actions-enter .agent-message-actions > :nth-child(7) {
+  --agent-action-index: 6;
+}
+
+@keyframes agent-actions-reveal {
+  from {
+    opacity: 0;
+    pointer-events: none;
+    transform: translateY(2px);
+  }
+}
+
+@container style(--motion-reduced: 1) {
+  .agent-actions-enter .agent-message-actions:not([data-reveal-finished]) > * {
+    animation: none;
+  }
+}
+
+.message-actions {
+  display: flex;
+  min-height: var(--conversation-message-action-size);
+  align-items: center;
+  gap: var(--wuu-message-actions-control-gap, 6px);
+  margin-inline-start: var(--wuu-message-actions-inline-offset, 0px);
+  color: var(--ink-muted);
+  line-height: var(--conversation-control-line-height);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(-2px);
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+
+.agent-block-with-action-slot:hover .agent-message-actions,
+.agent-block-with-action-slot:focus-within .agent-message-actions,
+.agent-block-with-action-slot.agent-actions-persistent .agent-message-actions,
+.user-message-block-with-actions:hover .message-actions,
+.user-message-block-with-actions:focus-within .message-actions {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+/* Touch input has no hover and needs roomier action targets. */
+@media (hover: none), (pointer: coarse) {
+  .conversation-pane {
+    --conversation-message-action-size: max(44px, var(--wuu-message-action-size, 0px));
+    --conversation-user-action-size: 44px;
+  }
+
+  .message-actions:not([aria-hidden="true"]) {
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+}
+
+.message-actions .message-action-button {
+  display: inline-flex;
+  width: var(--conversation-message-action-size);
+  height: var(--conversation-message-action-size);
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--wuu-message-action-radius, var(--radius-sm));
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-muted);
+  cursor: pointer;
+  opacity: 1;
+  padding: 0;
+  pointer-events: auto;
+  position: relative;
+  transform: none;
+  transition:
+    background-color var(--motion-base) var(--ease-out),
+    color var(--motion-base) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.message-actions .message-action-button > svg {
+  width: var(--conversation-message-action-icon-size);
+  height: var(--conversation-message-action-icon-size);
+  flex: none;
+}
+
+.message-actions .message-action-button:hover,
+.message-actions .message-action-button:focus-visible,
+.message-actions .message-action-button[aria-pressed="true"],
+.message-actions .message-action-button[aria-expanded="true"] {
+  outline: 0;
+  background: var(--surface-2);
+  box-shadow: none;
+  color: var(--ink);
+}
+
+.message-actions .message-action-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.message-actions .message-action-button:disabled:hover {
+  background: transparent;
+  color: var(--ink-muted);
+}
+
+.message-actions .message-action-button:active {
+  transform: scale(0.94);
+}
+
+/* Copied state in the agent action row keeps the row's rest palette.
+ * Same rationale as .message-copy-button.copied: the icon swap is the
+ * signal; the color shouldn't shout. */
+.message-actions .message-action-button.copied {
+  background: transparent;
+  color: var(--ink-muted);
+}
+
+.message-actions .message-action-button.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.agent-text {
+  min-width: 0;
+  word-break: break-word;
+}
+
+.streaming-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.streaming-markdown {
+  display: block;
+  position: relative;
+  min-width: 0;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  --stream-cursor-color: var(--stream-cursor-default-color);
+}
+
+/*
+ * Stable streaming blocks are split on BLANK lines (splitIntoStableBlocks),
+ * but one such block can still contain several markdown block elements —
+ * a paragraph directly followed by a list/heading/fence with only a
+ * single newline between them parses as two siblings. Those siblings
+ * live INSIDE the wrapper, where the root .rich-content flex gap cannot
+ * reach, so without this rule they stacked at 0px — the one spot in the
+ * stream where the prose rhythm silently vanished (live AND settled,
+ * since the settled phase keeps the same block layout to avoid the
+ * remount flick). Mirror the same gap here so wrapper-internal siblings
+ * space exactly like top-level ones.
+ */
+.streaming-markdown-block {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--conversation-prose-block-gap, 24px);
+}
+
+.stream-cursor {
+  /* Layout-stable slot. The wrapper takes zero flow width so inserting
+     or removing the cursor does not shift the trailing character of a
+     streamed paragraph. The visible 1px bar is rendered as a positioned
+     ::after pseudo-element that floats over the wrapper. */
+  display: inline-block;
+  width: 0;
+  height: 1.05em;
+  vertical-align: text-bottom;
+  position: relative;
+  pointer-events: none;
+}
+
+.stream-cursor::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: -1px;
+  width: 1px;
+  height: 1.05em;
+  background: var(--stream-cursor-color);
+}
+
+/* Diagram-final messages carry no inline cursor slot: a rendered Mermaid
+ * diagram has no text line to follow. The sibling cursor keeps the
+ * settle-stable DOM presence at zero flow height so no blank paragraph
+ * survives after the content. */
+.stream-cursor-block-tail {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  display: block;
+  width: 0;
+  height: 0;
+}
+
+.stream-cursor-block-tail::after {
+  top: auto;
+  bottom: 0;
+}
+
+.streaming-markdown[data-cursor-state="fading"] .stream-cursor {
+  transition: opacity var(--motion-base) var(--ease-out);
+  opacity: 0;
+}
+
+.reasoning-stream.streaming-markdown {
+  --stream-cursor-color: var(--reasoning-stream-cursor-color);
+  color: inherit;
+}
+
+.reasoning-stream.streaming-markdown .rich-paragraph {
+  color: inherit;
+}
+
+@container style(--motion-reduced: 1) {
+  .streaming-markdown[data-cursor-state="fading"] .stream-cursor {
+    transition: none;
+  }
+}
+
+.turn-process-fold {
+  min-width: 0;
+}
+
+.turn-process-topline {
+  /* The status and its trail form one region above the reading body. Keep
+     the separator in both live and settled states so handoff cannot jump. */
+  padding-bottom: var(--space-2);
+  box-shadow: inset 0 -1px 0 var(--hairline-soft);
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 26px;
+  align-items: center;
+  gap: 12px;
+}
+
+.turn-process-toggle {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  /* Live previews are atomic inline boxes so the sweep can be clipped to
+     their glyphs. Center the shared line boxes instead of using their
+     synthesized baselines, which lifts the preview above the status copy. */
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 0 8px;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+  padding: 0;
+  text-align: left;
+}
+
+.turn-process-topline > .turn-process-toggle {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.turn-process-toggle[role="button"] {
+  cursor: pointer;
+}
+
+.turn-process-toggle[role="button"]:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  border-radius: var(--radius-xs);
+}
+
+.turn-process-toggle svg {
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+/* The fold's chevron matches the nested process and reasoning folds, so a
+ * collapsed turn says it holds more than its duration. */
+.turn-process-header > .turn-process-chevron {
+  align-self: center;
+  color: var(--process-summary-color);
+  transform: rotate(0deg);
+  transition:
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-base) var(--ease-out);
+}
+
+.turn-process-toggle[aria-expanded="true"] .turn-process-chevron {
+  transform: rotate(90deg);
+}
+
+.turn-process-toggle[role="button"]:hover :is(.turn-process-title, .turn-process-meta, .turn-process-chevron) {
+  color: var(--activity-toggle-hover-color);
+}
+
+.turn-process-header {
+  display: flex;
+  flex: 0 0 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  align-items: baseline;
+  gap: 0 8px;
+  line-height: var(--conversation-process-line-height);
+}
+
+.turn-process-title {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--process-summary-color);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--conversation-process-font-size);
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+}
+
+.turn-process-live-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-circle);
+  background: var(--ink-muted);
+  margin-right: 6px;
+  vertical-align: middle;
+  --pulse-opacity: 0.4;
+  animation: wuu-pulse 1.8s ease-in-out infinite;
+}
+
+@container style(--motion-reduced: 1) {
+  .turn-process-live-dot {
+    animation: none;
+    opacity: 1;
+  }
+}
+
+.turn-process-meta {
+  flex: 0 0 auto;
+  color: var(--process-summary-color);
+  font-size: var(--conversation-process-font-size);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+}
+
+.turn-process-preview {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+  align-items: center;
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-size: var(--conversation-process-font-size);
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+  white-space: nowrap;
+}
+
+.turn-process-preview-text {
+  display: block;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collapsible-details {
+  /* Drive the fold body height directly with height: 0 / auto.
+     interpolate-size: allow-keywords lets the browser transition
+     between the two as a real height animation, replacing the
+     grid-template-rows: 0fr/1fr hack used previously. Supported
+     in Chromium 129+; on older browsers the body just snaps, the
+     same fallback as <details>. */
+  interpolate-size: allow-keywords;
+  height: 0;
+  overflow: hidden;
+  transition: height var(--collapse-motion-duration) var(--collapse-motion-easing);
+  will-change: height;
+}
+
+.collapsible-details.expanded {
+  height: auto;
+}
+
+/* The reveal commit already has the conversation's current structure.
+   Suppress height transitions for that frame so a fold that caught up
+   while hidden does not slide the message stream after it is visible.
+   Do not set `animation: none` here: removing it on the next frame
+   restarts entrance animations that were already applied. */
+.conversation-render-activity.is-reveal-snap .collapsible-details,
+.conversation-render-activity.is-reveal-snap .process-surface-fold::details-content,
+.conversation-render-activity.is-reveal-snap .process-surface-chevron,
+.conversation-render-activity.is-reveal-snap .process-text-motion-current,
+.conversation-render-activity.is-reveal-snap .process-text-motion-exit,
+.conversation-render-activity.is-reveal-snap .process-surface-count,
+.conversation-render-activity.is-reveal-snap .agent-message-actions,
+.conversation-render-activity.is-reveal-snap [data-wuu-mascot-presence] {
+  transition: none;
+}
+
+/* The inner holds the body content. The outer clips it during
+   the height transition, so the inner just renders its content
+   normally. min-height: 0 is no longer needed — the height is
+   driven by the outer, not a grid track. */
+.collapsible-details-inner {
+  overflow: hidden;
+}
+
+/* Both fold wrappers clip, so both reserve the mascot paint room: the negative
+ * margin moves each clip edge left, and the matching padding keeps the content —
+ * the text column and every process row — exactly where it was. The child
+ * selector outranks the `padding` shorthand on `.turn-process-fold-body`. */
+.collapsible-details,
+.collapsible-details > .collapsible-details-inner {
+  margin-left: calc(-1 * var(--process-mascot-room, 0px));
+  padding-left: var(--process-mascot-room, 0px);
+}
+
+.turn-process-fold-body {
+  /* The header and its first detail form one group; prose entries keep the
+   * wider reading gap below. */
+  padding: var(--conversation-activity-gap) 0 0 0;
+}
+
+/* A direct reply begins here until the provider confirms it as an answer.
+ * Keep its distance from the status header unchanged across that handoff. */
+.turn-process-fold-body:has(> .turn-process-fold-body-inner > .turn-process-entry-commentary:first-child) {
+  padding-top: var(--conversation-process-answer-gap);
+}
+
+.turn-process-fold-body-inner {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--conversation-process-detail-gap);
+}
+
+.turn-process-entry {
+  position: static;
+  display: block;
+  min-width: 0;
+  color: var(--turn-process-entry-color);
+  font-size: var(--conversation-process-font-size);
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+}
+
+.turn-process-entry-commentary {
+  color: var(--ink);
+  font-size: var(--conversation-message-font-size);
+  font-weight: var(--conversation-message-font-weight);
+  line-height: var(--conversation-commentary-line-height);
+}
+
+/*
+ * Commentary introduces the tool activity that follows it. Pull that
+ * pair down to the activity rhythm while activity -> next commentary
+ * keeps the full process-detail gap.
+ */
+.turn-process-entry-commentary + .turn-process-entry-activity,
+.turn-process-entry-commentary + .turn-process-entry-process_group {
+  margin-top: calc(
+    var(--conversation-activity-gap) - var(--conversation-process-detail-gap)
+  );
+}
+
+.turn-process-entry .agent-block,
+.turn-process-entry .reasoning-block {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+}
+
+.turn-process-entry .agent-text,
+.turn-process-entry .rich-content {
+  color: inherit;
+}
+
+.turn-process-entry .rich-content {
+  --conversation-prose-block-gap: 0.65em;
+  line-height: inherit;
+}
+
+/* A streamed reply can become the final answer at completion. Inherit the
+ * conversation's reading rhythm so that handoff cannot re-space its content. */
+.turn-process-entry.turn-process-entry-commentary .rich-content {
+  --conversation-prose-block-gap: inherit;
+}
+
+.turn-process-entry .rich-content .rich-paragraph,
+.turn-process-entry .rich-content .rich-list,
+.turn-process-entry .rich-content .rich-blockquote {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.turn-process-entry .activity-group {
+  color: inherit;
+}
+
+.turn-process-entry .activity-row {
+  min-height: 20px;
+  color: var(--conversation-process-control-color, var(--process-control-color-fallback));
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.turn-process-entry .activity-row svg {
+  color: currentColor;
+}
+
+.activity-timeline {
+  display: grid;
+  min-width: 0;
+  gap: var(--conversation-activity-gap);
+}
+
+.activity-timeline-item {
+  min-width: 0;
+}
+
+.activity-group {
+  display: block;
+  gap: 0;
+}
+
+.activity-row {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  color: var(--conversation-process-control-color, var(--process-control-color-fallback));
+  font-size: var(--conversation-process-font-size);
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+  padding: 0;
+  margin: 0;
+}
+
+.activity-toggle {
+  width: auto;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: inherit;
+  font: inherit;
+}
+
+.activity-toggle:hover {
+  color: var(--activity-toggle-hover-color-alt);
+}
+
+.activity-row svg {
+  flex: 0 0 auto;
+  color: currentColor;
+  width: 14px;
+  height: 14px;
+}
+
+.tool-activity-marker {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  align-self: center;
+}
+
+.tool-activity-marker.is-running {
+  animation: wuu-pulse 1.8s ease-in-out infinite;
+}
+
+@container style(--motion-reduced: 1) {
+  .tool-activity-marker.is-running {
+    animation: none;
+  }
+}
+
+.activity-toggle:hover svg {
+  color: currentColor;
+}
+
+.activity-copy {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0 8px;
+  white-space: nowrap;
+}
+
+.activity-summary-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Keep diff counts visible while the summary gives up space. */
+.activity-copy > .activity-add,
+.activity-copy > .activity-delete {
+  flex: 0 0 auto;
+}
+
+.activity-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: default;
+}
+
+.activity-chevron {
+  display: none;
+}
+
+.activity-details {
+  display: none;
+}
+
+.activity-detail {
+  display: block;
+  min-width: 0;
+  gap: 0;
+  color: var(--activity-detail-color);
+  padding: 0;
+}
+
+.activity-detail-marker {
+  display: none;
+}
+
+.activity-detail-marker svg {
+  color: var(--ink-muted);
+}
+
+.activity-detail-body {
+  display: block;
+  min-width: 0;
+  gap: 0;
+}
+
+.activity-command-list {
+  display: block;
+  min-width: 0;
+  gap: 0;
+}
+
+.activity-command {
+  display: inline;
+  color: var(--ink-tertiary);
+  /* Monospace runs visually larger than the UI face at equal px. */
+  font-size: var(--font-sm);
+  line-height: var(--conversation-control-line-height);
+  font-weight: 400;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.activity-command.running {
+  color: var(--ink-tertiary);
+}
+
+.activity-command.failed {
+  color: var(--danger);
+}
+
+.activity-detail-title {
+  display: inline;
+  min-width: 0;
+}
+
+.activity-detail-title strong {
+  overflow: hidden;
+  color: inherit;
+  font-size: inherit;
+  font-weight: var(--weight-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-detail-title span {
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-size: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-status {
+  flex: 0 0 auto;
+  margin-top: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--conversation-process-font-size);
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+}
+
+.activity-status.completed {
+  color: var(--ink-tertiary);
+}
+
+.activity-status.failed {
+  color: var(--danger);
+}
+
+.activity-file {
+  color: var(--info);
+  font-weight: var(--weight-medium);
+}
+
+.activity-target {
+  color: var(--activity-target-color);
+}
+
+.activity-add {
+  color: var(--diff-insert-color);
+}
+
+.activity-delete {
+  color: var(--diff-delete-color);
+}
+
+.process-text-motion {
+  display: inline-grid;
+  /* A shrinkable track: the copy's max-width then follows a narrowed row
+   * and ends in its ellipsis instead of being clipped mid-glyph here. */
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  max-width: 100%;
+  align-items: baseline;
+  line-height: inherit;
+  overflow: hidden;
+  vertical-align: baseline;
+}
+
+.process-text-motion-copy {
+  grid-area: 1 / 1;
+  justify-self: start;
+  width: max-content;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  will-change: opacity, translate;
+}
+
+.process-text-motion-current.process-text-motion-enter {
+  --enter-opacity: 1;
+  --enter-y: 4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.process-text-motion-exit {
+  pointer-events: none;
+  --exit-y: -4px;
+  animation: wuu-exit var(--motion-base) var(--ease-out) both;
+}
+
+.process-surface,
+.process-surface-fold,
+.process-surface-row {
+  min-width: 0;
+}
+
+/* Paint room reserved on the boxes that clip a process fold (the fold wrappers
+ * below). `--process-mascot-inset` shifts the mascot's painted silhouette onto
+ * the row's left edge, and that edge is exactly where the fold body's clip box
+ * ends, so the silhouette gets shaved whenever a morph, a morph blend, or the
+ * entry slide reaches further left. Keep this token at or above the largest
+ * inset in the block below (`bang`, 12px). */
+:root {
+  --process-mascot-room: 12px;
+}
+
+.process-surface,
+.process-surface-fold {
+  --process-summary-icon-size: 28px;
+  --process-summary-icon-gap: 8px;
+}
+
+.process-surface-row {
+  display: flex;
+  width: 100%;
+  max-width: 100%;
+  /* Match the 28px mascot slot. A 20px row grows when the ball appears and
+     shrinks when a settled catch-up hides it, which jumps the stream. */
+  min-height: 28px;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: visible;
+  background: transparent;
+  color: var(--process-summary-color);
+  cursor: default;
+  font-size: var(--conversation-process-font-size);
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+  list-style: none;
+}
+
+.process-surface-fold > .process-surface-row {
+  cursor: pointer;
+}
+
+.process-surface-row::-webkit-details-marker {
+  display: none;
+}
+
+.process-surface-row::marker {
+  display: none;
+}
+
+.process-surface-fold.has-details > .process-surface-row:hover,
+.process-surface-fold.has-details > .process-surface-row:focus-visible {
+  color: var(--activity-toggle-hover-color);
+}
+
+.process-surface-fold.has-details > .process-surface-row:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.process-surface-summary-line {
+  display: flex;
+  /* Size to the summary content so the fold chevron follows the text
+     instead of being pushed to the row's far edge. Shrinking still goes
+     through min-width: 0, so the ellipsis on the summary text is intact. */
+  flex: 0 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 0;
+  /* Hats, ears, and activity props paint past the 28px mascot box.
+   * Ellipsis lives on `.process-surface-summary-text`; clipping this
+   * flex row would shave those accessories off the round blobatar. */
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.process-surface-summary-line .process-surface-blobatar,
+.turn-reasoning-summary > .process-surface-blobatar {
+  flex: 0 0 auto;
+  width: var(--process-summary-icon-size, 28px);
+  height: var(--process-summary-icon-size, 28px);
+  align-self: center;
+  overflow: visible;
+  transform-origin: center;
+  /* The entry/exit slide moves the whole slot, so cap it to the reserved paint
+   * room: a full-size slide would push the painted silhouette past the fold's
+   * clip edge and shove the summary text sideways on the way in. */
+  --wuu-mascot-slide-shift: var(--process-mascot-room, 12px);
+}
+
+.process-surface-summary-line .process-surface-blobatar {
+  margin-right: var(--process-summary-icon-gap, 8px);
+}
+
+/* Align the painted silhouette, not the SVG's transparent padding. Keep the
+ * layout slot fixed so morphing never moves the summary text. Insets follow
+ * each shape's motion envelope rather than chasing its edge on every frame. */
+:is(.process-surface-summary-line, .turn-reasoning-summary) > .process-surface-blobatar[data-wuu-mascot-morph] {
+  translate: calc(-1 * var(--process-mascot-inset, 4px)) 0;
+  transition: translate var(--motion-slow) var(--ease-out);
+}
+
+.process-surface-blobatar:is([data-wuu-mascot-morph="radar"], [data-wuu-mascot-morph="gather"]) {
+  --process-mascot-inset: 2px;
+}
+
+.process-surface-blobatar[data-wuu-mascot-morph="orbit"] {
+  --process-mascot-inset: 3px;
+}
+
+.process-surface-blobatar[data-wuu-mascot-morph="progress"] {
+  --process-mascot-inset: 5px;
+}
+
+.process-surface-blobatar[data-wuu-mascot-morph="scan"] {
+  /* Text ink sits inside its line box; align the scan bars with that ink
+   * rather than pulling their rounded ends onto the box edge. */
+  --process-mascot-inset: 5px;
+}
+
+.process-surface-blobatar[data-wuu-mascot-morph="standby"] {
+  --process-mascot-inset: 6px;
+}
+
+.process-surface-blobatar:is([data-wuu-mascot-morph="pencil"], [data-wuu-mascot-morph="terminal"], [data-wuu-mascot-morph="send"]) {
+  --process-mascot-inset: 7px;
+}
+
+.process-surface-blobatar[data-wuu-mascot-morph="bang"] {
+  --process-mascot-inset: 12px;
+}
+
+.process-surface-condensed-summary {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The standalone reasoning fold uses a 6px flex gap; another 2px preserves
+ * the same 8px mascot-to-label spacing as the unified process row. */
+.turn-reasoning-summary > .process-surface-blobatar {
+  margin-right: 2px;
+}
+
+/* Keep segmented labels and changing counts aligned. Only the active process
+ * label receives the sweep; completed summaries retain their steady ink. */
+.process-surface-summary-text {
+  --process-segment-gap: 8px;
+  --process-segment-inner-gap: 4px;
+  display: inline-flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: var(--process-segment-gap);
+  overflow: hidden;
+}
+
+.process-label {
+  position: relative;
+}
+
+/* The base children keep their original flex positions and selection. */
+.process-label-content {
+  display: contents;
+}
+
+.process-label-highlight {
+  position: absolute;
+  inset: 0;
+  display: inherit;
+  align-items: inherit;
+  gap: inherit;
+  overflow: hidden;
+  color: var(--process-active-highlight);
+  pointer-events: none;
+  user-select: none;
+  mask-image: linear-gradient(
+    90deg,
+    transparent calc(50% - 30px),
+    #000 50%,
+    transparent calc(50% + 30px)
+  );
+  mask-size: calc(200% + 60px) 100%;
+  mask-position: 100% 50%;
+  mask-repeat: no-repeat;
+  animation: process-summary-soft-wave 4s linear 600ms infinite;
+}
+
+/* The highlight has the same segmented layout as the source, and is hidden
+ * from assistive technology. Never paint a second flat data-text string. */
+.process-label.wuu-live-text-wave::after {
+  content: none;
+  animation: none;
+}
+
+@keyframes process-summary-soft-wave {
+  from { mask-position: 100% 50%; }
+  25%, to { mask-position: 0% 50%; }
+}
+
+:root[data-renderer-hidden] .process-label-highlight,
+:root[data-stream-following] .process-label-highlight,
+.cached-conversation-pane[data-active="false"] .process-label-highlight {
+  display: none;
+  animation: none;
+}
+
+@container style(--motion-reduced: 1) {
+  .process-label-highlight {
+    display: none;
+    animation: none;
+  }
+}
+
+.process-surface-segment {
+  display: inline-flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: var(--process-segment-inner-gap);
+}
+
+.process-surface-segment > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.process-surface-separator {
+  flex: 0 0 auto;
+}
+
+/* A comma closes the phrase before it, so it drops the segment gap; the
+ * space after it comes from the glyph itself. */
+.process-surface-segment > .process-surface-separator {
+  margin-inline-start: calc(-1 * var(--process-segment-gap));
+}
+
+/* A centered dot keeps the segment gap on both sides, as it does between a
+ * notice's title and detail. The label after it is too short to truncate. */
+.process-surface-reasoning-segment {
+  flex-shrink: 0;
+}
+
+.process-surface-reasoning-segment > .process-surface-separator {
+  margin-inline: 0 calc(var(--process-segment-gap) - var(--process-segment-inner-gap));
+}
+
+/* Keep the ring on the summary line. A wrapping line places the text at its
+ * full max-content width first, so the indicator drops below before the text
+ * gets a chance to truncate. */
+.process-surface-summary-line.has-compaction {
+  flex-wrap: nowrap;
+}
+
+.process-surface-compactions {
+  display: inline-flex;
+  /* Reserve the ring's footprint; the summary text yields width first. */
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+}
+
+.process-surface-summary-text + .process-surface-compactions {
+  margin-inline-start: var(--space-2);
+}
+
+.context-compaction-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-height: 28px;
+  color: var(--ink-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.context-compaction-indicator .context-usage-ring {
+  color: var(--context-meter-mid);
+}
+
+.context-compaction-indicator.is-failed {
+  color: var(--danger);
+}
+
+.context-compaction-indicator:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.context-compaction-arrow {
+  color: var(--ink-tertiary);
+}
+
+/* Keep the compacted-state label readable and give the longer detail the
+ * remaining width. Without explicit flex ownership, English copy can shrink
+ * both segments below their painted text width and make them overlap. */
+.context-compaction-title {
+  flex: 0 0 auto;
+}
+
+.context-compaction-detail {
+  display: block;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-event-title {
+  flex: 0 0 auto;
+}
+
+/*
+ * The in-progress form of a system event carries a 28px mascot inside a
+ * 20px-min row; when it settles the mascot unmounts and the row would shrink
+ * back to its 20px minimum, so the whole turn reflows. Pin the summary row to
+ * the same 28px footprint in both states so settling never changes its height.
+ */
+.system-event-notice .process-surface-row {
+  min-height: 28px;
+}
+
+.system-event-detail {
+  display: block;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-event-expanded-detail {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--conversation-process-font-size);
+  line-height: var(--conversation-process-line-height);
+}
+
+/* Conversation events share the same neutral row geometry as aggregated
+ * tool activity and context compaction. The legacy turn-notice selector is
+ * retained only as a DOM compatibility hook; it must not reintroduce the
+ * centered colored-divider treatment. */
+.turn-notice.system-event-notice {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--conversation-process-control-color, var(--process-control-color-fallback));
+}
+
+/* Continuing starts a new turn while the failed turn stays in history. The
+ * presence wrapper lets the old card collapse out instead of leaving a red
+ * row above the live turn. It shares the grid-row exit used by turn output
+ * summaries: the card keeps its internal layout, and the negative margin
+ * releases the parent's flex gap so unmounting cannot jump the turn below. */
+.turn-failure-presence {
+  display: grid;
+  grid-template-rows: 1fr;
+  min-width: 0;
+  opacity: 1;
+  margin-bottom: 0;
+  transition:
+    grid-template-rows var(--motion-slow) var(--ease-out),
+    margin-top var(--motion-slow) var(--ease-out),
+    margin-bottom var(--motion-slow) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out);
+}
+
+.turn-failure-presence-body {
+  min-height: 0;
+}
+
+.turn-failure-presence.is-leaving {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+  margin-bottom: calc(-1 * var(--conversation-turn-item-gap));
+}
+
+.turn-failure-presence.is-leaving .turn-failure-presence-body {
+  overflow: hidden;
+}
+
+/* The turn's answer did not arrive. One row, read left to right: the symbol,
+ * what happened, then the recovery slot on the trailing edge. The slot holds
+ * the retry countdown while the core retries and the action once it gives
+ * up. The surface spans the reading column so changing status text cannot
+ * resize it. It turns to the error tint only when the turn has failed. */
+.turn-failure {
+  --turn-failure-pill-height: calc(var(--conversation-process-line-height) + 6px);
+  display: flex;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* A recovery message belongs to the same framed-message family, not a
+   * separate status pill. Only its semantic surface colour is different. */
+  padding: var(--conversation-framed-text-inset-block) var(--card-padding);
+  border: 0;
+  border-radius: var(--user-message-radius);
+  outline: var(--wuu-message-user-border, 1px solid var(--hairline-soft));
+  outline-offset: -1px;
+  box-shadow: var(--wuu-message-user-shadow, var(--shadow-message));
+  background: var(--danger-soft);
+  color: var(--ink);
+  font-size: var(--conversation-message-font-size);
+  line-height: var(--conversation-process-line-height);
+  transition: background-color var(--motion-slow) var(--ease-out);
+}
+
+.turn-failure.is-retrying {
+  background: var(--message-flow-card-bg);
+}
+
+/* The symbol and the first line of text sit on the pill's centre line, so
+ * a single-line row is balanced and a wrapped one keeps its action beside
+ * the title. The status colour pairs with the symbol and the title; it is
+ * never the only signal. */
+.turn-failure-icon {
+  flex: none;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  margin-top: calc((var(--turn-failure-pill-height) - var(--icon-size)) / 2);
+  margin-inline-end: var(--space-2);
+  color: var(--danger);
+}
+
+.turn-failure.is-retrying .turn-failure-icon {
+  color: var(--warning);
+}
+
+/* Everything after the symbol starts at one text edge. */
+.turn-failure-main {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Keep recovery on the trailing edge; wrap it below the message when the
+ * reading column cannot fit both without squeezing the text. */
+.turn-failure-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-1) var(--space-3);
+}
+
+.turn-failure-message {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding-block: calc((var(--turn-failure-pill-height) - 1lh) / 2);
+  overflow-wrap: anywhere;
+}
+
+.turn-failure-title {
+  font-weight: var(--weight-medium);
+}
+
+.turn-failure-title:not(:last-child) {
+  margin-inline-end: var(--space-2);
+}
+
+.turn-failure-body {
+  color: var(--ink-soft);
+}
+
+/* A text disclosure at the end of the sentence: the technical record is for
+ * the reader who asks for it. */
+.turn-failure-details-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  font: inherit;
+  vertical-align: baseline;
+  white-space: nowrap;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.turn-failure-details-toggle:hover {
+  color: var(--ink-soft);
+}
+
+.turn-failure-details-toggle:focus-visible {
+  border-radius: 4px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.turn-failure-details-toggle > .turn-failure-details-chevron {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  transition: rotate var(--motion-base) var(--ease-out);
+}
+
+.turn-failure-details-toggle[aria-expanded="true"] > .turn-failure-details-chevron {
+  rotate: 90deg;
+}
+
+.turn-failure-recovery {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  max-width: 100%;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-1);
+  margin-inline-start: auto;
+}
+
+/* Countdown and actions share the same reading-line height. */
+.turn-failure-pill {
+  display: inline-flex;
+  min-width: 4.5em;
+  height: var(--turn-failure-pill-height);
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-pill);
+  font: inherit;
+  font-size: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The wait fills the pill from the leading edge, like progress inside a
+ * button, and empties into the action that replaces it. */
+.turn-failure-countdown {
+  /* Reserve room for seconds, minutes and the retrying label at any UI size. */
+  width: 13em;
+  min-width: 0;
+  max-width: 100%;
+  height: auto;
+  min-height: var(--turn-failure-pill-height);
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+  background:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, var(--ink) 7%, transparent) calc(var(--retry-progress, 0) * 100%),
+      transparent 0
+    ),
+    var(--surface-2);
+  color: var(--ink-soft);
+}
+
+.turn-failure-action {
+  background: var(--paper);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  font-weight: var(--weight-medium);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    scale var(--motion-fast) var(--ease-out);
+}
+
+.turn-failure-action:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--danger) 26%, transparent);
+}
+
+.turn-failure-action:active {
+  scale: 0.97;
+}
+
+.turn-failure-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.turn-failure-action:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Beside provider settings, resending remains the quieter text action. */
+.turn-failure-action:not(.is-primary):has(+ .is-primary) {
+  min-width: 0;
+  margin-inline-end: var(--space-2);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink-soft);
+}
+
+.turn-failure-action:not(.is-primary):has(+ .is-primary):hover {
+  color: var(--ink);
+}
+
+.turn-failure-details > .collapsible-details-inner {
+  display: grid;
+  row-gap: var(--space-1);
+  /* Inline-start padding belongs to the shared fold's mascot-room offset. */
+  padding-block: var(--space-1) 0;
+}
+
+.turn-failure-facts {
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-failure-diagnostic {
+  margin: 0;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Recovery rows are turn siblings, so they only inherit the 8px item
+ * rhythm. The process↔answer landmark is 16px — the same pause a diff card
+ * gets after prose. Add the remainder; the parent gap already supplies the
+ * rest.
+ */
+.turn > .turn-failure-presence {
+  margin-top: calc(
+    var(--conversation-process-answer-gap) - var(--conversation-turn-item-gap)
+  );
+}
+
+/* A failure with no reply before it stands where the reply would: it keeps
+ * the query → reply gap, which already clears the query's hover actions
+ * hanging below the bubble. */
+.turn > .user-message-block + .turn-failure-presence {
+  margin-top: calc(
+    var(--conversation-user-rule-gap) - var(--conversation-turn-item-gap) -
+      var(--conversation-user-message-trailing-gap)
+  );
+}
+
+.turn > .turn-failure-presence.is-leaving,
+.turn > .user-message-block + .turn-failure-presence.is-leaving {
+  margin-top: 0;
+}
+
+/* A failure that happens in front of the reader resolves out of the pending
+ * row rather than popping in: the row comes into focus from a slight blur.
+ * When a retrying row gives up, the row stays; the tint warms, the symbol
+ * swaps, the reason slides in after the title and the action takes the
+ * countdown's place. History renders still. */
+.turn-failure.is-arriving {
+  animation: turn-failure-arrive var(--motion-slow) var(--ease-out) both;
+}
+
+@keyframes turn-failure-arrive {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    translate: 0 4px;
+  }
+}
+
+.turn-failure.is-arriving .turn-failure-icon {
+  --enter-scale: 0.6;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.turn-failure.is-arriving :is(.turn-failure-body, .turn-failure-details-toggle) {
+  --enter-x: -4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) calc(var(--motion-fast) / 2) both;
+}
+
+.turn-failure.is-arriving .turn-failure-pill {
+  --enter-scale: 0.92;
+  animation: wuu-enter var(--motion-base) var(--ease-out) var(--motion-fast) both;
+}
+
+/* Retain the actual wrapping notice height after settlement. */
+.turn-stream-status-spacer {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.process-surface-count {
+  display: inline-block;
+  min-width: 1ch;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.process-surface-count.is-changing {
+  --enter-opacity: 0.45;
+  --enter-y: 4px;
+  animation: wuu-enter var(--motion-base) var(--ease-out);
+}
+
+.process-surface-row.is-live-gray .process-surface-summary-line {
+  display: inline-flex;
+}
+
+.turn-reasoning-summary-text.is-live-gray {
+  display: inline-flex;
+  align-items: baseline;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Ambient loops pause while nobody can see them: a hidden window, or a
+ * cached conversation kept mounted behind the active pane. */
+:root[data-renderer-hidden] .turn-process-live-dot,
+:root[data-renderer-hidden] .tool-activity-marker.is-running,
+:root[data-renderer-hidden] .loading-rail::after,
+.cached-conversation-pane[data-active="false"] .turn-process-live-dot,
+.cached-conversation-pane[data-active="false"] .tool-activity-marker.is-running {
+  animation-play-state: paused;
+}
+
+@container style(--motion-reduced: 1) {
+  .process-surface-count.is-changing {
+    animation: none;
+  }
+
+  .process-text-motion-current,
+  .process-text-motion-exit {
+    animation: none;
+    transform: none;
+    will-change: auto;
+  }
+
+  .process-text-motion-exit {
+    display: none;
+  }
+
+}
+
+.process-surface-fold.no-details > .process-surface-row {
+  cursor: default;
+}
+
+.process-surface-fold.no-details > .process-surface-row:hover,
+.process-surface-fold.no-details > .process-surface-row:focus-visible {
+  text-decoration: none;
+}
+
+/* Fold chevrons take the row's ink: a disclosure mark needs 3:1 as much as
+ * its label needs 4.5:1. */
+.process-surface-chevron {
+  flex: 0 0 auto;
+  color: currentColor;
+  transform: rotate(0deg);
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.process-surface-fold[open] > .process-surface-row .process-surface-chevron {
+  transform: rotate(90deg);
+}
+
+@supports (interpolate-size: allow-keywords) and selector(::details-content) {
+  .process-surface-fold::details-content {
+    interpolate-size: allow-keywords;
+    height: 0;
+    overflow: clip;
+    /* Keep native details content visible until the closing transition ends. */
+    transition:
+      height var(--motion-base) var(--collapse-motion-easing),
+      content-visibility var(--motion-base) allow-discrete;
+  }
+
+  .process-surface-fold[open]::details-content {
+    height: auto;
+  }
+}
+
+.process-surface-body,
+.process-surface-tool-list .activity-timeline,
+.process-surface-reasoning-list {
+  gap: var(--space-2);
+}
+
+.process-surface-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  /* Expanded details are the fold's own content, not a nested column: every
+   * row starts on the summary row's left edge, so the leading glyphs line up
+   * as one list instead of stepping inward under the summary text. */
+  padding: var(--space-2) 0 var(--space-1);
+  color: var(--wuu-ink-soft);
+  /* One shared height bound for the whole expanded fold: the tool trail
+   * and the reasoning block both live here, and either can outgrow a
+   * viewport in busy turns. Cap the combined area and scroll it as a
+   * single container so an open fold stays a compact inspection strip
+   * instead of taking over the conversation. */
+  max-height: var(--conversation-process-fold-max-height, min(320px, 40vh));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.tool-result-data-json {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--conversation-process-font-size);
+  line-height: var(--conversation-process-line-height);
+}
+
+/* Expanded context-compaction body: the replacement-context summary is
+ * model prose, so keep the author's line breaks and wrap long tokens. */
+.context-compaction-summary {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: var(--conversation-process-font-size);
+  line-height: var(--conversation-process-line-height);
+}
+
+.process-surface-tool-list {
+  min-width: 0;
+}
+
+.process-surface-tool-list .activity-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  line-height: 1.5;
+  color: var(--wuu-ink-soft);
+}
+
+.process-surface-tool-list :is(.tool-activity-marker, .workspace-tool-chevron, .program-tool-chevron) {
+  align-self: flex-start;
+  /* Center on the first text line, including at larger user font sizes. */
+  margin-top: calc((1lh - 14px) / 2);
+}
+
+.process-surface-reasoning-list {
+  display: grid;
+  min-width: 0;
+}
+
+.process-surface-reasoning-item {
+  min-width: 0;
+}
+
+.rich-content {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--conversation-prose-block-gap, 10px);
+  line-height: var(--conversation-reading-line-height, var(--line-body));
+  white-space: normal;
+}
+
+.rich-content .katex-display {
+  max-width: 100%;
+  margin: 0;
+  padding-block: 0.25em;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.rich-content .katex-display > .katex {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+}
+
+.rich-content .katex {
+  white-space: nowrap;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+/* A genuine inline formula may be wider than the message; keep it readable
+ * without letting it push the surrounding text or bubble off screen. */
+.rich-content :not(.katex-display) > .katex {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  vertical-align: middle;
+  white-space: normal;
+}
+
+/* Compact Markdown fallback. Conversation reading surfaces refine the
+ * hierarchy and block adjacency in message-reading.css; document previews
+ * retain their own heading scale in workspace.css. */
+.rich-heading {
+  /* Give compact preview headings a small section break. */
+  margin: 12px 0 0;
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0;
+  line-height: var(--conversation-reading-line-height, inherit);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rich-content > .rich-heading:first-child {
+  margin-top: 0;
+}
+
+.rich-paragraph {
+  line-height: var(--conversation-reading-line-height, inherit);
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.rich-content ul,
+.rich-content ol {
+  display: grid;
+  /*
+   * Item gap stays well under the paragraph gap (14px) so a list reads
+   * as one cohesive block instead of a run of near-paragraphs.
+   */
+  gap: 8px;
+  margin: 0;
+  padding-left: 24px;
+  /*
+   * The grid track must shrink with the parent — default `none` sizes
+   * each track to the widest item's max-content, so a list item with a
+   * long unbreakable token (`internal/appserver/turn_handlers.go:2452`,
+   * structured payloads, etc.) pushes the whole list past the
+   * surrounding bubble / turn-process card. `minmax(0, 1fr)` lets the
+   * track go down to 0 and up to the available 1fr, and `min-width: 0`
+   * lets the grid container itself shrink inside the flex column it
+   * sits in. The actual mid-token breaking happens one level up at
+   * `.chat-bubble` / `.turn-process-entry`, where `overflow-wrap:
+   * anywhere` is the final guard that keeps the glyphs inside the
+   * rounded background.
+   */
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.rich-content li {
+  min-width: 0;
+  padding-left: 2px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.rich-content li > .rich-paragraph {
+  display: inline;
+}
+
+.rich-content li > ul,
+.rich-content li > ol {
+  margin-top: 8px;
+}
+
+.rich-content input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0 6px 0 -20px;
+  vertical-align: -2px;
+  accent-color: var(--info);
+}
+
+.rich-link {
+  color: var(--rich-link-color);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--rich-link-underline-color);
+  text-underline-offset: 0.22em;
+}
+
+/* Themes can paint the outgoing bubble; its links follow the bubble's own
+ * link palette. */
+.user-message .rich-link {
+  color: var(--user-message-link-color);
+}
+
+.user-message .rich-link:hover,
+.user-message .rich-link:focus-visible {
+  color: var(--user-message-link-hover-color);
+}
+
+/*
+ * Prose chrome (inline code, fenced blocks, headings, quotes) is tuned for
+ * the light conversation column. On the black outgoing bubble those same
+ * light chips become a wall of white pills. Keep the chip shape, but paint
+ * it from the bubble's own white-on-black mix so code recedes instead of
+ * glaring.
+ */
+.user-message .rich-heading,
+.user-message .rich-blockquote {
+  color: inherit;
+}
+
+.user-message .rich-blockquote {
+  border-left-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 28%,
+    transparent
+  );
+}
+
+.user-message .rich-content :not(pre) > code {
+  background: var(--wuu-inline-code-background);
+  color: inherit;
+}
+
+.user-message .rich-code,
+.user-message .rich-code-block {
+  background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 10%,
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 16%,
+    transparent
+  );
+  box-shadow: none;
+  color: inherit;
+}
+
+.user-message .rich-code-header {
+  background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 8%,
+    transparent
+  );
+}
+
+.user-message .rich-code-language {
+  color: inherit;
+  opacity: 0.55;
+}
+
+.user-message .rich-table-wrap th,
+.user-message .rich-table-wrap td {
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 16%,
+    transparent
+  );
+}
+
+.user-message .rich-table-wrap thead th {
+  color: inherit;
+  opacity: 0.7;
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 28%,
+    transparent
+  );
+}
+
+.user-message .rich-rule {
+  background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 18%,
+    transparent
+  );
+}
+
+.user-message .rich-mermaid {
+  background: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 8%,
+    transparent
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--wuu-message-user-color, var(--user-message-fg-color)) 16%,
+    transparent
+  );
+}
+
+.rich-web-link,
+.rich-file-link {
+  display: inline;
+  max-width: 100%;
+  vertical-align: baseline;
+}
+
+.rich-file-link {
+  appearance: none;
+  -webkit-appearance: none;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.rich-link-content {
+  display: inline;
+  max-width: 100%;
+  min-width: 0;
+  /*
+   * Keep the icon glued to the link text. Without this, a long URL that does
+   * not fit after the icon wraps as a whole word, leaving the icon alone on
+   * the first line. The label re-enables wrapping for its own text below.
+   */
+  white-space: nowrap;
+}
+
+.rich-link-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.rich-link-icon {
+  position: relative;
+  display: inline-flex;
+  width: 1em;
+  height: 1em;
+  align-items: center;
+  justify-content: center;
+  margin-right: 0.3em;
+  color: var(--rich-link-icon-color);
+  vertical-align: -0.12em;
+}
+
+.rich-link-icon svg {
+  width: 0.95em;
+  height: 0.95em;
+  stroke-width: var(--icon-stroke);
+}
+
+.rich-link-favicon-frame {
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.rich-link-favicon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.rich-link:hover,
+.rich-file-link:focus-visible {
+  color: var(--rich-link-hover-color);
+  text-decoration-color: currentColor;
+}
+
+.rich-file-link:hover {
+  background: transparent;
+}
+
+.rich-file-link:active {
+  background: transparent;
+}
+
+.rich-file-link:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.rich-content :not(pre) > code {
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: var(--wuu-inline-code-background, var(--surface-chip));
+  color: var(--theme-override-color-text, var(--ink));
+  font-family: var(--wuu-font-family-mono, "SFMono-Regular", Consolas, monospace);
+  font-size: 0.92em;
+  /*
+   * Inherit the parent line-height so the chip's line box matches the
+   * surrounding paragraph. The previous `line-height: 1.45` was applied
+   * to the chip's own 0.92em font, so when a long chip wrapped to its
+   * own line the line collapsed to ≈ 25.3px while the parent line sat
+   * at ≈ 25.6px; the 4px of vertical padding couldn't fill the gap and
+   * the gray pill visibly sat shorter than the text on the lines
+   * above and below. 1px of vertical padding fits inside the inherited
+   * line-height at the chip's reduced font size without growing the
+   * line box. `vertical-align: baseline` keeps the chip's text on the
+   * surrounding baseline now that we no longer nudge it with -0.1em.
+   */
+  line-height: inherit;
+  padding: 1px 6px;
+  white-space: break-spaces;
+  vertical-align: baseline;
+}
+
+/*
+ * Inline code rendered inside a rich link (markdown `[`text`](url)` shape
+ * that resolves to <a><code>...</code></a>) gets the gray pill from the rule
+ * above, which visually clashes with the link's leading file/web icon and
+ * makes the link read as "icon + pill" instead of "icon + blue text".
+ * Drop the pill here so a backticked link label sits flush with the rest of
+ * the link family (icon + plain blue text), matching un-backticked links
+ * like `d33c046a`. Selector specificity is one class higher than the base
+ * rule on purpose so the override wins regardless of stylesheet order.
+ */
+.rich-content .rich-link :not(pre) > code {
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  padding: 0;
+  vertical-align: baseline;
+}
+
+.rich-image-block {
+  display: block;
+  margin: 0;
+}
+
+.rich-image-block.inline {
+  display: block;
+  margin-top: 14px;
+}
+
+.rich-image {
+  display: block;
+  max-width: 100%;
+  max-height: 420px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-media);
+  background: var(--surface-1);
+  object-fit: contain;
+}
+
+.rich-code {
+  max-height: 460px;
+  min-width: 0;
+  border: 0;
+  background: var(--message-flow-card-bg);
+  border-radius: var(--radius-sm);
+}
+
+.rich-code code {
+  font: inherit;
+}
+
+.rich-code-block {
+  --rich-code-padding-block: 10px;
+  --rich-code-line-height: var(--appearance-code-line-height);
+  /* Label, code and copy glyph share the card inset measured from the outer
+   * edge, the same axis as composer text; the 1px is the frame. */
+  --rich-code-inset: calc(var(--card-padding) - 1px);
+  --rich-code-copy-glyph-offset: 5px;
+  margin: 8px 0;
+  background: var(--message-flow-card-bg);
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  box-shadow: var(--message-flow-card-shadow);
+  overflow: hidden;
+}
+
+/* Speech-bubble insets: step the card radius down so code corners stay
+   concentric with the user bubble padding (8/16). */
+.user-message .rich-code-block {
+  border-radius: var(--radius-sm);
+}
+
+/* No-language variant: the header row is gone (see RichCodeBlock in
+ * RichContent.tsx) and the copy button floats over the top-right
+ * of the <pre> instead. The container becomes the positioning
+ * anchor so the button stays put as the code scrolls horizontally,
+ * and the <pre> grows right padding so single-line blocks like
+ * `git push` output don't slide under the button. The button keeps
+ * the same always-visible opacity behaviour from `.rich-code-copy`
+ * below — no separate hover-reveal rule needed. */
+.rich-code-block--no-header {
+  position: relative;
+}
+
+.rich-code-block--no-header > .rich-code {
+  padding-right: 40px;
+}
+
+.rich-code-block--no-header .rich-code-copy {
+  position: absolute;
+  /* Center the action on the first code line, including custom code sizes. */
+  top: calc(var(--rich-code-padding-block) + (var(--rich-code-line-height) - 24px) / 2);
+  right: calc(var(--rich-code-inset) - var(--rich-code-copy-glyph-offset));
+  margin-left: 0;
+  z-index: 1;
+}
+
+.rich-code-block > .rich-code {
+  margin: 0;
+  padding-block: var(--rich-code-padding-block);
+  padding-inline-start: var(--rich-code-inset);
+  line-height: var(--rich-code-line-height);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.rich-code-header {
+  display: flex;
+  align-items: center;
+  padding: 4px calc(var(--rich-code-inset) - var(--rich-code-copy-glyph-offset)) 4px var(--rich-code-inset);
+  background: var(--message-flow-card-header-bg);
+}
+
+/* The fence's language as written, in the metadata role: UI chrome, not
+ * code, so it follows the UI size rather than the code size. */
+.rich-code-language {
+  font-family: inherit;
+  font-size: var(--font-xs);
+  font-weight: var(--weight-medium);
+  color: var(--ink-tertiary);
+  pointer-events: none;
+  user-select: none;
+}
+
+.rich-code-highlight {
+  margin-left: auto;
+  margin-right: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.rich-code-highlight:hover,
+.rich-code-highlight:focus-visible {
+  color: var(--ink);
+}
+
+.rich-code-highlight + .rich-code-copy,
+.rich-code-plain-note + .rich-code-copy {
+  margin-left: 0;
+}
+
+.rich-code-plain-note {
+  margin-left: auto;
+  margin-right: 8px;
+  color: var(--ink-tertiary);
+  font-size: inherit;
+  user-select: none;
+}
+
+.rich-code-copy {
+  margin-left: auto;
+  --message-copy-rest-transform: none;
+  width: 24px;
+  height: 24px;
+  background: none;
+  box-shadow: none;
+  /* Quiet at rest, yet a control mark that clears 3:1. */
+  color: var(--ink-muted);
+  opacity: 1;
+  pointer-events: auto;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+/* Even glyph in the 24px box keeps --rich-code-copy-glyph-offset whole. */
+.message-copy-button.rich-code-copy > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.rich-code-block:hover .rich-code-copy,
+.rich-code-copy:focus-visible {
+  color: var(--ink-tertiary);
+}
+
+.rich-code-copy:hover {
+  color: var(--ink);
+}
+
+/* Code block copy keeps the inherited icon color in the copied state.
+ * The Check icon swap is the only signal; celebratory green text reads
+ * as cheap against the neutral code chrome. */
+.rich-code-copy.copied {
+  color: inherit;
+}
+
+.rich-code-copy.failed {
+  color: var(--danger);
+}
+
+.fork-worktree-notice {
+  min-width: 0;
+}
+
+.fork-worktree-card {
+  display: block;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+}
+
+/* Match the inspector's compact action rows. */
+.fork-worktree-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: var(--environment-row-height);
+  align-items: center;
+  column-gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  color: var(--ink);
+  cursor: pointer;
+  list-style: none;
+}
+
+.fork-worktree-summary::-webkit-details-marker {
+  display: none;
+}
+
+.fork-worktree-summary:hover,
+.fork-worktree-summary:focus-visible {
+  background: var(--ink-overlay-4);
+}
+
+.fork-worktree-summary:focus-visible {
+  outline: 2px solid var(--fork-worktree-focus-ring);
+  outline-offset: -2px;
+}
+
+.fork-worktree-glyph {
+  align-self: start;
+  margin-top: calc((var(--font-ui) * 1.35 - var(--icon-size)) / 2);
+  color: var(--ink-tertiary);
+}
+
+.fork-worktree-summary-text {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.fork-worktree-summary-text strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+  line-height: 1.35;
+}
+
+.fork-worktree-chevron {
+  color: var(--ink-muted);
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.fork-worktree-card[open] .fork-worktree-chevron {
+  transform: rotate(180deg);
+}
+
+.fork-worktree-details {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  column-gap: var(--space-3);
+  padding: 0 var(--space-3) var(--space-3);
+}
+
+/* Stack facts so long workspace paths fit the narrow inspector. */
+.fork-worktree-meta {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-2) var(--space-3);
+  align-items: baseline;
+  margin: 0;
+  padding: 0;
+}
+
+.fork-worktree-meta div {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.fork-worktree-meta dt {
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+}
+
+.fork-worktree-meta dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+:is(.workspace-tool-record, .program-tool-record) > summary {
+  width: fit-content;
+  max-width: 100%;
+  cursor: pointer;
+  list-style: none;
+}
+
+:is(.workspace-tool-record, .program-tool-record) > summary::-webkit-details-marker {
+  display: none;
+}
+
+:is(.workspace-tool-record, .program-tool-record) > summary:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+  border-radius: var(--radius-xs);
+}
+
+.workspace-tool-chevron,
+.program-tool-chevron {
+  flex-shrink: 0;
+}
+
+.workspace-tool-record[open] .workspace-tool-chevron,
+.program-tool-record[open] .program-tool-chevron {
+  transform: rotate(180deg);
+}
+
+.workspace-tool-details {
+  margin: var(--space-2) 0 0 calc(var(--icon-size) + var(--space-2));
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.workspace-tool-details code {
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+}
+
+.workspace-tool-details p {
+  margin: var(--space-2) 0 0;
+}
+
+.program-tool-record > summary {
+  display: flex;
+  width: 100%;
+  min-height: 1lh;
+  align-items: center;
+}
+
+.program-tool-label {
+  flex: 1;
+  min-width: 0;
+}
+
+.program-tool-details {
+  margin: var(--space-2) 0 0 22px;
+}
+
+/* The process fold already supplies the single-call detail spacing. */
+.process-surface-body > :is(.program-tool-details, .workspace-tool-details) {
+  margin: 0;
+}
+
+.program-tool-details .rich-code-block {
+  margin: 0;
+}
+
+.program-tool-details p {
+  margin: var(--space-2) 0 0;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.program-tool-details[data-tool="run_code"] .rich-code,
+.program-tool-record[data-tool="exec"] .rich-code {
+  max-height: 320px;
+  overflow: auto;
+}
+
+.program-tool-record[data-tool="exec"] .program-tool-details > p code {
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+}
+
+.command-tool-output > p {
+  margin-bottom: var(--space-2);
+}
+
+/* A plain icon button in the open card, not the floating copy pill used on
+ * message hover. */
+.fork-worktree-copy,
+.fork-worktree-copy:hover,
+.fork-worktree-copy:focus-visible {
+  --message-copy-rest-transform: none;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-xs);
+  box-shadow: none;
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+.fork-worktree-copy {
+  background: transparent;
+  color: var(--ink-tertiary);
+}
+
+.fork-worktree-copy:hover,
+.fork-worktree-copy:focus-visible {
+  background: var(--ink-overlay-6);
+  color: var(--ink);
+}
+
+/*
+ * Notion-style inline table.
+ *
+ * No outer card frame, no vertical borders, no zebra stripes. The
+ * only structure is a thin hairline between rows; the header gets a
+ * slightly stronger bottom hairline and a muted text color so it
+ * reads as a label without relying on font weight (chat messages
+ * strip weight emphasis — see base.css `.rich-content strong`).
+ */
+.rich-table-wrap {
+  max-width: 100%;
+  margin: 8px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.rich-table-wrap table {
+  width: 100%;
+  min-width: 0;
+  border-collapse: collapse;
+  font-size: var(--font-ui);
+}
+
+.rich-table-wrap th,
+.rich-table-wrap td {
+  /* Lines inside a cell belong together more than neighboring rows do: a
+   * tighter leading and a text-scaled block padding keep each cell reading
+   * as one unit. */
+  padding-block: round(nearest, 0.7em, 1px);
+  padding-inline: var(--space-3);
+  line-height: round(nearest, 1.45em, 2px);
+  text-align: left;
+  vertical-align: top;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.rich-table-wrap thead th {
+  color: var(--ink-soft);
+  font-weight: inherit;
+  border-bottom-color: var(--hairline-strong);
+}
+
+/* Drop the bottom border on the final row so the table breathes. */
+.rich-table-wrap tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.rich-blockquote {
+  margin: 0;
+  border-left: 2px solid var(--hairline-strong);
+  color: var(--rich-blockquote-color);
+  padding: 2px 0 2px 16px;
+}
+
+.rich-rule {
+  width: 100%;
+  height: 1px;
+  border: 0;
+  background: var(--rich-rule-color);
+  margin: 8px 0;
+}
+
+.rich-mermaid {
+  /* Retain the ready diagram's footprint while rendering or showing an error. */
+  width: 100%;
+  height: 360px;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  padding: 14px;
+}
+
+.rich-mermaid .pele {
+  --pele-bg: var(--paper);
+  --pele-fg: var(--ink);
+  --pele-muted: var(--ink-soft);
+  --pele-line: var(--ink-soft);
+  --pele-surface: var(--surface-1);
+  --pele-surface-alt: var(--surface-2);
+  --pele-border: var(--hairline-strong);
+  --pele-accent: var(--accent);
+}
+
+.rich-mermaid svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.rich-mermaid-diagram {
+  appearance: none;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  place-items: center;
+  overflow: hidden;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: zoom-in;
+  font: inherit;
+}
+
+.rich-mermaid-diagram:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.rich-mermaid-diagram svg {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+.rich-mermaid-loading,
+.rich-mermaid-error {
+  min-height: 100%;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+}
+
+.rich-mermaid-loading {
+  display: grid;
+  place-items: center;
+}
+
+.rich-mermaid[data-mermaid-state="error"] {
+  border-color: var(--danger-border);
+  background: var(--danger-soft);
+}
+
+.rich-mermaid-error {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  color: var(--danger);
+}
+
+.reasoning-block {
+  display: block;
+  /* Same measure cap as .agent-block — reasoning is running prose too. */
+  max-width: min(var(--conversation-message-max-width, 720px), 100%);
+  color: var(--ink-tertiary);
+  font-size: var(--conversation-process-font-size);
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.reasoning-stream {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  gap: 6px;
+}
+
+.reasoning-stream .rich-paragraph {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  margin: 0;
+}
+
+.reasoning-stream .rich-paragraph + .rich-paragraph {
+  margin-top: 2px;
+}
+
+.turn-reasoning-fold {
+  min-width: 0;
+}
+
+.turn-reasoning-summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  list-style: none;
+  color: var(--process-summary-color);
+  font-size: var(--conversation-process-font-size);
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+  user-select: none;
+}
+
+.turn-reasoning-summary::-webkit-details-marker {
+  display: none;
+}
+
+.turn-reasoning-summary::marker {
+  display: none;
+}
+
+/* Reasoning folds share the process row's hover affordance: the label and
+ * chevron deepen together. An underline reads as a link. */
+.turn-reasoning-summary:hover,
+.turn-reasoning-summary:focus-visible {
+  color: var(--activity-toggle-hover-color);
+}
+
+.turn-reasoning-summary:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.turn-reasoning-summary-text {
+  /* Keep the chevron next to the label, matching the process surface row. */
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.turn-reasoning-chevron {
+  flex: 0 0 auto;
+  color: currentColor;
+  transform: rotate(0deg);
+  transition: transform var(--motion-base) var(--ease-out);
+}
+
+.turn-reasoning-fold[open] > .turn-reasoning-summary .turn-reasoning-chevron {
+  transform: rotate(90deg);
+}
+
+.turn-reasoning-body {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--motion-slow) var(--ease-out),
+    opacity var(--motion-base) var(--ease-out);
+}
+
+.turn-reasoning-fold[open] > .turn-reasoning-body {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+/* A paused closed body may never have computed a style to transition from. */
+@starting-style {
+  .turn-reasoning-fold[open] > .turn-reasoning-body {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+.turn-reasoning-body-inner {
+  min-height: 0;
+  overflow: hidden;
+  padding: 4px 0 2px 20px;
+  color: var(--wuu-ink-soft);
+}
+
+.turn-reasoning-scroll {
+  max-height: var(--conversation-process-fold-max-height, min(320px, 40vh));
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
+.tool-card {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.tool-header {
+  display: flex;
+  height: 40px;
+  align-items: center;
+  gap: 9px;
+  border-bottom: 1px solid var(--hairline-soft);
+  padding: 0 14px;
+  font-weight: var(--weight-semibold);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  margin-left: auto;
+  background: var(--ink-faint);
+}
+
+.status-dot.completed {
+  background: var(--success);
+}
+
+.status-dot.failed {
+  background: var(--danger);
+}
+
+pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  padding: 6px 14px 12px;
+  border-bottom: 1px solid var(--hairline-soft);
+  background: var(--surface-1);
+  color: var(--pre-text-color);
+  font-family: var(--wuu-font-family-mono, var(--font-mono, "SFMono-Regular", Consolas, monospace));
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-result {
+  border-bottom: 0;
+  background: var(--paper);
+}
+
+  
+  
+  
+   
+
+  
+   
+.system-line {
+  border: 0;
+  border-top: 1px solid var(--hairline-soft);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-tertiary);
+  padding: 10px 0 0;
+  margin-top: 4px;
+  line-height: var(--line-body);
+  max-width: 580px;
+}
+
+.system-line::before {
+  content: "—";
+  color: var(--system-line-marker-color);
+  margin-right: 8px;
+  user-select: none;
+}
+
+.system-line strong {
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+}
+
+.empty-home {
+  display: grid;
+  min-height: 100%;
+  align-items: start;
+  background: var(--paper);
+  padding: clamp(56px, 12vh, 128px) 0 clamp(32px, 6vh, 72px);
+  color: var(--ink);
+}
+
+.empty-home-inner {
+  /* Outer width, horizontal padding, and 12-col grid come from .session-flow
+     (applied via className in JSX). View-specific rules stay here. */
+  row-gap: var(--space-6);
+  min-width: 0;
+  /* Fixed gutters alone can exceed a narrow conversation beside both rails.
+     Keep the shared rhythm when it fits, and let the grid shrink with its pane. */
+  column-gap: min(var(--wuu-grid-gutter), calc(100% / var(--wuu-grid-cols) / 2));
+}
+
+/* Replacement content shares the welcome column without relying on private classes. */
+.empty-home-inner > :where(:not(.empty-home-header)) {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+/* The greeting follows the UI size between the display and hero roles, so
+ * at large text it still leads the summary numbers beneath it. */
+.empty-home h2 {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 26ch;
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: var(--ink);
+  font-family: var(--empty-home-title-font);
+  font-size: clamp(var(--font-display), 2.1vw, var(--font-hero));
+  font-weight: var(--weight-regular);
+  letter-spacing: 0;
+  line-height: 1.3;
+  text-align: center;
+  text-wrap: balance;
+}
+
+.empty-home-workspace-link {
+  display: inline;
+  padding: 0;
+  background: none;
+  cursor: pointer;
+  text-align: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 45%, transparent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.15em;
+}
+
+.empty-home-workspace-link:hover,
+.empty-home-workspace-link[aria-expanded="true"] {
+  text-decoration-color: currentColor;
+}
+
+.empty-home-workspace-link:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 3px;
+}
+
+.empty-home-header {
+  /* A centered greeting establishes the main task before the overview. */
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-5);
+  max-width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+/* Keep the companion at a stable size above the greeting. */
+.empty-home-mascot {
+  display: var(--empty-home-mascot-display);
+  width: 80px;
+  height: 80px;
+  flex: 0 0 auto;
+  /* The idle play squashes and hops the body on its resting point. */
+  transform-origin: 50% 90%;
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
+/* Usage overview under the greeting: the totals and their heatmap in one
+   card, framed like the composer beneath it so the two read as a pair. It
+   appears only once the host answers, so it enters in stages: the summary
+   rises in, the totals settle, and the weeks follow in time order. Every
+   delay and duration comes from the motion ladder, so reduced motion shows
+   the final state at once. The idle play waits for this entrance to finish
+   (EmptyHomeOverview). */
+.empty-home-overview {
+  position: relative;
+  grid-column: 1 / -1;
+  display: grid;
+  row-gap: var(--space-4);
+  min-width: 0;
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-card);
+  padding: var(--card-padding);
+  --enter-y: 6px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+}
+
+/* Totals read as one line of facts at their natural widths; they wrap as a
+   whole when the column narrows instead of truncating a number. */
+.empty-home-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3) var(--space-8);
+  margin: 0;
+  --enter-y: 6px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+  animation-delay: calc(var(--motion-fast) / 2);
+}
+
+.empty-home-stats > div {
+  display: grid;
+  align-content: start;
+  row-gap: var(--space-1);
+  min-width: 0;
+}
+
+.empty-home-stats dt {
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  line-height: 1.3;
+}
+
+.empty-home-stats dd {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--font-title);
+  font-variant-numeric: tabular-nums;
+  font-weight: var(--weight-medium);
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+/* Square cells stay between a readable floor and ceiling. When the column
+   cannot fit every week at the floor, whole older weeks wrap onto a clipped
+   second line instead of shrinking the cells further. The newest week is
+   the first child, so row-reverse keeps it last; a column wider than the
+   year at the ceiling leaves the weeks on its leading edge. */
+.empty-home-heatmap {
+  container-type: inline-size;
+  min-width: 0;
+}
+
+.empty-home-heatmap-weeks {
+  --empty-home-heatmap-gap: 3px;
+  --empty-home-heatmap-label: calc(var(--font-xs) * 1.25);
+  display: flex;
+  flex-flow: row-reverse wrap;
+  align-content: flex-start;
+  justify-content: flex-end;
+  column-gap: var(--empty-home-heatmap-gap);
+  /* Keep cqi on this box's height, not in an inherited cell-size variable:
+     otherwise every day needs style recalculation on each resize frame. */
+  height: calc(
+    var(--empty-home-heatmap-label) +
+      7 * (clamp(
+        8px,
+        (100cqi - (var(--empty-home-heatmap-weeks) - 1) * var(--empty-home-heatmap-gap)) /
+          var(--empty-home-heatmap-weeks),
+        14px
+      ) + var(--empty-home-heatmap-gap))
+  );
+  overflow: hidden;
+}
+
+/* After the totals start, the weeks reveal from the oldest one on screen to
+   today across one slow step. EmptyHomeOverview counts the weeks on the
+   first line, so clipped older weeks start at once and add no wait. */
+.empty-home-heatmap-week {
+  display: grid;
+  flex: none;
+  /* Percentage width stays local to layout; the shared row height keeps
+     even the unfinished current week aligned with the full weeks. */
+  width: clamp(
+    8px,
+    (100% - (var(--empty-home-heatmap-weeks) - 1) * var(--empty-home-heatmap-gap)) /
+      var(--empty-home-heatmap-weeks),
+    14px
+  );
+  height: 100%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--empty-home-heatmap-label) repeat(7, minmax(0, 1fr));
+  row-gap: var(--empty-home-heatmap-gap);
+  --enter-y: 6px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+  animation-delay: calc(
+    var(--motion-fast) + var(--motion-slow) *
+      max(0, var(--empty-home-heatmap-visible) - 1 - var(--empty-home-heatmap-week)) /
+      var(--empty-home-heatmap-visible)
+  );
+}
+
+/* A month label starts at its week and runs across the following weeks. */
+.empty-home-heatmap-month {
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+  line-height: 1.25;
+  white-space: nowrap;
+  user-select: none;
+}
+
+/* Days without use stay a faint grid so the few active days carry the
+   picture. */
+.empty-home-heatmap-week i {
+  border-radius: 2px;
+  background: var(--ink-overlay-4);
+}
+
+.empty-home-heatmap-week i[data-level="1"] {
+  background: var(--settings-heatmap-level-1);
+}
+
+.empty-home-heatmap-week i[data-level="2"] {
+  background: var(--settings-heatmap-level-2);
+}
+
+.empty-home-heatmap-week i[data-level="3"] {
+  background: var(--settings-heatmap-level-3);
+}
+
+.empty-home-heatmap-week i[data-level="4"] {
+  background: var(--settings-heatmap-level-4);
+}
+
+/* The idle play's little ball leaves the greeting mascot and plays on the
+   heatmap (useEmptyHomePlay). The layer covers the overview and paints
+   outside it, so the ball can start above the totals and ripple past the
+   heatmap's clip. Each
+   sprite is a track that carries x around a body that carries y. The ball
+   wears the mascot's colours; the eyes keep it legible where the body matches
+   the surface, as they do for the mascot itself. */
+.empty-home-play {
+  --empty-home-play-size: max(8px, calc(var(--empty-home-play-cell) * 0.9));
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.empty-home-play > span {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.empty-home-play-ball > span {
+  position: relative;
+  display: block;
+  width: var(--empty-home-play-size);
+  height: var(--empty-home-play-size);
+  margin: calc(var(--empty-home-play-size) / -2);
+  border-radius: 50%;
+  background: var(--empty-home-play-body);
+  /* The rim separates the ball from busy cells and from a surface that
+     matches its body colour. */
+  box-shadow: 0 0 0 1.5px var(--hairline-strong);
+  opacity: 0;
+}
+
+/* Eyes sit toward the direction of travel; the play mirrors the ball to
+   face the other way. */
+.empty-home-play-ball > span::before,
+.empty-home-play-ball > span::after {
+  position: absolute;
+  top: 28%;
+  width: 15%;
+  height: 34%;
+  border-radius: 999px;
+  background: var(--empty-home-play-eye);
+  content: "";
+}
+
+.empty-home-play-ball > span::before {
+  left: 38%;
+}
+
+.empty-home-play-ball > span::after {
+  left: 62%;
+}
+
+.empty-home-play-ripple {
+  width: var(--empty-home-play-cell);
+  height: var(--empty-home-play-cell);
+  margin: calc(var(--empty-home-play-cell) / -2);
+  border: 1.5px solid var(--ink-muted);
+  border-radius: 50%;
+  opacity: 0;
+}
+
+.empty-home-play-segment > span {
+  display: block;
+  width: var(--empty-home-play-size);
+  height: var(--empty-home-play-size);
+  margin: calc(var(--empty-home-play-size) / -2);
+  border-radius: 50%;
+  background: var(--empty-home-play-body);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--empty-home-play-eye) 55%, transparent);
+  opacity: 0;
+}
+
+.empty-home-play-paddle > span {
+  display: block;
+  width: calc(var(--empty-home-play-cell) * 3.4);
+  height: max(3px, calc(var(--empty-home-play-cell) * 0.3));
+  margin-left: calc(var(--empty-home-play-cell) * -1.7);
+  border-radius: 999px;
+  background: var(--empty-home-play-body);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--empty-home-play-eye) 55%, transparent);
+  opacity: 0;
+}
+
+/* Breakout debris takes its brick's colour from the play. */
+.empty-home-play-shard > span {
+  display: block;
+  width: calc(var(--empty-home-play-cell) * 0.45);
+  height: calc(var(--empty-home-play-cell) * 0.45);
+  margin: calc(var(--empty-home-play-cell) * -0.225);
+  border-radius: 1px;
+  opacity: 0;
+}
+
+.empty-home-inner > .hero-composer-wrap {
+  /* Share the full content column with the dock composer. The fixed anchor
+     height matches the collapsed hero composer so expanding
+     grows upward from the original toolbar edge instead of pushing it down. */
+  grid-column: 1 / -1;
+  display: flex;
+  height: 118px;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.empty-home-actions {
+  display: grid;
+  grid-column: 2 / 12;
+  width: 100%;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--wuu-grid-gutter);
+  margin-top: 0;
+}
+
+.empty-home-actions button {
+  display: grid;
+  min-height: 120px;
+  align-content: start;
+  gap: 16px;
+  border: 1px solid var(--empty-home-action-border);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+  padding: 18px;
+  text-align: left;
+}
+
+.empty-home-actions button:hover {
+  border-color: var(--empty-home-action-border-hover);
+  background: var(--surface-1);
+}
+
+.empty-home-actions button > svg {
+  color: var(--empty-home-action-icon-color);
+}
+
+.empty-home-actions span {
+  display: grid;
+  gap: 6px;
+}
+
+.empty-home-actions strong {
+  font-size: var(--font-body);
+  font-weight: var(--weight-semibold);
+}
+
+.empty-home-actions small {
+  color: var(--ink-tertiary);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: 1.35;
+}
+
+.project-empty-pane {
+  display: grid;
+  min-height: 0;
+  place-items: center;
+  background: var(--paper);
+}
+
+/* The host owns this surface before any application shell can be loaded. */
+.application-recovery {
+  height: 100%;
+  overflow: auto;
+  padding: 32px 24px;
+  -webkit-app-region: drag;
+}
+
+.application-recovery .wuu-launch {
+  -webkit-app-region: no-drag;
+}
+
+.project-empty-content {
+  display: grid;
+  width: min(440px, calc(100% - 72px));
+  justify-items: center;
+  gap: 18px;
+  color: var(--project-empty-content-color);
+}
+
+.project-empty-content h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: var(--font-title);
+}
+
+/*
+ * The launch signature shows the same round wuu blobatar as the empty home
+ * greeting, centered inside one opaque app-icon surface. The mascot is the
+ * color mark itself, and the old monochrome carving plus startup sweep are
+ * gone. A failure keeps the same mark so a stall does not make the icon
+ * vanish; it only stamps a status badge on the corner.
+ */
+.wuu-launch {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-6);
+  width: min(400px, 100%);
+  padding: var(--space-4);
+  text-align: center;
+  color: var(--ink);
+  font-size: var(--font-ui);
+}
+
+.wuu-launch-mark {
+  position: relative;
+}
+
+.wuu-launch-badge {
+  position: absolute;
+  inset-inline-end: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  aspect-ratio: 1;
+  border: 3px solid var(--paper);
+  border-radius: var(--radius-pill);
+  background: var(--danger);
+  color: var(--paper);
+  --enter-scale: 0.6;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
+}
+
+.wuu-launch-message {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+  width: 100%;
+}
+
+.wuu-launch-title {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--font-heading);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+}
+
+.wuu-launch-description {
+  /* Keep the delayed hint from shifting the centered icon, title and rail. */
+  position: absolute;
+  top: calc(100% + var(--space-4));
+  inset-inline: 0;
+  margin: 0;
+  color: var(--ink-soft);
+  line-height: var(--line-body);
+}
+
+/* A <p> keeps raw error text without picking up the code-block chrome a
+ * <pre> gets globally. */
+.wuu-launch-error {
+  margin: 0;
+  max-height: 35vh;
+  width: 100%;
+  overflow: auto;
+  color: var(--ink-soft);
+  line-height: var(--line-body);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  user-select: text;
+}
+
+.wuu-launch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
+}
+
+@container style(--motion-reduced: 1) {
+  .wuu-launch .loading-rail::after {
+    animation: none;
+    width: 100%;
+  }
+}
+
+.wuu-launch-glass {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  width: clamp(120px, 14vw, 152px);
+  aspect-ratio: 1;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: 31%;
+  background: var(--surface-2);
+  box-shadow: var(--shadow-modal);
+  --enter-y: 8px;
+  --enter-scale: 0.96;
+  animation: wuu-enter var(--motion-slower) var(--ease-out) both;
+}
+
+.wuu-launch-mascot {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: 100%;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* The one indeterminate rail for loading that covers a region: a
+ * conversation switch, the settings view, a workspace panel. It is a rhythm
+ * like a spinner's, so it keeps moving under reduced motion: it reports
+ * ongoing work. */
+.loading-rail {
+  position: relative;
+  width: 96px;
+  height: 3px;
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+  background: var(--surface-3);
+}
+
+.loading-rail::after {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 40%;
+  border-radius: inherit;
+  background: var(--ink-soft);
+  content: "";
+  animation: loading-rail-scan 1200ms linear infinite;
+}
+
+/* From just outside the start to just outside the end, whatever the width. */
+@keyframes loading-rail-scan {
+  from {
+    translate: -100% 0;
+  }
+  to {
+    translate: 250% 0;
+  }
+}
+
+.view-switch-loading,
+.view-switch-loading-conversation,
+.view-switch-loading-inline {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+}
+
+.view-switch-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: var(--paper);
+  pointer-events: auto;
+}
+
+/* The shell measures the message viewport(s), excluding input and status
+ * docks. Fade only those rectangles; sidebar and titlebar remain live. */
+.view-switch-loading-conversation {
+  z-index: 30;
+  background: var(--paper);
+  pointer-events: auto;
+  animation: wuu-fade-in var(--motion-base) var(--ease-out) both;
+}
+
+.conversation-pane.environment-panel-reserved .view-switch-loading-conversation {
+  padding-right: var(--environment-panel-content-inset);
+}
+
+.project-empty-actions {
+  display: grid;
+  width: 100%;
+  gap: 8px;
+}
+
+.project-empty-actions button {
+  display: flex;
+  height: 52px;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--project-empty-actions-border);
+  border-radius: var(--radius-sm);
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+  padding: 0 16px;
+  text-align: left;
+}
+
+.project-empty-actions button:hover {
+  background: var(--project-empty-actions-hover-bg);
+}
+
+/*
+ * Chip 图鉴 dev panel (ChipGalleryPanel). Dev-mode only — gated by
+ * `ENABLE_CHIP_GALLERY` in App.tsx and the debug-controls switch in
+ * Settings. Never reaches production builds. See AGENTS.md "Desktop
+ * Debug Controls" for the gating rules.
+ */
+.chip-gallery-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: color-mix(in srgb, var(--ink) 40%, transparent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 24px;
+  overflow: auto;
+}
+
+.chip-gallery-panel {
+  width: 100%;
+  max-width: 960px;
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+
+.chip-gallery-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.chip-gallery-header h2 {
+  margin: 0 0 4px;
+  font-size: 18px;
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
+}
+
+.chip-gallery-header p {
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+  max-width: 720px;
+}
+
+.chip-gallery-header p code {
+  font-size: 0.92em;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.chip-gallery-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 8px 24px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+}
+
+.chip-gallery-section > header {
+  padding: 16px 0 12px;
+}
+
+.chip-gallery-section > header h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--ink-tertiary);
+}
+
+.chip-gallery-section > header p {
+  margin: 0;
+  font-size: var(--font-ui);
+  color: var(--ink-tertiary);
+  line-height: 1.5;
+}
+
+.chip-gallery-section > header p code {
+  font-size: 0.92em;
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+/* --- Gallery section: each chip in isolation --- */
+
+.chip-gallery-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.chip-gallery-entry {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(280px, 1.2fr);
+  align-items: center;
+  gap: 16px;
+  padding: 12px 16px;
+  background: var(--surface-1);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+}
+
+.chip-gallery-entry-chip {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+}
+
+.chip-gallery-entry-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.chip-gallery-entry-label {
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+  color: var(--ink);
+}
+
+.chip-gallery-entry-kind {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--ink-tertiary);
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+  align-self: flex-start;
+}
+
+.chip-gallery-entry-description {
+  font-size: var(--font-ui);
+  color: var(--ink-tertiary);
+  line-height: 1.4;
+}
+
+/* --- In-Context section: mock turns rendered through TurnView --- */
+
+.chip-gallery-context {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.chip-gallery-context-item h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: var(--weight-medium);
+  color: var(--ink-tertiary);
+}
+
+.chip-gallery-context-frame {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  padding: 16px 20px;
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+/*
+ * Tool diff hover preview
+ * A compact popover that appears when the user hovers over an file-edit
+ * activity row, showing the actual diff with line numbers and colored
+ * additions/deletions.
+ */
+.tool-diff-preview-trigger {
+  position: relative;
+  display: inline;
+  cursor: default;
+}
+
+.turn-edit-summary-list > .tool-diff-preview-trigger {
+  display: block;
+}
+
+.tool-diff-preview-card {
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 48px);
+  max-height: 360px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--paper);
+  box-shadow: var(--shadow-pop);
+  color: var(--ink);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  text-align: left;
+}
+
+.tool-diff-preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
+  border-bottom: 1px solid var(--hairline-soft);
+  background: var(--surface-1);
+  flex-shrink: 0;
+}
+
+.tool-diff-preview-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: var(--font-sm);
+}
+
+.tool-diff-preview-truncated {
+  flex-shrink: 0;
+  font-size: var(--font-xs);
+  color: var(--ink-tertiary);
+}
+
+.tool-diff-preview-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--compact-padding-block) 0;
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: var(--appearance-code-size);
+  line-height: var(--appearance-code-line-height);
+}
+
+.tool-diff-preview-summary {
+  display: block;
+  padding: 8px 12px;
+  color: var(--ink-tertiary);
+  white-space: normal;
+}
+
+.tool-diff-hunk {
+  display: flex;
+  flex-direction: column;
+}
+
+.tool-diff-hunk + .tool-diff-hunk {
+  margin-top: var(--space-2);
+  border-top: 1px solid var(--hairline-soft);
+  padding-top: var(--space-2);
+}
+
+.tool-diff-line {
+  display: grid;
+  grid-template-columns: repeat(2, calc(5ch + 16px)) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.tool-diff-line-number {
+  padding: 0 8px;
+  color: var(--ink-tertiary);
+  text-align: right;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.tool-diff-line-content {
+  padding: 0 12px 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: pre;
+}
+
+.tool-diff-line-insert {
+  background: var(--diff-insert-bg);
+}
+
+.tool-diff-line-insert .tool-diff-line-content {
+  color: var(--diff-insert-color);
+}
+
+.tool-diff-line-delete {
+  background: var(--diff-delete-bg);
+}
+
+.tool-diff-line-delete .tool-diff-line-content {
+  color: var(--diff-delete-color);
+}
+
+.tool-diff-line-equal {
+  background: transparent;
+}
+
+.tool-diff-line-equal .tool-diff-line-content {
+  color: var(--ink);
+}
+
+/* Shared row primitives for turn output summaries. Card chrome lives on
+ * `.turn-edit-summary-card` so file changes and presented files read as one family. */
+.turn-output-summary-list {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0;
+}
+
+.turn-output-summary-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+
+.turn-output-summary-row:hover {
+  background: var(--message-flow-card-hover-bg);
+}
+
+.turn-output-summary-row:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.turn-output-summary-file {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+}
+
+.turn-output-summary-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--font-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Rich tool-result artifacts
+ * Images and subsequent messages remain in chronological order. Document
+ * outputs collect at the turn end, matching the existing file-change summary.
+ */
+.turn-artifact-inline-list {
+  --artifact-gallery-control-inset: 8px;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.turn-artifact-gallery-toolbar {
+  position: absolute;
+  top: var(--artifact-gallery-control-inset);
+  right: var(--artifact-gallery-control-inset);
+  z-index: 1;
+  display: flex;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-out);
+  isolation: isolate;
+}
+
+/* White light supports the icon over media without a dark halo or button box. */
+.turn-artifact-gallery-toolbar::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  z-index: -1;
+  border-radius: var(--radius-media);
+  background: var(--artifact-gallery-control-glow);
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+.turn-artifact-inline-list:is(:hover, :focus-within) > .turn-artifact-gallery-toolbar {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.turn-artifact-gallery-toolbar .icon-button {
+  color: var(--artifact-gallery-control-fg);
+  background: transparent;
+  border: 0;
+}
+
+.turn-artifact-gallery-toolbar .icon-button:is(:hover, :active):not(:disabled) {
+  color: var(--artifact-gallery-control-fg-hover);
+  background: transparent;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .turn-artifact-gallery-toolbar {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.turn-artifact-gallery-items {
+  container-type: inline-size;
+  display: flex;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 4px;
+  scroll-padding-inline: 32px;
+}
+
+/* Small thumbnails must still contain the full font-scaled view control. */
+.turn-artifact-gallery-toolbar + .turn-artifact-gallery-items {
+  min-height: calc(var(--control-size-roomy) + var(--artifact-gallery-control-inset) * 2);
+}
+
+.turn-artifact-gallery-items:not(.is-tiled) > * {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.turn-artifact-gallery-items > :only-child {
+  width: min(var(--conversation-image-width), 100%);
+}
+
+/* A single publication reads like an image in the answer. */
+.turn-artifact-gallery-items:has(> :only-child) {
+  padding: 4px 0;
+}
+
+/* Carousel height is known before decoding. Intrinsic image widths may settle
+ * horizontally without moving the following prose or remounting an image. */
+.turn-artifact-gallery-items:not(.is-tiled) > :not(:only-child) .turn-artifact-image-preview {
+  width: auto;
+  min-width: min(120px, 85cqw);
+  max-width: 85cqw;
+  height: min(180px, 60cqw);
+  aspect-ratio: auto;
+}
+
+.turn-artifact-gallery-items:not(.is-tiled) > :not(:only-child) .turn-artifact-image-preview > button {
+  position: relative;
+  width: auto;
+  min-width: inherit;
+}
+
+.turn-artifact-gallery-items:not(.is-tiled) > :not(:only-child) .turn-artifact-image-preview img {
+  position: static;
+  width: auto;
+  height: auto;
+  max-width: 85cqw;
+  object-position: left top;
+}
+
+.turn-artifact-gallery-items.is-tiled .turn-artifact-image-preview {
+  aspect-ratio: 4 / 3;
+}
+
+.turn-artifact-gallery-items.is-tiled {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: visible;
+}
+
+.turn-artifact-gallery-items.is-tiled > * {
+  width: 100%;
+}
+
+.turn-artifact-gallery-items .turn-artifact-image-preview {
+  width: 100%;
+}
+
+html[data-focus-modality="keyboard"] .turn-artifact-gallery-items:focus-visible {
+  outline-offset: -2px;
+  border-radius: var(--radius-media);
+}
+
+.turn-artifact-text-part {
+  width: min(100%, 620px);
+  min-width: 0;
+  padding: 2px 0;
+  color: var(--ink);
+}
+
+.turn-artifact-inline-image {
+  align-self: flex-start;
+  margin: 0;
+  width: min(100%, var(--conversation-image-width));
+  min-width: 0;
+}
+
+.turn-artifact-image-preview > :is(button, img) {
+  position: absolute;
+  inset: 0;
+}
+
+.turn-artifact-inline-image img {
+  position: absolute;
+  inset: 0 auto auto 0;
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--hairline);
+  border-radius: var(--conversation-image-radius);
+  background: transparent;
+  object-fit: scale-down;
+}
+
+.turn-artifact-image-preview > button {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-media);
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+  overflow-wrap: anywhere;
+}
+
+.turn-artifact-image-preview > button:not(:disabled),
+.turn-artifact-inline-image img[role="button"] {
+  cursor: zoom-in;
+}
+
+.turn-artifact-image-preview > button:focus-visible,
+.turn-artifact-inline-image img[role="button"]:focus-visible {
+  outline: 2px solid var(--image-preview-outline-focus);
+  outline-offset: 2px;
+}
+
+.turn-artifact-unavailable {
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+}
+
+.turn-artifact-image-preview > .image-placeholder {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: var(--conversation-image-radius);
+  background: var(--surface-2);
+}
+
+.turn-artifact-image-preview .image-placeholder .turn-artifact-unavailable {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.turn-edit-summary-card[data-wuu-component="artifact"] {
+  width: min(100%, 620px);
+  margin-top: 0;
+}
+
+.artifact-preview-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2147482990;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: var(--artifact-preview-overlay-bg);
+}
+
+.artifact-preview-shell {
+  display: flex;
+  width: min(1180px, 94vw);
+  height: min(860px, 92vh);
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--artifact-preview-shell-border);
+  border-radius: var(--radius-lg);
+  background: var(--paper);
+  box-shadow: var(--shadow-modal);
+}
+
+.artifact-preview-panel,
+.artifact-preview-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--paper);
+}
+
+.artifact-preview-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--hairline-soft);
+}
+
+.artifact-preview-toolbar > div:first-child {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.artifact-preview-toolbar strong,
+.artifact-preview-toolbar span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-preview-toolbar strong {
+  color: var(--ink);
+  font-size: var(--font-sm);
+}
+
+.artifact-preview-toolbar span {
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+}
+
+.artifact-preview-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 6px;
+}
+
+.artifact-preview-actions button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-muted);
+  cursor: pointer;
+}
+
+.artifact-preview-actions button:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.artifact-preview-actions .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.artifact-preview-body {
+  position: relative;
+  display: grid;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  place-items: stretch;
+  overflow: auto;
+}
+
+.artifact-preview-frame,
+.artifact-preview-body > .workspace-file-pdf-preview {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  background: var(--artifact-preview-frame-bg);
+}
+
+.artifact-preview-audio {
+  width: min(680px, 90%);
+  margin: auto;
+}
+
+.artifact-preview-text {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100%;
+  margin: 0;
+  padding: 18px;
+  overflow: auto;
+  color: var(--ink);
+  font: var(--appearance-code-size)/var(--appearance-code-line-height) var(--font-mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.artifact-preview-empty {
+  display: grid;
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 240px;
+  padding: var(--panel-padding);
+  place-items: center;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .artifact-preview-overlay {
+    padding: 10px;
+  }
+
+  .artifact-preview-shell {
+    width: 100%;
+    height: 100%;
+  }
+}
+
+/*
+ * Turn file-change object
+ * A compact receipt for files created or edited during the turn. The stable
+ * right-side artifact panel owns the full diff and current-file preview.
+ */
+.turn-edit-presentation {
+  display: grid;
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-bottom: 0;
+  transition: grid-template-rows var(--query-submit-duration) var(--query-submit-easing),
+    opacity var(--query-submit-duration) var(--query-submit-easing),
+    margin-bottom var(--query-submit-duration) var(--query-submit-easing);
+}
+
+.assistant-turn-shell > .turn-edit-presentation {
+  --turn-edit-exit-gap: var(--conversation-process-answer-gap);
+}
+
+.turn > .turn-edit-presentation {
+  --turn-edit-exit-gap: var(--conversation-turn-item-gap);
+}
+
+.turn-edit-presentation.is-exiting {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+  /* Collapse the parent's gap too, so unmounting does not cause a final jump. */
+  margin-bottom: calc(-1 * var(--turn-edit-exit-gap, 0px));
+}
+
+/* Submission placement measures its destination after enabling the glide.
+ * Settle outgoing summaries in that layout so their height animation cannot
+ * keep moving the preview and the new message underneath the scroll motion. */
+:root[data-submit-glide] .turn-edit-presentation.is-exiting {
+  transition: none;
+}
+
+.turn-edit-presentation-body {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.turn-edit-summary-toggle {
+  display: flex;
+  width: 100%;
+  min-height: 20px;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--conversation-process-control-color, var(--process-control-color-fallback));
+  font: inherit;
+  font-size: var(--conversation-process-font-size);
+  font-weight: var(--conversation-process-font-weight);
+  line-height: var(--conversation-process-line-height);
+  cursor: pointer;
+  text-align: left;
+}
+
+.turn-edit-summary-toggle > svg {
+  flex: 0 0 auto;
+  margin-left: auto;
+}
+
+.turn-edit-summary-toggle[aria-expanded="true"] > svg {
+  transform: rotate(90deg);
+}
+
+@container style(--motion-reduced: 1) {
+  .turn-edit-presentation {
+    transition: none;
+  }
+}
+
+.turn-edit-summary-card {
+  margin: var(--conversation-process-answer-gap) 0 0;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+  box-sizing: border-box;
+  align-self: stretch;
+  overflow: hidden;
+  border: 1px solid var(--message-flow-card-border);
+  border-radius: var(--message-flow-card-radius);
+  background: var(--message-flow-card-bg);
+  box-shadow: none;
+}
+
+/* The shell gap already separates successful output from the answer. */
+.assistant-turn-shell > .turn-edit-presentation .turn-edit-summary-card {
+  margin-top: 0;
+}
+
+.assistant-turn-shell > .turn-edit-presentation + .turn-edit-presentation .turn-edit-summary-card,
+.turn-edit-presentation + .turn-edit-presentation .turn-edit-summary-card {
+  margin-top: var(--conversation-process-answer-gap);
+}
+
+.turn-edit-summary-card > .tool-diff-preview-trigger {
+  display: block;
+}
+
+.turn-edit-summary-overview {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--control-row-height);
+  box-sizing: border-box;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--compact-padding-block) var(--compact-padding-inline);
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+button.turn-edit-summary-overview {
+  cursor: pointer;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+button.turn-edit-summary-overview:hover {
+  background: var(--message-flow-card-hover-bg);
+}
+
+button.turn-edit-summary-overview:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 2px var(--focus-ring);
+}
+
+.turn-edit-summary-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+}
+
+.turn-edit-summary-icon .icon {
+  width: var(--icon-size-xl);
+  height: var(--icon-size-xl);
+}
+
+.turn-edit-summary-overview-copy {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.turn-edit-summary-overview-title {
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-edit-summary-overview-path {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-family: var(--font-mono, "SFMono-Regular", Consolas, monospace);
+  font-size: var(--font-xs);
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-edit-summary-overview-meta {
+  color: var(--ink-tertiary);
+  font-size: var(--font-xs);
+  line-height: 1.35;
+}
+
+.turn-edit-summary-overview-trailing {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.turn-edit-summary-overview-trailing > .icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--ink-muted);
+}
+
+.turn-edit-summary-list {
+  padding: 0 var(--space-1) var(--space-1);
+}
+
+.turn-edit-summary-card.is-list-only .turn-edit-summary-list {
+  padding-top: var(--space-1);
+}
+
+.turn-edit-summary-row {
+  min-height: var(--control-row-height);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  border-radius: var(--radius-sm);
+  cursor: default;
+}
+
+.turn-edit-summary-row.is-clickable {
+  cursor: pointer;
+}
+
+.turn-edit-summary-file {
+  gap: 8px;
+}
+
+.turn-edit-summary-name {
+  display: block;
+}
+
+.turn-output-summary-copy {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: calc(var(--space-1) / 2);
+}
+
+.turn-output-summary-description {
+  display: block;
+  min-width: 0;
+}
+
+.turn-edit-summary-card:is([data-wuu-component="turn-artifacts"], [data-wuu-component="artifact"]) :is(.turn-edit-summary-overview-title, .turn-output-summary-name) {
+  font-weight: var(--weight-regular);
+}
+
+.turn-edit-summary-card[data-wuu-component="turn-artifacts"] .turn-edit-summary-row {
+  gap: var(--space-3);
+  padding-block: var(--compact-padding-block);
+}
+
+.turn-edit-summary-card[data-wuu-component="turn-artifacts"] .turn-edit-summary-row > .icon {
+  flex: 0 0 auto;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--ink-muted);
+}
+
+.turn-edit-summary-stats {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  font-size: var(--font-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.turn-edit-summary-overview-meta .turn-edit-summary-stats {
+  font-size: inherit;
+}
+
+.turn-edit-summary-add {
+  color: var(--diff-insert-color);
+}
+
+.turn-edit-summary-delete {
+  color: var(--diff-delete-color);
+}
+
+.turn-edit-summary-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: var(--font-sm);
+  color: var(--ink-tertiary);
+  text-align: center;
+}
+
+.turn-edit-summary-more-button {
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.turn-edit-summary-more-button:hover,
+.turn-edit-summary-more-button:focus-visible {
+  color: var(--ink-strong);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 720px) {
+  .chip-gallery-entry {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* IM presentation shares the message flow and its editing/attachment contracts.
+   The frame spans the reading row; its text stays on the reply's axis. */
+:root[data-message-style="im"] {
+  --user-message-frame-border: var(--wuu-message-user-border, 1px solid var(--hairline-soft));
+  --user-message-radius: var(--wuu-message-user-radius, var(--radius-md));
+}
+
+/* Resize-time paint containment must include the frame's reading-column overhang. */
+:root[data-message-style="im"] .turn {
+  margin-inline: calc(-1 * var(--session-im-inline-outset));
+  padding-inline: var(--session-im-inline-outset);
+}
+
+:root[data-message-style="im"] .user-message-block {
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  align-self: stretch;
+  justify-items: stretch;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+:root[data-message-style="im"] :is(.user-message, .user-message-edit, .turn-failure) {
+  width: calc(100% + 2 * var(--session-im-inline-outset));
+  max-width: none;
+  margin-inline: calc(-1 * var(--session-im-inline-outset));
+  box-sizing: border-box;
+}
+
+:root[data-message-style="im"] .turn-failure {
+  padding-inline: var(--session-im-inline-outset);
+}
+
+/* Only text owns the frame; attachments stay above it on the reading axis. */
+:root[data-message-style="im"] .user-message {
+  align-self: start;
+  padding: var(--conversation-framed-text-inset-block) var(--session-im-text-padding);
+  border: 0;
+  background: var(--user-message-bg-color);
+  border-radius: var(--user-message-radius);
+  outline: var(--user-message-frame-border);
+  outline-offset: -1px;
+  box-shadow: var(--wuu-message-user-shadow, var(--shadow-message));
+}
+
+:root[data-message-style="im"] .user-message-edit {
+  padding-inline: calc(var(--session-im-text-padding) - 1px);
+  border-radius: var(--user-message-radius);
+}
+
+:root[data-message-style="im"] .user-message-edit-input {
+  padding-inline: 0;
+}
+
+:root[data-message-style="im"] .session-message-source {
+  justify-self: start;
+}
+
+:root[data-message-style="im"] .user-message-attachments {
+  justify-items: start;
+}
+
+:root[data-message-style="im"] .user-message-media-row {
+  justify-content: flex-start;
+}
+
+:root[data-message-style="im"] .user-message-block :is(.message-images, .message-files) {
+  justify-content: flex-start;
+}

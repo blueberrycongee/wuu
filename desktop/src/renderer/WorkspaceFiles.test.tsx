@@ -1,0 +1,1143 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { showActionErrorToast, showErrorToast } from "./Toast";
+vi.mock("./Toast", () => ({ showActionErrorToast: vi.fn(), showErrorToast: vi.fn() }));
+import { WorkspaceFileService } from "../main/workspaceFiles";
+import type {
+  RuntimeContext,
+  WorkspaceDirectoryListResult,
+  WorkspaceFileReadResult,
+} from "../shared/protocol";
+import { WORKSPACE_FILE_DRAG_MIME } from "./ComposerMessages";
+import { PreviewContentProvider } from "./PreviewContentContext";
+import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
+import { WorkspaceFilePreview, WorkspaceFileTree } from "./WorkspaceFiles";
+import { workspaceFileViewTab, type WorkspaceFileViewTab } from "./WorkspaceViewTabs";
+
+vi.mock("./WorkspaceMonacoEditor", () => ({
+  WorkspaceMonacoEditor: ({
+    path,
+    text,
+    selection,
+    readOnly,
+    onChange,
+    onSave,
+  }: {
+    path: string;
+    text: string;
+    selection?: { startLineNumber: number; startColumn: number };
+    readOnly?: boolean;
+    onChange?: (value: string) => void;
+    onSave?: () => void;
+  }) => (
+    <div
+      className="workspace-monaco-editor"
+      data-path={path}
+      data-readonly={readOnly ? "true" : "false"}
+      data-selection={selection ? `${selection.startLineNumber}:${selection.startColumn}` : ""}
+      data-text={text}
+    >
+      <pre>{text}</pre>
+      <button type="button" className="mock-editor-edit" disabled={readOnly} onClick={() => onChange?.("edited code\n")}>
+        mock edit
+      </button>
+      <button type="button" className="mock-editor-edit-second" disabled={readOnly} onClick={() => onChange?.("second edit\n")}>
+        mock edit second
+      </button>
+      <button type="button" className="mock-editor-save" disabled={readOnly} onClick={() => onSave?.()}>
+        mock save
+      </button>
+    </div>
+  ),
+}));
+
+vi.mock("./WorkspacePdfPreview", () => ({
+  WorkspacePdfPreview: ({ url, title }: { url: string; title: string }) => (
+    <div className="mock-workspace-pdf-preview" data-url={url} data-title={title} />
+  ),
+}));
+
+let container: HTMLDivElement;
+let root: Root | null = null;
+let previewContent: ApplicationPreviewContent;
+let listWorkspaceDirectory: ReturnType<typeof vi.fn>;
+let readWorkspaceFile: ReturnType<typeof vi.fn>;
+let writeWorkspaceFile: ReturnType<typeof vi.fn>;
+let revealWorkspaceItem: ReturnType<typeof vi.fn>;
+let writeClipboard: ReturnType<typeof vi.fn>;
+let scrollIntoView: ReturnType<typeof vi.fn>;
+
+const activeContext: RuntimeContext = {
+  kind: "project",
+  project_id: "project-1",
+  cwd: "/repo",
+};
+
+function workspaceFile(overrides: Partial<WorkspaceFileReadResult> = {}): WorkspaceFileReadResult {
+  return {
+    root: "/repo",
+    path: "src/index.ts",
+    absolute_path: "/repo/src/index.ts",
+    size_bytes: 12,
+    mtime_ms: 1000,
+    sha256: "a".repeat(64),
+    binary: false,
+    truncated: false,
+    text: "button code",
+    ...overrides,
+  };
+}
+
+const directoryResults: Record<string, WorkspaceDirectoryListResult> = {
+  "": { root: "/repo", path: "", entries: [
+    { kind: "directory", name: "src", path: "src/" },
+    { kind: "file", name: "README.md", path: "README.md" },
+  ], truncated: false },
+  src: { root: "/repo", path: "src", entries: [
+    { kind: "directory", name: "components", path: "src/components/" },
+    { kind: "file", name: "index.ts", path: "src/index.ts" },
+  ], truncated: false },
+  "src/components": { root: "/repo", path: "src/components", entries: [
+    { kind: "file", name: "Button.tsx", path: "src/components/Button.tsx" },
+  ], truncated: false },
+};
+
+beforeEach(() => {
+  vi.mocked(showActionErrorToast).mockClear();
+  vi.mocked(showErrorToast).mockClear();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  listWorkspaceDirectory = vi.fn((path = "") => Promise.resolve(directoryResults[path]));
+  readWorkspaceFile = vi.fn((path: string) =>
+    Promise.resolve(workspaceFile({ path, absolute_path: `/repo/${path}` })),
+  );
+  writeWorkspaceFile = vi.fn();
+  revealWorkspaceItem = vi.fn().mockResolvedValue(undefined);
+  writeClipboard = vi.fn().mockResolvedValue(undefined);
+  Object.defineProperty(window, "wuu", {
+    configurable: true,
+    value: {
+      listWorkspaceDirectory,
+      readWorkspaceFile,
+      writeWorkspaceFile,
+      revealWorkspaceItem,
+      showWorkspaceItemMenu: vi.fn().mockResolvedValue({ action: "none" }),
+    },
+  });
+  previewContent = new ApplicationPreviewContent(window.wuu);
+  Object.defineProperty(globalThis.navigator, "clipboard", {
+    configurable: true,
+    value: { writeText: writeClipboard },
+  });
+  scrollIntoView = vi.fn();
+  Element.prototype.scrollIntoView = scrollIntoView;
+});
+
+afterEach(() => {
+  act(() => {
+    root?.unmount();
+  });
+  root = null;
+  container.remove();
+  // Reset the navigator.clipboard definition we installed so the next
+  // test starts from a clean slate.
+  Object.defineProperty(globalThis.navigator, "clipboard", {
+    configurable: true,
+    value: undefined,
+  });
+  vi.restoreAllMocks();
+});
+
+async function render(element: JSX.Element): Promise<void> {
+  await act(async () => {
+    root?.render(<PreviewContentProvider service={previewContent}>{element}</PreviewContentProvider>);
+    await Promise.resolve();
+  });
+}
+
+async function settleDirectoryLoads(): Promise<void> {
+  for (let index = 0; index < 4; index += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
+
+// Helpers for the file-tree context-menu tests below. Right-click events
+// reach the row's onContextMenu handler, which sets React state; menu
+// listeners attach via setTimeout(0) inside useEffect, so tests must flush
+// a real macrotask before dispatching outside pointerdown / Escape events.
+function treeShadowRoot(): ShadowRoot {
+  const shadowRoot = container.querySelector("file-tree-container")?.shadowRoot;
+  if (!shadowRoot) throw new Error("missing Pierre tree shadow root");
+  return shadowRoot;
+}
+
+function rowButtonByTitle(title: string): HTMLButtonElement {
+  const row = [...treeShadowRoot().querySelectorAll<HTMLButtonElement>("button[data-type='item']")]
+    .find((button) => button.getAttribute("aria-label") === title || button.dataset.itemPath === title);
+  if (!row) {
+    throw new Error(`missing tree row with title ${title}`);
+  }
+  return row;
+}
+
+function contextMenu(): HTMLElement | null {
+  return document.body.querySelector('[role="menu"]');
+}
+
+async function dispatchContextMenu(
+  element: HTMLElement,
+  clientX: number,
+  clientY: number,
+): Promise<void> {
+  await act(async () => {
+    element.dispatchEvent(
+      new MouseEvent("contextmenu", {
+        bubbles: true,
+        cancelable: true,
+        clientX,
+        clientY,
+        button: 2,
+      }),
+    );
+    await Promise.resolve();
+  });
+}
+
+async function flushMacrotask(): Promise<void> {
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, 0);
+  });
+}
+
+async function clickMenuItem(text: string): Promise<void> {
+  const menu = contextMenu();
+  if (!menu) {
+    throw new Error("menu not visible");
+  }
+  const items = [
+    ...menu.querySelectorAll<HTMLButtonElement>("button[role='menuitem']"),
+  ];
+  const item = items.find((b) => b.textContent?.trim() === text);
+  if (!item) {
+    throw new Error(`menu item ${text} not found`);
+  }
+  await act(async () => {
+    item.click();
+    await Promise.resolve();
+  });
+}
+
+describe("WorkspaceFileTree", () => {
+  it("recovers a root directory failure by retrying the current root", async () => {
+    let shouldFail = true;
+    listWorkspaceDirectory.mockImplementation(async (path = "", cwd = "/repo") => {
+      if (path === "" && shouldFail) throw new Error("Directory unavailable");
+      return { ...directoryResults[path], root: cwd };
+    });
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    expect(container.textContent).toContain("Directory unavailable");
+    const retry = container.querySelector<HTMLButtonElement>('.workspace-panel-empty button');
+    expect(retry).not.toBeNull();
+    shouldFail = false;
+    await act(async () => retry!.click());
+    await settleDirectoryLoads();
+    expect(listWorkspaceDirectory).toHaveBeenLastCalledWith("", "/repo");
+    expect(rowButtonByTitle("README.md")).toBeTruthy();
+    expect(container.textContent).not.toContain("Directory unavailable");
+  });
+
+  it("toasts a subdirectory failure and keeps the loaded tree", async () => {
+    let shouldFail = true;
+    listWorkspaceDirectory.mockImplementation(async (path = "", cwd = "/repo") => {
+      if (path === "src" && shouldFail) throw new Error("Directory unavailable");
+      return { ...directoryResults[path], root: cwd };
+    });
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await act(async () => rowButtonByTitle("src/").click());
+    await settleDirectoryLoads();
+    expect(vi.mocked(showErrorToast)).toHaveBeenCalled();
+    // The loaded tree stays in place rather than collapsing to the root retry.
+    expect(container.querySelector(".workspace-panel-empty button")).toBeNull();
+    expect(rowButtonByTitle("README.md")).toBeTruthy();
+    // Collapsing and re-expanding retries the failed load.
+    shouldFail = false;
+    await act(async () => rowButtonByTitle("src/").click());
+    await act(async () => rowButtonByTitle("src/").click());
+    await settleDirectoryLoads();
+    expect(rowButtonByTitle("src/components/")).toBeTruthy();
+  });
+
+  it("ignores a retried root response after navigating to another root", async () => {
+    listWorkspaceDirectory.mockRejectedValueOnce(new Error("Root unavailable"));
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    let completeRetry!: (result: WorkspaceDirectoryListResult) => void;
+    listWorkspaceDirectory.mockImplementationOnce(() => new Promise(resolve => { completeRetry = resolve; }));
+    const retry = container.querySelector<HTMLButtonElement>('.workspace-panel-empty button');
+    expect(retry).not.toBeNull();
+    await act(async () => retry!.click());
+    await render(<WorkspaceFileTree activeContext={{ kind: "no_project", cwd: "/other" }} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await act(async () => completeRetry({ root: "/repo", path: "", entries: [{ kind: "file", name: "stale.ts", path: "stale.ts" }], truncated: false }));
+    await settleDirectoryLoads();
+    expect(listWorkspaceDirectory).toHaveBeenLastCalledWith("", "/other");
+    expect(rowButtonByTitle("README.md")).toBeTruthy();
+    expect(treeShadowRoot().querySelector('[data-item-path="stale.ts"]')).toBeNull();
+  });
+
+  it.skipIf(process.platform === "win32").each([
+    [" note.txt", "note.txt"],
+    ["note.txt ", "note.txt"],
+    [" ", "note.txt"],
+    ["folder\\note.txt", "folder/note.txt"],
+  ])("previews the exact listed file %j through a file tab", async (name, otherName) => {
+    const parent = mkdtempSync(join(tmpdir(), "wuu-file-preview-"));
+    const cwd = join(parent, " workspace\\root ");
+    const context: RuntimeContext = { kind: "no_project", cwd };
+    try {
+      mkdirSync(dirname(join(cwd, otherName)), { recursive: true });
+      writeFileSync(join(cwd, name), "selected contents\n");
+      writeFileSync(join(cwd, otherName), "other contents\n");
+      const files = new WorkspaceFileService(() => context);
+      listWorkspaceDirectory.mockImplementation(async (path, root) => files.directoryList(path, root));
+      readWorkspaceFile.mockImplementation(async (path, root) => files.readFile(path, root));
+      let selected: WorkspaceFileViewTab | undefined;
+      await render(<WorkspaceFileTree activeContext={context} open onOpenFile={(path) => {
+        selected = workspaceFileViewTab({ context, path });
+      }} />);
+      await settleDirectoryLoads();
+      await act(async () => { rowButtonByTitle(name).click(); });
+
+      expect(selected).toBeDefined();
+      expect(selected!.path).toBe(name);
+      expect(selected!.id).not.toBe(workspaceFileViewTab({ context, path: otherName }).id);
+      await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={selected!.path} />);
+      await settleDirectoryLoads();
+      expect(readWorkspaceFile).toHaveBeenLastCalledWith(name, cwd);
+      expect(container.textContent).toContain("selected contents");
+      expect(container.textContent).not.toContain("other contents");
+
+      const absoluteTab = workspaceFileViewTab({ context, path: join(cwd, name) });
+      expect(absoluteTab.id).toBe(selected!.id);
+      await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={join(cwd, name)} />);
+      await settleDirectoryLoads();
+      expect(container.textContent).toContain("selected contents");
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["C:\\repo", "\\\\server\\share\\repo"])("preserves Windows workspace paths under %j", async (cwd) => {
+    const context: RuntimeContext = { kind: "no_project", cwd };
+    const tab = workspaceFileViewTab({ context, path: `${cwd}\\src\\ note.txt` });
+    await render(<WorkspaceFilePreview activeContext={context} selectedFilePath={tab.path} />);
+    await settleDirectoryLoads();
+    expect(readWorkspaceFile).toHaveBeenCalledWith("src/ note.txt", cwd);
+    expect(container.textContent).toContain("button code");
+  });
+
+  it.each([["", "resolve"], ["", "reject"], ["src", "resolve"], ["src", "reject"]])("ignores a stale directory %j %s after switching roots", async (pendingPath, outcome) => {
+    let completeOld: (result: WorkspaceDirectoryListResult) => void = () => {};
+    let rejectOld: (error: Error) => void = () => {};
+    listWorkspaceDirectory.mockImplementation((path = "", cwd = "/repo") => {
+      if (path === pendingPath && cwd === "/repo") {
+        return new Promise((resolve, reject) => { completeOld = resolve; rejectOld = reject; });
+      }
+      return Promise.resolve({ ...directoryResults[path], root: cwd });
+    });
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    if (pendingPath) await act(async () => rowButtonByTitle("src/").click());
+    const nextContext: RuntimeContext = { kind: "no_project", cwd: "/other" };
+    await render(<WorkspaceFileTree activeContext={nextContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    if (pendingPath) await act(async () => rowButtonByTitle("src/").click());
+    await settleDirectoryLoads();
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith(pendingPath, "/other");
+    await act(async () => {
+      if (outcome === "reject") rejectOld(new Error("Old root disappeared"));
+      else completeOld({ root: "/repo", path: pendingPath, entries: [{ kind: "file", name: "stale.ts", path: "src/stale.ts" }], truncated: false });
+      await Promise.resolve();
+    });
+    await settleDirectoryLoads();
+    expect(treeShadowRoot().querySelector('[data-item-path="src/stale.ts"]')).toBeNull();
+    expect(rowButtonByTitle(pendingPath ? "src/index.ts" : "README.md")).toBeTruthy();
+    expect(container.textContent).not.toContain("Old root disappeared");
+  });
+
+  it("expands and scrolls to the selected workspace file path", async () => {
+    await render(
+      <WorkspaceFileTree
+        activeContext={activeContext}
+        open
+        selectedFilePath="/repo/src/components/Button.tsx"
+        onOpenFile={() => {}}
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith("", "/repo");
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith("src", "/repo");
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith("src/components", "/repo");
+    const selected = treeShadowRoot().querySelector("[aria-selected='true']");
+    expect(selected?.getAttribute("data-item-path")).toBe("src/components/Button.tsx");
+  });
+
+  it("marks tree rows as drag sources carrying the workspace-relative path", async () => {
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    const row = rowButtonByTitle("README.md");
+    expect(row.draggable).toBe(true);
+
+    const setData = vi.fn();
+    const dataTransfer = { effectAllowed: "uninitialized", setData };
+    const event = new Event("dragstart", { bubbles: true, composed: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { configurable: true, value: dataTransfer });
+    await act(async () => {
+      row.dispatchEvent(event);
+      await Promise.resolve();
+    });
+
+    expect(dataTransfer.effectAllowed).toBe("copy");
+    expect(setData).toHaveBeenCalledWith(WORKSPACE_FILE_DRAG_MIME, "README.md");
+    expect(setData).toHaveBeenCalledWith("text/plain", "README.md");
+  });
+
+  it("keeps the trailing slash when a directory row is dragged", async () => {
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    const row = rowButtonByTitle("src/");
+    const setData = vi.fn();
+    const dataTransfer = { effectAllowed: "uninitialized", setData };
+    const event = new Event("dragstart", { bubbles: true, composed: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", { configurable: true, value: dataTransfer });
+    await act(async () => {
+      row.dispatchEvent(event);
+      await Promise.resolve();
+    });
+
+    expect(setData).toHaveBeenCalledWith(WORKSPACE_FILE_DRAG_MIME, "src/");
+  });
+
+  it("does not reopen the previous file when an external tab changes the tree selection", async () => {
+    const onOpenFile = vi.fn();
+    await render(
+      <WorkspaceFileTree
+        activeContext={activeContext}
+        open
+        selectedFilePath="/repo/README.md"
+        onOpenFile={onOpenFile}
+      />,
+    );
+    await settleDirectoryLoads();
+    onOpenFile.mockClear();
+
+    await render(
+      <WorkspaceFileTree
+        activeContext={activeContext}
+        open
+        selectedFilePath="/repo/src/index.ts"
+        onOpenFile={onOpenFile}
+      />,
+    );
+    await settleDirectoryLoads();
+
+    expect(onOpenFile).not.toHaveBeenCalled();
+    expect(treeShadowRoot().querySelector("[aria-selected='true']")?.getAttribute("data-item-path"))
+      .toBe("src/index.ts");
+  });
+
+  it("opens a file when the user changes the tree selection", async () => {
+    const onOpenFile = vi.fn();
+    await render(
+      <WorkspaceFileTree
+        activeContext={activeContext}
+        open
+        onOpenFile={onOpenFile}
+      />,
+    );
+    await settleDirectoryLoads();
+
+    await act(async () => {
+      rowButtonByTitle("README.md").click();
+      await Promise.resolve();
+    });
+
+    expect(onOpenFile).toHaveBeenCalledTimes(1);
+    expect(onOpenFile).toHaveBeenCalledWith("README.md");
+  });
+
+  it("keeps parent directories expanded while nested directories load", async () => {
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    await act(async () => {
+      rowButtonByTitle("src/").click();
+      await Promise.resolve();
+    });
+    await settleDirectoryLoads();
+
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith("src", "/repo");
+    expect(rowButtonByTitle("src/").getAttribute("aria-expanded")).toBe("true");
+
+    await act(async () => {
+      rowButtonByTitle("src/components/").click();
+      await Promise.resolve();
+    });
+    await settleDirectoryLoads();
+
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith("src/components", "/repo");
+    expect(rowButtonByTitle("src/").getAttribute("aria-expanded")).toBe("true");
+    expect(rowButtonByTitle("src/components/").getAttribute("aria-expanded")).toBe("true");
+    expect(rowButtonByTitle("src/components/Button.tsx")).toBeTruthy();
+  });
+
+  it("forwards a worktree root that differs from /repo through to the preload API", async () => {
+    const worktreeContext: RuntimeContext = {
+      kind: "project",
+      project_id: "project-1",
+      cwd: "/worktrees/fork-1",
+    };
+    listWorkspaceDirectory.mockResolvedValueOnce({
+      root: "/worktrees/fork-1",
+      path: "",
+      entries: [{ kind: "file", name: "README.md", path: "README.md" }],
+      truncated: false,
+    });
+
+    await render(
+      <WorkspaceFileTree
+        activeContext={worktreeContext}
+        open
+        onOpenFile={() => {}}
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    expect(listWorkspaceDirectory).toHaveBeenCalledWith("", "/worktrees/fork-1");
+    expect(listWorkspaceDirectory).not.toHaveBeenCalledWith("", "/repo");
+  });
+
+  it("reads an absolute selected file path relative to the workspace root", async () => {
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/src/components/Button.tsx"
+       
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    expect(readWorkspaceFile).toHaveBeenCalledWith("src/components/Button.tsx", "/repo");
+    expect(container.textContent).toContain("button code");
+  });
+
+  it.each([false, true])("retries a failed file read in place after a previous successful read: %s", async (previouslyLoaded) => {
+    const preview = (refreshKey: string, active = true) => (
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/src/components/Button.tsx"
+        refreshKey={refreshKey}
+        active={active}
+      />
+    );
+    if (previouslyLoaded) {
+      await render(preview("initial"));
+      await settleDirectoryLoads();
+    }
+    readWorkspaceFile.mockRejectedValueOnce(new Error("File temporarily unavailable"));
+    await render(preview("failed"));
+    await settleDirectoryLoads();
+    expect(container.textContent).toContain("File temporarily unavailable");
+
+    const readsBeforeRetry = readWorkspaceFile.mock.calls.length;
+    await render(preview("failed", false));
+    await render(preview("failed"));
+    expect(readWorkspaceFile).toHaveBeenCalledTimes(readsBeforeRetry);
+
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "src/components/Button.tsx", text: "Recovered file content",
+    }));
+    const retry = container.querySelector<HTMLButtonElement>(".workspace-panel-empty button");
+    expect(retry).not.toBeNull();
+    await act(async () => retry!.click());
+    await settleDirectoryLoads();
+
+    expect(readWorkspaceFile).toHaveBeenCalledTimes(readsBeforeRetry + 1);
+    expect(readWorkspaceFile).toHaveBeenLastCalledWith("src/components/Button.tsx", "/repo");
+    expect(container.textContent).toContain("Recovered file content");
+    expect(container.textContent).not.toContain("File temporarily unavailable");
+  });
+
+  it("exports the complete selected file and reports native save failures", async () => {
+    const exporter = vi.fn().mockRejectedValue(new Error("Share destination unavailable"));
+    window.wuu.exportWorkspaceFile = exporter;
+    previewContent = new ApplicationPreviewContent(window.wuu);
+    await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="src/components/Button.tsx" />);
+    await settleDirectoryLoads();
+    const button = container.querySelector<HTMLButtonElement>(".workspace-file-export-actions button");
+    expect(button?.disabled).toBe(false);
+    await act(async () => { button?.click(); });
+    expect(exporter).toHaveBeenCalledWith("src/components/Button.tsx", activeContext.cwd);
+    expect(vi.mocked(showActionErrorToast)).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Share destination unavailable" }),
+      expect.any(String),
+    );
+    expect(button?.disabled).toBe(false);
+  });
+
+  it("refreshes an open file without clearing the current preview", async () => {
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/src/components/Button.tsx"
+        refreshKey="running"
+       
+      />,
+    );
+    await settleDirectoryLoads();
+
+    let finishRefresh: ((result: WorkspaceFileReadResult) => void) | undefined;
+    readWorkspaceFile.mockImplementationOnce(
+      () => new Promise<WorkspaceFileReadResult>((resolve) => {
+        finishRefresh = resolve;
+      }),
+    );
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/src/components/Button.tsx"
+        refreshKey="completed"
+       
+      />,
+    );
+
+    expect(container.textContent).toContain("button code");
+
+    await act(async () => {
+      finishRefresh?.(workspaceFile({
+        path: "src/components/Button.tsx",
+        absolute_path: "/repo/src/components/Button.tsx",
+        text: "updated button code",
+      }));
+      await Promise.resolve();
+    });
+    expect(container.textContent).toContain("updated button code");
+  });
+
+  it("opens selected non-Markdown text files in the center Monaco editor surface", async () => {
+    readWorkspaceFile.mockResolvedValueOnce({
+      root: "/repo",
+      path: "AGENTS.txt",
+      absolute_path: "/repo/AGENTS.txt",
+      size_bytes: 35,
+      mtime_ms: 1000,
+      sha256: "b".repeat(64),
+      binary: false,
+      truncated: false,
+      text: "## Execution Autonomy\n\n- Keep going.\n",
+    });
+
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/AGENTS.txt"
+       
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    expect(readWorkspaceFile).toHaveBeenCalledWith("AGENTS.txt", "/repo");
+    expect(container.querySelector(".workspace-monaco-editor")).not.toBeNull();
+    expect(container.querySelector(".workspace-file-preview-header")).toBeNull();
+    expect(container.textContent).toContain("Execution Autonomy");
+  });
+
+  it("renders code files in Monaco without treating source as HTML", async () => {
+    readWorkspaceFile.mockResolvedValueOnce({
+      root: "/repo",
+      path: "src/index.ts",
+      absolute_path: "/repo/src/index.ts",
+      size_bytes: 44,
+      mtime_ms: 1000,
+      sha256: "c".repeat(64),
+      binary: false,
+      truncated: false,
+      text: 'const answer = 42;\nconsole.log("<tag>", answer);\n',
+    });
+
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/src/index.ts"
+       
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    const content = container.querySelector<HTMLElement>(".workspace-monaco-editor");
+    expect(content?.textContent).toContain('console.log("<tag>", answer);');
+    expect(content?.innerHTML).not.toContain("<tag>");
+  });
+
+  it("keeps text files readonly without exposing edit or save controls", async () => {
+    const onDirtyChange = vi.fn();
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/src/index.ts"
+       
+        onDirtyChange={onDirtyChange}
+      />,
+    );
+
+    await settleDirectoryLoads();
+    expect(container.querySelector<HTMLElement>(".workspace-monaco-editor")?.dataset.readonly).toBe("true");
+    expect(container.querySelector(".workspace-file-editor-toolbar")).toBeNull();
+    expect(container.querySelector(".workspace-file-save-button")).toBeNull();
+    expect(writeWorkspaceFile).not.toHaveBeenCalled();
+    expect(onDirtyChange).toHaveBeenLastCalledWith({
+      root: "/repo",
+      path: "src/index.ts",
+      dirty: false,
+    });
+  });
+
+  it("keeps truncated text files readonly", async () => {
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "large.log",
+      absolute_path: "/repo/large.log",
+      truncated: true,
+      text: "partial log\n",
+    }));
+
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/large.log"
+       
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    expect(container.querySelector<HTMLElement>(".workspace-monaco-editor")?.dataset.readonly).toBe("true");
+    expect(container.querySelector(".workspace-file-editor-toolbar")).toBeNull();
+  });
+
+  it("keeps binary files out of the editor surface", async () => {
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "archive.dat",
+      absolute_path: "/repo/archive.dat",
+      binary: true,
+      text: undefined,
+    }));
+
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/archive.dat"
+       
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    expect(container.textContent).toContain("二进制文件");
+    expect(container.querySelector(".workspace-monaco-editor")).toBeNull();
+  });
+
+  it("renders image files with a renderable file URL", async () => {
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "assets/mascot/wuu-mascot-concept-01.png",
+      absolute_path: "/repo/assets/mascot/wuu-mascot-concept-01.png",
+      binary: true,
+      text: undefined,
+      renderable_url: "wuu-file://local/encoded-image",
+    }));
+
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/assets/mascot/wuu-mascot-concept-01.png"
+       
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    const image = container.querySelector<HTMLImageElement>(".workspace-file-image-preview img");
+    expect(image?.getAttribute("src")).toBe("wuu-file://local/encoded-image");
+    expect(image?.getAttribute("alt")).toBe("assets/mascot/wuu-mascot-concept-01.png");
+    expect(container.textContent).not.toContain("二进制文件");
+    expect(container.querySelector(".workspace-monaco-editor")).toBeNull();
+  });
+
+  it("uses the themed workspace PDF viewer instead of Chromium's dark iframe", async () => {
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "docs/spec.pdf",
+      absolute_path: "/repo/docs/spec.pdf",
+      binary: true,
+      text: undefined,
+      renderable_url: "wuu-file://local/encoded-pdf",
+      renderable_kind: "pdf",
+    }));
+
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/docs/spec.pdf"
+       
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    const preview = container.querySelector<HTMLElement>(".mock-workspace-pdf-preview");
+    expect(preview?.dataset.url).toBe("wuu-file://local/encoded-pdf");
+    expect(preview?.dataset.title).toBe("docs/spec.pdf");
+    expect(container.querySelector("iframe")).toBeNull();
+  });
+
+  it("opens Markdown files in reading mode by default", async () => {
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "README.md",
+      absolute_path: "/repo/README.md",
+      text: "# Project Notes\n\n- review changes\n",
+    }));
+
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/README.md"
+       
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    expect(container.querySelector(".workspace-markdown-reading")).not.toBeNull();
+    expect(container.querySelector(".workspace-markdown-reading .rich-heading")?.textContent).toContain("Project Notes");
+    expect(container.querySelector(".workspace-monaco-editor")).toBeNull();
+    expect(container.querySelector(".workspace-file-editor-toolbar")).toBeNull();
+    expect(writeWorkspaceFile).not.toHaveBeenCalled();
+  });
+
+  it("opens Markdown links relative to the loaded document through the public service", async () => {
+    const openFile = vi.fn();
+    previewContent = new ApplicationPreviewContent(window.wuu, { openFile });
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "docs/guide.md",
+      absolute_path: "/repo/docs/guide.md",
+      text: "[source](../src/App.tsx#L12) [section](./details.md#usage) [absolute](/repo/LICENSE)",
+    }));
+    await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="/repo/docs/guide.md" />);
+    await settleDirectoryLoads();
+    const links = container.querySelectorAll<HTMLButtonElement>(".rich-file-link");
+    expect(links).toHaveLength(3);
+    await act(async () => { for (const link of links) link.click(); });
+    expect(openFile.mock.calls).toEqual([
+      [{ root: "/repo", path: "src/App.tsx#L12" }],
+      [{ root: "/repo", path: "docs/details.md#usage" }],
+      [{ root: "/repo", path: "/repo/LICENSE" }],
+    ]);
+  });
+
+  it("opens a line-targeted Markdown file in Monaco at the requested position", async () => {
+    readWorkspaceFile.mockResolvedValueOnce(workspaceFile({
+      path: "README.md",
+      absolute_path: "/repo/README.md",
+      text: "# Project Notes\n\n- review changes\n",
+    }));
+
+    await render(
+      <WorkspaceFilePreview
+        activeContext={activeContext}
+        selectedFilePath="/repo/README.md"
+        selection={{ startLineNumber: 3, startColumn: 1 }}
+       
+      />,
+    );
+
+    await settleDirectoryLoads();
+
+    expect(container.querySelector(".workspace-markdown-reading")).toBeNull();
+    expect(
+      container.querySelector<HTMLElement>(".workspace-monaco-editor")?.dataset.selection,
+    ).toBe("3:1");
+  });
+
+  // Right-click context menu on file-tree rows. Lives inside WorkspaceFileTree
+  // via WorkspaceTreeContextMenu; uses navigator.clipboard.writeText for the
+  // three copy actions and the new window.wuu.revealWorkspaceItem IPC for
+  // "show in folder". The menu is also exercised by right-clicking either a
+  // file or a directory row — both branches share the same component.
+  it("right-clicking a row opens the menu with four menu items", async () => {
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    expect(contextMenu()).toBeNull();
+
+    const row = rowButtonByTitle("README.md");
+    await dispatchContextMenu(row, 120, 240);
+    await flushMacrotask();
+
+    const menu = contextMenu();
+    expect(menu).toBeTruthy();
+    expect(menu?.parentElement).toBe(document.body);
+    expect(menu?.textContent).toContain("复制路径");
+    expect(menu?.textContent).toContain("复制相对路径");
+    expect(menu?.textContent).toContain("复制文件名");
+    expect(menu?.textContent).toContain("在文件管理器中显示");
+  });
+
+  it("uses the macOS native menu", async () => {
+    const showWorkspaceItemMenu = vi.fn().mockResolvedValue({ action: "none" });
+    Object.assign(window.wuu, { platform: "darwin", showWorkspaceItemMenu });
+    previewContent = new ApplicationPreviewContent(window.wuu);
+
+    await render(
+      <WorkspaceFileTree
+        activeContext={activeContext}
+        open
+        onOpenFile={() => {}}
+      />,
+    );
+    await settleDirectoryLoads();
+
+    await dispatchContextMenu(rowButtonByTitle("README.md"), 120, 240);
+    await flushMacrotask();
+
+    expect(showWorkspaceItemMenu).toHaveBeenCalledWith("/repo/README.md");
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("复制路径 writes the absolute path to clipboard and closes the menu", async () => {
+    // Override the root mock so entry.path is absolute — lets the assertions
+    // distinguish "the raw entry path" from "the workspace-root-stripped
+    // variant" in the next two tests.
+    listWorkspaceDirectory.mockResolvedValue({ root: "/repo", path: "", entries: [{ kind: "file", name: "page.tsx", path: "page.tsx" }], truncated: false });
+
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    const row = rowButtonByTitle("page.tsx");
+    await dispatchContextMenu(row, 120, 240);
+    await flushMacrotask();
+
+    await clickMenuItem("复制路径");
+
+    expect(writeClipboard).toHaveBeenCalledWith("/repo/page.tsx");
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("复制相对路径 strips the workspace-root prefix and closes the menu", async () => {
+    listWorkspaceDirectory.mockResolvedValue({ root: "/repo", path: "", entries: [{ kind: "file", name: "page.tsx", path: "page.tsx" }], truncated: false });
+
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    const row = rowButtonByTitle("page.tsx");
+    await dispatchContextMenu(row, 120, 240);
+    await flushMacrotask();
+
+    await clickMenuItem("复制相对路径");
+
+    expect(writeClipboard).toHaveBeenCalledWith("page.tsx");
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("复制文件名 writes the entry name and closes the menu", async () => {
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    const row = rowButtonByTitle("README.md");
+    await dispatchContextMenu(row, 120, 240);
+    await flushMacrotask();
+
+    await clickMenuItem("复制文件名");
+
+    expect(writeClipboard).toHaveBeenCalledWith("README.md");
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("在文件管理器中显示 invokes the reveal IPC with the entry path and closes the menu", async () => {
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    const row = rowButtonByTitle("README.md");
+    await dispatchContextMenu(row, 120, 240);
+    await flushMacrotask();
+
+    await clickMenuItem("在文件管理器中显示");
+
+    expect(revealWorkspaceItem).toHaveBeenCalledWith("/repo/README.md");
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("reports a failed reveal without retaining the menu", async () => {
+    const failure = new Error("File manager unavailable");
+    revealWorkspaceItem.mockRejectedValueOnce(failure);
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await dispatchContextMenu(rowButtonByTitle("README.md"), 120, 240);
+    await clickMenuItem("在文件管理器中显示");
+    expect(showActionErrorToast).toHaveBeenCalledWith(failure);
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("reports a failed native menu instead of silently dismissing it", async () => {
+    const failure = new Error("Native menu unavailable");
+    Object.assign(window.wuu, { platform: "darwin", showWorkspaceItemMenu: vi.fn().mockRejectedValueOnce(failure) });
+    previewContent = new ApplicationPreviewContent(window.wuu);
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await dispatchContextMenu(rowButtonByTitle("README.md"), 120, 240);
+    await flushMacrotask();
+    expect(showActionErrorToast).toHaveBeenCalledWith(failure);
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("does not report a late native-menu failure after the workspace is replaced", async () => {
+    let reject!: (error: Error) => void;
+    Object.assign(window.wuu, { platform: "darwin", showWorkspaceItemMenu: vi.fn(() => new Promise((_resolve, fail) => { reject = fail; })) });
+    previewContent = new ApplicationPreviewContent(window.wuu);
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await dispatchContextMenu(rowButtonByTitle("README.md"), 120, 240);
+    await render(<WorkspaceFileTree activeContext={{ kind: "no_project", cwd: "/other" }} open onOpenFile={() => {}} />);
+    await act(async () => reject(new Error("Old menu failed")));
+    expect(showActionErrorToast).not.toHaveBeenCalled();
+  });
+
+  it.each(["reveal", "copy"])("does not report a late %s failure in another workspace", async action => {
+    let reject!: (error: Error) => void;
+    const operation = action === "reveal" ? revealWorkspaceItem : writeClipboard;
+    operation.mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }));
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await dispatchContextMenu(rowButtonByTitle("README.md"), 120, 240);
+    await clickMenuItem(action === "reveal" ? "在文件管理器中显示" : "复制路径");
+    await render(<WorkspaceFileTree activeContext={{ kind: "no_project", cwd: "/other" }} open onOpenFile={() => {}} />);
+    await act(async () => reject(new Error("Old action failed")));
+    expect(showActionErrorToast).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed file-path copy instead of implying success", async () => {
+    writeClipboard.mockRejectedValueOnce(new Error("Clipboard unavailable"));
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await dispatchContextMenu(rowButtonByTitle("README.md"), 120, 240);
+    await clickMenuItem("复制路径");
+    expect(showActionErrorToast).toHaveBeenCalledOnce();
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("Escape dismisses the menu", async () => {
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    const row = rowButtonByTitle("README.md");
+    await dispatchContextMenu(row, 120, 240);
+    await flushMacrotask();
+
+    expect(contextMenu()).toBeTruthy();
+
+    await act(async () => {
+      document.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(contextMenu()).toBeNull();
+  });
+
+  it("an outside pointerdown dismisses the menu", async () => {
+    await render(
+      <WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />,
+    );
+    await settleDirectoryLoads();
+
+    const row = rowButtonByTitle("README.md");
+    await dispatchContextMenu(row, 120, 240);
+    await flushMacrotask();
+
+    expect(contextMenu()).toBeTruthy();
+
+    await act(async () => {
+      // PointerEvent isn't exposed in every JSDOM version; MouseEvent with the
+      // same event.type reaches the same `pointerdown` listener since addEventListener
+      // matches by event type, not event class.
+      document.dispatchEvent(
+        new MouseEvent("pointerdown", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+        }),
+      );
+      await Promise.resolve();
+    });
+
+    expect(contextMenu()).toBeNull();
+  });
+});
+
+ it("ignores a file result from the previous workspace", async () => {
+    let finish!: (value: WorkspaceFileReadResult) => void;
+    readWorkspaceFile.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+    await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="src/index.ts" />);
+    await render(<WorkspaceFilePreview activeContext={{ kind: "no_project", cwd: "/other" }} selectedFilePath="src/index.ts" />);
+    await settleDirectoryLoads();
+    await act(async () => { finish(workspaceFile({ text: "STALE CONTENT" })); });
+    expect(container.textContent).not.toContain("STALE CONTENT");
+    expect(readWorkspaceFile).toHaveBeenLastCalledWith("src/index.ts", "/other");
+  });
+
+it("does not show an old file export failure in a newly selected file", async () => {
+  let fail!: (error: Error) => void;
+  window.wuu.exportWorkspaceFile = vi.fn(() => new Promise<void>((_, reject) => { fail = reject; }));
+  previewContent = new ApplicationPreviewContent(window.wuu);
+  await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="one.txt" />);
+  await settleDirectoryLoads();
+  await act(async () => { container.querySelector<HTMLButtonElement>(".workspace-file-export-actions button")!.click(); });
+  await render(<WorkspaceFilePreview activeContext={activeContext} selectedFilePath="two.txt" />);
+  await settleDirectoryLoads();
+  await act(async () => { fail(new Error("OLD EXPORT ERROR")); });
+  expect(container.textContent).not.toContain("OLD EXPORT ERROR");
+  expect(container.querySelector<HTMLButtonElement>(".workspace-file-export-actions button")?.disabled).toBe(false);
+});

@@ -1,0 +1,445 @@
+import { Tooltip } from "./Tooltip";
+import { useSettingsControls } from "./SettingsControlsContext";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
+import { useSettingsConnectionDisplay } from "./SettingsControlsContext";
+import { ConnectionUsageSummary } from "./ConnectionUsageSummary";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { MoreHorizontal, RefreshCw } from "./WuuIcons";
+import type { EngineListResult, ProviderSummary } from "../shared/protocol";
+import { EngineIcon } from "./EngineIcons";
+import { EngineAuthentication } from "./EngineAuthentication";
+import { ServiceMark, serviceIdentity } from "./ModelServicesPage";
+import { SelectMenu } from "./SelectMenu";
+import { ThreadContextMenu } from "./ThreadContextMenu";
+import { useI18n } from "./i18n";
+import { SettingsSection } from "./SettingsSection";
+import {
+  hasBuiltInSubscriptionControls,
+  isCodexSubscription,
+  selectSubscriptionModel,
+  subscriptionSources,
+  type SubscriptionSource,
+} from "./SubscriptionSources";
+
+export function SubscriptionDashboard({
+  detailOnly = false,
+  inventory,
+  providers,
+  onSelectBuiltinModel,
+  onAddService,
+  scope,
+  initialInventory,
+  onInventoryLoaded,
+  onProvidersChanged,
+}: {
+  detailOnly?: boolean;
+  onAddService?: () => void;
+  scope?: { kind: "provider"; name: string } | { kind: "engine"; id: string };
+  inventory?: EngineListResult;
+  initialInventory?: EngineListResult;
+  onInventoryLoaded?: (inventory: EngineListResult) => void;
+  onProvidersChanged?: (providers: ProviderSummary[]) => void;
+  providers?: readonly ProviderSummary[];
+  onSelectBuiltinModel: (provider: string, model: string) => Promise<void>;
+}): JSX.Element | null {
+  const controls = useSettingsControls();
+  const lifetime = useMemo(() => ({ active: true }), [controls]);
+  useEffect(() => {
+    lifetime.active = true;
+    setPending(""); setAuthError(false); setError("");
+    return () => { lifetime.active = false; };
+  }, [lifetime]);
+  const { t, formatDate } = useI18n();
+  const displayPreferences = useSettingsConnectionDisplay();
+  const scopedEngine = scope?.kind === "engine" ? inventory?.engines.find(engine => engine.id === scope.id) : undefined;
+  const canRefresh = scope?.kind !== "engine" || Boolean(scopedEngine?.enabled && scopedEngine.binary_ok);
+  const [error, setError] = useState<"" | "settings.subscriptionRefreshFailed" | "settings.subscriptionModelFailed">("");
+  const [authProviders, setAuthProviders] = useState<ProviderSummary[]>([]);
+  const [authError, setAuthError] = useState(false);
+  const [checkedProvider, setCheckedProvider] = useState("");
+  const [pending, setPending] = useState("");
+  const [revision, setRevision] = useState(0);
+  const [menu, setMenu] = useState<{ sourceKey: string; x: number; y: number } | null>(null);
+  const [loadedInventory, setLoadedInventory] = useState<EngineListResult | undefined>(initialInventory);
+  const snapshotCallback = useRef(onInventoryLoaded);
+  snapshotCallback.current = onInventoryLoaded;
+  // Active runtimes load on opening their details; disabled or missing ones
+  // retain any observed account snapshot without probing the runtime.
+  const [refreshing, setRefreshing] = useState(true);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [now, setNow] = useState(Date.now);
+  const authConfiguration = JSON.stringify(providers?.map(providerAuthConfiguration));
+  useEffect(() => {
+    // A parent may echo the explicit credential result back into this detail.
+    // Quota-only observations and that same verified result preserve the check.
+    const matchesVerified = providers?.length && providers.every(provider => {
+      const verified = authProviders.find(candidate => candidate.name === provider.name);
+      return verified && providerAuthConfiguration(verified) === providerAuthConfiguration(provider);
+    });
+    if (!matchesVerified) { setAuthProviders([]); setCheckedProvider(""); }
+  }, [authConfiguration]);
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    if (!canRefresh) { setRefreshing(false); return; }
+    setRefreshing(true);
+    setError("");
+    void controls.listEngines({ include_quota: true, include_activity: false }).then((result) => {
+      if (active) { setLoadedInventory(result); snapshotCallback.current?.(result); setNow(Date.now()); }
+    }, cause => {
+      if (active && !isPluginLifecycleCancellation(cause)) setError("settings.subscriptionRefreshFailed");
+    }).finally(() => { if (active) setRefreshing(false); });
+    return () => { active = false; };
+  }, [controls, refreshVersion, canRefresh]);
+  const sources = useMemo(
+    () => {
+      // Keep live model selections from the parent; refresh owns only the
+      // account snapshot and supplies inventory before the parent loads.
+      const base = inventory ?? loadedInventory;
+      const refreshed = base ? { ...base, engines: base.engines.map((engine) => {
+        const snapshot = loadedInventory?.engines.find((item) => item.id === engine.id);
+        if (!snapshot) return engine;
+        return canRefresh ? { ...snapshot, enabled: engine.enabled } : { ...engine, quota: snapshot.quota ?? engine.quota };
+      }) } : undefined;
+      const currentProviders = (providers ?? loadedInventory?.subscription_providers ?? []).map((current) => {
+        const snapshot = loadedInventory?.subscription_providers?.find((item) => item.name === current.name);
+        const provider = snapshot ? { ...snapshot, ...current, quota: snapshot.quota ?? current.quota } : current;
+        const checked = authProviders.find((item) => item.name === provider.name);
+        return checked ? { ...provider, reuse_codex_credentials: checked.reuse_codex_credentials,
+          codex_credential_source: checked.codex_credential_source, api_key_configured: checked.api_key_configured,
+          quota: provider.quota } : provider;
+      });
+      const sources = subscriptionSources(controls, refreshed, currentProviders, scope?.kind === "engine" ? scope.id : undefined);
+      if (loadedInventory) {
+        // Wait for the quota snapshot before moving observed subscriptions to
+        // the front. Exhausted and stale allowances still belong to active accounts.
+        const hasObservedQuota = (source: SubscriptionSource) =>
+          source.quota?.status === "available" || source.quota?.status === "stale";
+        sources.sort((left, right) => Number(hasObservedQuota(right)) - Number(hasObservedQuota(left)));
+      }
+      return sources.filter((source) => !scope ||
+        (scope.kind === "provider" ? source.kind === "builtin" && source.id === scope.name : source.kind === "engine" && source.id === scope.id));
+    },
+    [controls, displayPreferences, loadedInventory, inventory, providers, revision, authProviders, canRefresh, now, scope?.kind, scope?.kind === "provider" ? scope.name : scope?.id],
+  );
+
+  // Group presentation only. Every connection keeps its own account snapshot,
+  // model selection and credential actions, including accounts at one vendor.
+  const groups = new Map<string, SubscriptionSource[]>();
+  for (const source of sources) {
+    const key = source.provider ? `service:${serviceIdentity(source.provider, t).label}` : source.key;
+    const group = groups.get(key);
+    if (group) group.push(source);
+    else groups.set(key, [source]);
+  }
+  const menuSource = sources.find((source) => source.key === menu?.sourceKey);
+
+  // Quota arrives only with this dashboard's own snapshot. Until the first one
+  // lands, reserve its block on runnable engines that advertise an account
+  // allowance; the snapshot omits every other row's quota.
+  const quotaLoading = refreshing && !loadedInventory;
+
+  async function choose(source: SubscriptionSource, modelID: string): Promise<void> {
+    if (!modelID || modelID === source.selectedModel || pending) return;
+    setError("");
+    setPending(source.key);
+    try {
+      if (source.kind === "builtin") {
+        await onSelectBuiltinModel(source.id, modelID);
+      } else {
+        selectSubscriptionModel(controls, source, modelID);
+        setRevision((current) => current + 1);
+      }
+    } catch (cause) {
+      if (lifetime.active && !isPluginLifecycleCancellation(cause)) setError("settings.subscriptionModelFailed");
+    } finally {
+      if (lifetime.active) setPending("");
+    }
+  }
+
+  async function checkCodexLogin(source: SubscriptionSource, useLocal: boolean): Promise<void> {
+    if (pending) return;
+    let retired = false;
+    setPending(source.key);
+    setAuthError(false);
+    setCheckedProvider("");
+    try {
+      if (useLocal) {
+        const result = await controls.useCodexCredentials(source.id);
+        if (!lifetime.active) return;
+        setAuthProviders(result.providers);
+        onProvidersChanged?.(result.providers);
+      }
+      const result = await controls.loadCodexModels(source.id);
+      if (!lifetime.active) return;
+      setAuthProviders(result.providers);
+      onProvidersChanged?.(result.providers);
+      setCheckedProvider(source.id);
+    } catch (cause) {
+      retired = isPluginLifecycleCancellation(cause);
+      if (lifetime.active && !retired) setAuthError(true);
+    } finally {
+      if (lifetime.active) {
+        setPending("");
+        if (!retired) {
+          setLoadedInventory(undefined);
+          setRefreshVersion((value) => value + 1);
+        }
+      }
+    }
+  }
+
+  // The connection list already shows a bare balance; the detail page adds a
+  // section only for windows, account identity, reset credits, or a problem.
+  if (detailOnly && !error && sources.length && sources.every(({ quota }) => quota?.status === "available"
+    && !quota.windows?.length && !!quota.balances?.length && !quota.account?.label && quota.reset_credits === undefined
+    && !(quota.expires_at !== undefined && Date.parse(quota.expires_at) <= now))) return null;
+  if (detailOnly) return <SettingsSection testID="settings-subscriptions" ariaBusy={refreshing} title={t("connection.subscriptionQuota")}
+    actions={<Tooltip asChild content={t("settings.subscriptionRefresh")}><button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("settings.subscriptionRefresh")} disabled={refreshing || !canRefresh} onClick={() => setRefreshVersion(value => value + 1)}><RefreshCw className="icon" /></button></Tooltip>}>
+    <div className="settings-group connection-detail-quota" aria-busy={refreshing}>
+      {error ? <p className="settings-error" role="alert">{t(error)}</p> : null}
+      {quotaLoading ? <p role="status">{t("settings.subscriptionRefreshing")}</p> : null}
+      {sources.map(source => <div key={source.key} data-testid={`subscription-${source.kind}-${source.id}`}>
+        {source.quota && ["available", "stale"].includes(source.quota.status) && source.quota.account?.label ? <p className="settings-muted-line">{source.quota.account.label}</p> : null}
+        {source.quota && ["available", "stale"].includes(source.quota.status) && source.quota.account?.source ? <span className="sr-only">{source.quota.account.source}</span> : null}
+        <ConnectionUsageSummary quota={source.quota} now={now} loading={refreshing} />
+        {source.quota && ["available", "stale"].includes(source.quota.status) && source.quota.reset_credits !== undefined ? <p className="settings-muted-line">{t("settings.subscriptionResetCredits", { count: source.quota.reset_credits })}</p> : null}
+        {source.quota && ["available", "stale"].includes(source.quota.status) && !(source.quota.windows ?? []).some(window => window.unlimited || window.display?.trim() || (typeof window.used_percent === "number" && Number.isFinite(window.used_percent) && window.used_percent >= 0)) && !source.quota.balances?.length ? <p className="settings-muted-line">{t("settings.subscriptionQuotaUnknown")}</p> : null}
+        {!source.quota || !["available", "stale"].includes(source.quota.status) ? <p className="settings-muted-line">{t(source.quota?.status === "sign_in" ? "settings.subscriptionSignIn" : source.quota?.status === "unsupported" ? "settings.subscriptionQuotaUnsupported" : source.quota?.status === "unavailable" ? "settings.subscriptionQuotaUnavailable" : "settings.subscriptionQuotaUnknown")}</p> : null}
+      </div>)}
+    </div>
+  </SettingsSection>;
+
+  return (
+    <SettingsSection testID="settings-subscriptions" ariaBusy={refreshing}
+        title={t(scope ? "provider.accountUsage" : "settings.subscriptions")}
+        actions={<>
+          {onAddService ? <button type="button" className="settings-button" onClick={onAddService}>{t("provider.connectTitle", { name: "ChatGPT" })}</button> : null}
+          <Tooltip asChild content={t("settings.subscriptionRefresh")}><button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={refreshing || !canRefresh} onClick={() => setRefreshVersion((value) => value + 1)} aria-label={t(refreshing ? "settings.subscriptionRefreshing" : "settings.subscriptionRefresh")}>
+            <RefreshCw className={refreshing ? "icon settings-spin" : "icon"} aria-hidden="true" />
+          </button></Tooltip>
+        </>}
+      >
+      <div className="settings-subscriptions" aria-busy={refreshing}>
+      {sources.length === 0 ? (
+        inventory || loadedInventory ? <p className="settings-muted-line">{t("settings.subscriptionsEmpty")}</p>
+          : refreshing ? (
+            <div className="settings-subscription-list settings-subscription-skeleton" role="status" aria-label={t("settings.engineDetecting")} aria-busy="true">
+              {[0, 1, 2].map((item) => (
+                <div key={item} className="settings-subscription" aria-hidden="true">
+                  <div className="settings-subscription-main">
+                    <span className="settings-usage-skeleton-line settings-subscription-skeleton-icon" />
+                    <span className="settings-usage-skeleton-line settings-subscription-skeleton-text settings-subscription-skeleton-name" />
+                  </div>
+                  <QuotaSkeleton />
+                </div>
+              ))}
+            </div>
+          ) : null
+      ) : (
+        <div className={scope ? undefined : "settings-subscription-list"}>
+          {[...groups].map(([key, accounts]) => {
+            const first = accounts[0];
+            const identity = first.provider ? serviceIdentity(first.provider, t) : undefined;
+            return (
+              <article key={key} className={scope ? undefined : "settings-subscription"} aria-label={identity?.label ?? first.label}>
+                {accounts.map((source, index) => {
+                  const showAuthentication = source.engine?.enabled && source.engine.binary_ok
+                    && (scope?.kind === "engine" || source.login !== "ready" || source.catalogFailed);
+                  const status = source.login === "unavailable" ? source.engine && !source.engine.binary_ok ? "settings.engineNotInstalled" : source.engine && !source.engine.enabled ? "settings.engineDisabled" : "settings.subscriptionUnavailable"
+                    : source.catalogFailed ? "settings.subscriptionCatalogFailed"
+                      : source.login === "sign_in" && source.quota?.status !== "sign_in" ? "settings.subscriptionSignIn" : null;
+                  const observed = source.quota?.status === "available" || source.quota?.status === "stale";
+                  const account = observed ? source.quota?.account : undefined;
+                  const serviceNamedConnection = source.id.toLowerCase() === identity?.label.toLowerCase();
+                  const accountName = account?.label || (!scope && source.provider && (accounts.length > 1 || !serviceNamedConnection) ? source.id : undefined);
+                  const origin = account?.source;
+                  const observedAt = source.quota?.observed_at ?? source.quota?.checked_at;
+                  const observedMillis = observedAt ? Date.parse(observedAt) : NaN;
+                  const credentialSource = origin || source.provider?.codex_credential_source;
+                  const credential = credentialSource ?
+                    ["codex-cli", "codex-cli-readonly"].includes(credentialSource) ? "Codex CLI"
+                      : credentialSource === "claude-code" ? "Claude Code"
+                        : credentialSource === "grok-cli" ? "Grok CLI"
+                          : credentialSource === "wuu-auth-store" ? "Wuu"
+                            : ["explicit", "configured", "anthropic-oauth", "deepseek", "openrouter", "kimi-code", "zhipu"].includes(credentialSource) ? t("settings.subscriptionCredentialConfigured")
+                              : credentialSource
+                    : source.provider?.reuse_codex_credentials ? "Codex CLI"
+                      : source.provider?.api_key_configured ? t("settings.subscriptionCredentialApiKey") : undefined;
+                  const sourceLabel = [source.provider && accountName !== source.id && !serviceNamedConnection ? source.id : undefined, credential].filter(Boolean).join(" · ");
+                  const observedLabel = Number.isFinite(observedMillis) ? t(source.quota?.observed_at ? "settings.subscriptionObserved" : "settings.subscriptionChecked", { age: formatAge(observedMillis, now, t) }) : undefined;
+                  const showObservationAge = !sourceLabel && source.quota?.status === "available" && !(source.quota.expires_at && Date.parse(source.quota.expires_at) <= now);
+                  const observationTitle = Number.isFinite(observedMillis) ? formatDate(observedMillis, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" }) : undefined;
+                  const showModel = scope?.kind !== "provider" && source.models.length > 0 && (source.kind === "engine" || (source.provider && hasBuiltInSubscriptionControls(source.provider)));
+                  const controls = <div className="settings-subscription-controls">
+                    {showModel ? <SelectMenu
+                      triggerClassName="settings-subscription-model-trigger"
+                      value={source.selectedModel}
+                      disabled={!!pending || source.login === "unavailable"}
+                      ariaLabel={`${source.label} ${t("settings.subscriptionModel")}`}
+                      placeholder={t("settings.subscriptionModelUnset")}
+                      onChange={(model) => void choose(source, model)}
+                      options={source.models.map((model) => ({ value: model.id, label: model.label }))}
+                      flip
+                    /> : null}
+                    {isCodexSubscription(source.provider?.type) ? <button
+                      type="button"
+                      className="settings-button settings-button-ghost settings-icon-button settings-subscription-more"
+                      data-testid="subscription-account-actions"
+                      aria-label={pending === source.key ? t("settings.codexChecking") : t("provider.moreActions", { name: accountName ?? source.label })}
+                      aria-haspopup="menu"
+                      aria-expanded={menu?.sourceKey === source.key}
+                      disabled={!!pending}
+                      onClick={(event) => {
+                        const bounds = event.currentTarget.getBoundingClientRect();
+                        setMenu({ sourceKey: source.key, x: bounds.right, y: bounds.bottom + 4 });
+                      }}
+                    >{pending === source.key ? <RefreshCw className="icon settings-spin" aria-hidden="true" /> : <MoreHorizontal className="icon" aria-hidden="true" />}</button> : null}
+                  </div>;
+                  return <section key={source.key} className="settings-subscription-source" data-testid={`subscription-${source.kind}-${source.id}`}>
+                    {index === 0 && !scope ? <div className="settings-subscription-main">
+                      {identity ? <ServiceMark identity={identity} />
+                        : <span className="settings-engine-row-icon" aria-hidden="true"><EngineIcon engine={first.id} /></span>}
+                      <h2 className="settings-subscription-name">{identity?.label ?? first.label}</h2>
+                      {accounts.length === 1 ? controls : null}
+                    </div> : null}
+                    {scope && (scope.kind === "engine" || isCodexSubscription(source.provider?.type)) ? controls : null}
+                    {accountName || (observed && source.quota?.plan) || accounts.length > 1 ? <div className="settings-subscription-account">
+                      <span className="settings-subscription-account-name">{accountName || sourceLabel}</span>
+
+                      {observed && source.quota?.plan ? <span className="settings-subscription-plan">{source.quota.plan}</span> : null}
+                      {accounts.length > 1 ? controls : null}
+                    </div> : null}
+                    {sourceLabel ? <span className="sr-only">{t("settings.subscriptionAccountSource", { source: sourceLabel })}</span> : null}
+                    {status && !(scope?.kind === "provider" && source.login === "sign_in") && !(scope?.kind === "engine" && source.login === "unavailable" && (!scopedEngine?.enabled || !scopedEngine?.binary_ok)) ? <p className="settings-subscription-status">{t(status)}</p> : null}
+                    {quotaLoading && source.engine?.enabled && source.engine.binary_ok && source.engine.capabilities?.includes("account-quota")
+                      ? <QuotaSkeleton />
+                      : <Quota source={source} now={now} hideSignIn={scope?.kind === "provider"} />}
+                    {scope?.kind === "engine" && !source.quota && !quotaLoading ? <p className="settings-subscription-status">{t("settings.subscriptionQuotaUnknown")}</p> : null}
+                    {(observedLabel && showObservationAge) || showAuthentication ? <div className="settings-subscription-actions">
+                      {observedLabel && showObservationAge ? <Tooltip asChild content={observationTitle}><time className="settings-subscription-age" dateTime={observedAt}>{observedLabel}</time></Tooltip> : null}
+                      {showAuthentication ? <EngineAuthentication engineID={source.id} protocol={source.engine?.protocol} compact disabled={refreshing}
+                        onAuthenticated={() => setRefreshVersion((value) => value + 1)}
+                        onReuseLocal={() => setRefreshVersion((value) => value + 1)} /> : null}
+                    </div> : null}
+                    {checkedProvider === source.id ? <p className="settings-subscription-status" role="status">{t("settings.codexLoginVerified")}</p> : null}
+                  </section>;
+                })}
+              </article>
+            );
+          })}
+        </div>
+      )}
+      {menu && menuSource ? <ThreadContextMenu x={menu.x} y={menu.y} onClose={() => setMenu(null)} items={[
+        { label: t("settings.codexUseLocal"), disabled: !!pending, onSelect: () => checkCodexLogin(menuSource, true) },
+        { label: t("settings.codexCheckLogin"), disabled: !!pending, onSelect: () => checkCodexLogin(menuSource, false) },
+      ]} /> : null}
+      {authError ? <p className="settings-subscription-status" role="alert">{t("settings.subscriptionLoginFailed")}</p> : null}
+      {error ? <p className="settings-subscription-status" role="alert">{t(error)}</p> : null}
+      </div>
+    </SettingsSection>
+  );
+}
+
+// Mirrors Quota's layout line for line (usage, meter, reset). Two windows
+// match the usual short and long allowance pair at every width.
+function QuotaSkeleton(): JSX.Element {
+  return <div className="settings-subscription-quota settings-subscription-skeleton" aria-hidden="true">
+    {[0, 1].map((item) => (
+      <div key={item} className="settings-subscription-window">
+        <div className="settings-subscription-usage">
+          <span className="settings-usage-skeleton-line settings-subscription-skeleton-text settings-subscription-skeleton-period" />
+          <span className="settings-usage-skeleton-line settings-subscription-skeleton-text settings-subscription-skeleton-remaining" />
+        </div>
+        <span className="settings-usage-skeleton-line settings-subscription-skeleton-meter" />
+        <span className="settings-usage-skeleton-line settings-subscription-skeleton-text settings-subscription-skeleton-reset" />
+      </div>
+    ))}
+  </div>;
+}
+
+function Quota({ source, now, hideSignIn = false }: { source: SubscriptionSource; now: number; hideSignIn?: boolean }): JSX.Element | null {
+  const { t, formatNumber, formatDate } = useI18n();
+  const quota = source.quota;
+  if (!quota) return null;
+  const statusKey = quota.status === "stale" ? "settings.subscriptionQuotaRefreshFailed"
+    : quota.status === "unavailable" ? "settings.subscriptionQuotaUnavailable"
+      : quota.status === "sign_in" && !hideSignIn ? "settings.subscriptionSignIn"
+        : quota.status === "unsupported" ? "settings.subscriptionQuotaUnsupported" : null;
+  const expiredSnapshot = quota.status === "available" && quota.expires_at !== undefined && Date.parse(quota.expires_at) <= now;
+  const windows = quota.status === "available" || quota.status === "stale" ? quota.windows ?? [] : [];
+  const balances = quota.status === "available" || quota.status === "stale" ? quota.balances ?? [] : [];
+
+  const observation = Date.parse(quota.observed_at ?? quota.checked_at);
+  const observationAge = Number.isFinite(observation) ? t(quota.observed_at ? "settings.subscriptionObserved" : "settings.subscriptionChecked", { age: formatAge(observation, now, t) }) : "";
+  return <section className="settings-subscription-quota" aria-label={t(quota.kind === "plan" ? "settings.subscriptionKindPlan" : quota.kind === "balance" ? "settings.subscriptionKindBalance" : quota.kind === "subscription" ? "settings.subscriptionKindSubscription" : "settings.subscriptionAllowance")}>
+    {statusKey || expiredSnapshot ? <p className="settings-subscription-quota-state" role="status">{[t(statusKey ?? "settings.subscriptionQuotaStale"), (quota.status === "stale" || expiredSnapshot) && observationAge].filter(Boolean).join(" · ")}</p> : null}
+    {windows.length ? <div className="settings-subscription-windows">
+      {windows.map((window) => {
+        const percent = window.used_percent;
+        const hasPercent = typeof percent === "number" && Number.isFinite(percent) && percent >= 0;
+        const unlimited = window.unlimited === true;
+        const remaining = hasPercent ? Math.max(0, 100 - percent) : undefined;
+        const minutes = window.window_minutes;
+        const period = minutes && minutes > 0 ? minutes % 1440 === 0 ? t("settings.subscriptionDays", { count: minutes / 1440 }) : minutes % 60 === 0 ? t("settings.subscriptionHours", { count: minutes / 60 }) : t("settings.subscriptionMinutes", { count: minutes }) : undefined;
+        const periodOnly = /^(?:\d+ (?:hours|days|minutes)|Primary|Secondary|Daily|Weekly|Weekly allowance|Rolling window|Requests|Allowance)$/i.test(window.label ?? "");
+        const label = (periodOnly && period ? period : [window.label, period].filter(Boolean).join(" · ")) || t("settings.subscriptionAllowance");
+        const resetMillis = window.resets_at ? Date.parse(window.resets_at) : NaN;
+        const expired = quota.status === "stale" || (quota.expires_at !== undefined && Date.parse(quota.expires_at) <= now)
+          || (Number.isFinite(resetMillis) && resetMillis <= now);
+        const readout = unlimited ? t(expired ? "settings.subscriptionLastKnownUnlimited" : "settings.subscriptionUnlimited")
+          : remaining === undefined ? t("settings.subscriptionQuotaUnknown")
+            : expired ? t("settings.subscriptionLastKnownRemaining", { percent: formatNumber(remaining, { maximumFractionDigits: 1 }) })
+              : t("settings.subscriptionRemaining", { percent: formatNumber(remaining, { maximumFractionDigits: 1 }) });
+        const resetTitle = Number.isFinite(resetMillis) ? t("settings.subscriptionResetTime", { time: formatDate(resetMillis, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZoneName: "short" }) }) : undefined;
+        const resetMinutes = Math.max(1, Math.ceil((resetMillis - now) / 60_000));
+        const resetDuration = resetMinutes < 60 ? t("settings.subscriptionMinutes", { count: resetMinutes })
+          : resetMinutes < 1440 ? [t("settings.subscriptionHours", { count: Math.floor(resetMinutes / 60) }), resetMinutes % 60 ? t("settings.subscriptionMinutes", { count: resetMinutes % 60 }) : ""].filter(Boolean).join(" ")
+            : [t("settings.subscriptionDays", { count: Math.floor(resetMinutes / 1440) }), Math.floor(resetMinutes % 1440 / 60) ? t("settings.subscriptionHours", { count: Math.floor(resetMinutes % 1440 / 60) }) : ""].filter(Boolean).join(" ");
+        const knownLabels = [source.id, source.label, source.selectedModel, source.models.find((model) => model.id === source.selectedModel)?.label].map((value) => value?.toLowerCase());
+        const scope = [window.model, window.scope].filter((value) => value && value.toLowerCase() !== "all models" && !knownLabels.includes(value.toLowerCase())).join(" · ");
+        return <div key={window.id} className="settings-subscription-window" data-exhausted={!expired && remaining === 0}>
+          <div className="settings-subscription-window-heading">
+            <div className="settings-subscription-usage"><span>{label}</span><span className="settings-subscription-remaining">{readout}</span></div>
+            {window.display ? <p className="settings-subscription-window-display">{window.display}</p> : null}
+            {scope ? <p className="settings-subscription-window-scope">{scope}</p> : null}
+          </div>
+          {!expired && !unlimited && remaining !== undefined ? <meter min={0} max={100} value={remaining} aria-label={label} aria-valuetext={readout} /> : <span aria-hidden="true" />}
+          <span className="settings-subscription-reset">{window.resets_at && resetTitle ? <Tooltip asChild content={resetTitle}><time className={resetMillis <= now ? "sr-only" : undefined} dateTime={window.resets_at} aria-label={resetTitle}>{resetMillis <= now
+            ? t("settings.subscriptionResetTime", { time: formatDate(resetMillis, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) })
+            : t("settings.subscriptionResetsIn", { time: resetDuration })}</time></Tooltip> : null}</span>
+        </div>;
+      })}
+    </div> : null}
+    {quota.status === "available" && !windows.length && !balances.length ? <p className="settings-subscription-empty">{t("settings.subscriptionQuotaUnknown")}</p> : null}
+    {balances.length ? <div className="settings-subscription-balances" aria-label={t("settings.subscriptionBalances")}>
+      <div className="settings-subscription-balance">
+        <span>{t("settings.subscriptionKindBalance")}</span>
+        <span className="settings-subscription-balance-amount">{balances.map((balance, index) => <span key={`${balance.currency}-${index}`}>
+          {index > 0 ? " · " : ""}{balance.amount} {balance.currency}
+        </span>)}</span>
+      </div>
+    </div> : null}
+    {(quota.status === "available" || quota.status === "stale") && quota.reset_credits !== undefined
+      ? <div className="settings-subscription-terms">{t("settings.subscriptionResetCredits", { count: quota.reset_credits })}</div> : null}
+  </section>;
+}
+
+function formatAge(observedAt: number, now: number, t: (key: "settings.subscriptionAgeMinutes" | "settings.subscriptionAgeHours" | "settings.subscriptionAgeDays", options?: Record<string, string | number>) => string): string {
+  const minutes = Math.floor(Math.max(0, now - observedAt) / 60_000);
+  if (minutes < 60) return t("settings.subscriptionAgeMinutes", { count: minutes });
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return t("settings.subscriptionAgeHours", { count: hours });
+  return t("settings.subscriptionAgeDays", { count: Math.floor(hours / 24) });
+}
+
+function providerAuthConfiguration(provider: ProviderSummary): string {
+  return JSON.stringify([
+    provider.name, provider.type, provider.base_url, provider.chatgpt_account_id,
+    provider.codex_credential_source, provider.reuse_codex_credentials,
+    provider.api_key_configured, provider.auth_status,
+  ]);
+}

@@ -1,0 +1,33 @@
+import XCTest
+@testable import WuuCore
+
+final class NavigationLocationTests: XCTestCase {
+    func testPersonalAreaRestoresWithoutChangingLegacyProjectsDefault() throws {
+        let account = AccountSession(server: "https://example.test", token: "token", username: "alice", pub: "phone", deviceSeed: "seed")
+        let devices = [AccountDevice(pub: "host", name: "Host", role: "host", online: false)]
+        let personal = try NavigationLocation(account: account, host: "host", personal: true)
+        let restored = try JSONDecoder().decode(NavigationLocation.self, from: JSONEncoder().encode(personal)).restore(account: account, devices: devices)
+        XCTAssertEqual(restored?.personal, true)
+        let legacy = try NavigationLocation(account: account, host: "host")
+        XCTAssertNotEqual(legacy.personal, true)
+    }
+    func testColdBookmarkRestoresOnlyForAuthorizedHostAndLogin() throws {
+        let account = AccountSession(server: "https://example.test", token: "token", username: "alice", pub: "phone", deviceSeed: "seed")
+        let devices = [AccountDevice(pub: "host", name: "Computer", role: "host", online: false)]
+        let location = try NavigationLocation(account: account, host: "host", workspace: "/work", thread: "thread")
+        var legacy = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(location)) as? [String: Any])
+        // Bookmarks saved before Collaboration was removed also carry its room and tab.
+        legacy["room"] = "room"; legacy["mode"] = "collaboration"
+        for data in [try JSONEncoder().encode(location), try JSONSerialization.data(withJSONObject: legacy)] {
+            let disk = try JSONDecoder().decode(NavigationLocation.self, from: data)
+            XCTAssertEqual(try disk.restore(account: account, devices: devices), location)
+            XCTAssertNil(try disk.restore(account: account, devices: []))
+            XCTAssertNil(try disk.restore(account: account, devices: [AccountDevice(pub: "host", name: "Phone", role: "phone", online: true)]))
+            for other in [
+                AccountSession(server: "https://other.test", token: account.token, username: account.username, pub: account.pub, deviceSeed: "seed"),
+                AccountSession(server: account.server, token: "new-login", username: account.username, pub: account.pub, deviceSeed: "seed"),
+                AccountSession(server: account.server, token: account.token, username: "bob", pub: account.pub, deviceSeed: "seed")
+            ] { XCTAssertNil(try disk.restore(account: other, devices: devices)) }
+        }
+    }
+}

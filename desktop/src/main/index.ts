@@ -1,0 +1,3652 @@
+import { encodePluginRuntimeResponse } from "./pluginRuntimeIPC";
+import { DictationService } from "./dictation";
+import { spawn as spawnDictationHelper } from "node:child_process";
+import { steerOrQueueIsolatedTurn } from "./isolatedTurnSubmission";
+import { RegisteredSessionTransport, REGISTERED_SESSION_REVERSE_METHODS } from "./registeredSessionTransport";
+import { resolveUserHostContext } from "./userHost";
+import { PresentationFrameCapture } from "./presentationFrame";
+import { createDesktopRecovery } from "./desktopRecovery";
+import { randomUUID } from "node:crypto";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
+import { AppContextCapture } from "./appContextCapture";
+import { SystemPermissions } from "./systemPermissions";
+import { createBrowserView } from "./browserView";
+import { WebWorkspaceHost } from "./webWorkspaceHost";
+import { WebWorkspaceLibrary } from "./webWorkspaceLibrary";
+import { WebWorkspaceDownloads } from "./webWorkspaceDownloads";
+import type { WebWorkspaceDownloadCommand } from "../shared/webWorkspaceDownloads";
+import { NativeTooltip } from "./nativeTooltip";
+import { NativeBrowserPopover } from "./nativeBrowserPopover";
+import type { WebWorkspacePopoverBounds } from "../shared/webWorkspace";
+import { ChromeOverlayHost, chromeOverlayScheme } from "./chromeOverlayHost";
+import type { ChromeOverlayRequest } from "../shared/chromeOverlay";
+import type { WebWorkspaceTooltip, WebWorkspaceMenuRequest, WebWorkspaceBounds, WebWorkspaceCommand, WebWorkspaceDestination, WebWorkspaceLegacyDestination, WebWorkspaceFindOptions } from "../shared/webWorkspace";
+import { importBrowserCookies, listBrowserProfiles } from "./browserCookieImport";
+import { BrowserExtensionManager, type BrowserExtensionConsent } from "./browserExtensions";
+import { BrowserExtensionWindows } from "./browserExtensionWindows";
+import { saveArtifactFile } from "./artifactSave";
+import { ArtifactSources } from "./artifactSources";
+import { showArtifactItemMenu } from "./artifactItemMenu";
+import { showContextMenu, dismissContextMenu } from "./contextMenu";
+import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
+import { readCatalogSkill } from "./remoteSkills";
+import { configureBackendProxy } from "./systemProxy";
+import { RemoteAppServerBridge } from "./remoteAppServerBridge";
+import { requestTrustedRemote, bindRemoteEventAuthorization } from "./trustedRemoteTransport";
+import { EngineLogin } from "./engineLogin";
+import { XAILoginCoordinator } from "./xaiLogin";
+import { MCPLoginCoordinator } from "./mcpLogin";
+import { authWindowReturn } from "./authWindowReturn";
+import { PhoneAccess } from "./phoneAccess";
+import {
+  app,
+  BrowserWindow,
+  type BrowserWindowConstructorOptions,
+  clipboard,
+  dialog,
+  ipcMain,
+  type IpcMainInvokeEvent,
+  type IpcMainEvent,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  powerMonitor,
+  protocol,
+  screen,
+  session as electronSession,
+  systemPreferences,
+  type OpenDialogOptions,
+  shell,
+  type WebContents,
+} from "electron";
+import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  APP_SERVER_PROTOCOL_VERSION,
+  BROWSER_REVERSE_RPC_METHODS,
+  MESSAGE_FLOW_FONT_SIZE_RANGE,
+  isAppLocale,
+  isLanguagePreference,
+  isMessageFlowFontSize,
+  type DesktopPreferences,
+} from "../shared/protocol";
+import type {
+  ArtifactItemMenuParams,
+  ConfigAdvancedUpdateResult,
+  ConfigGeneralUpdateResult,
+  ConfigCodexModelsResult,
+  ConfigModelCatalogProvidersResult,
+  ConfigModelCatalogRefreshResult,
+  ConfigModelUpdateResult,
+  EngineListResult,
+  EngineUpdateParams,
+  EngineAuthParams,
+  EngineAuthResult,
+  ExtensionCatalogRefreshResult,
+  ExtensionPackageUpdateParams,
+  ExtensionPackageUpdateResult,
+  GitCommitParams,
+  GitPullRequestParams,
+  BuildInfoResult,
+  ActivityActionResult,
+  ActivityListResult,
+  ActivityReleaseResult,
+  ActivitySession,
+  ActiveDocumentContext,
+  CoreBuildInfo,
+  DesktopBuildInfo,
+  InputFile,
+  CodexPetSettingsUpdate,
+  InputImage,
+  InitializeResult,
+  InstructionsListResult,
+  MCPListResult,
+  MCPConfigureParams,
+  MCPDefinitionResult,
+  MCPAuthFinishResult,
+  MCPAuthRemoveResult,
+  MCPAuthStartResult,
+  MCPAuthStatusResult,
+  MCPServerActionResult,
+  ManagedProcessActionResult,
+  ManagedProcessListResult,
+  ManagedProcessReadParams,
+  ManagedProcessReadResult,
+  ManagedProcessWriteResult,
+  RemoteControlSnapshot,
+  RemoteControlStatus,
+  ServerEvent,
+  SkillContentParams,
+  SkillContentResult,
+  SkillListResult,
+  SkillListParams,
+  RuntimeContext,
+  RuntimeAdvancedSettingsUpdate,
+  RuntimeGeneralSettingsUpdate,
+  GitCommitMessageResult,
+  SettingsUsageResponse,
+  UsageOverviewParams,
+  UsageOverviewResponse,
+  TerminalSessionStartParams,
+  TextPolishResult,
+  Thread,
+  ThreadContextCompositionResult,
+  ThreadEditMessageResult,
+  ThreadForkResult,
+  ThreadForkTarget,
+  ThreadResumeResult,
+  ThreadStartParams,
+  Turn,
+  UserQuestionAnswer,
+  UserQuestionListResult,
+  UserQuestionResolveResult,
+  SystemNotificationParams,
+  SystemNotificationResult,
+  PopOutInitResult,
+  PopOutSessionParams,
+  PluginPackageInstallResult,
+  PluginPackageRemoveResult,
+  PluginDesktopModuleLoadResult,
+  PluginDesktopModuleReadParams,
+  PluginDesktopActivationParams,
+  PluginScopeInitializeParams,
+  ExtensionInventoryRecord,
+  PluginDesktopModuleReadResult,
+  PluginIconLoadResult,
+  PluginIconReadParams,
+  PluginIconReadResult,
+  PluginSettingGetParams,
+  PluginIdentityParams,
+  PluginSettingSetParams,
+  PluginSettingResult,
+  PluginDiagnosticsResult,
+  PluginStorageGetParams,
+  PluginStorageSetParams,
+  PluginStorageResult,
+  PluginClientRequestParams,
+  PluginClientCancelParams,
+  PluginVisibleHistoryRequest,
+  PluginVisibleHistoryResult,
+  WorkspaceFileSaveParams,
+  CodexPetFeed,
+  CodexPetSubmitResult,
+  SideThreadOpenResult,
+  SideThreadHistoryResult,
+  SideThreadSendParams,
+  SideThreadSendResult,
+} from "../shared/protocol";
+import { AppServerClientPool, configurePackagedCUA, type AppServerShutdownOptions } from "./appServerClients";
+import { ChatGPTLoginCoordinator } from "./chatgptLogin";
+import { visibleMainTurns, visibleSideTurns } from "./pluginVisibleHistory";
+import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
+import { ObservationCoordinator, observationActivityFromServerEvent } from "./cuaActivityWindows";
+import type { ActivityPreviewAppearance } from "../shared/activityPreview";
+import { browserPiPHostClient } from "./browserPiPPlacement";
+import { createObservationPiPFactory } from "./browserPiPWindow";
+import { removeLegacyDesktopCliLink } from "./legacyCliLink";
+import {
+  defaultCodexPetsDir,
+  ensureCodexPetsDir,
+  legacyCodexPetsDir,
+  loadCodexPetsSnapshot,
+} from "./codexPets";
+import { CodexPetWindowManager } from "./codexPetWindow";
+import { CodexPetActivity } from "./codexPetActivity";
+import { CodexPetCommandRelay, type CodexPetCommandTarget } from "./codexPetCommands";
+import { RemoteHostManager } from "./remoteControl";
+import {
+  getCodexPetSettings,
+  getCodexPetScale,
+  getCodexPetSize,
+  getMessageFlowFontSize,
+  getDesktopPreferences,
+  updateDesktopPreferences,
+  getThemePreference,
+  getLanguagePreference,
+  getPluginConflictPreferences,
+  isOnboardingComplete,
+  completeOnboarding,
+  setCodexPetSettings,
+  setMessageFlowFontSize,
+  setThemePreference,
+  setLanguagePreference,
+  setPluginConflictPreference,
+  type MessageFlowFontSize,
+  type ThemePreference,
+  type LanguagePreference,
+} from "./desktopSettings";
+import { GitService } from "./gitService";
+import { requestRemoteWorkspace } from "./remoteWorkspace";
+import { DesktopGraphOwnershipError, observeDesktopActivationDocument, PluginDesktopActivations } from "./pluginDesktopActivations";
+import { PluginRuntimeRequests } from "./pluginRuntimeRequests";
+import { openExternalURL, wireExternalNavigationGuards } from "./externalNavigation";
+import { ProjectManager, wuuHomePath } from "./projects";
+import { discoverRecentWorkspaces } from "./recentWorkspaces";
+import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
+import { installDesktopUpdates } from "./desktopUpdateMenu";
+import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
+import {
+  registerRenderableFileProtocol,
+  renderableFileSchemes,
+} from "./renderableFileProtocol";
+import {
+  cachePluginDesktopModule,
+  cachePluginIcon,
+  cacheImageAsset,
+  registerPluginModuleProtocol,
+  pluginModuleScheme,
+} from "./pluginModuleProtocol";
+import { TerminalSessionManager } from "./terminalSessions";
+import { WorkspaceFileService } from "./workspaceFiles";
+import { registerWorkspaceFileWatches } from "./workspaceFileWatches";
+import { WorkspaceDirectoryReader } from "./workspaceDirectoryReader";
+import createWorkspaceDirectoryWorker from "./workspaceDirectoryWorker?nodeWorker";
+import {
+  macWorkspaceItemMenuTemplate,
+  macWorkspaceApplications,
+  openMacWorkspaceItemWithApplication,
+} from "./macWorkspaceApplications";
+
+import {
+  appShellWebPreferences,
+  installProductionAppShellGuards,
+  productionApplicationMenuTemplate,
+} from "./appShellGuards";
+import { createWindowRegistry, type WindowRegistry } from "./windowRegistry";
+import { installRendererRecovery, loadDevelopmentRenderer, sendToWindow } from "./rendererProcessGone";
+import {
+  BrowserHostCoordinator,
+  BROWSER_PARTITION,
+  configureBrowserProxy,
+  type BrowserHostWindowHandle,
+  type BrowserParentWindowHandle,
+  type BrowserViewHandle,
+  defaultBrowserHostDeps,
+  installBrowserSessionHandlers,
+} from "./browserHostWindows";
+import {
+  computeDefaultMainWindowBounds,
+  computeOnboardingWindowBounds,
+  loadMainWindowBounds,
+  saveMainWindowBounds,
+} from "./windowState";
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const DEV_CACHE_CLEANUP_THRESHOLD_BYTES = 512 * 1024 * 1024;
+const DEV_CACHE_DIRECTORIES = ["Cache", "Code Cache", "GPUCache", "DawnCache"];
+const DEFAULT_WINDOW_BACKGROUND = "#f6f6f4";
+// Dark-theme counterpart, matching --paper in theme.css. The window fill is
+// what shows behind the transparent web layer before first paint, so a
+// dark-theme launch must not flash white.
+const DARK_WINDOW_BACKGROUND = "#1c1c1d";
+// Native chrome keeps its physical height as the renderer zooms. The compact
+// workbench strip follows that height independently of its content headers.
+const DEFAULT_TITLEBAR_HEIGHT = 56;
+const WORKBENCH_TITLEBAR_HEIGHT = 44;
+const ENABLE_EMBEDDED_BROWSER = process.env.WUU_ENABLE_BROWSER !== "0";
+let browserExtensionManager: BrowserExtensionManager | undefined;
+let browserExtensionWindows: BrowserExtensionWindows | undefined;
+function embeddedBrowserSession() {
+  if (!ENABLE_EMBEDDED_BROWSER) {
+    throw new Error("The embedded browser is disabled in this build.");
+  }
+  return electronSession.fromPartition(BROWSER_PARTITION);
+}
+if (process.argv.includes("--safe-mode")) {
+  process.env.WUU_SAFE_MODE = "1";
+}
+// Electron forwards fetch/CORS privileges through one set of child-process
+// switches; a second registration would replace the first set.
+protocol.registerSchemesAsPrivileged([...renderableFileSchemes, pluginModuleScheme, chromeOverlayScheme]);
+
+let mainWindow: BrowserWindow | null = null;
+// Live system notifications are kept referenced so the OS cannot collect
+// them before the user acts on them (Electron retains only while referenced).
+const activeSystemNotifications = new Set<Notification>();
+const windowRegistry: WindowRegistry = createWindowRegistry();
+const projectManager = new ProjectManager(join(app.getPath("userData"), "projects.json"));
+
+// Build-time globals injected by electron.vite.config.ts. TypeScript
+// doesn't know about them by default; declare them so we can reference
+// them inside main. The "undefined" type keeps the same declaration
+// valid for unit-test contexts where the define hasn't run.
+declare const __DESKTOP_VERSION__: string | undefined;
+declare const __DESKTOP_BUILD_DATE__: string | undefined;
+
+const DESKTOP_BUILD_INFO: DesktopBuildInfo = {
+  version:
+    typeof __DESKTOP_VERSION__ === "string"
+      ? __DESKTOP_VERSION__
+      : "0.0.0-test",
+  date:
+    typeof __DESKTOP_BUILD_DATE__ === "string"
+      ? __DESKTOP_BUILD_DATE__
+      : "1970-01-01T00:00:00Z",
+};
+
+// Cached core build info. Populated on the first wuu:initialize call so
+// the renderer can ask for build identity via wuu:build-info without
+// racing the first initialize.
+let cachedCoreBuildInfo: CoreBuildInfo | undefined;
+let windowResizeEndTimer: NodeJS.Timeout | undefined;
+let windowResizeState = false;
+// Debounce timer for persisting the main window bounds on resize end. The
+// 200ms delay matches windowResizeEndTimer so the two callbacks fire
+// together — a single "user finished resizing" tick writes once.
+let mainWindowBoundsSaveTimer: NodeJS.Timeout | undefined;
+const appServerClientPool = new AppServerClientPool(
+  () => projectManager.ensureRuntimeContext(),
+  () => projectManager.activeWorkdir(),
+  (event) => emitServerEvent(event),
+  undefined,
+  desktopInitializeParams,
+  { appPath: app.getAppPath(), isPackaged: app.isPackaged },
+);
+const registeredSessionTransport = new RegisteredSessionTransport(appServerClientPool);
+// Cross-workdir running state (which sessions are actively turning in any
+// workspace) is aggregated in the main process from each client's own turn
+// lifecycle tracking and broadcast to the renderer on change. The renderer's
+// sidebar uses it to show spinners for non-active workspaces without depending
+// on event routing that is filtered to the active context.
+appServerClientPool.setRunningThreadsChangedHandler((snapshot) => {
+  broadcastToAll("wuu:running-threads-changed", snapshot);
+  codexPetActivity.setRunningThreads(snapshot);
+});
+// Owns every agent-driven embedded browser tab (hidden WebContentsView + CDP
+// bridge). Reverse-RPC browser/* requests are intercepted in emitServerEvent
+// (below) and answered here via the pool's single-shot reply channel. The view
+// factory keeps real Electron out of unit tests.
+const browserHostCoordinator = new BrowserHostCoordinator(
+  windowRegistry,
+  {
+    respond: (id, result) => appServerClientPool.respondToServerRequest(id, result),
+    reject: (id, message) => appServerClientPool.rejectServerRequest(id, message),
+  },
+  defaultBrowserHostDeps(
+    () =>
+      new BrowserWindow({
+        show: false,
+        skipTaskbar: true,
+        frame: false,
+        webPreferences: {
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+        },
+      }) as unknown as BrowserHostWindowHandle,
+    (options) => createBrowserView(options) as unknown as BrowserViewHandle,
+  ),
+  (workdir) => broadcastToAll("wuu:browser-invalidate", { workdir }),
+);
+const webWorkspaceLibrary = new WebWorkspaceLibrary(join(app.getPath("userData"), "web-workspace.json"));
+const webWorkspaceDownloads = new WebWorkspaceDownloads(
+  (owner, items) => sendToWindow(owner, "wuu:web-workspace-downloads", items),
+  join(app.getPath("userData"), "browser-downloads.json"),
+);
+const chromeOverlayHost = new ChromeOverlayHost(
+  (owner, event) => sendToWindow(owner, "wuu:chrome-overlay-event", event),
+  join(__dirname, "../renderer"), join(__dirname, "../preload/chromeOverlay.cjs"), !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined,
+);
+const webWorkspaceHost = new WebWorkspaceHost(
+  (owner, state) => sendToWindow(owner, "wuu:web-workspace-state", state),
+  (owner, id, newTabId) => sendToWindow(owner, "wuu:web-workspace-focus-address", { id, newTabId }),
+  {
+    library: webWorkspaceLibrary, downloads: webWorkspaceDownloads,
+    onViewAttached: owner => chromeOverlayHost.prepare(owner),
+    onFullscreen: (owner, fullscreen) => chromeOverlayHost.setFullscreen(owner, fullscreen),
+    onReveal: (owner, id) => sendToWindow(owner, "wuu:web-workspace-reveal", id),
+    onFocusFind: (owner, id) => sendToWindow(owner, "wuu:web-workspace-focus-find", id),
+    onLibraryChange: (owner) => sendToWindow(owner, "wuu:web-workspace-library", webWorkspaceLibrary.getState()),
+  },
+);
+browserHostCoordinator.setWorkspaceSource(webWorkspaceHost.browserSource(() => windowRegistry.mainWindow()));
+// A workdir with a live agent tab counts as busy so pool idle-eviction cannot
+// yank the page out mid user-takeover (isBusy only sees pending requests +
+// running turns, not outstanding core→desktop browser work).
+appServerClientPool.setWorkdirPinnedCheck((workdir) =>
+  browserHostCoordinator.hasAgentTabs(workdir),
+);
+// Client teardown sink: destroy that workdir's views. Not server-exit driven —
+// the disposing/eviction path suppresses server-exit, so this is the authority.
+appServerClientPool.setClientTorndownHandler((workdir) => {
+  browserHostCoordinator.onClientTorndown(workdir);
+  observationCoordinator.dropWorkdir(workdir);
+});
+// Shared observation stack for CUA windows and browser tabs, fed by the same
+// activity notifications the renderer uses. The coordinator owns per-target
+// lifecycle, session visibility, stack ordering, and position memory.
+const observationCoordinator = new ObservationCoordinator(
+  windowRegistry,
+  async (threadID): Promise<ActivitySession[]> => {
+    const workdir = projectManager.activeWorkdir();
+    if (!workdir) return [];
+    const result = await appServerClientPool.requestForWorkdir<ActivityListResult>(
+      workdir,
+      "activity/list",
+      { thread_id: threadID },
+    );
+    return result.activities ?? [];
+  },
+  createObservationPiPFactory({
+    browserHost: browserHostCoordinator,
+    isPackaged: app.isPackaged,
+    parent: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : undefined),
+  }),
+);
+observationCoordinator.setAppearance(resolvedThemeIsDark());
+browserHostCoordinator.setRendererSink({
+  surface: (snapshot) => broadcastToAll("wuu:browser-surface", snapshot),
+  userInput: (payload) => {
+    if (!payload.workspace) { broadcastToAll("wuu:browser-user-input", payload); return; }
+    // Website chrome is outside the conversation's browser panel. Reclaim the
+    // owning activity here even when its renderer or conversation is hidden.
+    if (!payload.threadID || !payload.activityID || payload.inputGeneration === undefined) return;
+    void appServerClientPool.requestForWorkdir<ActivityActionResult>(payload.workdir, "activity/takeover", {
+      thread_id: payload.threadID, activity_id: payload.activityID, execution_id: payload.executionID,
+    }).then(result => browserHostCoordinator.acknowledgeLocalTakeover(result.activity, payload.inputGeneration!))
+      .catch(error => console.warn("[web-workspace] Could not acknowledge native takeover", error));
+  },
+  adopted: (payload) => broadcastToAll("wuu:browser-tab-adopted", payload),
+  presented: () => observationCoordinator.refreshBrowserPresentation(),
+});
+observationCoordinator.setBrowserInPanel((activity) =>
+  activity.kind === "browser" &&
+  browserHostCoordinator.isInPanel(activity.workdir, activity.target || activity.id),
+);
+observationCoordinator.setBrowserExpandHandler((activity) => {
+  if (browserHostCoordinator.revealWorkspaceTab(activity.workdir, activity.target || activity.id)) return;
+  // The workspace panel belongs to the main window. A broadcast also changes
+  // unrelated popped-out conversations and lets them compete for the tab.
+  const host = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed()) return;
+  host.webContents.send("wuu:browser-dock", {
+    thread_id: activity.thread_id,
+    workdir: activity.workdir,
+    tabID: activity.target || activity.id,
+  });
+});
+// The pet is a standalone always-on-top window owned by the main process, so
+// it stays on the desktop when the main window is hidden, minimized, or
+// closed. Its right-click menu disables the setting, which also tears the
+// window down. Jumps and submits are relayed to the main window's renderer,
+// which owns conversation navigation and sending; the relay opens the main
+// window when none is attached.
+const codexPetWindowManager = new CodexPetWindowManager({
+  onClose: () => {
+    updateCodexPetSettings({ enabled: false });
+  },
+  onJump: (threadID) => {
+    revealMainWindow();
+    codexPetCommandRelay.jump(threadID);
+  },
+  onSubmit: (text, target) => codexPetCommandRelay.submit(text, target),
+  onShowApp: () => revealMainWindow(),
+  onSizeChange: (size) => {
+    // Context-menu size change — push the choice into desktop-settings.json
+    // and refresh the snapshot so the next sync re-stages the window with
+    // the new size (CodexPetWindowManager already called applyView).
+    updateCodexPetSettings({ size });
+  },
+  onScaleChange: (scale) => {
+    // Continuous-resize drag ended (commit=1) — persist the raw scale so
+    // the pet reopens at exactly the size the user left it. Intermediate
+    // per-frame scale updates never reach this callback.
+    updateCodexPetSettings({ scale });
+  },
+  isPackaged: app.isPackaged,
+});
+const codexPetCommandRelay = new CodexPetCommandRelay({
+  timeoutMs: 30_000,
+  // A submit sent while the main window is closed opens it without taking
+  // focus from the app the user is typing next to.
+  onMissingTarget: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) createWindow({ inactive: true });
+  },
+});
+// Main-window renderers attached to the relay, keyed by webContents id.
+const codexPetCommandTargets = new Map<number, CodexPetCommandTarget>();
+const codexPetActivity = new CodexPetActivity({
+  onMood: (mood) => codexPetWindowManager.setMood(mood),
+  onReaction: (reaction) => codexPetWindowManager.react(reaction),
+  onHints: (hints) => codexPetWindowManager.setHints(hints),
+});
+const terminalSessionManager = new TerminalSessionManager(
+  (windowID, event) => emitTerminalEvent(windowID, event),
+);
+
+const appContextOwnerGenerations = new Map<number, number>();
+function appContextOwner(): string | undefined {
+  const host = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || host.webContents.isDestroyed()) return undefined;
+  const generation = appContextOwnerGenerations.get(host.webContents.id);
+  return generation === undefined ? undefined : `${host.webContents.id}:${generation}`;
+}
+const appContextCapture = new AppContextCapture((reveal, owner) => {
+  const host = windowRegistry.mainWindow();
+  if (!host || host.isDestroyed() || host.webContents.isDestroyed() || (owner && owner !== appContextOwner())) return;
+  // Delivery never creates a replacement owner for a cancelled/closed window.
+  if (reveal) { if (host.isMinimized()) host.restore(); host.show(); host.focus(); }
+  const generation = appContextOwner();
+  const send = (): void => {
+    if (!host.isDestroyed() && !host.webContents.isDestroyed() && generation === appContextOwner()) host.webContents.send("wuu:app-context-changed");
+  };
+  if (host.webContents.isLoadingMainFrame()) host.webContents.once("did-finish-load", send);
+  else send();
+}, appContextOwner);
+const systemPermissions = new SystemPermissions(appContextCapture);
+const dictation = new DictationService({
+  askForMicrophoneAccess: () => systemPreferences.askForMediaAccess("microphone"),
+  spawn: locale => spawnDictationHelper(
+    process.env.WUU_SPEECH_MAC_HELPER || join(process.resourcesPath, "bin", "wuu-speech-mac"),
+    ["--locale", locale], { stdio: ["pipe", "pipe", "pipe"] },
+  ),
+});
+
+
+function isAppContextSender(event: IpcMainInvokeEvent | IpcMainEvent): boolean {
+  const host = windowRegistry.mainWindow();
+  return Boolean(host && !host.isDestroyed() && event.sender === host.webContents && event.senderFrame === event.sender.mainFrame);
+}
+
+function requireAppContextSender(event: IpcMainInvokeEvent): void {
+  if (!isAppContextSender(event)) {
+    throw new Error("App snapshots are available from Wuu's main window only.");
+  }
+}
+
+function requireDictationSender(event: IpcMainInvokeEvent): void {
+  if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+    throw new Error("Dictation is available from Wuu windows only.");
+  }
+}
+
+function requireBrowserSettingsSender(event: IpcMainInvokeEvent): BrowserWindow {
+  const host = windowRegistry.mainWindow();
+  if (!host || !isAppContextSender(event)) {
+    throw new Error("Browser settings are available from Wuu's main window only.");
+  }
+  return host;
+}
+
+function requireBrowserExtensionManager(): BrowserExtensionManager {
+  if (!browserExtensionManager) {
+    throw new Error("Embedded browser extensions are unavailable.");
+  }
+  return browserExtensionManager;
+}
+
+function browserExtensionConsent(host: BrowserWindow, legacy = false): BrowserExtensionConsent {
+  return async (manifest, source, previous) => {
+    if (host.isDestroyed()) return false;
+    const display = (items: string[]) => items.length ? items.join(", ") : mainTranslate("browserExtensionNone");
+    const warnings = {
+      serviceWorker: "browserExtensionServiceWorker", action: "browserExtensionAction",
+      options: "browserExtensionOptions", browserUI: "browserExtensionBrowserUI", devtools: "browserExtensionDevtools",
+    } as const;
+    const { response } = await dialog.showMessageBox(host, {
+      type: "warning",
+      message: mainTranslate(previous ? "browserExtensionReviewUpdate" : "browserExtensionReview", { name: `${manifest.name} ${manifest.version}` }),
+      detail: [
+        mainTranslate("browserExtensionTrust"),
+        mainTranslate("browserExtensionPermissions", { value: display(manifest.permissions) }),
+        mainTranslate("browserExtensionSites", { value: display(manifest.sites) }),
+        mainTranslate("browserExtensionOptional", { value: display([...manifest.optionalPermissions, ...manifest.optionalSites]) }),
+        ...(manifest.unsupportedPermissions.length ? [mainTranslate("browserExtensionUnsupported", { value: display(manifest.unsupportedPermissions) })] : []),
+        mainTranslate("browserExtensionCompatibility"),
+        ...manifest.compatibility.map(warning => mainTranslate(warnings[warning])),
+        ...(legacy ? [mainTranslate("browserExtensionMigration")] : []),
+        mainTranslate("browserExtensionSource", { path: source }),
+      ].join("\n\n"),
+      buttons: [mainTranslate("browserExtensionCancel"), mainTranslate("browserExtensionLoad")],
+      defaultId: 0, cancelId: 0, noLink: true,
+    });
+    return response === 1 && !host.isDestroyed();
+  };
+}
+
+
+async function showProjectDirectoryDialog(
+  options: OpenDialogOptions,
+): Promise<string | undefined> {
+  const focusedWindow = BrowserWindow.getFocusedWindow();
+  const result = focusedWindow && !focusedWindow.isDestroyed()
+    ? await dialog.showOpenDialog(focusedWindow, options)
+    : await dialog.showOpenDialog(options);
+  if (result.canceled) {
+    return undefined;
+  }
+  return result.filePaths[0];
+}
+
+const desktopActivationOwners = new Map<number, PluginDesktopActivations>();
+const desktopActivationDisconnects = new Set<Promise<void>>();
+const observedActivationWindows = new WeakSet<WebContents>();
+
+function desktopActivationOwner(event: IpcMainInvokeEvent): PluginDesktopActivations {
+  if (event.senderFrame !== event.sender.mainFrame || !windowRegistry.allWindows().some(window => window.webContents === event.sender)) {
+    throw new Error("Desktop activation reports are available from Wuu window main frames only");
+  }
+  const contents = event.sender;
+  if (!observedActivationWindows.has(contents)) {
+    observedActivationWindows.add(contents);
+    const disconnect = (): void => {
+      const owner = desktopActivationOwners.get(contents.id);
+      desktopActivationOwners.delete(contents.id);
+      if (owner) {
+        const pending = owner.disconnect();
+        desktopActivationDisconnects.add(pending);
+        void pending.catch((error: unknown) => console.error("Desktop activation disconnect failed", error))
+          .finally(() => desktopActivationDisconnects.delete(pending));
+      }
+    };
+    observeDesktopActivationDocument(contents, disconnect);
+  }
+  let owner = desktopActivationOwners.get(contents.id);
+  if (!owner) {
+    owner = new PluginDesktopActivations(contents.id);
+    desktopActivationOwners.set(contents.id, owner);
+  }
+  return owner;
+}
+
+async function initializeDesktopGraph(event: IpcMainInvokeEvent, owner: PluginDesktopActivations): Promise<void> {
+  // This is a fresh authoritative handshake, not a route inferred from the
+  // selected workspace. Only the exact returned graph may admit this ACK.
+  const context = runtimeContextForEvent(event);
+  const request = appServerClientPool.bindContextRequest(context);
+  const currentDocument = () => {
+    if (event.sender.isDestroyed() || event.senderFrame !== event.sender.mainFrame
+      || desktopActivationOwners.get(event.sender.id) !== owner) {
+      throw new PluginLifecycleCancellationError(new Error("Desktop activation recovery document was replaced"));
+    }
+  };
+  currentDocument();
+  const recoveryId = randomUUID();
+  const revision = owner.initializationRevision + 1;
+  event.sender.send("wuu:runtime-initialization-recovery", { phase: "started", recoveryId, afterRequestId: owner.rendererRequestId });
+  const initialized = await owner.initialize(context.cwd, async <T>(method: string, input?: unknown): Promise<T> => {
+    const result = await request<T>(method, input);
+    currentDocument();
+    return result;
+  }, desktopInitializeParams());
+  currentDocument();
+  // A newer workspace/process initialize wins, even at the same path.
+  if (owner.initializationRevision !== revision || JSON.stringify(runtimeContextForEvent(event)) !== JSON.stringify(context)) {
+    throw new PluginLifecycleCancellationError(new Error("Desktop activation recovery was superseded"));
+  }
+  event.sender.send("wuu:runtime-initialization-recovery", { phase: "completed", recoveryId, initialized });
+}
+
+const artifactSources = new ArtifactSources();
+const artifactDocumentRevisions = new Map<number, number>();
+
+async function acquireArtifactSource(event: IpcMainInvokeEvent, input: ArtifactItemMenuParams) {
+  const owner = windowRegistry.windowForID(event.sender.id);
+  const frame = event.senderFrame;
+  if (!owner || !frame || frame !== event.sender.mainFrame) throw new Error("Artifact source requires a Wuu document");
+  const senderID = event.sender.id;
+  if (!artifactDocumentRevisions.has(senderID)) {
+    artifactDocumentRevisions.set(senderID, 0);
+    const retire = () => { artifactDocumentRevisions.set(senderID, (artifactDocumentRevisions.get(senderID) ?? 0) + 1); artifactSources.releaseOwner(senderID); };
+    event.sender.once("destroyed", () => { retire(); artifactDocumentRevisions.delete(senderID); });
+    event.sender.on("render-process-gone", retire);
+    event.sender.on("did-start-navigation", (details: { isMainFrame: boolean; isSameDocument: boolean }) => { if (details.isMainFrame && !details.isSameDocument) retire(); });
+  }
+  const revision = artifactDocumentRevisions.get(senderID);
+  const context = structuredClone(runtimeContextForEvent(event));
+  const contextKey = JSON.stringify(context);
+  const current = () => artifactDocumentRevisions.get(senderID) === revision && !event.sender.isDestroyed() && !frame.isDestroyed() && event.sender.mainFrame === frame && JSON.stringify(runtimeContextForEvent(event)) === contextKey;
+  const request = appServerClientPool.bindSessionRequest({...context, ...(input.locator ? {session_locator:input.locator} : {})}, input.threadId);
+  return artifactSources.acquire(input, request, current, senderID);
+}
+
+function runtimeContextForEvent(event: IpcMainInvokeEvent): RuntimeContext {
+  return (
+    windowRegistry.runtimeContextForWindow(event.sender.id) ??
+    projectManager.ensureRuntimeContext()
+  );
+}
+
+function appServerRequest<T>(
+  event: IpcMainInvokeEvent,
+  method: string,
+  params?: unknown,
+  targetContext?: RuntimeContext,
+): Promise<T> {
+  const context = targetContext
+    ? targetContext.kind === "user"
+      ? resolveUserHostContext(targetContext.user_space_id, targetContext.product_domain, targetContext.composition_profile)
+      : projectManager.resolveSubmissionContext(targetContext)
+    : windowRegistry.runtimeContextForWindow(event.sender.id);
+  return context
+    ? appServerClientPool.requestInContext<T>(context, method, params)
+    : appServerClientPool.request<T>(method, params);
+}
+
+async function bindScopedUserRuntime(owner: PluginDesktopActivations, params: PluginClientRequestParams) {
+  const context = resolveUserHostContext(params.user_space_id ?? "", params.product_domain ?? "", params.composition_profile);
+  return owner.scopedRuntimeRequest(params,
+    JSON.stringify([context.user_space_id, context.product_domain, context.composition_profile]),
+    async () => ({ workdir: context.cwd, request: appServerClientPool.bindContextRequest(context), params: desktopInitializeParams() }));
+}
+
+function desktopInitializeParams() {
+  return {
+    protocol_version: APP_SERVER_PROTOCOL_VERSION,
+    client: { name: "wuu-desktop", version: DESKTOP_BUILD_INFO.version },
+    capabilities: {
+      reverse_rpc: { methods: [...BROWSER_REVERSE_RPC_METHODS, ...REGISTERED_SESSION_REVERSE_METHODS] },
+    },
+  };
+}
+
+function runtimeContextForWorkspaceID(workspaceID: string): RuntimeContext {
+  const id = workspaceID.trim();
+  if (!id) {
+    throw new Error("workspace id is required");
+  }
+  const project = projectManager.list().projects.find(
+    (candidate) => candidate.id === id,
+  );
+  if (!project) {
+    throw new Error(`workspace ${id} is not registered`);
+  }
+  if (project.missing) {
+    throw new Error(`workspace ${project.name} is unavailable`);
+  }
+  return { kind: "project", project_id: project.id, cwd: project.path };
+}
+
+function runtimeContextForPluginWorkspace(
+  event: IpcMainInvokeEvent,
+  workspaceID?: string,
+  workspaceRoot?: string,
+): RuntimeContext {
+  if (workspaceID?.trim()) return runtimeContextForWorkspaceID(workspaceID);
+  if (!workspaceRoot?.trim()) return runtimeContextForEvent(event);
+  const current = runtimeContextForEvent(event);
+  if (current.kind === "no_project" && resolve(current.cwd) === resolve(workspaceRoot)) return current;
+  if (projectManager.list().projects.some((project) => resolve(project.path) === resolve(workspaceRoot))) {
+    throw new Error("Plugin workspace ID is required for a registered project");
+  }
+  return projectManager.resolveSubmissionContext({ kind: "no_project", cwd: workspaceRoot });
+}
+
+function codexPetDirs(): string[] {
+  const primaryPetsDir = defaultCodexPetsDir(wuuHomePath());
+  ensureCodexPetsDir(primaryPetsDir);
+  return [primaryPetsDir, legacyCodexPetsDir()];
+}
+
+function codexPetsSnapshot() {
+  return loadCodexPetsSnapshot({
+    petsDirs: codexPetDirs(),
+    settings: getCodexPetSettings(),
+  });
+}
+
+function updateCodexPetSettings(update: CodexPetSettingsUpdate) {
+  const current = getCodexPetSettings();
+  const requested = {
+    enabled: update.enabled ?? current.enabled,
+    selected_id: update.selected_id ?? current.selected_id,
+    size: update.size ?? current.size,
+    // 显式选 size 档位意味着放弃之前拖出来的连续 scale——两者同时在场时
+    // scale 优先，所以这里必须把 scale 清掉档位才生效。
+    scale: update.size !== undefined ? undefined : update.scale ?? current.scale,
+  };
+  const snapshot = loadCodexPetsSnapshot({
+    petsDirs: codexPetDirs(),
+    settings: requested,
+  });
+  setCodexPetSettings({
+    enabled: snapshot.enabled,
+    selected_id: snapshot.selected_id,
+    size: requested.size,
+    scale: requested.scale,
+  });
+  codexPetWindowManager.sync(snapshot);
+  return snapshot;
+}
+
+function gitServiceForEvent(event: IpcMainInvokeEvent): GitService {
+  return gitServiceForContext(() => runtimeContextForEvent(event));
+}
+
+function gitServiceForContext(getContext: () => RuntimeContext): GitService {
+  return new GitService(
+    getContext,
+    () => appServerClientPool.runningThreadCwds(),
+    () => {
+      const context = getContext();
+      return appServerClientPool.threadCwdsForWorkdir(context.cwd);
+    },
+    async (context, input) => {
+      const result = await appServerClientPool.requestInContext<GitCommitMessageResult>(
+        context,
+        "git/commit-message",
+        input,
+      );
+      return result.message ?? "";
+    },
+  );
+}
+
+const workspaceDirectoryReader = new WorkspaceDirectoryReader(() => createWorkspaceDirectoryWorker({}));
+const directoryReaderOwners = new Map<number, number>();
+
+function workspaceFilesForEvent(event: IpcMainInvokeEvent): WorkspaceFileService {
+  return new WorkspaceFileService(() => runtimeContextForEvent(event));
+}
+
+const rendererServerEventBatcher = new RendererServerEventBatcher((event) => {
+  broadcastToAll("wuu:server-event", event);
+});
+
+function emitServerEvent(event: ServerEvent): void {
+  registeredSessionTransport.handleConnectionEvent(event);
+  if (event.kind === "server-request" && REGISTERED_SESSION_REVERSE_METHODS.includes(event.message.method)) {
+    void registeredSessionTransport.handleServerRequest(event);
+    return;
+  }
+  remoteAppServerBridge.publish(event);
+  codexPetActivity.handleServerEvent(event);
+  // Intercept core→desktop browser/* requests BEFORE broadcastToAll: the
+  // renderer auto-rejects every server-request ("unsupported server request"),
+  // and server-request routes are single-shot, so letting the renderer race
+  // would reject the route before the main-process handler can answer it. Cheap
+  // prefix test on the hot stdout path.
+  if (
+    ENABLE_EMBEDDED_BROWSER &&
+    event.kind === "server-request" &&
+    event.message.method.startsWith("browser/")
+  ) {
+    void browserHostCoordinator.handleServerRequest(event);
+    return;
+  }
+  // A crashed core (server-exit that still emits, i.e. not the disposing path)
+  // tears down that workdir's browser views here. markServerExit alone would
+  // only stop a late reply from respawning the core, leaking the hidden
+  // WebContentsViews — and because a workdir with live tabs is pinned
+  // non-evictable, the dead client would never reach disposeClient's teardown.
+  // onClientTorndown destroys the views (clearing the pin), marks the workdir
+  // down so respondSafe drops late replies, and broadcasts invalidation.
+  // Idempotent with a later disposeClient.
+  if (event.kind === "server-exit") {
+    for (const [id, owner] of desktopActivationOwners) {
+      owner.invalidateWorkspace(event.workdir);
+      const window = windowRegistry.windowForID(id);
+      for (const invalidation of owner.invalidateScopes(event.workdir)) if (window) sendToWindow(window, "wuu:plugin-scope-invalidated", invalidation);
+    }
+    browserHostCoordinator.onClientTorndown(event.workdir);
+    observationCoordinator.dropWorkdir(event.workdir);
+  }
+  if (event.kind === "notification" && event.message.method === "plugin/inventory/changed") {
+    const params = event.message.params as { extension_inventory?: ExtensionInventoryRecord[] } | undefined;
+    if (params?.extension_inventory) {
+      for (const [id, owner] of desktopActivationOwners) {
+        const invalidations = owner.invalidateScopes(event.workdir);
+        if (!invalidations.length) owner.observeInventory(event.workdir, params.extension_inventory);
+        const window = windowRegistry.windowForID(id);
+        for (const invalidation of invalidations) if (window) sendToWindow(window, "wuu:plugin-scope-invalidated", invalidation);
+      }
+    }
+  }
+  browserHostCoordinator.handleServerEvent(event);
+  const browserActivity = observationActivityFromServerEvent(event);
+  if (browserActivity && event.kind === "notification") browserHostCoordinator.updateActivity(browserActivity, event.message.method);
+  observationCoordinator.handleServerEvent(event);
+  const sideThreadEvent = sideThreadEventFromServerEvent(event);
+  if (sideThreadEvent) {
+    broadcastToAll("wuu:side-thread-event", sideThreadEvent);
+  }
+  rendererServerEventBatcher.enqueue(event);
+}
+
+function broadcastToAll(channel: string, payload: unknown): void {
+  for (const window of windowRegistry.allWindows()) {
+    sendToWindow(window, channel, payload);
+  }
+}
+
+function emitTerminalEvent(
+  windowID: number,
+  event: Parameters<TerminalSessionManager["emit"]>[1],
+): void {
+  const window = windowRegistry.windowForID(windowID);
+  if (!window) {
+    return;
+  }
+  sendToWindow(window, "wuu:terminal-event", event);
+}
+
+function unregisterWindow(windowID: number): void {
+  terminalSessionManager.stopForOwner(windowID);
+  windowRegistry.unregisterWindow(windowID);
+}
+
+function returnToAuthWindow(senderID: number): void {
+  const window = BrowserWindow.getAllWindows().find(candidate =>
+    !candidate.isDestroyed() && candidate.webContents.id === senderID,
+  );
+  authWindowReturn(window ?? null)();
+}
+const engineLogins = new Map<string, EngineLogin>();
+const pluginRuntimeRequests = new PluginRuntimeRequests(appServerClientPool);
+
+// Remote-control host: one machine-global daemon serving paired phones,
+// independent of the per-workdir app-server pool. Events (pairing URI,
+// paired, exit) fan out to every window; the settings panel re-pulls its
+// snapshot on each one.
+const remoteTerminals = new TerminalSessionManager((owner,event)=>remoteAppServerBridge.notifyPeer(owner,"desktop/terminal/event",event));
+const remoteAppServerBridge = new RemoteAppServerBridge(async (workdir, method, params, reply, peerID, activations, peer) => {
+  const pluginOwner = `remote:${peerID}`;
+  // Existing ownership is enough to cancel; the original workspace may no
+  // longer be listed by the time the paired client disconnects or switches.
+  if (method === "plugin/client/cancel") return pluginRuntimeRequests.cancel(pluginOwner, params as PluginClientCancelParams);
+  // Keep the desktop's reverse-RPC capabilities: a phone attachment must not
+  // disable browser tools on the shared execution service.
+  if (method === "initialize") params = desktopInitializeParams();
+  if (method === "shutdown") throw new Error("Remote clients cannot shut down the shared execution service");
+  if (method === "plugin/client/request") {
+    const request = params as PluginClientRequestParams;
+    if (request.user_space_id || request.product_domain || request.composition_profile) {
+      if (request.workspace_id || request.workspace_root) throw new Error("User host and workspace routes cannot be combined");
+      if (!peer.owner) throw new Error("Scoped plugin routing required");
+      const bound = await bindScopedUserRuntime(activations, request);
+      return pluginRuntimeRequests.request(pluginOwner, bound, request, reply);
+    }
+  }
+  return requestRemoteWorkspace(projectManager, appServerClientPool, remoteTerminals, workdir, method, params, reply, peerID,
+    (context, method, params) => {
+      if (peer.owner && method === "initialize") return activations.initialize(context.cwd, appServerClientPool.bindContextRequest(context), params);
+      if (peer.owner && method === "plugin/client/request") return pluginRuntimeRequests.request(pluginOwner, context, params as PluginClientRequestParams, reply);
+      if (!peer.owner && method.startsWith("plugin/")) throw new Error("Scoped plugin routing required");
+      // Core responses retain their exact policy receipt, including delegated
+      // model/tool ceilings. Never send a delegated call on the owner pipe raw.
+      return requestTrustedRemote(appServerClientPool, context, peer, method, params, reply);
+    });
+}, (peerID) => {
+  remoteTerminals.stopForOwner(peerID);
+  pluginRuntimeRequests.closeOwner(`remote:${peerID}`);
+}, (event, peer) => bindRemoteEventAuthorization(appServerClientPool, event, peer));
+
+const remoteHostManager = new RemoteHostManager({
+  appServerEndpoint: () => remoteAppServerBridge.currentEndpoint(),
+  onEvent: (event) => broadcastToAll("wuu:remote-event", event),
+});
+
+const phoneAccess = new PhoneAccess(remoteHostManager,
+  app.isPackaged ? join(process.resourcesPath, "mobile-web") : resolve(__dirname, "../../build/mobile-web"),
+  () => broadcastToAll("wuu:remote-event", { kind: "host-log", message: "Phone access changed" }), remoteAppServerBridge);
+
+async function remoteControlSnapshot(workdir: string): Promise<RemoteControlSnapshot> {
+  let status: RemoteControlStatus | null = null;
+  let statusError = "";
+  try {
+    status = await remoteHostManager.status(workdir);
+  } catch (err) {
+    statusError = err instanceof Error ? err.message : String(err);
+  }
+  return {
+    status,
+    status_error: statusError || phoneAccess.error() || undefined,
+    host_running: remoteHostManager.isRunning(),
+    host_enabled: phoneAccess.enabled(),
+    pair_uri: remoteHostManager.currentPairUri(),
+    web_url: phoneAccess.url(),
+  };
+}
+
+function setWindowResizeState(resizing: boolean): void {
+  if (windowResizeState === resizing) {
+    return;
+  }
+  windowResizeState = resizing;
+  broadcastToAll("wuu:window-resize-state", { resizing });
+}
+
+function scheduleWindowResizeEnd(delay = 140): void {
+  if (windowResizeEndTimer) {
+    clearTimeout(windowResizeEndTimer);
+  }
+  windowResizeEndTimer = setTimeout(() => {
+    windowResizeEndTimer = undefined;
+    setWindowResizeState(false);
+  }, delay);
+}
+
+function handleNativeWindowResizePhase(
+  phase: "live" | "end",
+  win?: BrowserWindow,
+): void {
+  if (phase === "end") {
+    // `resized` means the user released the frame. Do not treat it as another
+    // live tick — that restarted the 140ms freeze after the chrome was still.
+    if (windowResizeEndTimer) {
+      clearTimeout(windowResizeEndTimer);
+      windowResizeEndTimer = undefined;
+    }
+    setWindowResizeState(false);
+    if (win) scheduleMainWindowBoundsSave(win);
+    return;
+  }
+  setWindowResizeState(true);
+  scheduleWindowResizeEnd();
+  if (win) scheduleMainWindowBoundsSave(win);
+}
+
+function scheduleMainWindowBoundsSave(win: BrowserWindow, delay = 200): void {
+  if (mainWindowBoundsSaveTimer) {
+    clearTimeout(mainWindowBoundsSaveTimer);
+  }
+  mainWindowBoundsSaveTimer = setTimeout(() => {
+    mainWindowBoundsSaveTimer = undefined;
+    persistMainWindowBoundsNow(win);
+  }, delay);
+}
+
+function persistMainWindowBoundsNow(win: BrowserWindow): void {
+  if (win.isDestroyed()) return;
+  // Maximised / fullscreen bounds are full-rect; restoring to them on the
+  // next launch would skip the user's normal layout. Skip the write so the
+  // last non-maximised bounds stay saved.
+  if (win.isMinimized()) return;
+  if (win.isMaximized() || win.isFullScreen()) return;
+  saveMainWindowBounds(win.getBounds());
+}
+
+const nativeBrowserPopovers = new WeakMap<BrowserWindow, NativeBrowserPopover>();
+function loadRenderer(window: BrowserWindow): void {
+  window.webContents.on("context-menu", (_event, params) => {
+    if (params.mediaType !== "image") return;
+    const contents = window.webContents;
+    const zoom = contents.getZoomFactor();
+    void showContextMenu(contents, {
+      token: randomUUID(),
+      x: params.x / zoom,
+      y: params.y / zoom,
+      items: [
+        { id: "copy-image", label: mainTranslate("copyImage"), disabled: !params.hasImageContents },
+        { id: "save-image", label: mainTranslate("saveArtifactAs"), disabled: !params.hasImageContents },
+      ],
+    }).then(async action => {
+      if (contents.isDestroyed()) return;
+      if (action === "copy-image") {
+        // Chromium copies the original image, including cross-origin sources,
+        // without applying the preview's zoom, rotation, or viewport crop.
+        contents.copyImageAt(params.x, params.y);
+      } else if (action === "save-image") {
+        try {
+          await saveArtifactFile(window, contents.session, params.suggestedFilename ||
+            (/^(https?|wuu-file|wuu-artifact):/i.test(params.srcURL) ? params.srcURL : "image"), params.srcURL);
+        } catch (error) {
+          if (!window.isDestroyed()) await dialog.showMessageBox(window, {
+            type: "error", message: mainTranslate("saveImageFailed"),
+            detail: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }).catch(error => console.error("[desktop] image context menu failed", error));
+  });
+  // Shell windows only: browser and observation surfaces keep their own zoom.
+  window.webContents.on("before-input-event", (event, input) => {
+    if (event.defaultPrevented || webWorkspaceHost.handleShellInput(window.webContents, event, input)) return;
+    const modifier = process.platform === "darwin" ? input.meta : input.control;
+    if (!modifier || input.alt || (process.platform === "darwin" && input.control)) return;
+    let action: DesktopZoomAction;
+    if (input.key === "+" || input.key === "=") action = "in";
+    else if (input.key === "-" || input.code === "NumpadSubtract") action = "out";
+    else if (input.key === "0" && !input.shift) action = "reset";
+    else return;
+    // Consume both phases so native menu accelerators and editors cannot also zoom.
+    event.preventDefault();
+    if (input.type === "keyDown") window.webContents.send("wuu:desktop-zoom", action);
+  });
+  if (!app.isPackaged) {
+    window.webContents.on("console-message", (_event, _level, message) => {
+      if (message) {
+        console.error(`[renderer] ${message}`);
+      }
+    });
+    window.webContents.on("preload-error", (_event, preloadPath, error) => {
+      console.error(`[preload] ${preloadPath}: ${error.message}`);
+    });
+  }
+  const devRendererURL = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined;
+  const rendererPath = join(__dirname, "../renderer/index.html");
+  const rendererURL = devRendererURL ?? pathToFileURL(rendererPath).toString();
+  installRendererRecovery(window, {
+    app,
+    load: () => devRendererURL ? window.loadURL(devRendererURL) : window.loadFile(rendererPath),
+    stopTerminals: (ownerID) => terminalSessionManager.stopForOwner(ownerID),
+    recover: () => desktopRecovery.open(),
+    prompt: async () => {
+      const { response } = await dialog.showMessageBox(window, {
+        type: "error",
+        title: "Wuu",
+        message: mainTranslate("rendererRecoveryFailed"),
+        detail: mainTranslate("rendererRecoveryDetail"),
+        buttons: [mainTranslate("reloadWindow"), desktopRecovery.menuItem().label!, mainTranslate("closeWindow")],
+        defaultId: 0,
+        cancelId: 2,
+        noLink: true,
+      });
+      return response === 0 ? "reload" : response === 1 ? "recover" : "close";
+    },
+  });
+  const popover = new NativeBrowserPopover(window);
+  nativeBrowserPopovers.set(window, popover);
+  wireExternalNavigationGuards(window, {
+    rendererURL,
+    openExternal: openExternalNavigation,
+    openWindow: popover.open,
+  });
+
+  if (devRendererURL) {
+    void loadDevelopmentRenderer(window, devRendererURL, app);
+  } else {
+    void window.loadFile(rendererPath);
+  }
+}
+
+function openExternalNavigation(rawURL: unknown): Promise<boolean> {
+  return openExternalURL(rawURL, (url) => shell.openExternal(url));
+}
+
+function resolvedThemeIsDark(): boolean {
+  const preference = getThemePreference();
+  if (preference === "system") return nativeTheme.shouldUseDarkColors;
+  return preference === "dark";
+}
+
+// Keep Chromium's internal color scheme (used by the built-in PDF viewer,
+// form controls, scrollbars, and DevTools) in lockstep with the app-global
+// theme preference. Without this the PDF preview follows the OS theme even
+// when the user has pinned Wuu to light/dark, producing the black PDF chrome
+// seen on dark-mode macOS while the rest of the app stays light.
+function syncNativeThemeSource(): void {
+  const preference = getThemePreference();
+  nativeTheme.themeSource = preference === "system" ? "system" : preference;
+}
+
+// Pre-paint window fill. It is the visible backdrop until the renderer
+// paints, so it follows the stored theme.
+function windowBackgroundColor(): string {
+  if (resolvedThemeIsDark()) return DARK_WINDOW_BACKGROUND;
+  // Match renderer --paper (#ffffff): on Linux the WCO paints over the page
+  // fill, and on macOS the canvas starts at the window edge.
+  if (process.platform !== "win32") return "#ffffff";
+  return DEFAULT_WINDOW_BACKGROUND;
+}
+
+// The window-chrome contract per platform: macOS hides the titlebar and
+// uses renderer-drawn traffic lights over the drag strip (top-left);
+// Windows hides it and lets Chromium draw min/max/close as a controls
+// overlay (top-right — the renderer reserves that corner through the
+// --window-controls-inset-* variables). Linux is frameless: the renderer
+// draws caption buttons in the same white header as app actions so GTK
+// chrome never sits beside Wuu's icons.
+function usesWindowControlsOverlay(): boolean {
+  return process.platform === "win32";
+}
+
+function windowTitlebarHeight(win: BrowserWindow): number {
+  return win === mainWindow && isOnboardingComplete()
+    ? WORKBENCH_TITLEBAR_HEIGHT
+    : DEFAULT_TITLEBAR_HEIGHT;
+}
+
+const macWindowControls = new WeakMap<BrowserWindow, { visible: boolean; x: number; y: number }>();
+
+// AppKit owns fullscreen chrome and will not show buttons at a custom position
+// inside the content area. Hide them there and let the renderer draw its own.
+function applyMacWindowControls(win: BrowserWindow): void {
+  if (process.platform !== "darwin" || win.isDestroyed()) return;
+  const state = macWindowControls.get(win);
+  const visible = state?.visible === true && !win.isFullScreen();
+  win.setWindowButtonVisibility(visible);
+  // Showing the native button container can reset its frame; position it last.
+  if (visible && state) win.setWindowButtonPosition({ x: state.x, y: state.y });
+}
+
+function attachMacWindowControls(win: BrowserWindow): void {
+  if (process.platform !== "darwin") return;
+  const apply = (): void => applyMacWindowControls(win);
+  const sendFullScreen = (): void => {
+    if (!win.isDestroyed()) sendToWindow(win, "wuu:window-full-screen-changed", win.isFullScreen());
+  };
+  apply();
+  win.on("ready-to-show", apply);
+  win.on("show", () => { apply(); sendFullScreen(); });
+  win.on("restore", apply);
+  win.on("enter-full-screen", () => { apply(); sendFullScreen(); });
+  win.on("leave-full-screen", () => { apply(); sendFullScreen(); });
+  win.webContents.on("did-finish-load", () => { macWindowControls.delete(win); apply(); sendFullScreen(); });
+}
+
+function windowFrameOptions(height = DEFAULT_TITLEBAR_HEIGHT): Pick<
+  BrowserWindowConstructorOptions,
+  | "frame"
+  | "titleBarStyle"
+  | "titleBarOverlay"
+  | "autoHideMenuBar"
+> {
+  if (process.platform === "darwin") {
+    return {
+      titleBarStyle: "hidden",
+    };
+  }
+  if (usesWindowControlsOverlay()) {
+    return {
+      titleBarStyle: "hidden",
+      titleBarOverlay: nonMacTitleBarOverlay(height),
+    };
+  }
+  if (process.platform === "linux") {
+    return { frame: false, autoHideMenuBar: true };
+  }
+  return {};
+}
+
+function nonMacTitleBarOverlay(height: number): Electron.TitleBarOverlay {
+  const dark = resolvedThemeIsDark();
+  return {
+    // Track the themed window fill so the button strip reads as part of
+    // the titlebar; symbol colors mirror the --ink text tokens.
+    // On Linux this is --paper white in light theme (see windowBackgroundColor).
+    color: windowBackgroundColor(),
+    symbolColor: dark ? "#e4e6e8" : "#1f2328",
+    height,
+  };
+}
+
+// The theme preference is app-global state owned by the main process.
+// Every themed content window (main + pop-outs) registers here; a theme
+// change — explicit preference or an OS dark-mode flip while on
+// "system" — re-pushes the native chrome (Windows controls overlay,
+// non-macOS window background fill) to all of them, and the new
+// preference is broadcast so each renderer re-applies data-theme.
+const themedChromeWindows = new Set<BrowserWindow>();
+
+function registerThemedChromeWindow(win: BrowserWindow): void {
+  themedChromeWindows.add(win);
+  attachMacWindowControls(win);
+  const sendMaximized = (): void => {
+    if (win.isDestroyed()) return;
+    sendToWindow(win, "wuu:window-maximized-changed", win.isMaximized());
+  };
+  win.on("maximize", sendMaximized);
+  win.on("unmaximize", sendMaximized);
+  win.on("closed", () => {
+    themedChromeWindows.delete(win);
+  });
+}
+
+function syncThemedWindowChrome(): void {
+  const background = windowBackgroundColor();
+  for (const win of themedChromeWindows) {
+    if (win.isDestroyed()) continue;
+    // Windows redraws the controls overlay only when told to, and every
+    // platform keeps the creation-time backgroundColor until re-set —
+    // both must follow the theme or the window frame lags the content.
+    win.setBackgroundColor(background);
+    if (usesWindowControlsOverlay()) {
+      win.setTitleBarOverlay(nonMacTitleBarOverlay(windowTitlebarHeight(win)));
+    }
+  }
+}
+
+function broadcastThemePreference(): void {
+  broadcastToAll("wuu:theme-preference-changed", getThemePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
+}
+
+function broadcastLanguagePreference(): void {
+  broadcastToAll("wuu:language-preference-changed", getLanguagePreference());
+  systemPermissions.refreshAppearance(resolvedThemeIsDark());
+}
+
+function syncThemeAcrossWindows(): void {
+  syncNativeThemeSource();
+  syncThemedWindowChrome();
+  observationCoordinator.setAppearance(resolvedThemeIsDark());
+  broadcastThemePreference();
+}
+
+type PopOutWindowParams =
+  | {
+      kind: "thread";
+      threadID: string;
+      context: RuntimeContext;
+      sourceWindow?: BrowserWindow | null;
+    }
+  | {
+      kind: "draft";
+      context: RuntimeContext;
+      sourceWindow?: BrowserWindow | null;
+    };
+
+function createPopOutWindow(params: PopOutWindowParams): BrowserWindow {
+  // Plan §2.2 #1 (vs Reviewer S1): cursor position is read by main
+  // process via `screen.getCursorScreenPoint()` so the preload bridge
+  // never sees the `screen` Electron API. Combined with `getBounds()`
+  // we compute the new window position without exposing platform APIs
+  // to the renderer.
+  // Cast: some Electron typings bundle cursor methods on the namespace
+  // value rather than the `Screen` interface; both exist at runtime.
+  const cursor = (screen as unknown as { getCursorScreenPoint(): { x: number; y: number } }).getCursorScreenPoint();
+  const display = (screen as unknown as { getDisplayNearestPoint(point: { x: number; y: number }): { workArea: { x: number; y: number; width: number; height: number } } }).getDisplayNearestPoint(cursor);
+  const workArea = display.workArea;
+  const sourceBounds = params.sourceWindow?.isDestroyed()
+    ? undefined
+    : params.sourceWindow?.getBounds();
+  const winWidth = Math.max(
+    720,
+    Math.min(sourceBounds?.width ?? 800, workArea.width),
+  );
+  const winHeight = Math.max(
+    560,
+    Math.min(sourceBounds?.height ?? 600, workArea.height),
+  );
+  const x = Math.max(
+    workArea.x,
+    Math.min(cursor.x - winWidth / 2, workArea.x + workArea.width - winWidth),
+  );
+  const y = Math.max(
+    workArea.y,
+    Math.min(cursor.y - 20, workArea.y + workArea.height - winHeight),
+  );
+
+  const placeholderTitle =
+    params.kind === "thread"
+      ? `wuu · ${params.threadID.slice(0, 8)}`
+      : `wuu · ${mainTranslate("conversation")}`;
+  const win = new BrowserWindow({
+    width: winWidth,
+    height: winHeight,
+    x,
+    y,
+    ...windowFrameOptions(),
+    backgroundColor: windowBackgroundColor(),
+    title: placeholderTitle,
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webviewTag: true,
+      scrollBounce: process.platform === "darwin",
+      // Enables Chromium's built-in PDF viewer for workspace PDF previews.
+      plugins: true,
+      ...appShellWebPreferences(app.isPackaged),
+    },
+  });
+  const windowID = win.webContents.id;
+  registerThemedChromeWindow(win);
+
+  windowRegistry.registerWindow(win, "popped-out", {
+    workdir: params.context.cwd,
+    runtimeContext: params.context,
+    threadID: params.kind === "thread" ? params.threadID : undefined,
+  });
+  windowRegistry.attachResizeHandlers(win, (phase) => {
+    handleNativeWindowResizePhase(phase);
+  });
+  if (params.kind === "thread") {
+    windowRegistry.setThreadWindow(params.threadID, windowID);
+  }
+  win.on("closed", () => {
+    unregisterWindow(windowID);
+  });
+
+  loadRenderer(win);
+  return win;
+}
+
+function createAccountWindow(context: RuntimeContext): void {
+  const existing = windowRegistry.allWindows().find(win =>
+    !win.isDestroyed() && windowRegistry.roleForWindow(win.webContents.id) === "account");
+  if (existing) {
+    if (existing.isMinimized()) existing.restore();
+    existing.show(); existing.focus();
+    return;
+  }
+  const { workArea } = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
+  const win = new BrowserWindow({
+    width: Math.min(640, workArea.width),
+    height: Math.min(780, workArea.height),
+    minWidth: Math.min(440, workArea.width),
+    minHeight: Math.min(560, workArea.height),
+    show: false,
+    ...windowFrameOptions(),
+    backgroundColor: windowBackgroundColor(),
+    title: "Wuu",
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      additionalArguments: ["--wuu-account-window"],
+      ...appShellWebPreferences(app.isPackaged),
+    },
+  });
+  const id = win.webContents.id;
+  windowRegistry.registerWindow(win, "account", { runtimeContext: context, workdir: context.cwd });
+  registerThemedChromeWindow(win);
+  win.once("ready-to-show", () => { win.show(); win.focus(); });
+  win.on("closed", () => unregisterWindow(id));
+  loadRenderer(win);
+}
+
+// Brings the main window forward, creating it if the user closed it.
+function revealMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+    return;
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+// Attaches the main window's renderer to the pet command relay once it
+// subscribes, and detaches it when that page navigates away or dies.
+function attachCodexPetCommandTarget(contents: WebContents): void {
+  const existing = codexPetCommandTargets.get(contents.id);
+  if (existing) {
+    codexPetCommandRelay.attach(existing);
+    return;
+  }
+  const target: CodexPetCommandTarget = {
+    send: (channel, command) => {
+      if (!contents.isDestroyed()) contents.send(channel, command);
+    },
+  };
+  const detach = () => {
+    if (codexPetCommandTargets.get(contents.id) !== target) return;
+    codexPetCommandTargets.delete(contents.id);
+    contents.off("did-start-navigation", navigation);
+    contents.off("render-process-gone", detach);
+    codexPetCommandRelay.detach(target);
+    if (!codexPetCommandRelay.attached) codexPetActivity.setRendererAttached(false);
+  };
+  const navigation = (details: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>) => {
+    if (details.isMainFrame && !details.isSameDocument) detach();
+  };
+  codexPetCommandTargets.set(contents.id, target);
+  contents.on("did-start-navigation", navigation);
+  contents.on("render-process-gone", detach);
+  contents.once("destroyed", detach);
+  codexPetCommandRelay.attach(target);
+  codexPetActivity.setRendererAttached(true);
+}
+
+function createWindow(options: { inactive?: boolean } = {}): void {
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const onboardingComplete = isOnboardingComplete();
+  const restoredBounds = onboardingComplete
+    ? loadMainWindowBounds(screen.getAllDisplays())
+    : null;
+  const defaultSize = onboardingComplete
+    ? computeDefaultMainWindowBounds(primaryDisplay.workArea)
+    : computeOnboardingWindowBounds(primaryDisplay.workArea);
+  const width = restoredBounds?.width ?? defaultSize.width;
+  const height = restoredBounds?.height ?? defaultSize.height;
+
+  const windowOptions: BrowserWindowConstructorOptions = {
+    width,
+    height,
+    show: !options.inactive,
+    resizable: onboardingComplete,
+    ...windowFrameOptions(onboardingComplete ? WORKBENCH_TITLEBAR_HEIGHT : DEFAULT_TITLEBAR_HEIGHT),
+    backgroundColor: windowBackgroundColor(),
+    webPreferences: {
+      preload: join(__dirname, "../preload/index.cjs"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webviewTag: true,
+      additionalArguments: ENABLE_EMBEDDED_BROWSER ? [] : ["--wuu-browser-disabled"],
+      // AppKit owns trackpad contact, resistance, and release on macOS.
+      // Individual conversation scrollers opt in with overscroll-behavior.
+      scrollBounce: process.platform === "darwin",
+      // Enables Chromium's built-in PDF viewer for workspace PDF previews.
+      plugins: true,
+      ...appShellWebPreferences(app.isPackaged),
+    },
+  };
+  if (restoredBounds) {
+    windowOptions.x = restoredBounds.x;
+    windowOptions.y = restoredBounds.y;
+  }
+
+  mainWindow = new BrowserWindow(windowOptions);
+  registerThemedChromeWindow(mainWindow);
+
+  windowRegistry.registerWindow(mainWindow, "main");
+  const win = mainWindow;
+  const windowID = win.webContents.id;
+  appContextOwnerGenerations.set(windowID, 0);
+  const invalidateAppContextOwner = (): void => {
+    const generation = appContextOwnerGenerations.get(windowID);
+    if (generation === undefined) return;
+    appContextOwnerGenerations.set(windowID, generation + 1);
+    appContextCapture.invalidateOwner(windowID);
+  };
+  win.webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) invalidateAppContextOwner();
+  });
+  win.webContents.on("render-process-gone", invalidateAppContextOwner);
+  win.webContents.once("destroyed", invalidateAppContextOwner);
+  win.on("blur", () => appContextCapture.setShortcutRecording(false));
+  win.on("close", invalidateAppContextOwner);
+  win.once("closed", () => { invalidateAppContextOwner(); appContextOwnerGenerations.delete(windowID); });
+
+  windowRegistry.attachResizeHandlers(win, (phase) => {
+    handleNativeWindowResizePhase(phase, win);
+  });
+  if (options.inactive) win.once("ready-to-show", () => win.showInactive());
+  win.on("close", () => {
+    // Last-write-wins: cancel any pending debounce and persist synchronously
+    // before the window is destroyed.
+    if (mainWindowBoundsSaveTimer) {
+      clearTimeout(mainWindowBoundsSaveTimer);
+      mainWindowBoundsSaveTimer = undefined;
+    }
+    persistMainWindowBoundsNow(win);
+  });
+  win.on("closed", () => {
+    if (windowResizeEndTimer) {
+      clearTimeout(windowResizeEndTimer);
+      windowResizeEndTimer = undefined;
+    }
+    if (mainWindowBoundsSaveTimer) {
+      clearTimeout(mainWindowBoundsSaveTimer);
+      mainWindowBoundsSaveTimer = undefined;
+    }
+    windowResizeState = false;
+    observationCoordinator.setActiveThread(undefined);
+    observationCoordinator.closeDesktopDocked();
+    unregisterWindow(windowID);
+    mainWindow = null;
+  });
+  loadRenderer(win);
+}
+
+async function clearOversizedDevCaches(): Promise<void> {
+  if (app.isPackaged || process.env.WUU_DESKTOP_DISABLE_DEV_CACHE_CLEANUP === "1") {
+    return;
+  }
+  const userData = app.getPath("userData");
+  const totalBytes = await cacheDirectoriesSize(userData, DEV_CACHE_DIRECTORIES);
+  if (totalBytes < DEV_CACHE_CLEANUP_THRESHOLD_BYTES) {
+    return;
+  }
+  try {
+    await Promise.all([
+      electronSession.defaultSession.clearCache(),
+      electronSession.fromPartition("persist:wuu-browser").clearCache(),
+    ]);
+    await Promise.all(
+      DEV_CACHE_DIRECTORIES.map((dir) =>
+        rm(join(userData, dir), { recursive: true, force: true }),
+      ),
+    );
+    console.info(
+      `[desktop] cleared oversized dev cache (${Math.round(totalBytes / 1024 / 1024)} MB)`,
+    );
+  } catch (error) {
+    console.warn(
+      `[desktop] failed to clear oversized dev cache: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function cacheDirectoriesSize(root: string, names: string[]): Promise<number> {
+  let total = 0;
+  for (const name of names) {
+    total += await directorySize(join(root, name));
+  }
+  return total;
+}
+
+async function directorySize(path: string): Promise<number> {
+  let info;
+  try {
+    info = await stat(path);
+  } catch {
+    return 0;
+  }
+  if (!info.isDirectory()) {
+    return info.size;
+  }
+  let total = 0;
+  let entries;
+  try {
+    entries = await readdir(path, { withFileTypes: true });
+  } catch {
+    return 0;
+  }
+  for (const entry of entries) {
+    total += await directorySize(join(path, entry.name));
+  }
+  return total;
+}
+
+let desktopRecovery: ReturnType<typeof createDesktopRecovery>;
+let desktopUpdates: ReturnType<typeof installDesktopUpdates>;
+
+// Electron manages login items on macOS and Windows only.
+function loginItemsSupported(): boolean {
+  return process.platform === "darwin" || process.platform === "win32";
+}
+
+function currentDesktopPreferences(): DesktopPreferences {
+  return {
+    ...getDesktopPreferences(),
+    ...(loginItemsSupported() ? { open_at_login: app.getLoginItemSettings().openAtLogin } : {}),
+  };
+}
+app.whenReady().then(async () => {
+  desktopRecovery = createDesktopRecovery({
+    preloadPath: join(__dirname, "../preload/recovery.cjs"),
+    mode: "normal",
+    shutdown: prepareToQuit,
+    reload: async () => {
+      const target = mainWindow;
+      if (!target || target.isDestroyed()) throw new Error("Application window unavailable");
+      const url = !app.isPackaged ? process.env.ELECTRON_RENDERER_URL : undefined;
+      if (url) await target.loadURL(url);
+      else await target.loadFile(join(__dirname, "../renderer/index.html"));
+    },
+  });
+  Menu.setApplicationMenu(Menu.buildFromTemplate(productionApplicationMenuTemplate(process.platform, undefined, desktopRecovery.menuItem())));
+  const presentationFrames = new PresentationFrameCapture(contents => windowRegistry.allWindows().some(window => window.webContents === contents));
+  ipcMain.handle("wuu:presentation-frame", event => presentationFrames.capture(event));
+  ipcMain.handle("wuu:recovery-open", event => {
+    if (event.senderFrame !== event.sender.mainFrame || !windowRegistry.allWindows().some(window => window.webContents === event.sender)) {
+      throw new Error("Application window required");
+    }
+    return desktopRecovery.open();
+  });
+  await configureBackendProxy(getDesktopPreferences());
+  if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
+  setMainLocale(resolveMainLocale(getLanguagePreference(), app.getLocale()));
+  installProductionAppShellGuards({
+    isPackaged: app.isPackaged,
+    setApplicationMenu: () => {
+      Menu.setApplicationMenu(
+        Menu.buildFromTemplate(productionApplicationMenuTemplate(process.platform, undefined, desktopRecovery.menuItem())),
+      );
+    },
+    onWebContentsCreated: (listener) => {
+      app.on("web-contents-created", (_event, contents) => {
+        listener({
+          onBeforeInputEvent: (handler) => {
+            contents.on("before-input-event", (event, value) => {
+              if (!webWorkspaceHost.handleShellInput(contents, event, value)) handler(event, value);
+            });
+          },
+          onDevToolsOpened: (handler) => {
+            contents.on("devtools-opened", handler);
+          },
+          closeDevTools: () => contents.closeDevTools(),
+        });
+      });
+    },
+  });
+  await clearOversizedDevCaches();
+  await removeLegacyDesktopCliLink().catch(() => false);
+  projectManager.load();
+  registerRenderableFileProtocol(artifactSources);
+  registerPluginModuleProtocol();
+  // Sort permission/download traffic on the shared browser partition by
+  // webContents ownership: only agent-driven views are denied sensitive
+  // capabilities, the user's own <webview> on the same partition is untouched.
+  if (ENABLE_EMBEDDED_BROWSER) {
+    const browserSession = electronSession.fromPartition(BROWSER_PARTITION);
+    try {
+      if (await configureBrowserProxy(browserSession)) {
+        console.info("[desktop] embedded browser proxy enabled via WUU_BROWSER_PROXY");
+      }
+    } catch (error) {
+      // A stale or unavailable proxy must not prevent the desktop shell from
+      // starting. The browser falls back to its normal connection behavior.
+      console.warn(
+        `[desktop] failed to configure embedded browser proxy: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    installBrowserSessionHandlers(browserSession, browserHostCoordinator, webWorkspaceHost);
+    if (process.env.WUU_SAFE_MODE === "1") {
+      console.info("[desktop] embedded-browser extensions disabled by safe mode");
+    } else {
+      browserExtensionManager = new BrowserExtensionManager(browserSession);
+      browserExtensionWindows = new BrowserExtensionWindows(browserSession, browserExtensionManager);
+      try {
+        await browserExtensionManager.initialize();
+      } catch (error) {
+        console.warn(
+          `[desktop] failed to initialize embedded-browser extensions: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+  // Pick up the user's chosen size before the pet window is created, so the
+  // initial BrowserWindow and the inline data: URL are sized right the first
+  // time. setSize is a no-op when the persisted size equals the default. A
+  // persisted continuous scale (edge-drag resize) overrides the preset — it
+  // must be applied after setSize, which clears any scale override.
+  // Restoration must not persist a preset change and erase the saved scale.
+  codexPetWindowManager.setSize(getCodexPetSize(), false);
+  const persistedPetScale = getCodexPetScale();
+  if (persistedPetScale !== undefined) {
+    codexPetWindowManager.setScale(persistedPetScale);
+  }
+  codexPetWindowManager.sync(codexPetsSnapshot());
+
+  ipcMain.handle(
+    "wuu:pop-out-session",
+    (event, params: PopOutSessionParams) => {
+      const context = params?.context ?? runtimeContextForEvent(event);
+      const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+      if (params?.kind === "draft") {
+        const win = createPopOutWindow({
+          kind: "draft",
+          context,
+          sourceWindow,
+        });
+        return { windowID: win.webContents.id };
+      }
+      const threadID =
+        typeof params?.threadID === "string" ? params.threadID.trim() : "";
+      if (!threadID) {
+        throw new Error("threadID is required");
+      }
+      const existingWindowID = windowRegistry.threadHostWindowID(threadID);
+      const existing = windowRegistry.popOutWindowForThread(threadID);
+      if (existing && !existing.isDestroyed() && !existing.webContents.isDestroyed()) {
+        if (existing.isMinimized()) {
+          existing.restore();
+        }
+        existing.show();
+        existing.focus();
+        return { windowID: existing.webContents.id };
+      }
+      if (existing) {
+        windowRegistry.clearThreadWindow(threadID);
+        if (existingWindowID !== undefined) {
+          unregisterWindow(existingWindowID);
+        }
+      }
+      const win = createPopOutWindow({
+        kind: "thread",
+        threadID,
+        context,
+        sourceWindow,
+      });
+      return { windowID: win.webContents.id };
+    },
+  );
+  ipcMain.handle(
+    "wuu:pop-out-closed",
+    (_event, params: { threadID: string }) => {
+      const win = windowRegistry.popOutWindowForThread(params.threadID);
+      windowRegistry.clearThreadWindow(params.threadID);
+      if (win && !win.isDestroyed()) win.close();
+      return { ok: true };
+    },
+  );
+  // Sync bootstrap for popped-out windows. This returns only the
+  // main-process-owned window identity; conversation data loads through
+  // normal async IPC after React starts. M1 parity: keep this channel
+  // mirrored in preload.ts and always set event.returnValue.
+  ipcMain.on(
+    "wuu:pop-out-init",
+    (event) => {
+      const threadID = windowRegistry.threadForWindow(event.sender.id);
+      const context = windowRegistry.runtimeContextForWindow(event.sender.id);
+      event.returnValue = {
+        kind: context ? (threadID ? "thread" : "draft") : null,
+        threadID: threadID ?? null,
+        context: context ?? null,
+      } satisfies PopOutInitResult;
+    },
+  );
+  ipcMain.handle("wuu:cua-active-thread", (event, threadID?: string) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!senderWindow || senderWindow.isDestroyed()) return;
+    // Renderer focus and React mount are independent. Rejecting the initial
+    // thread sync while focus is still settling permanently suppresses PiP for
+    // that session because no later focus event is guaranteed.
+    observationCoordinator.setActiveThread(threadID);
+  });
+  ipcMain.handle("wuu:running-threads-snapshot", () =>
+    appServerClientPool.runningThreadsSnapshot(),
+  );
+  ipcMain.handle("wuu:project-list", () => {
+    const result = projectManager.list();
+    // Open the selected workspace first. Other workspaces start on selection;
+    // prewarming them here duplicates state admission while the shell is loading.
+    if (result.active_context) {
+      appServerClientPool.noteContextUsed(result.active_context);
+      appServerClientPool.prewarmContexts([result.active_context]);
+    }
+    return result;
+  });
+  ipcMain.handle("wuu:project-recover-unavailable", (event) => {
+    if (windowRegistry.runtimeContextForWindow(event.sender.id)) return undefined;
+    return projectManager.recoverUnavailableProject();
+  });
+  ipcMain.handle(
+    "wuu:project-select",
+    (_event, projectIDToSelect: string) => {
+      const result = projectManager.select(projectIDToSelect);
+      // Kick the target runtime's spawn off the moment the user clicks,
+      // before the renderer's follow-up listThreads/thread-start requests
+      // arrive, so the cold-start wait overlaps with the IPC round-trips
+      // instead of being serialized after them.
+      if (result.active_context) {
+        appServerClientPool.noteContextUsed(result.active_context);
+        appServerClientPool.prewarmContexts([result.active_context]);
+      }
+      return result;
+    },
+  );
+  ipcMain.handle("wuu:project-remove", (_event, projectIDToRemove: string) =>
+    projectManager.remove(projectIDToRemove),
+  );
+  ipcMain.handle(
+    "wuu:project-cleanup-state",
+    (_event, projectId: string, projectPath: string) => {
+      // The removed workspace may still have a pooled app server; dispose
+      // it first so nothing recreates runtime state during the cleanup.
+      if (typeof projectPath === "string" && projectPath.trim() !== "") {
+        appServerClientPool.disposeWorkdirClient(projectPath);
+      }
+      return appServerClientPool.request<{
+        state_dir: string;
+        removed: boolean;
+        data_archived: boolean;
+      }>("workspace/state/cleanup", {
+        workspace_id: projectId,
+      });
+    },
+  );
+  ipcMain.handle(
+    "wuu:project-select-none",
+    (_event, fresh?: boolean, cwd?: string) => {
+      const result = projectManager.selectNoProject(Boolean(fresh), cwd);
+      if (result.active_context) {
+        appServerClientPool.noteContextUsed(result.active_context);
+        appServerClientPool.prewarmContexts([result.active_context]);
+      }
+      return result;
+    },
+  );
+  ipcMain.handle("wuu:git-status", (event, root?: string) =>
+    gitServiceForEvent(event).status({}, root),
+  );
+  ipcMain.handle("wuu:git-changes", (event, root?: string) =>
+    gitServiceForEvent(event).changes(root),
+  );
+  ipcMain.handle("wuu:git-file-diff", (event, path: string, root?: string) =>
+    gitServiceForEvent(event).fileDiff(path, root),
+  );
+  ipcMain.handle("wuu:git-action-busy", (event, root?: string) =>
+    gitServiceForEvent(event).actionBusy(root),
+  );
+  ipcMain.handle("wuu:git-checkout-branch", (event, branch: string, root?: string) =>
+    gitServiceForEvent(event).checkoutBranch(branch, root),
+  );
+  ipcMain.handle("wuu:git-create-checkout-branch", (event, branch: string, root?: string) =>
+    gitServiceForEvent(event).createCheckoutBranch(branch, root),
+  );
+  ipcMain.handle("wuu:git-commit", (event, params: GitCommitParams, root?: string) =>
+    gitServiceForEvent(event).commit(params ?? {}, root),
+  );
+  ipcMain.handle(
+    "wuu:git-commit-message",
+    (event, params: GitCommitParams, root?: string) =>
+      gitServiceForEvent(event).commitMessage(params ?? {}, root),
+  );
+  ipcMain.handle("wuu:git-create-pr", (event, params: GitPullRequestParams, root?: string) =>
+    gitServiceForEvent(event).createPullRequest(params ?? {}, root),
+  );
+  registerWorkspaceFileWatches(workspaceFilesForEvent);
+  ipcMain.handle("wuu:file-tree-list", (event, root?: string) =>
+    workspaceFilesForEvent(event).fileTreeList(root),
+  );
+  ipcMain.handle(
+    "wuu:file-directory-list",
+    async (event, path?: string, root?: string) => {
+      const owner = event.sender.id;
+      if (!directoryReaderOwners.has(owner)) {
+        directoryReaderOwners.set(owner, 0);
+        event.sender.on("render-process-gone", () => {
+          workspaceDirectoryReader.cancelOwner(owner);
+          directoryReaderOwners.set(owner, (directoryReaderOwners.get(owner) ?? 0) + 1);
+        });
+        event.sender.once("destroyed", () => {
+          workspaceDirectoryReader.cancelOwner(owner);
+          directoryReaderOwners.delete(owner);
+        });
+      }
+      const generation = directoryReaderOwners.get(owner);
+      const boundContext = windowRegistry.runtimeContextForWindow(owner);
+      const context = boundContext ? { ...boundContext } : await projectManager.readRuntimeContext();
+      if (event.sender.isDestroyed() || directoryReaderOwners.get(owner) !== generation) {
+        throw Object.assign(new Error("directory read owner was destroyed"), { name: "AbortError" });
+      }
+      return workspaceDirectoryReader.list(root ? resolve(root) : context.cwd, path, owner);
+    },
+  );
+  ipcMain.handle("wuu:file-read", (event, path: string, root?: string) =>
+    workspaceFilesForEvent(event).readFile(path, root),
+  );
+  ipcMain.handle(
+    "wuu:file-write",
+    (event, params: WorkspaceFileSaveParams, root?: string) =>
+      workspaceFilesForEvent(event).writeFile(params, root),
+  );
+  ipcMain.handle(
+    "wuu:file-reference-resolve",
+    (event, reference: string, root?: string) =>
+      workspaceFilesForEvent(event).resolveFileReference(reference, root),
+  );
+  ipcMain.handle(
+    "wuu:terminal-start",
+    (event, params?: TerminalSessionStartParams) =>
+      terminalSessionManager.startInContext(
+        runtimeContextForEvent(event),
+        params,
+        event.sender.id,
+      ),
+  );
+  ipcMain.handle("wuu:terminal-write", (event, id: string, data: string) =>
+    terminalSessionManager.write(id, data, event.sender.id),
+  );
+  ipcMain.handle(
+    "wuu:terminal-resize",
+    (event, id: string, cols: number, rows: number) =>
+      terminalSessionManager.resize(id, cols, rows, event.sender.id),
+  );
+  ipcMain.handle("wuu:terminal-stop", (event, id: string) =>
+    terminalSessionManager.stop(id, event.sender.id),
+  );
+  ipcMain.handle("wuu:managed-process-list", (event, threadId: string) =>
+    appServerRequest<ManagedProcessListResult>(event, "process/list", { thread_id: threadId }),
+  );
+  ipcMain.handle("wuu:process-cancel-notifications", (event, threadId: string, processId: string) =>
+    appServerRequest<ManagedProcessActionResult>(event, "process/cancel-notifications", { thread_id: threadId, process_id: processId }),
+  );
+  ipcMain.handle("wuu:managed-process-read", (event, params: ManagedProcessReadParams) =>
+    appServerRequest<ManagedProcessReadResult>(event, "process/read", params),
+  );
+  ipcMain.handle(
+    "wuu:managed-process-write",
+    (event, threadId: string, processId: string, input: string) =>
+      appServerRequest<ManagedProcessWriteResult>(event, "process/write", {
+        thread_id: threadId,
+        process_id: processId,
+        input,
+      }),
+  );
+  ipcMain.handle(
+    "wuu:managed-process-resize",
+    (event, threadId: string, processId: string, cols: number, rows: number) =>
+      appServerRequest<ManagedProcessActionResult>(event, "process/resize", {
+        thread_id: threadId,
+        process_id: processId,
+        cols,
+        rows,
+      }),
+  );
+  ipcMain.handle("wuu:managed-process-stop", (event, threadId: string, processId: string) =>
+    appServerRequest<ManagedProcessActionResult>(event, "process/stop", {
+      thread_id: threadId,
+      process_id: processId,
+    }),
+  );
+  ipcMain.handle("wuu:project-choose-folder", async () => {
+    const projectPath = await showProjectDirectoryDialog({
+      title: mainTranslate("chooseExistingFolder"),
+      buttonLabel: mainTranslate("useFolder"),
+      properties: ["openDirectory"],
+    });
+    if (!projectPath) {
+      return projectManager.list();
+    }
+    return projectManager.add(projectPath);
+  });
+  ipcMain.handle("wuu:project-create-blank", async () => {
+    const projectPath = await showProjectDirectoryDialog({
+      title: mainTranslate("createBlankProject"),
+      buttonLabel: mainTranslate("createProject"),
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (!projectPath) {
+      return projectManager.list();
+    }
+    return projectManager.add(projectPath);
+  });
+  ipcMain.handle(
+    "wuu:project-relocate",
+    async (_event, projectIDToRelocate: string) => {
+      const projectPath = await showProjectDirectoryDialog({
+        title: mainTranslate("relocateWorkspace"),
+        buttonLabel: mainTranslate("relocateHere"),
+        properties: ["openDirectory"],
+      });
+      if (!projectPath) {
+        return projectManager.list();
+      }
+      return projectManager.relocate(projectIDToRelocate, projectPath);
+    },
+  );
+  ipcMain.handle("wuu:initialize", async (event, rendererRequestId?: number) => {
+    const owner = desktopActivationOwner(event);
+    if (Number.isSafeInteger(rendererRequestId) && rendererRequestId! > 0) owner.rendererRequestId = Math.max(owner.rendererRequestId, rendererRequestId!);
+    const context = runtimeContextForEvent(event);
+    const result = await owner.initialize(context.cwd, appServerClientPool.bindContextRequest(context), desktopInitializeParams());
+    if (result.core) {
+      cachedCoreBuildInfo = result.core;
+    }
+    return result;
+  });
+  ipcMain.handle("wuu:user-question-list", (event, threadId?: string, context?: RuntimeContext) =>
+    appServerRequest<UserQuestionListResult>(event, "user-question/list", {
+      thread_id: threadId,
+    }, context));
+  ipcMain.handle(
+    "wuu:user-question-answer",
+    (event, requestId: string, answer: UserQuestionAnswer, context?: RuntimeContext) =>
+      appServerRequest<UserQuestionResolveResult>(event, "user-question/respond", {
+        request_id: requestId,
+        answer,
+      }, context),
+  );
+  ipcMain.handle("wuu:user-question-cancel", (event, requestId: string, context?: RuntimeContext) =>
+    appServerRequest<UserQuestionResolveResult>(event, "user-question/cancel", {
+      request_id: requestId,
+    }, context));
+  ipcMain.handle("wuu:user-question-hold", (event, requestId: string, context?: RuntimeContext) =>
+    appServerRequest<UserQuestionResolveResult>(event, "user-question/hold", {
+      request_id: requestId,
+    }, context));
+  ipcMain.handle(
+    "wuu:system-notification",
+    (event, params: SystemNotificationParams): SystemNotificationResult => {
+      // Linux uses Electron's libnotify backend; Windows toast registration
+      // still needs its own integration.
+      if ((process.platform !== "darwin" && process.platform !== "linux") || !Notification.isSupported()) {
+        return { shown: false };
+      }
+      const preferences = getDesktopPreferences();
+      if ((params.category === "turn_completed" && !preferences.notify_turn_completed) ||
+        (params.category === "question" && !preferences.notify_questions)) {
+        return { shown: false };
+      }
+      const win = BrowserWindow.fromWebContents(event.sender);
+      // The in-app surface already shows the event while the window has
+      // focus; only reach out of the app when the user is elsewhere.
+      if (win && !win.isDestroyed() && win.isFocused()) {
+        return { shown: false };
+      }
+      const notification = new Notification({
+        title: params.title,
+        body: params.body,
+        silent: !preferences.notification_sound,
+      });
+      let failedToShow = false;
+      activeSystemNotifications.add(notification);
+      notification.on("close", () => {
+        activeSystemNotifications.delete(notification);
+      });
+      notification.on("failed", () => {
+        failedToShow = true;
+        activeSystemNotifications.delete(notification);
+      });
+      notification.on("click", () => {
+        if (win && !win.isDestroyed()) {
+          if (win.isMinimized()) {
+            win.restore();
+          }
+          win.show();
+          win.focus();
+        }
+        activeSystemNotifications.delete(notification);
+      });
+      notification.show();
+      return { shown: !failedToShow };
+    },
+  );
+  ipcMain.handle("wuu:desktop-update-state", () => desktopUpdates?.state ?? { kind: "unsupported" });
+  ipcMain.handle("wuu:desktop-update-download", event => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Updates are available from Wuu windows only.");
+    }
+    return desktopUpdates?.download();
+  });
+  ipcMain.handle("wuu:desktop-update-restart", event => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Updates are available from Wuu windows only.");
+    }
+    return desktopUpdates?.restart();
+  });
+  ipcMain.handle("wuu:desktop-update-check", event => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Updates are available from Wuu windows only.");
+    }
+    return desktopUpdates?.check();
+  });
+  ipcMain.handle("wuu:desktop-preferences-get", () => currentDesktopPreferences());
+  ipcMain.handle("wuu:desktop-preferences-update", (_event, patch: unknown) => {
+    if (typeof patch !== "object" || patch === null || Array.isArray(patch)) throw new Error("Invalid desktop preferences");
+    const { open_at_login: openAtLogin, ...stored } = patch as Partial<DesktopPreferences>;
+    if (openAtLogin !== undefined) {
+      if (!loginItemsSupported() || typeof openAtLogin !== "boolean") throw new Error("Open at login is unavailable");
+      app.setLoginItemSettings({ openAtLogin });
+    }
+    updateDesktopPreferences(stored);
+    const next = currentDesktopPreferences();
+    broadcastToAll("wuu:desktop-preferences-changed", next);
+    return next;
+  });
+  ipcMain.handle("wuu:desktop-folder-open", async (_event, folder: unknown) => {
+    if (folder !== "data" && folder !== "logs") throw new Error("Unknown folder");
+    const path = folder === "data" ? wuuHomePath() : join(wuuHomePath(), "log");
+    await mkdir(path, { recursive: true });
+    const failure = await shell.openPath(path);
+    if (failure) throw new Error(failure);
+  });
+  ipcMain.handle("wuu:build-info", (): BuildInfoResult => ({
+    core: cachedCoreBuildInfo,
+    desktop: DESKTOP_BUILD_INFO,
+  }));
+  ipcMain.handle("wuu:text-polish", (event, text: string) =>
+    appServerRequest<TextPolishResult>(event, "text/polish", { text }),
+  );
+  ipcMain.handle("wuu:context-menu-show", (event, request) => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Context menus are available from Wuu windows only.");
+    }
+    return showContextMenu(event.sender, request);
+  });
+  ipcMain.handle("wuu:context-menu-dismiss", (event, token: string) => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) return;
+    dismissContextMenu(event.sender, token);
+  });
+  ipcMain.handle("wuu:artifact-acquire", acquireArtifactSource);
+  ipcMain.handle("wuu:artifact-release", (event, leaseId: string) => {
+    artifactSources.release(leaseId, event.sender.id);
+  });
+  ipcMain.handle("wuu:artifact-save", async (event, name: string, source: string) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    if (!parent) throw new Error("Artifact window is no longer available");
+    if (source.startsWith("wuu-artifact:") && !artifactSources.owns(source, event.sender.id)) throw new Error("Artifact source does not belong to this document");
+    await saveArtifactFile(parent, event.sender.session, name, source);
+  });
+  ipcMain.handle("wuu:artifact-show-menu", async (event, input: ArtifactItemMenuParams) => {
+    const parent = BrowserWindow.fromWebContents(event.sender);
+    const sourceFrame = event.senderFrame;
+    if (!parent || parent.isDestroyed() || !sourceFrame || sourceFrame !== event.sender.mainFrame) {
+      throw new Error("Artifact window is no longer available");
+    }
+    if (!input || typeof input.threadId !== "string" || !input.threadId || typeof input.uri !== "string") {
+      throw new Error("Invalid artifact reference");
+    }
+    let navigated = false;
+    const onNavigation = (details: { isMainFrame: boolean; isSameDocument: boolean }): void => {
+      if (details.isMainFrame && !details.isSameDocument) navigated = true;
+    };
+    const isCurrentSource = (): boolean => !navigated && !parent.isDestroyed()
+      && !event.sender.isDestroyed() && !sourceFrame.isDestroyed() && event.sender.mainFrame === sourceFrame;
+    const onProcessGone = (): void => { navigated = true; };
+    event.sender.on("did-start-navigation", onNavigation);
+    event.sender.on("render-process-gone", onProcessGone);
+    try {
+      const lease = await acquireArtifactSource(event, input);
+      try {
+        if (!isCurrentSource()) return { action: "none" };
+        return await showArtifactItemMenu(parent, lease, artifactSources, isCurrentSource);
+      } finally { artifactSources.release(lease.leaseId); }
+    } finally {
+      event.sender.removeListener("did-start-navigation", onNavigation);
+      event.sender.removeListener("render-process-gone", onProcessGone);
+    }
+  });
+  ipcMain.handle("wuu:open-external", async (_event, url: string) => {
+    await openExternalNavigation(url);
+  });
+  ipcMain.handle("wuu:config-codex-credentials", (event, provider: string) =>
+    appServerRequest(event, "config/codex/credentials", { provider }),
+  );
+  ipcMain.handle("wuu:config-codex-models", (event, provider?: string) =>
+    appServerRequest<ConfigCodexModelsResult>(event, "config/codex/models", {
+      provider: provider ?? "",
+    }),
+  );
+  ipcMain.handle("wuu:config-model-catalog-providers", (event, provider?: string) =>
+    appServerRequest<ConfigModelCatalogProvidersResult>(
+      event,
+      "config/model-catalog/providers",
+      provider ? { provider } : {},
+    ),
+  );
+  ipcMain.handle("wuu:config-model-catalog-refresh", (event) =>
+    appServerRequest<ConfigModelCatalogRefreshResult>(
+      event,
+      "config/model-catalog/refresh",
+    ),
+  );
+  ipcMain.handle(
+    "wuu:config-model-update",
+    (
+      event,
+      provider?: string,
+      model?: string,
+      effort?: string,
+      connection?: {
+        base_url?: string;
+        api_key?: string;
+        auth_token?: string;
+        type?: string;
+        create_provider?: boolean;
+        remove_model?: string;
+        add_model?: string;
+        keep_selection?: boolean;
+        reuse_codex_credentials?: boolean;
+        approve_for_me?: boolean;
+      },
+      variant?: string,
+      permissionMode?: string,
+      threadID?: string,
+      speed?: string,
+      targetContext?: RuntimeContext,
+      engineSelection?: { reset_model?: boolean; model_options?: Record<string, string>; apply_at?: "next_step" },
+    ) =>
+      appServerRequest<ConfigModelUpdateResult>(event, "config/model/update", {
+        ...engineSelection,
+        // Omitted provider/model are inherited from the target thread, so
+        // their empties are dropped instead of sent. Effort/variant/permission
+        // forward whenever explicitly provided: an explicit empty variant is
+        // the reset-to-model-default signal (the server clears the stored
+        // selection), so it must not be truthy-dropped.
+        ...(provider ? { provider } : {}),
+        ...(model ? { model } : {}),
+        ...(threadID ? { thread_id: threadID } : {}),
+        ...(connection?.base_url === undefined
+          ? {}
+          : { base_url: connection.base_url }),
+        ...(connection?.api_key === undefined
+          ? {}
+          : { api_key: connection.api_key }),
+        ...(connection?.auth_token === undefined
+          ? {}
+          : { auth_token: connection.auth_token }),
+        ...(connection?.type === undefined ? {} : { type: connection.type }),
+        ...(connection?.create_provider ? { create_provider: true } : {}),
+        ...(connection?.remove_model ? { remove_model: connection.remove_model } : {}),
+        ...(connection?.add_model ? { add_model: connection.add_model } : {}),
+        ...(connection?.keep_selection ? { keep_selection: true } : {}),
+        ...(connection?.reuse_codex_credentials === undefined
+          ? {}
+          : { reuse_codex_credentials: connection.reuse_codex_credentials }),
+        ...(effort === undefined ? {} : { effort }),
+        ...(variant === undefined ? {} : { variant }),
+        ...(speed === undefined ? {} : { speed }),
+        ...(permissionMode === undefined
+          ? {}
+          : { permission_mode: permissionMode }),
+        ...(connection?.approve_for_me === undefined
+          ? {}
+          : { approve_for_me: connection.approve_for_me }),
+      }, targetContext),
+  );
+  ipcMain.handle(
+    "wuu:config-advanced-update",
+    (event, settings: RuntimeAdvancedSettingsUpdate) =>
+      appServerRequest<ConfigAdvancedUpdateResult>(
+        event,
+        "config/advanced/update",
+        settings ?? {},
+      ),
+  );
+  ipcMain.handle(
+    "wuu:config-general-update",
+    (event, settings: RuntimeGeneralSettingsUpdate) =>
+      appServerRequest<ConfigGeneralUpdateResult>(
+        event,
+        "config/general/update",
+        settings ?? {},
+      ),
+  );
+  ipcMain.handle("wuu:engines-list", (event, options?: { include_quota?: boolean; include_activity?: boolean; include_models?: boolean; refresh_models?: boolean; cwd?: string }, context?: RuntimeContext) =>
+    appServerRequest<EngineListResult>(event, "engine/list", {
+      include_quota: options?.include_quota === true,
+      include_activity: options?.include_activity,
+      include_models: options?.include_models,
+      refresh_models: options?.refresh_models === true,
+      cwd: options?.cwd,
+    }, context),
+  );
+  ipcMain.handle("wuu:engines-update", (event, params: EngineUpdateParams) =>
+    appServerRequest<EngineListResult>(event, "engine/update", params ?? {}),
+  );
+  ipcMain.handle("wuu:engine-auth-methods", (event, engineID: string) =>
+    appServerRequest<EngineAuthResult>(event, "engine/auth/methods", { engine_id: engineID }),
+  );
+  ipcMain.handle("wuu:engine-authenticate", (event, params: EngineAuthParams) => {
+    if (params?.method_id === "local-cli" && params.engine_id !== "grok") {
+      throw new Error("Local CLI sign-in is not supported for this engine");
+    }
+    let login = engineLogins.get(params.engine_id);
+    if (!login) {
+      login = new EngineLogin(returnToAuthWindow);
+      engineLogins.set(params.engine_id, login);
+    }
+    return login.start(event.sender, () => appServerClientPool.bindContextRequest(runtimeContextForEvent(event)), params);
+  });
+  ipcMain.handle("wuu:engine-auth-cancel", (event, engineID: string) => {
+    const login = engineLogins.get(engineID);
+    if (login?.active) return login.cancel(event.sender.id);
+    return appServerRequest<{ ok: boolean }>(event, "engine/auth/cancel", { engine_id: engineID });
+  });
+  ipcMain.handle(
+    "wuu:extension-package-update",
+    (event, params: ExtensionPackageUpdateParams) =>
+      appServerRequest<ExtensionPackageUpdateResult>(
+        event,
+        "extension/package/update",
+        params,
+      ),
+  );
+  ipcMain.handle("wuu:extension-catalog-refresh", (event) =>
+    appServerRequest<ExtensionCatalogRefreshResult>(event, "extension/catalog/refresh"),
+  );
+  ipcMain.handle("wuu:plugin-package-install", async (event) => {
+    const context = runtimeContextForEvent(event);
+    const packagePath = await showProjectDirectoryDialog({
+      properties: ["openFile", "openDirectory"],
+      filters: [{ name: "Wuu Plugin Package", extensions: ["zip", "ts"] }],
+    });
+    if (!packagePath) {
+      return undefined;
+    }
+    return appServerClientPool.requestInContext<PluginPackageInstallResult>(
+      context,
+      "plugin/package/install",
+      { path: packagePath },
+    );
+  });
+  ipcMain.handle("wuu:plugin-package-remove", (event, id: string) =>
+    appServerRequest<PluginPackageRemoveResult>(event, "plugin/package/remove", { id }),
+  );
+  ipcMain.handle("wuu:plugin-desktop-activation", async (event, params: PluginDesktopActivationParams) => {
+    const owner = desktopActivationOwner(event);
+    try { return await owner.report(params); }
+    catch (error) { if (!(error instanceof DesktopGraphOwnershipError)) throw error; }
+    await owner.recoverGraph(params.graph_generation, () => initializeDesktopGraph(event, owner));
+    return owner.report(params);
+  });
+  ipcMain.handle(
+    "wuu:plugin-desktop-module-load",
+    async (event, params: PluginDesktopModuleReadParams): Promise<PluginDesktopModuleLoadResult> => {
+      let module: PluginDesktopModuleReadResult;
+      if (params.graph_generation) {
+        const owner = desktopActivationOwner(event);
+        const identity = { id: params.id, fingerprint: params.fingerprint, graph_generation: params.graph_generation };
+        try { module = await owner.readModule(identity); }
+        catch (error) {
+          if (!(error instanceof DesktopGraphOwnershipError)) throw error;
+          await owner.recoverGraph(params.graph_generation, () => initializeDesktopGraph(event, owner));
+          module = await owner.readModule(identity);
+        }
+      } else {
+        module = await appServerRequest<PluginDesktopModuleReadResult>(event, "plugin/desktop-module/read", params);
+      }
+      if (module.entry.startsWith("wuu-builtin:")) {
+        return { id: module.id, fingerprint: module.fingerprint, digest: module.digest, url: module.entry };
+      }
+      return cachePluginDesktopModule(module);
+    },
+  );
+  ipcMain.handle(
+    "wuu:plugin-icon-load",
+    async (event, params: PluginIconReadParams): Promise<PluginIconLoadResult> => {
+      const icon = await appServerRequest<PluginIconReadResult>(
+        event,
+        "plugin/icon/read",
+        params,
+      );
+      return cachePluginIcon(icon);
+    },
+  );
+  ipcMain.handle("wuu:plugin-skin-image-load", async (event, params: PluginIconReadParams): Promise<PluginIconLoadResult> => {
+    return cachePluginIcon(await appServerRequest<PluginIconReadResult>(event, "plugin/skin-image/read", params));
+  });
+  ipcMain.handle("wuu:shell-image-cache", (event, data: ArrayBuffer): string => {
+    if (event.senderFrame !== event.sender.mainFrame || !windowRegistry.allWindows().some(window => window.webContents === event.sender)) {
+      throw new Error("Shell images are available from Wuu windows only");
+    }
+    if (!(data instanceof ArrayBuffer)) throw new Error("Invalid shell image");
+    return cacheImageAsset(new Uint8Array(data), "image/png");
+  });
+  ipcMain.handle("wuu:plugin-setting-get", (event, params: PluginSettingGetParams) =>
+    appServerRequest<PluginSettingResult>(event, "plugin/setting/get", params));
+  ipcMain.handle("wuu:plugin-setting-set", (event, params: PluginSettingSetParams) =>
+    appServerRequest<PluginSettingResult>(event, "plugin/setting/set", params));
+  ipcMain.handle("wuu:plugin-diagnostics-list", (event, params: PluginIdentityParams) =>
+    appServerRequest<PluginDiagnosticsResult>(event, "plugin/diagnostics/list", params));
+  ipcMain.handle("wuu:plugin-storage-get", (event, params: PluginStorageGetParams) =>
+    appServerRequest<PluginStorageResult>(event, "plugin/storage/get", params));
+  ipcMain.handle("wuu:plugin-storage-set", (event, params: PluginStorageSetParams) =>
+    appServerRequest<PluginStorageResult>(event, "plugin/storage/set", params));
+  ipcMain.handle("wuu:plugin-scope-initialize", async (event, params: PluginScopeInitializeParams) => {
+    const owner = desktopActivationOwner(event);
+    const admissionContext = runtimeContextForEvent(event);
+    await owner.recoverRuntimeRequest(params.graph_generation, admissionContext.cwd, () => initializeDesktopGraph(event, owner));
+    const identity = { id: params.id, fingerprint: params.fingerprint, graph_generation: params.graph_generation };
+    await owner.readModule(identity);
+    const context = resolveUserHostContext(params.user_space_id, params.product_domain, params.composition_profile);
+    const scope = JSON.stringify([context.user_space_id, context.product_domain, context.composition_profile]);
+    const inventory = await owner.scopedInventory(identity, scope, async () => ({
+      workdir: context.cwd, request: appServerClientPool.bindContextRequest(context), params: desktopInitializeParams(),
+    }));
+    await owner.readModule(identity);
+    if (event.sender.isDestroyed() || event.senderFrame !== event.sender.mainFrame || desktopActivationOwners.get(event.sender.id) !== owner
+      || JSON.stringify(runtimeContextForEvent(event)) !== JSON.stringify(admissionContext)) {
+      throw new PluginLifecycleCancellationError(new Error("Plugin scope admission document was replaced"));
+    }
+    return inventory;
+  });
+  ipcMain.handle("wuu:plugin-runtime-request", async (event, params: PluginClientRequestParams) => encodePluginRuntimeResponse(async () => {
+    if ((params.user_space_id || params.product_domain || params.composition_profile) && (params.workspace_id || params.workspace_root)) {
+      throw new Error("User host and workspace routes cannot be combined");
+    }
+    // Explicit user scopes are bound after authenticating the source graph.
+    const context = params.workspace_id || params.workspace_root
+      ? runtimeContextForPluginWorkspace(event, params.workspace_id, params.workspace_root) : undefined;
+    if (params.workspace_root && context && resolve(params.workspace_root) !== resolve(context.cwd)) {
+      throw new Error("Plugin runtime workspace changed");
+    }
+    const activationOwner = desktopActivationOwner(event);
+    const admissionContext = runtimeContextForEvent(event);
+    let request: ReturnType<PluginDesktopActivations["runtimeRequest"]>;
+    try { request = activationOwner.runtimeRequest(params.graph_generation, context?.cwd); }
+    catch (error) {
+      if (!(error instanceof DesktopGraphOwnershipError)) throw error;
+      request = await activationOwner.recoverRuntimeRequest(params.graph_generation, context?.cwd,
+        () => initializeDesktopGraph(event, activationOwner));
+    }
+    if (params.user_space_id || params.product_domain || params.composition_profile) {
+      request = await bindScopedUserRuntime(activationOwner, params);
+    }
+    // Revalidate this caller after an awaited admission, even when another ACK
+    // owns the singleflight handshake. Never dispatch into a replacement document.
+    if (event.sender.isDestroyed() || event.senderFrame !== event.sender.mainFrame
+      || desktopActivationOwners.get(event.sender.id) !== activationOwner) {
+      throw new PluginLifecycleCancellationError(new Error("Plugin runtime admission document was replaced"));
+    }
+    if (JSON.stringify(runtimeContextForEvent(event)) !== JSON.stringify(admissionContext)) {
+      throw new PluginLifecycleCancellationError(new Error("Plugin runtime admission workspace was superseded"));
+    }
+    const owner = `window:${event.sender.id}`;
+    return pluginRuntimeRequests.request(owner, request, params, undefined, () => {
+      event.sender.once("destroyed", () => pluginRuntimeRequests.closeOwner(owner));
+    });
+  }));
+  ipcMain.handle("wuu:plugin-runtime-cancel", (event, params: PluginClientCancelParams) =>
+    pluginRuntimeRequests.cancel(`window:${event.sender.id}`, params));
+  ipcMain.handle("wuu:plugin-visible-history", async (event, request: PluginVisibleHistoryRequest): Promise<PluginVisibleHistoryResult> => {
+    if (!request || !request.threadId?.trim() || !request.workspaceRoot?.trim()) throw new Error("Conversation identity is required");
+    const context = runtimeContextForPluginWorkspace(event, request.workspaceId, request.workspaceRoot);
+    if (resolve(context.cwd) !== resolve(request.workspaceRoot)
+      || (!request.workspaceId && context.kind !== "no_project")) throw new Error("Conversation workspace changed");
+    if (request.kind === "main") {
+      if (!request.beforeTurnId?.trim() || request.sideThreadId) throw new Error("Main conversation turn is required");
+      const history = await appServerClientPool.requestInContext<{ thread_id: string; turns: Turn[] }>(
+        context, "thread/history/read", { thread_id: request.threadId, cursor: `conversation:turn:${request.beforeTurnId}` },
+      );
+      if (history.thread_id !== request.threadId) throw new Error("Conversation identity changed");
+      return { turns: visibleMainTurns(history.turns) };
+    }
+    if (request.kind === "side") {
+      if (!request.sideThreadId?.trim() || request.beforeTurnId) throw new Error("Side conversation identity is required");
+      const history = await appServerClientPool.requestInContext<SideThreadHistoryResult>(
+        context, "sideThread/getHistory", { main_thread_id: request.threadId },
+      );
+      if (history.summary.main_thread_id !== request.threadId || history.summary.side_thread_id !== request.sideThreadId) {
+        throw new Error("Side conversation identity changed");
+      }
+      return { turns: visibleSideTurns(history, request.sideThreadId) };
+    }
+    throw new Error("Unknown conversation kind");
+  });
+  ipcMain.handle(
+    "wuu:config-provider-remove",
+    (
+      event,
+      provider: string,
+      options?: { fallbackProvider?: string; fallbackModel?: string },
+    ) =>
+      appServerRequest<ConfigModelUpdateResult>(
+        event,
+        "config/provider/remove",
+        {
+          provider,
+          ...(options?.fallbackProvider
+            ? { fallback_provider: options.fallbackProvider }
+            : {}),
+          ...(options?.fallbackModel
+            ? { fallback_model: options.fallbackModel }
+            : {}),
+        },
+      ),
+  );
+  ipcMain.handle("wuu:skill-list", (event, params?: SkillListParams) =>
+    appServerRequest(event, "skill/list", params),
+  );
+  ipcMain.handle("wuu:skill-content", async (event, params: SkillContentParams): Promise<SkillContentResult> => {
+    return readCatalogSkill(await appServerRequest<SkillListResult>(event, "skill/list"),params);
+  });
+  ipcMain.handle("wuu:codex-pets-list", () => {
+    const snapshot = codexPetsSnapshot();
+    // Sync the pet window from the renderer-side list call so a failed
+    // startup sync (e.g. data: URL ready-to-show that never fires) can
+    // be recovered by re-opening the snapshot via SettingsView, not only
+    // by toggling the enabled flag. `sync` is idempotent: if the window
+    // already shows the same pet, applyView short-circuits.
+    codexPetWindowManager.sync(snapshot);
+    return snapshot;
+  });
+  ipcMain.handle(
+    "wuu:codex-pets-update",
+    (_event, settings: CodexPetSettingsUpdate) =>
+      updateCodexPetSettings(settings ?? {}),
+  );
+  ipcMain.handle(
+    "wuu:codex-pet-feed",
+    (_event, feed: Partial<CodexPetFeed> | null) => {
+      codexPetActivity.setRendererHints(Array.isArray(feed?.hints) ? feed.hints : []);
+      codexPetWindowManager.setWorkspace(feed?.workspace);
+    },
+  );
+  // Only the main window's renderer navigates and sends on the pet's behalf;
+  // pop-out conversation windows share the preload but must not attach.
+  ipcMain.on("wuu:codex-pet-ready", (event) => {
+    if (mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents) {
+      attachCodexPetCommandTarget(event.sender);
+    }
+  });
+  ipcMain.on("wuu:codex-pet-resolve", (event, id: unknown, result: CodexPetSubmitResult) => {
+    if (typeof id !== "string" || !codexPetCommandTargets.has(event.sender.id)) return;
+    codexPetCommandRelay.resolve(id, result);
+  });
+  // Greet the user when they come back to the machine.
+  powerMonitor.on("unlock-screen", () => codexPetWindowManager.react("waving"));
+  powerMonitor.on("resume", () => codexPetWindowManager.react("waving"));
+  ipcMain.handle("wuu:settings-usage", (event) =>
+    appServerRequest<SettingsUsageResponse>(event, "settings/usage", {
+      timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    }),
+  );
+  ipcMain.handle("wuu:usage-overview", (event, params: UsageOverviewParams) =>
+    appServerRequest<UsageOverviewResponse>(event, "usage/overview", params),
+  );
+  const mcpLogin = new MCPLoginCoordinator(url => shell.openExternal(url), returnToAuthWindow);
+  ipcMain.handle("wuu:mcp-login-start", (event, name: string) =>
+    mcpLogin.start(event.sender, name, () => appServerClientPool.bindContextRequest(runtimeContextForEvent(event))),
+  );
+  ipcMain.handle("wuu:mcp-login-poll", (event, loginId: string) => mcpLogin.poll(event.sender.id, loginId));
+  ipcMain.handle("wuu:mcp-login-cancel", (event, loginId: string) => mcpLogin.cancel(event.sender.id, loginId));
+  ipcMain.handle("wuu:mcp-definition-read", (event, name: string) =>
+    appServerRequest<MCPDefinitionResult>(event, "mcp/definition/read", { name }),
+  );
+  ipcMain.handle("wuu:mcp-configure", (event, params: MCPConfigureParams) =>
+    appServerRequest<MCPListResult>(event, "mcp/configure", params),
+  );
+  ipcMain.handle("wuu:mcp-auth-cancel", (event, name: string, state: string) =>
+    appServerRequest(event, "mcp/auth/cancel", { name, state }),
+  );
+  ipcMain.handle("wuu:mcp-list", (event, context?: RuntimeContext) =>
+    appServerRequest<MCPListResult>(event, "mcp/list", undefined, context),
+  );
+  ipcMain.handle("wuu:mcp-connect", (event, name: string) =>
+    appServerRequest<MCPServerActionResult>(event, "mcp/connect", { name }),
+  );
+  ipcMain.handle("wuu:mcp-disconnect", (event, name: string) =>
+    appServerRequest<MCPServerActionResult>(event, "mcp/disconnect", { name }),
+  );
+  ipcMain.handle("wuu:mcp-refresh", (event, name: string) =>
+    appServerRequest<MCPServerActionResult>(event, "mcp/refresh", { name }),
+  );
+  ipcMain.handle("wuu:mcp-auth-start", (event, name: string) =>
+    appServerRequest<MCPAuthStartResult>(event, "mcp/auth/start", { name }),
+  );
+  ipcMain.handle("wuu:mcp-auth-status", (event, name: string) =>
+    appServerRequest<MCPAuthStatusResult>(event, "mcp/auth/status", { name }),
+  );
+  ipcMain.handle("wuu:mcp-auth-finish", (event, name: string, state: string, code: string) =>
+    appServerRequest<MCPAuthFinishResult>(event, "mcp/auth/finish", { name, state, code }),
+  );
+  const chatgptLogin = new ChatGPTLoginCoordinator(
+    (context, method, params) => appServerClientPool.requestInContext(context, method, params),
+    (url) => shell.openExternal(url),
+    returnToAuthWindow,
+  );
+  ipcMain.handle("wuu:auth-chatgpt-login-start", (event, accountId?: string, enablePlanUsage?: boolean) =>
+    chatgptLogin.start(event.sender, runtimeContextForEvent(event), accountId, enablePlanUsage),
+  );
+  ipcMain.handle("wuu:auth-chatgpt-login-poll", (event, loginId: string) => chatgptLogin.poll(event.sender.id, loginId));
+  ipcMain.handle("wuu:auth-chatgpt-login-cancel", (event, loginId: string) => chatgptLogin.cancel(event.sender.id, loginId));
+  ipcMain.handle("wuu:auth-chatgpt-accounts", (event) => appServerRequest(event, "auth/chatgpt/accounts"));
+  ipcMain.handle("wuu:auth-chatgpt-signout", (event, accountId: string) => appServerRequest(event, "auth/chatgpt/signout", { account_id: accountId }));
+  ipcMain.handle("wuu:auth-chatgpt-models", (event, accountId: string) => appServerRequest(event, "auth/chatgpt/models", { account_id: accountId }));
+  const xaiLogin = new XAILoginCoordinator(returnToAuthWindow);
+  ipcMain.handle("wuu:auth-xai-login-start", (event) =>
+    xaiLogin.start(event.sender, () => appServerClientPool.bindContextRequest(runtimeContextForEvent(event))),
+  );
+  ipcMain.handle("wuu:auth-xai-login-poll", (event, loginId: string) => xaiLogin.poll(event.sender.id, loginId));
+  ipcMain.handle("wuu:auth-xai-login-cancel", (event, loginId: string) => xaiLogin.cancel(event.sender.id, loginId));
+  ipcMain.handle("wuu:mcp-auth-remove", (event, name: string) =>
+    appServerRequest<MCPAuthRemoveResult>(event, "mcp/auth/remove", { name }),
+  );
+  ipcMain.handle("wuu:activity-list", (event, threadId: string) =>
+    appServerRequest<ActivityListResult>(event, "activity/list", { thread_id: threadId }),
+  );
+  ipcMain.handle("wuu:activity-takeover", async (event, threadId: string, activityId: string, inputGeneration?: number, executionId?: string) => {
+    const result = await appServerRequest<ActivityActionResult>(event, "activity/takeover", { thread_id: threadId, activity_id: activityId, execution_id: executionId });
+    if (typeof inputGeneration === "number" && Number.isSafeInteger(inputGeneration)) {
+      browserHostCoordinator.acknowledgeLocalTakeover(result.activity, inputGeneration);
+    }
+    return result;
+  });
+  ipcMain.handle("wuu:activity-release", (event, threadId: string, activityId: string, executionId?: string) =>
+    appServerRequest<ActivityReleaseResult>(event, "activity/release", { thread_id: threadId, activity_id: activityId, execution_id: executionId }),
+  );
+  ipcMain.handle("wuu:activity-stop", (event, threadId: string, activityId: string, executionId?: string) =>
+    appServerRequest<ActivityActionResult>(event, "activity/stop", { thread_id: threadId, activity_id: activityId, execution_id: executionId }),
+  );
+  ipcMain.handle("wuu:side-thread-open", (event, mainThreadId: string) =>
+    appServerRequest<SideThreadOpenResult>(event, "sideThread/open", { main_thread_id: mainThreadId }),
+  );
+  ipcMain.handle("wuu:side-thread-history", (event, mainThreadId: string) =>
+    appServerRequest<SideThreadHistoryResult>(event, "sideThread/getHistory", { main_thread_id: mainThreadId }),
+  );
+  ipcMain.handle(
+    "wuu:side-thread-send",
+    (event, params: SideThreadSendParams) =>
+      appServerRequest<SideThreadSendResult>(event, "sideThread/sendMessage", params),
+  );
+  ipcMain.handle("wuu:side-thread-reset", (event, mainThreadId: string) =>
+    appServerRequest<{ ok: boolean }>(event, "sideThread/reset", { main_thread_id: mainThreadId }),
+  );
+  ipcMain.handle("wuu:side-thread-interrupt", (event, mainThreadId: string) =>
+    appServerRequest<{ ok: boolean }>(event, "sideThread/interrupt", { main_thread_id: mainThreadId }),
+  );
+  ipcMain.handle(
+    "wuu:thread-start",
+    (event, params?: ThreadStartParams, targetContext?: RuntimeContext) =>
+      appServerRequest<{ thread: Thread }>(event, "thread/start", params ?? {}, targetContext),
+  );
+  ipcMain.handle("wuu:thread-resume", (event, sessionId?: string) =>
+    rendererServerEventBatcher.resolveSnapshot(
+      appServerClientPool.requestForSession<ThreadResumeResult>(
+        runtimeContextForEvent(event), sessionId ?? "", "thread/resume",
+        { session_id: sessionId ?? "", response_only: true },
+        (response, workdir) => {
+          // Reuse the response instead of transferring the entire history twice
+          // from the core. Publish synchronously before the next stdout event,
+          // preserving snapshot/delta order for every connected window.
+          if (!response.error) {
+            emitServerEvent({
+              kind: "notification", workdir,
+              message: { method: "thread/resumed", params: response.result },
+            });
+          }
+        },
+      ),
+    ),
+  );
+  ipcMain.handle(
+    "wuu:thread-fork",
+    (
+      event,
+      threadId: string,
+      turnId?: string,
+      itemId?: string,
+      mode?: "local" | "worktree",
+      target?: ThreadForkTarget,
+    ) =>
+      appServerRequest<ThreadForkResult>(event, "thread/fork", {
+        thread_id: threadId,
+        turn_id: turnId ?? "",
+        item_id: itemId ?? "",
+        ...(target ? { target } : {}),
+        ...(mode ? { mode } : {}),
+      }),
+  );
+  ipcMain.handle(
+    "wuu:thread-edit-message",
+    (event, threadId: string, turnId: string, itemId: string) =>
+      appServerRequest<ThreadEditMessageResult>(event, "thread/edit-message", {
+        thread_id: threadId,
+        turn_id: turnId,
+        item_id: itemId,
+      }),
+  );
+  ipcMain.handle("wuu:thread-context-composition", (event, threadId: string) =>
+    appServerRequest<ThreadContextCompositionResult>(event, "thread/context-composition", {
+      thread_id: threadId,
+    }),
+  );
+  ipcMain.handle("wuu:instructions-list", (event) =>
+    appServerRequest<InstructionsListResult>(event, "instructions/list"),
+  );
+  ipcMain.handle("wuu:account-window-open", event => {
+    createAccountWindow(runtimeContextForEvent(event));
+  });
+  ipcMain.handle("wuu:account-window-close", event => {
+    if (windowRegistry.roleForWindow(event.sender.id) !== "account") return;
+    BrowserWindow.fromWebContents(event.sender)?.close();
+    mainWindow?.show(); mainWindow?.focus();
+  });
+  ipcMain.handle("wuu:remote-account", (event, action: string, input: Record<string,string>) => {
+    const workdir = runtimeContextForEvent(event).cwd;
+    return phoneAccess.run(async () => {
+      if (['login','register','logout','password'].includes(action)) await phoneAccess.stop();
+      const result = await remoteHostManager.account(workdir, action, input);
+      if (action === 'github-poll' && result.username) {
+        await phoneAccess.stop();
+        await phoneAccess.setEnabled(workdir, true);
+        const window = BrowserWindow.fromWebContents(event.sender);
+        window?.show(); window?.focus();
+      }
+      if (['login','register'].includes(action)) await phoneAccess.setEnabled(workdir, true);
+      if (['logout','password'].includes(action)) await phoneAccess.setEnabled(workdir, false);
+      if (['login', 'register', 'logout', 'password', 'revoke'].includes(action) || (action === 'github-poll' && result.username)) {
+        broadcastToAll("wuu:account-changed", undefined);
+      }
+      return result;
+    });
+  });
+  ipcMain.handle("wuu:remote-snapshot", (event) =>
+    remoteControlSnapshot(runtimeContextForEvent(event).cwd),
+  );
+  ipcMain.handle("wuu:remote-relay-set", async (event, relayUrl: string) => {
+    const workdir = runtimeContextForEvent(event).cwd;
+    await remoteHostManager.setRelay(workdir, String(relayUrl));
+    return remoteControlSnapshot(workdir);
+  });
+  ipcMain.handle("wuu:remote-host-set", (event, enabled: boolean) => {
+    const workdir = runtimeContextForEvent(event).cwd;
+    return phoneAccess.run(async () => {
+      await phoneAccess.setEnabled(workdir, enabled);
+      return remoteControlSnapshot(workdir);
+    });
+  });
+  ipcMain.handle("wuu:remote-pairing-start", (event) => {
+    const workdir = runtimeContextForEvent(event).cwd;
+    return phoneAccess.run(async () => {
+      await phoneAccess.openPairing(workdir);
+      return remoteControlSnapshot(workdir);
+    });
+  });
+  ipcMain.handle("wuu:remote-device-remove", async (event, fingerprintOrPub: string) => {
+    const workdir = runtimeContextForEvent(event).cwd;
+    return phoneAccess.run(async () => {
+      await remoteHostManager.removeDevice(workdir, String(fingerprintOrPub));
+      return remoteControlSnapshot(workdir);
+    });
+  });
+  ipcMain.handle("wuu:window-minimize", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.minimize();
+  });
+  ipcMain.handle("wuu:window-toggle-maximize", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  ipcMain.handle("wuu:window-toggle-full-screen", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return;
+    win.setFullScreen(!win.isFullScreen());
+  });
+  ipcMain.handle("wuu:window-close", (event) => {
+    BrowserWindow.fromWebContents(event.sender)?.close();
+  });
+  ipcMain.handle("wuu:window-is-maximized", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return Boolean(win && !win.isDestroyed() && win.isMaximized());
+  });
+  ipcMain.handle("wuu:window-is-full-screen", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return Boolean(win && !win.isDestroyed() && win.isFullScreen());
+  });
+  ipcMain.handle("wuu:window-pointer-position", (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed() || !win.isFocused()) return null;
+    const cursor = screen.getCursorScreenPoint();
+    const bounds = win.getContentBounds();
+    const zoom = event.sender.getZoomFactor();
+    return { x: (cursor.x - bounds.x) / zoom, y: (cursor.y - bounds.y) / zoom };
+  });
+  ipcMain.handle("wuu:window-set-controls", (event, state: { visible: boolean; x: number; y: number }) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (process.platform !== "darwin" || !win || win.isDestroyed()) return;
+    if (!state || typeof state.visible !== "boolean" || !Number.isFinite(state.x) || !Number.isFinite(state.y)) {
+      throw new Error("Invalid window controls state");
+    }
+    const zoom = event.sender.getZoomFactor();
+    macWindowControls.set(win, { visible: state.visible, x: Math.round(state.x * zoom), y: Math.round(state.y * zoom) });
+    applyMacWindowControls(win);
+  });
+  ipcMain.handle("wuu:activity-preview-appearance", (event, value: unknown) => {
+    // Only the main workbench supplies global presentation preferences.
+    if (event.sender !== mainWindow?.webContents || !value || typeof value !== "object") return;
+    const appearance = value as ActivityPreviewAppearance;
+    if (typeof appearance.reducedMotion !== "boolean" ||
+      !isMessageFlowFontSize(appearance.fontSize) ||
+      !isAppLocale(appearance.locale) ||
+      [appearance.fontFamily, appearance.surface, appearance.text, appearance.muted]
+        .some(field => typeof field !== "string" || field.length > 512)) return;
+    observationCoordinator.setAppearance(resolvedThemeIsDark(), appearance);
+  });
+  ipcMain.handle("wuu:theme-preference-get", () => getThemePreference());
+  ipcMain.on("wuu:onboarding-complete-get-sync", (event) => {
+    event.returnValue = isOnboardingComplete();
+  });
+  ipcMain.handle("wuu:onboarding-discover-workspaces", () => discoverRecentWorkspaces({
+    codexHome: process.env.CODEX_HOME || undefined,
+    claudeHome: process.env.CLAUDE_CONFIG_DIR || undefined,
+    existingPaths: projectManager.list().projects.map((project) => project.path),
+  }));
+  ipcMain.handle("wuu:onboarding-choose-directory", async () =>
+    (await showProjectDirectoryDialog({
+      title: mainTranslate("chooseExistingFolder"),
+      buttonLabel: mainTranslate("useFolder"),
+      properties: ["openDirectory"],
+    })) ?? null,
+  );
+  ipcMain.handle("wuu:onboarding-import-workspaces", (_event, paths: unknown) => {
+    if (!Array.isArray(paths) || paths.length > 3000 || paths.some((path) => typeof path !== "string" || !path.trim())) {
+      throw new Error("Invalid workspace selection");
+    }
+    return projectManager.addMany(paths);
+  });
+  ipcMain.handle("wuu:onboarding-complete", () => {
+    completeOnboarding();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setResizable(true);
+      applyMacWindowControls(mainWindow);
+      if (usesWindowControlsOverlay()) {
+        mainWindow.setTitleBarOverlay(nonMacTitleBarOverlay(WORKBENCH_TITLEBAR_HEIGHT));
+      }
+    }
+    return { ok: true as const };
+  });
+  ipcMain.handle("wuu:language-preference-get", () => getLanguagePreference());
+  ipcMain.handle("wuu:plugin-conflict-preferences-get", () => getPluginConflictPreferences());
+  ipcMain.handle("wuu:plugin-conflict-preference-set", (_event, key: string, pluginId: string) =>
+    setPluginConflictPreference(String(key), String(pluginId)));
+  ipcMain.on("wuu:language-preference-get-sync", (event) => {
+    event.returnValue = getLanguagePreference();
+  });
+  ipcMain.handle("wuu:language-preference-set", (_event, language: LanguagePreference) => {
+    const next = isLanguagePreference(language) ? language : "system";
+    setLanguagePreference(next);
+    setMainLocale(resolveMainLocale(next, app.getLocale()));
+    codexPetWindowManager.refreshLocale();
+    desktopUpdates?.refresh();
+    broadcastLanguagePreference();
+    return { ok: true, language: next };
+  });
+  // Synchronous variant used by the preload script so the first paint
+  // already carries the persisted theme (no light-mode flash on boot).
+  ipcMain.on("wuu:theme-preference-get-sync", (event) => {
+    event.returnValue = getThemePreference();
+  });
+  ipcMain.handle("wuu:theme-preference-set", (_event, theme: ThemePreference) => {
+    const valid: ThemePreference[] = ["system", "light", "dark"];
+    const next = valid.includes(theme) ? theme : "system";
+    setThemePreference(next);
+    syncThemeAcrossWindows();
+    return { ok: true, theme: next };
+  });
+  // "system" preference: OS dark-mode flips arrive here, not through the
+  // preference IPC. They go through the same multi-window sync so every
+  // window's content, background, and native chrome move together.
+  nativeTheme.on("updated", syncThemeAcrossWindows);
+  ipcMain.on("wuu:message-flow-font-size-get-sync", (event) => {
+    // Sync partner of getMessageFlowFontSize — preload needs the value
+    // before first paint to stamp --conversation-message-font-size on
+    // <html> and avoid a flash of the default size.
+    event.returnValue = getMessageFlowFontSize();
+  });
+  ipcMain.handle("wuu:message-flow-font-size-get", () =>
+    getMessageFlowFontSize(),
+  );
+  ipcMain.handle(
+    "wuu:message-flow-font-size-set",
+    (_event, fontSize: unknown) => {
+      // Keep the IPC boundary honest about the same 13-20 window so a
+      // corrupted renderer can't widen it.
+      const next: MessageFlowFontSize = isMessageFlowFontSize(fontSize)
+        ? fontSize
+        : MESSAGE_FLOW_FONT_SIZE_RANGE.default;
+      setMessageFlowFontSize(next);
+      systemPermissions.refreshAppearance(resolvedThemeIsDark());
+      return { ok: true, fontSize: next };
+    },
+  );
+  ipcMain.handle("wuu:thread-list", (event, cwd?: string) =>
+    appServerRequest<{ threads: Thread[] }>(
+      event,
+      "thread/list",
+      { summary_only: true, ...(typeof cwd === "string" && cwd.length > 0 ? { cwd } : {}) },
+    ),
+  );
+  ipcMain.handle("wuu:thread-list-archived", (event) =>
+    appServerRequest<{ threads: Thread[] }>(event, "thread/listArchived", { summary_only: true }),
+  );
+  ipcMain.handle("wuu:thread-list-all", (event) =>
+    appServerRequest<{ threads: Thread[] }>(event, "thread/listAll", { summary_only: true }),
+  );
+  ipcMain.handle("wuu:thread-recovery-list", (event) =>
+    appServerRequest(event, "thread/recovery/list"),
+  );
+  ipcMain.handle("wuu:thread-recovery-dismiss", (event, threadIDs: string[]) =>
+    appServerRequest(event, "thread/recovery/dismiss", { thread_ids: threadIDs }),
+  );
+  ipcMain.handle("wuu:thread-search", (event, query: string, limit?: number) =>
+    appServerRequest(event, "thread/search", {
+      query: query ?? "",
+      limit: typeof limit === "number" ? limit : undefined,
+    }),
+  );
+  ipcMain.handle(
+    "wuu:thread-preview",
+    (event, threadId: string, limit?: number) =>
+      appServerRequest(event, "thread/preview", {
+        thread_id: threadId,
+        limit: typeof limit === "number" ? limit : undefined,
+      }),
+  );
+  ipcMain.handle(
+    "wuu:thread-pin",
+    (event, threadId: string, pinned: boolean) =>
+      appServerRequest<{ thread: Thread }>(event, "thread/pin", {
+        thread_id: threadId,
+        pinned,
+      }),
+  );
+  ipcMain.handle("wuu:session-organization-list", (event) =>
+    appServerRequest(event, "sessionOrganization/list"),
+  );
+  ipcMain.handle("wuu:session-folder-create", (event, name: string) =>
+    appServerRequest(event, "sessionFolder/create", { name }),
+  );
+  ipcMain.handle("wuu:session-folder-update", (event, id: string, name: string) =>
+    appServerRequest(event, "sessionFolder/update", { id, name }),
+  );
+  ipcMain.handle("wuu:session-folder-reorder", (event, ids: string[]) =>
+    appServerRequest(event, "sessionFolder/reorder", { ids }),
+  );
+  ipcMain.handle("wuu:session-folder-delete", (event, id: string) =>
+    appServerRequest(event, "sessionFolder/delete", { id }),
+  );
+  ipcMain.handle(
+    "wuu:thread-organization-update",
+    (event, threadId: string, folderId?: string) =>
+      appServerRequest<{ thread: Thread }>(event, "thread/organization/update", {
+        thread_id: threadId,
+        ...(folderId !== undefined ? { folder_id: folderId } : {}),
+      }),
+  );
+  ipcMain.handle(
+    "wuu:thread-archive",
+    (event, threadId: string, archived: boolean, force?: boolean) =>
+      appServerRequest<{ thread: Thread }>(event, "thread/archive", {
+        thread_id: threadId,
+        archived,
+        force: force === true ? true : undefined,
+      }),
+  );
+  ipcMain.handle("wuu:thread-delete", (event, threadId: string, options?: { onlyIfArchived?: boolean }) =>
+    appServerRequest<{ thread_id: string }>(event, "thread/delete", {
+      thread_id: threadId,
+      ...(options?.onlyIfArchived ? { only_if_archived: true } : {}),
+    }),
+  );
+  ipcMain.handle("wuu:thread-compact-start", (event, threadId: string) =>
+    appServerRequest<{ turn: Turn }>(event, "thread/compact/start", {
+      thread_id: threadId,
+    }),
+  );
+  ipcMain.handle(
+    "wuu:thread-rename",
+    (event, threadId: string, title: string) =>
+      appServerRequest<{ thread: Thread }>(event, "thread/rename", {
+        thread_id: threadId,
+        title,
+      }),
+  );
+  ipcMain.handle("wuu:reveal-session", (_event, _threadId: string) => {
+    // The session's data lives in the user-level sessions dir (a single
+    // shared SQLite file). Reveal that dir in the OS file browser so
+    // the user can inspect the database.
+    return shell.openPath(join(wuuHomePath(), "sessions"));
+  });
+  ipcMain.handle(
+    "wuu:file-show-in-folder",
+    (_event, path: string) => {
+      // The path comes from `listWorkspaceDirectory`, so it's already a
+      // workspace item the renderer is allowed to know about. We hand
+      // it straight to the OS file browser — Finder highlights the row,
+      // Explorer opens its parent, file managers open the folder — so
+      // the user can do anything with the item beyond the in-app tree.
+      // `showItemInFolder` returns void; we run it for its side effect.
+      shell.showItemInFolder(path);
+    },
+  );
+  ipcMain.handle("wuu:file-show-menu", async (event, path: string) => {
+    if (process.platform !== "darwin") {
+      return { action: "none" } as const;
+    }
+    const owner = BrowserWindow.fromWebContents(event.sender);
+    if (!owner || owner.isDestroyed()) {
+      return { action: "none" } as const;
+    }
+
+    const associations = await macWorkspaceApplications(path).catch(() => ({
+      defaultApplication: undefined,
+      applications: [],
+    }));
+    const iconApplications = associations.defaultApplication
+      ? [associations.defaultApplication, ...associations.applications]
+      : associations.applications;
+    const iconEntries = iconApplications.map((application) => {
+      if (!application.iconPng) return [application.path, undefined] as const;
+      const icon = nativeImage.createFromBuffer(
+        Buffer.from(application.iconPng, "base64"),
+        { scaleFactor: 2 },
+      );
+      return [application.path, icon.isEmpty() ? undefined : icon] as const;
+    });
+    const icons = new Map(iconEntries);
+    return new Promise<{ action: "none" }>((resolve) => {
+      const template = macWorkspaceItemMenuTemplate({
+        associations,
+        icons,
+        labels: {
+          open: mainTranslate("open"),
+          openInApplication: (application) => mainTranslate("openInApplication", { application }),
+          openWith: mainTranslate("openWith"),
+          copyPath: mainTranslate("copyPath"),
+        },
+        onOpenDefault: () => { void shell.openPath(path); },
+        onOpenWith: (application) => {
+          void openMacWorkspaceItemWithApplication(path, application.path).catch((error) => {
+            console.error("[desktop] failed to open workspace item with application", error);
+          });
+        },
+        onCopyPath: () => clipboard.writeText(path),
+      });
+      Menu.buildFromTemplate(template).popup({
+        window: owner,
+        callback: () => resolve({ action: "none" }),
+      });
+    });
+  });
+  ipcMain.handle(
+    "wuu:turn-start",
+    (
+      event,
+      threadId: string,
+      prompt: string,
+      images?: InputImage[],
+      files?: InputFile[],
+      permissionMode?: string,
+      activeDocument?: ActiveDocumentContext,
+      contentParts?: import("../shared/protocol").MessageContentPart[],
+      targetContext?: RuntimeContext,
+      clientId?: string,
+      resumeAfterTurnId?: string,
+    ) =>
+      appServerRequest<{ turn: Turn }>(event, "turn/start", {
+        thread_id: threadId,
+        ...(clientId === undefined ? {} : { client_id: clientId }),
+        ...(resumeAfterTurnId === undefined ? {} : { resume_after_turn_id: resumeAfterTurnId }),
+        prompt,
+        images: images ?? [],
+        files: files ?? [],
+        ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
+        ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
+        ...(contentParts === undefined ? {} : { content_parts: contentParts }),
+      }, targetContext),
+  );
+  ipcMain.handle(
+    "wuu:turn-queue",
+    (
+      event,
+      threadId: string,
+      prompt: string,
+      images?: InputImage[],
+      clientId?: string,
+      files?: InputFile[],
+      permissionMode?: string,
+      activeDocument?: ActiveDocumentContext,
+      contentParts?: import("../shared/protocol").MessageContentPart[],
+      targetContext?: RuntimeContext,
+      hold?: boolean,
+    ) =>
+      appServerRequest(event, "turn/queue", {
+        thread_id: threadId,
+        prompt,
+        images: images ?? [],
+        files: files ?? [],
+        client_id: clientId,
+        ...(hold ? { hold: true } : {}),
+        ...(permissionMode === undefined ? {} : { permission_mode: permissionMode }),
+        ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
+        ...(contentParts === undefined ? {} : { content_parts: contentParts }),
+      }, targetContext),
+  );
+  ipcMain.handle(
+    "wuu:turn-update-queued",
+    (
+      event,
+      threadId: string,
+      queueId: string,
+      prompt: string,
+      images?: InputImage[],
+      files?: InputFile[],
+      contentParts?: import("../shared/protocol").MessageContentPart[],
+    ) =>
+      appServerRequest(event, "turn/update-queued", {
+        thread_id: threadId,
+        queue_id: queueId,
+        prompt,
+        images: images ?? [],
+        files: files ?? [],
+        ...(contentParts === undefined ? {} : { content_parts: contentParts }),
+      }),
+  );
+  ipcMain.handle(
+    "wuu:turn-dequeue",
+    (event, threadId: string, queueId: string) =>
+      appServerRequest<{ ok: boolean }>(event, "turn/dequeue", {
+        thread_id: threadId,
+        queue_id: queueId,
+      }),
+  );
+  ipcMain.handle(
+    "wuu:turn-steer",
+    (
+      event,
+      threadId: string,
+      expectedTurnId: string,
+      prompt: string,
+      images?: InputImage[],
+      clientId?: string,
+      files?: InputFile[],
+      activeDocument?: ActiveDocumentContext,
+      contentParts?: import("../shared/protocol").MessageContentPart[],
+      targetContext?: RuntimeContext,
+    ) => {
+      const context = targetContext
+        ? targetContext.kind === "user"
+          ? resolveUserHostContext(targetContext.user_space_id, targetContext.product_domain, targetContext.composition_profile)
+          : projectManager.resolveSubmissionContext(targetContext)
+        : runtimeContextForEvent(event);
+      const request = appServerClientPool.bindSessionRequest(context, threadId);
+      return steerOrQueueIsolatedTurn(request, {
+        thread_id: threadId,
+        expected_turn_id: expectedTurnId,
+        prompt,
+        images: images ?? [],
+        files: files ?? [],
+        client_id: clientId,
+        ...(activeDocument === undefined ? {} : { active_document: activeDocument }),
+        ...(contentParts === undefined ? {} : { content_parts: contentParts }),
+      });
+    },
+  );
+  ipcMain.handle("wuu:turn-unsteer", (event, threadId: string, steerId: string) =>
+    appServerRequest<{ ok: boolean }>(event, "turn/unsteer", {
+      thread_id: threadId,
+      steer_id: steerId,
+    }),
+  );
+  ipcMain.handle("wuu:turn-requeue", (event, threadId: string, steerId: string) =>
+    appServerRequest(event, "turn/requeue", {
+      thread_id: threadId,
+      steer_id: steerId,
+    }),
+  );
+  ipcMain.handle("wuu:turn-interrupt", (event, threadId: string) =>
+    appServerRequest<{ ok: boolean }>(event, "turn/interrupt", {
+      thread_id: threadId,
+    }),
+  );
+  ipcMain.handle(
+    "wuu:respond-server-request",
+    (_event, id: string, result: unknown) => {
+      appServerClientPool.respondToServerRequest(id, result);
+    },
+  );
+  ipcMain.handle(
+    "wuu:reject-server-request",
+    (_event, id: string, message: string) => {
+      appServerClientPool.rejectServerRequest(id, message);
+    },
+  );
+  // Embedded browser: the renderer reports the on-screen bounds of the host div
+  // while an agent view is taken over (rAF-polled — pure motion isn't caught by
+  // ResizeObserver), so main can position the reparented WebContentsView. The
+  // target window is derived from event.sender, not trusted from the payload.
+  ipcMain.handle("wuu:browser-pip-host-layout", (event, payload: unknown) => {
+    const senderWindow = BrowserWindow.fromWebContents(event.sender);
+    if (!senderWindow || senderWindow.isDestroyed()) return { ok: false };
+    observationCoordinator.setBrowserPiPHostLayout(
+      event.sender.id,
+      senderWindow,
+      browserPiPHostClient(payload),
+    );
+    return { ok: true };
+  });
+  ipcMain.handle(
+    "wuu:browser-report-bounds",
+    (
+      event,
+      payload: {
+        workdir: string;
+        tabID: string;
+        rect: { x: number; y: number; width: number; height: number } | null;
+        force?: boolean;
+      },
+    ) => {
+      if (!ENABLE_EMBEDDED_BROWSER) return { ok: false };
+      const senderWindow = BrowserWindow.fromWebContents(event.sender);
+      if (!senderWindow || senderWindow.isDestroyed()) return { ok: false };
+      browserHostCoordinator.reportBounds(
+        payload.workdir,
+        payload.tabID,
+        senderWindow as unknown as BrowserParentWindowHandle,
+        payload.rect,
+        event.sender.getZoomFactor(),
+        payload.force === true,
+      );
+      return { ok: true };
+    },
+  );
+  ipcMain.handle(
+    "wuu:browser-command",
+    async (
+      _event,
+      payload: { workdir: string; tabID: string; command: string; url?: string; threadID?: string },
+    ) => {
+      if (!ENABLE_EMBEDDED_BROWSER) return null;
+      const snapshot = await browserHostCoordinator.runCommand(
+        payload.workdir,
+        payload.tabID,
+        payload.command,
+        payload.url,
+        payload.threadID,
+      );
+      return snapshot ?? null;
+    },
+  );
+  ipcMain.handle(
+    "wuu:browser-surface",
+    (_event, payload: { workdir: string; tabID: string }) => {
+      if (!ENABLE_EMBEDDED_BROWSER) return null;
+      return browserHostCoordinator.surface(payload.workdir, payload.tabID) ?? null;
+    },
+  );
+  // Renderer full-window overlay/modal appeared over the agent view — hide the
+  // WebContentsView so it does not paint over the dialog, restore when clear.
+  ipcMain.handle(
+    "wuu:browser-overlay-suppress",
+    (_event, payload: { workdir: string; tabID: string; suppressed: boolean }) => {
+      if (!ENABLE_EMBEDDED_BROWSER) return { ok: false };
+      browserHostCoordinator.setOverlaySuppressed(
+        payload.workdir,
+        payload.tabID,
+        payload.suppressed === true,
+      );
+      return { ok: true };
+    },
+  );
+  const nativeTooltip = new NativeTooltip();
+  ipcMain.on("wuu:web-workspace-page-edited", event => webWorkspaceHost.protectEditedPage(event.sender));
+  const webWorkspaceSender = (event: IpcMainInvokeEvent): BrowserWindow => {
+    if (!ENABLE_EMBEDDED_BROWSER) throw new Error("The embedded browser is disabled in this build.");
+    if (!isAppContextSender(event)) throw new Error("Website destinations are available from Wuu's main window only.");
+    return windowRegistry.mainWindow()!;
+  };
+  ipcMain.handle("wuu:chrome-overlay-show", (event, request: ChromeOverlayRequest) => chromeOverlayHost.show(webWorkspaceSender(event), request));
+  ipcMain.handle("wuu:chrome-overlay-hide", (event, token: string, generation: number) => chromeOverlayHost.hide(webWorkspaceSender(event), token, generation));
+  ipcMain.handle("wuu:chrome-overlay-ready", event => chromeOverlayHost.ready(event));
+  ipcMain.on("wuu:chrome-overlay-prepared", (event, token: string, generation: number) => chromeOverlayHost.prepared(event, token, generation));
+  ipcMain.on("wuu:chrome-overlay-painted", (event, token: string, generation: number, viewport: { width: number; height: number }) => chromeOverlayHost.painted(event, token, generation, viewport));
+  ipcMain.on("wuu:chrome-overlay-command", (event, message) => chromeOverlayHost.command(event, message));
+  ipcMain.handle("wuu:web-workspace-tabs-initialize", (event, destinations: WebWorkspaceLegacyDestination[]) =>
+    webWorkspaceHost.initializeTabs(webWorkspaceSender(event), destinations));
+  ipcMain.handle("wuu:web-workspace-open", (event, destination: WebWorkspaceDestination) =>
+    webWorkspaceHost.open(webWorkspaceSender(event), destination));
+  ipcMain.handle("wuu:web-workspace-tooltip", (event, token: string, hint: WebWorkspaceTooltip | null) =>
+    nativeTooltip.show(webWorkspaceSender(event), token, hint));
+  ipcMain.handle("wuu:web-workspace-options-dismiss", (event, id: string) =>
+    webWorkspaceHost.dismissOptions(webWorkspaceSender(event), id));
+  ipcMain.handle("wuu:web-workspace-options", (event, id: string, request: WebWorkspaceMenuRequest) =>
+    webWorkspaceHost.showOptions(webWorkspaceSender(event), id, request));
+  ipcMain.handle("wuu:web-workspace-popover", (event, token: string, bounds: WebWorkspacePopoverBounds | null) =>
+    nativeBrowserPopovers.get(webWorkspaceSender(event))?.report(token, bounds));
+  ipcMain.handle("wuu:web-workspace-capture", (event, id: string) => webWorkspaceHost.capture(webWorkspaceSender(event), id));
+  ipcMain.handle("wuu:page-context-read", (event, id: string, tabId: string) =>
+    webWorkspaceHost.pageContext(webWorkspaceSender(event), id, tabId));
+  ipcMain.handle("wuu:web-workspace-bounds", (event, id: string, bounds: WebWorkspaceBounds | null) =>
+    webWorkspaceHost.reportBounds(webWorkspaceSender(event), id, bounds));
+  ipcMain.handle("wuu:web-workspace-shortcut-target", (event, id: string, active: boolean) =>
+    webWorkspaceHost.setShortcutTarget(webWorkspaceSender(event), id, active === true));
+  ipcMain.handle("wuu:web-workspace-command", (event, id: string, command: WebWorkspaceCommand, url?: string) =>
+    webWorkspaceHost.command(webWorkspaceSender(event), id, command, url));
+  ipcMain.handle("wuu:web-workspace-close", (event, id: string) =>
+    webWorkspaceHost.close(webWorkspaceSender(event), id));
+  ipcMain.handle("wuu:web-workspace-tab-create", (event, id: string, url?: string) =>
+    webWorkspaceHost.createTab(webWorkspaceSender(event), id, url));
+  ipcMain.handle("wuu:web-workspace-tab-select", (event, id: string, tabId: string) =>
+    webWorkspaceHost.selectTab(webWorkspaceSender(event), id, tabId));
+  ipcMain.handle("wuu:web-workspace-tab-close", (event, id: string, tabId: string) =>
+    webWorkspaceHost.closeTab(webWorkspaceSender(event), id, tabId));
+  ipcMain.handle("wuu:web-workspace-tab-reopen", (event, id: string) =>
+    webWorkspaceHost.reopenTab(webWorkspaceSender(event), id));
+  ipcMain.handle("wuu:web-workspace-tab-pin", (event, id: string, tabId: string, pinned: boolean) =>
+    webWorkspaceHost.setTabPinned(webWorkspaceSender(event), id, tabId, pinned));
+  ipcMain.handle("wuu:web-workspace-tab-mute", (event, id: string, tabId: string, muted: boolean) =>
+    webWorkspaceHost.setTabMuted(webWorkspaceSender(event), id, tabId, muted));
+  ipcMain.handle("wuu:web-workspace-tabs-reorder", (event, id: string, tabIds: string[]) =>
+    webWorkspaceHost.reorderTabs(webWorkspaceSender(event), id, tabIds));
+  ipcMain.handle("wuu:web-workspace-find", (event, id: string, text: string, options?: WebWorkspaceFindOptions) =>
+    webWorkspaceHost.find(webWorkspaceSender(event), id, text, options));
+  ipcMain.handle("wuu:web-workspace-stop-find", (event, id: string) =>
+    webWorkspaceHost.stopFind(webWorkspaceSender(event), id));
+  ipcMain.handle("wuu:web-workspace-zoom", (event, id: string, factor: number) =>
+    webWorkspaceHost.setZoom(webWorkspaceSender(event), id, factor));
+  ipcMain.handle("wuu:web-workspace-downloads-list", event => webWorkspaceDownloads.list(webWorkspaceSender(event)));
+  ipcMain.handle("wuu:web-workspace-download-command", async (event, id: string, command: WebWorkspaceDownloadCommand) => {
+    const owner = webWorkspaceSender(event);
+    await webWorkspaceDownloads.command(owner, id, command);
+    return webWorkspaceDownloads.list(owner);
+  });
+  ipcMain.handle("wuu:web-workspace-library-get", event => {
+    webWorkspaceSender(event);
+    return webWorkspaceLibrary.getState();
+  });
+  ipcMain.handle("wuu:web-workspace-library-bookmark", (event, url: string, title: string, bookmarked: boolean) => {
+    webWorkspaceSender(event);
+    if (typeof url !== "string" || typeof title !== "string" || typeof bookmarked !== "boolean") throw new Error("Invalid website bookmark.");
+    const state = webWorkspaceLibrary.setBookmark(url, title, bookmarked);
+    broadcastToAll("wuu:web-workspace-library", state);
+    return state;
+  });
+  ipcMain.handle("wuu:web-workspace-library-remove", (event, id: string) => {
+    webWorkspaceSender(event);
+    const state = webWorkspaceLibrary.removeHistory(id);
+    broadcastToAll("wuu:web-workspace-library", state);
+    return state;
+  });
+  ipcMain.handle("wuu:web-workspace-library-clear", event => {
+    webWorkspaceSender(event);
+    const state = webWorkspaceLibrary.clearHistory();
+    broadcastToAll("wuu:web-workspace-library", state);
+    return state;
+  });
+  ipcMain.handle("wuu:browser-profiles", (event) => {
+    requireBrowserSettingsSender(event);
+    if (!ENABLE_EMBEDDED_BROWSER) {
+      throw new Error("The embedded browser is disabled in this build.");
+    }
+    return listBrowserProfiles();
+  });
+  ipcMain.handle(
+    "wuu:browser-import-cookies",
+    async (event, profilePath: unknown) => {
+      requireBrowserSettingsSender(event);
+      if (!ENABLE_EMBEDDED_BROWSER) {
+        throw new Error("The embedded browser is disabled in this build.");
+      }
+      if (typeof profilePath !== "string" || !profilePath.trim()) {
+        throw new Error("A browser profile path is required.");
+      }
+      return importBrowserCookies({
+        profilePath,
+        session: embeddedBrowserSession(),
+      });
+    },
+  );
+  ipcMain.handle("wuu:browser-extensions-list", (event) => {
+    requireBrowserSettingsSender(event);
+    return requireBrowserExtensionManager().list();
+  });
+  ipcMain.handle("wuu:browser-extensions-add", async (event) => {
+    const host = requireBrowserSettingsSender(event);
+    const manager = requireBrowserExtensionManager();
+    const result = await dialog.showOpenDialog(host, {
+      title: mainTranslate("chooseExtensionFolder"),
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || !result.filePaths[0]) return manager.list();
+    return manager.addFromDirectory(result.filePaths[0], browserExtensionConsent(host));
+  });
+  ipcMain.handle(
+    "wuu:browser-extensions-set-enabled",
+    async (event, id: unknown, enabled: unknown) => {
+      const host = requireBrowserSettingsSender(event);
+      if (typeof id !== "string" || !id.trim() || typeof enabled !== "boolean") {
+        throw new Error("Extension id and enabled state are required.");
+      }
+      const manager = requireBrowserExtensionManager();
+      const legacy = (await manager.list()).some(extension => extension.id === id && extension.needsReview);
+      return manager.setEnabled(id, enabled, browserExtensionConsent(host, legacy));
+    },
+  );
+  ipcMain.handle("wuu:browser-extensions-reload", async (event, id: unknown) => {
+    const host = requireBrowserSettingsSender(event);
+    if (typeof id !== "string" || !id.trim()) throw new Error("Extension id is required.");
+    const manager = requireBrowserExtensionManager();
+    const legacy = (await manager.list()).some(extension => extension.id === id && extension.needsReview);
+    return manager.reload(id, browserExtensionConsent(host, legacy));
+  });
+  ipcMain.handle("wuu:browser-extensions-remove", (event, id: unknown) => {
+    requireBrowserSettingsSender(event);
+    if (typeof id !== "string" || !id.trim()) {
+      throw new Error("Extension id is required.");
+    }
+    return requireBrowserExtensionManager().remove(id);
+  });
+  ipcMain.handle("wuu:browser-extensions-options", async (event, id: unknown) => {
+    const host = requireBrowserSettingsSender(event);
+    if (typeof id !== "string" || !id.trim()) throw new Error("Extension id is required.");
+    if (!browserExtensionWindows) throw new Error("Embedded browser extensions are unavailable.");
+    await browserExtensionWindows.openOptions(id, host);
+  });
+  ipcMain.handle("wuu:dictation-start", async (event, id: unknown, locale: unknown) => {
+    requireDictationSender(event);
+    if (process.platform !== "darwin" || typeof id !== "string" || !id || typeof locale !== "string" || !/^[a-zA-Z-]{2,35}$/.test(locale)) {
+      throw new Error("Invalid dictation request.");
+    }
+    const sessionId = `${event.sender.id}:${id}`;
+    const cancel = (): void => dictation.cancel(sessionId);
+    event.sender.once("destroyed", cancel);
+    event.sender.once("render-process-gone", cancel);
+    const navigated = (_event: unknown, _url: string, _inPlace: boolean, mainFrame: boolean): void => { if (mainFrame) cancel(); };
+    event.sender.on("did-start-navigation", navigated);
+    // Each recording owns its cleanup; replacing or completing it removes
+    // these listeners rather than accumulating them over a long session.
+    const cleanup = (): void => {
+      event.sender.removeListener("destroyed", cancel);
+      event.sender.removeListener("render-process-gone", cancel);
+      event.sender.removeListener("did-start-navigation", navigated);
+    };
+    await dictation.start(sessionId, locale, message => {
+      if (!event.sender.isDestroyed()) event.sender.send("wuu:dictation-event", { ...message, sessionId: id });
+    }, cleanup);
+  });
+  ipcMain.handle("wuu:dictation-stop", (event, id: string) => { requireDictationSender(event); dictation.stop(`${event.sender.id}:${id}`); });
+  ipcMain.handle("wuu:dictation-cancel", (event, id: string) => { requireDictationSender(event); dictation.cancel(`${event.sender.id}:${id}`); });
+  systemPermissions.start();
+  ipcMain.handle("wuu:system-permissions", event => {
+    requireAppContextSender(event);
+    return systemPermissions.state();
+  });
+  ipcMain.handle("wuu:system-permission-request", (event, permission: unknown, presentation: unknown) => {
+    requireAppContextSender(event);
+    return systemPermissions.open(permission, windowRegistry.mainWindow()!, resolvedThemeIsDark(), presentation);
+  });
+  ipcMain.on("wuu:system-permission-guide-update", (event, presentation: unknown) => {
+    if (isAppContextSender(event)) systemPermissions.update(presentation);
+  });
+  ipcMain.handle("wuu:system-permission-guide-close", (event, requestId: unknown) => {
+    requireAppContextSender(event);
+    systemPermissions.cancel(requestId);
+  });
+  ipcMain.handle("wuu:app-context-state", (event) => {
+    requireAppContextSender(event);
+    return appContextCapture.state();
+  });
+  ipcMain.handle("wuu:app-context-recording", (event, recording: unknown) => {
+    requireAppContextSender(event);
+    if (typeof recording !== "boolean") throw new Error("Invalid shortcut recording state.");
+    return appContextCapture.setShortcutRecording(recording);
+  });
+  ipcMain.handle("wuu:app-context-settings", (event, settings: unknown) => {
+    requireAppContextSender(event);
+    return appContextCapture.update(settings);
+  });
+  ipcMain.handle("wuu:app-context-permission", async (event, kind: unknown) => {
+    requireAppContextSender(event);
+    if (kind !== "screen" && kind !== "text") throw new Error("Unknown app snapshot permission.");
+    await systemPermissions.open(kind === "text" ? "accessibility" : "screen", windowRegistry.mainWindow()!, resolvedThemeIsDark());
+    return appContextCapture.state();
+  });
+  ipcMain.handle("wuu:app-context-discard", (event, id: unknown) => {
+    requireAppContextSender(event);
+    if (id !== undefined && typeof id !== "string") throw new Error("Invalid snapshot identifier.");
+    return appContextCapture.cancel(id);
+  });
+  appContextCapture.start();
+  syncNativeThemeSource();
+  createWindow();
+  desktopUpdates = installDesktopUpdates(() => prepareToQuit({ reason: "update" }), state => broadcastToAll("wuu:desktop-update-changed", state), () => getDesktopPreferences().auto_check_updates, desktopRecovery.menuItem());
+  void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
+
+  app.on("activate", () => {
+    // The pet window counts among all windows, so check the main window
+    // itself; otherwise a Dock click with only the pet open does nothing.
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+    }
+  });
+});
+
+let quitCleanup: Promise<void> | undefined;
+let quitCleanupFinished = false;
+app.on("before-quit", (event) => {
+  dictation.cancel();
+  if (quitCleanupFinished) return;
+  event.preventDefault();
+  if (quitCleanup) return;
+  void prepareToQuit().finally(() => app.quit());
+});
+
+async function stopRenderer(window: BrowserWindow): Promise<void> {
+  const contents = window.webContents;
+  if (contents.isDestroyed()) return;
+  await new Promise<void>((resolve, reject) => {
+    const complete = (error?: Error): void => {
+      clearTimeout(timer);
+      ipcMain.removeListener("wuu:renderer-shutdown-complete", acknowledge);
+      contents.removeListener("destroyed", destroyed);
+      contents.removeListener("render-process-gone", destroyed);
+      if (error) reject(error); else resolve();
+    };
+    const acknowledge = (event: IpcMainEvent, error?: unknown): void => {
+      if (event.sender !== contents || event.senderFrame !== contents.mainFrame) return;
+      complete(error === undefined ? undefined : new Error(String(error)));
+    };
+    const destroyed = (): void => complete();
+    // A hung or still-loading renderer must not block native quit indefinitely.
+    const timer = setTimeout(() => {
+      complete(new Error(`Renderer ${contents.id} did not finish shutdown within 10 seconds`));
+    }, 10000);
+    ipcMain.on("wuu:renderer-shutdown-complete", acknowledge);
+    contents.once("destroyed", destroyed);
+    contents.once("render-process-gone", destroyed);
+    contents.send("wuu:renderer-shutdown");
+  }).finally(() => { if (!window.isDestroyed()) window.destroy(); });
+}
+
+function prepareToQuit(shutdownOptions: AppServerShutdownOptions = {}): Promise<void> {
+  if (quitCleanup) return quitCleanup;
+  // Publish the shared promise before destroying windows: closing the hidden
+  // host can synchronously re-enter quit through window-all-closed. The first
+  // caller owns the shutdown reason; a later before-quit reuses this promise.
+  quitCleanup = Promise.resolve().then(async () => {
+    desktopUpdates?.stop();
+    const directoryShutdown = Promise.allSettled([workspaceDirectoryReader.close()]);
+    const renderers = await Promise.allSettled(windowRegistry.allWindows().map(stopRenderer));
+    for (const result of renderers) {
+      if (result.status === "rejected") console.error("Renderer shutdown failed", result.reason);
+    }
+    const disconnects = [...desktopActivationOwners.values()].map(owner => owner.disconnect());
+    desktopActivationOwners.clear();
+    const disconnected = await Promise.allSettled([...disconnects, ...desktopActivationDisconnects]);
+    for (const result of disconnected) {
+      if (result.status === "rejected") console.error("Desktop activation disconnect failed", result.reason);
+    }
+    systemPermissions.close();
+    appContextCapture.dispose();
+    terminalSessionManager.cleanup();
+    // Destroy every agent view + the hidden host window before the pool shuts
+    // down so no WebContentsView leaks past quit.
+    browserHostCoordinator.destroyAll();
+    webWorkspaceHost.destroyAll();
+    const shutdown = await Promise.allSettled([observationCoordinator.shutdown(), appServerClientPool.shutdown(shutdownOptions), phoneAccess.shutdown()]);
+    return [...await directoryShutdown, ...shutdown];
+  })
+    .then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") console.error("Shutdown cleanup failed", result.reason);
+      }
+    })
+    .finally(() => {
+      quitCleanupFinished = true;
+    });
+  return quitCleanup;
+}
+
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+  }
+});
+
+if (process.platform === "linux") {
+  app.on("browser-window-created", (_event, window) => {
+    window.once("closed", () => {
+      // The hidden browser host is infrastructure, not a way to reopen Wuu.
+      // Preserve last-window quit behavior after browsing; pet, PiP and other
+      // application windows still keep the app alive as before.
+      setImmediate(() => {
+        const remaining = BrowserWindow.getAllWindows().filter(win => !win.isDestroyed());
+        if (remaining.length === 1 && browserHostCoordinator.isHostWindow(remaining[0])) {
+          app.quit();
+        }
+      });
+    });
+  });
+}

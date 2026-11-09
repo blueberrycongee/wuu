@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="background_sync_channel">Background sync</string>
+    <string name="background_sync_title">Wuu is syncing messages</string>
+    <string name="background_sync_body">Connected to your computer. Tap to open Wuu.</string>
+</resources>

@@ -1,0 +1,1597 @@
+import { pendingComposerUpdateFromNotification, type PendingComposerUpdate } from "../shared/pendingComposerMessages";
+import { rebaseResumeComposerResult, wireComposerMessage, type WireComposerMessage } from "./resumeComposerReceipt";
+import { defaultDesktopSessionRoutes, SessionOutcomeUnknownError, sessionRouteHost, sessionRouteKey, type DesktopSessionRoutes, type SessionRoute } from "./sessionRoutes";
+import { RemoteAppServerClient, type PooledAppServerClient } from "./remoteAppServerClient";
+import { shutdownChild } from "./childShutdown";
+import { AppServerResponseError } from "./appServerErrors";
+import {
+  spawn as spawnChild,
+  type ChildProcessWithoutNullStreams,
+} from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import type { Writable } from "node:stream";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { resolveWuuCommand } from "./wuuCommand";
+import type {
+  AppServerNotification,
+  AppServerRequest,
+  AppServerResponse,
+  RunningThreadSnapshot,
+  RuntimeContext,
+  ServerEvent,
+  SessionLocatorV1,
+} from "../shared/protocol";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+// Soft cap on resident app-server clients. A workdir switch that finds its
+// client already alive is a pure data load (~100ms), while a cold start takes
+// ~1s, so the cap is a memory/perf trade: keep a small MRU of warm runtimes and
+// idle-evict beyond that. 4 keeps the active workdir + the three most recently
+// used ones resident without letting the pool grow unbounded.
+const MAX_APP_SERVER_CLIENTS = 4;
+// JSONL frame budget in internal/appserver/stdio.go, including the newline.
+// Check the serialized UTF-8 envelope, not raw file sizes: base64, metadata,
+// content parts, and prompt text all consume the same transport budget.
+const MAX_APP_SERVER_FRAME_BYTES = 64 * 1024 * 1024;
+
+class AppServerMessageTooLargeError extends Error {}
+
+type AppServerSpawnOptions = {
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  stdio: ["pipe", "pipe", "pipe"] | ["pipe", "pipe", "pipe", "pipe"];
+};
+
+export type AppServerSpawn = (
+  command: string,
+  args: readonly string[],
+  options: AppServerSpawnOptions,
+) => ChildProcessWithoutNullStreams;
+
+const defaultSpawnAppServer: AppServerSpawn = (command, args, options) =>
+  spawnChild(command, args, options) as ChildProcessWithoutNullStreams;
+
+type DesktopPaths = { appPath: string; isPackaged: boolean };
+
+type PendingRequest = {
+  onResponse?: (response: AppServerResponse) => void;
+  method: string;
+  params?: unknown;
+  // Resume can finish after turn/input lifecycle notifications. Keep evidence
+  // only for the lifetime of that request, not an unbounded session history.
+  settledTurnIDs?: Map<string, Set<string>>;
+  startedTurnIDs?: Map<string, string | undefined>;
+  composerUpdates?: PendingComposerUpdate<WireComposerMessage>[];
+  resolve: (value: unknown) => void;
+  reject: (reason?: unknown) => void;
+};
+
+export type AppServerClientEvent =
+  | { kind: "connection-reset" }
+  | { kind: "notification"; message: AppServerNotification }
+  | { kind: "server-request"; message: Required<AppServerRequest> }
+  | { kind: "server-error"; message: string }
+  | { kind: "server-exit"; code: number | null; message: string };
+
+type ServerRequestRoute = {
+  client: PooledAppServerClient;
+  serverID: string;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** A trusted adapter declares cleanup when it issues an owned operation. The
+ * returned zero-argument release cannot change target, generation or payload. */
+export type OwnedAppServerOperation<T> = { result: Promise<T>; release: () => Promise<void>; forget: () => void };
+export type BoundAppServerRequest = PooledAppServerClient["request"] & {
+  owned<T>(method: string, params: unknown, cleanup: { method: string; params?: unknown; retainAfterResult?: boolean }, onResponse?: (response: AppServerResponse) => void): OwnedAppServerOperation<T>;
+};
+const OWNED_CLEANUP_TIMEOUT_MS = 5000;
+
+export type AppServerBindingOptions = { localOnly?: boolean };
+
+/** A deliberate shutdown may still preserve interrupted turns for a later boot. */
+export type AppServerShutdownOptions = { reason?: "update" };
+
+export class AppServerClientPool {
+  private closing = false;
+  private readonly ownedCleanups = new Map<PooledAppServerClient, Set<() => Promise<void>>>();
+  private readonly disposal = new Map<PooledAppServerClient, Promise<void>>();
+  private readonly eventSources = new WeakMap<ServerEvent, PooledAppServerClient>();
+  private clients = new Map<string, PooledAppServerClient>();
+  private clientRoutes = new Map<PooledAppServerClient, { context: RuntimeContext; route: SessionRoute }>();
+  private retiredClients = new Set<PooledAppServerClient>();
+  private sessionOwners = new Map<string, PooledAppServerClient>();
+  private receiverBindings = new Map<PooledAppServerClient, BoundAppServerRequest>();
+  private nextServerRequestRouteID = 1;
+  private serverRequestRoutes = new Map<string, ServerRequestRoute>();
+  // Most-recently-used workdirs (most recent last). prewarmContexts fills the
+  // resident pool in this order so the workdirs the user actually switches
+  // between stay warm instead of the first registered projects winning.
+  private mruWorkdirs: string[] = [];
+  // Optional cross-cutting hooks wired after construction (index.ts) so the
+  // embedded browser coordinator can (a) veto idle-eviction of a workdir that
+  // still owns agent tabs and (b) tear down that workdir's views on dispose.
+  private isWorkdirPinned?: (workdir: string) => boolean;
+  private clientTorndownHandler?: (workdir: string) => void;
+  private runningThreadsChangedHandler?: (snapshot: RunningThreadSnapshot[]) => void;
+  private lastRunningThreadsKey = "";
+
+  constructor(
+    private readonly getRuntimeContext: () => RuntimeContext,
+    private readonly getActiveWorkdir: () => string | undefined,
+    private readonly emitToRenderer: (event: ServerEvent) => void,
+    private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
+    private readonly getInitializeParams?: () => unknown,
+    private readonly desktopPaths?: DesktopPaths,
+    private readonly sessionRoutes: DesktopSessionRoutes = defaultDesktopSessionRoutes(),
+  ) {}
+
+  // A workdir the check pins (e.g. it owns a live agent browser tab) is treated
+  // as busy and never idle-evicted, so a page can't vanish mid user-takeover.
+  setWorkdirPinnedCheck(check: (workdir: string) => boolean): void {
+    this.isWorkdirPinned = check;
+  }
+
+  // Fired whenever a client is disposed (idle-evict, workdir removal, shutdown).
+  // This is the authoritative teardown signal for view recycling: the disposing
+  // flag suppresses the server-exit event on these paths, so a server-exit
+  // listener alone would miss them.
+  setClientTorndownHandler(handler: (workdir: string) => void): void {
+    this.clientTorndownHandler = handler;
+  }
+
+  request<T>(method: string, params?: unknown): Promise<T> {
+    return this.requestInContext<T>(this.getRuntimeContext(), method, params);
+  }
+
+  prewarmContexts(contexts: readonly RuntimeContext[]): void {
+    // Fill the resident pool in MRU order: workdirs the user recently switched
+    // to are the ones a next click is most likely to hit. Unknown workdirs fall
+    // back to their call order. Respect the cap by only starting clients up to
+    // it; the rest stay cold and start on demand.
+    const byRecency = new Map(
+      this.mruWorkdirs.map((workdir, index) => [workdir, index] as const),
+    );
+    const ordered = [...contexts].sort(
+      (left, right) =>
+        (byRecency.get(resolve(right.cwd)) ?? -1) -
+        (byRecency.get(resolve(left.cwd)) ?? -1),
+    );
+    for (const context of ordered) {
+      const workdir = resolve(context.cwd);
+      const existing = this.clients.get(workdir);
+      if (existing) {
+        this.clientForContext(context).start();
+        continue;
+      }
+      if (this.clients.size >= MAX_APP_SERVER_CLIENTS) {
+        return;
+      }
+      this.clientForContext(context).start();
+    }
+  }
+
+  // Records a workdir as recently used (called on context select) so prewarm
+  // keeps the right runtimes resident.
+  noteContextUsed(context: RuntimeContext): void {
+    const workdir = resolve(context.cwd);
+    const index = this.mruWorkdirs.indexOf(workdir);
+    if (index >= 0) {
+      this.mruWorkdirs.splice(index, 1);
+    }
+    this.mruWorkdirs.push(workdir);
+  }
+
+  /** Snapshot only currently registered local receivers; never start a replacement
+   * core to satisfy a control request after registration or connection changes. */
+  registeredSessionReceivers(): { locator?: SessionLocatorV1; request: BoundAppServerRequest; routeKind?: "owner-local" | "federation" }[] {
+    const receivers: { locator?: SessionLocatorV1; request: BoundAppServerRequest; routeKind?: "owner-local" | "federation" }[] = [];
+    for (const client of this.clients.values()) {
+      if (!this.isSelectedClient(client) || this.clientRoutes.get(client)?.route.kind !== "local") continue;
+      let request=this.receiverBindings.get(client);
+      if(!request){request=this.bindClientRequest(client,{localOnly:true});this.receiverBindings.set(client,request);}
+      const ownerLocal = client.ownerLocalSessionLocator();
+      const federation = client.federationLocator();
+      if (ownerLocal) receivers.push({locator:ownerLocal, request, routeKind:"owner-local"});
+      if (federation || !ownerLocal) receivers.push({locator:federation,request,routeKind:"federation"});
+    }
+    return receivers;
+  }
+
+  runningThreadsSnapshot(): RunningThreadSnapshot[] {
+    const snapshot: RunningThreadSnapshot[] = [];
+    for (const client of this.allClients()) {
+      for (const threadID of client.runningThreadIDsList()) {
+        snapshot.push({ workdir: client.workdir, thread_id: threadID });
+      }
+    }
+    return snapshot;
+  }
+
+  // Wired by index.ts so the renderer can render cross-workdir running state
+  // (sidebar spinners) from an aggregate fact source instead of filtered events.
+  setRunningThreadsChangedHandler(
+    handler: (snapshot: RunningThreadSnapshot[]) => void,
+  ): void {
+    this.runningThreadsChangedHandler = handler;
+    this.maybeBroadcastRunningThreads();
+  }
+
+  // Related control frames must reach the same process even if its workspace
+  // registration changes while the original request is still running.
+  bindContextRequest(context: RuntimeContext, options?: AppServerBindingOptions): BoundAppServerRequest {
+    const client = this.clientForContext(context);
+    return this.bindClientRequest(client, options);
+  }
+
+  async requestInContext<T>(
+    context: RuntimeContext,
+    method: string,
+    params?: unknown,
+    onResponse?: (response: AppServerResponse) => void,
+  ): Promise<T> {
+    // A session may execute in a resident process other than its project
+    // client. Reads and controls must reach that same live runtime.
+    const sessionID = isRecord(params)
+      ? params.thread_id ?? params.session_id ?? params.main_thread_id
+      : undefined;
+    return typeof sessionID === "string" && sessionID
+      ? this.requestForSession<T>(context, sessionID, method, params, onResponse)
+      : this.contextRequest<T>(context, method, params, onResponse);
+  }
+
+  requestForSession<T>(
+    context: RuntimeContext,
+    sessionID: string,
+    method: string,
+    params?: unknown,
+    onResponse?: (response: AppServerResponse, workdir: string) => void,
+  ): Promise<T> {
+    const client = this.ownerForSession(context, sessionID);
+    return this.guardRequest(client, client.request.bind(client))<T>(method, params, (response) => onResponse?.(response, client.workdir));
+  }
+
+  bindSessionRequest(context: RuntimeContext, sessionID: string, options?: AppServerBindingOptions): BoundAppServerRequest {
+    const owner = this.ownerForSession(context, sessionID);
+    return this.bindClientRequest(owner, options);
+  }
+
+  /** Bind an actual emitted event to its original connection generation. A
+   * workdir/locator copied from wire data cannot select a replacement owner. */
+  bindEventRequest(event: ServerEvent, options?: AppServerBindingOptions): BoundAppServerRequest {
+    const source = this.eventSources.get(event);
+    if (!source || !this.isSelectedClient(source)) throw new Error("The event's owning session connection is no longer available");
+    return this.bindClientRequest(source, options);
+  }
+
+  sameEventSource(left: ServerEvent, right: ServerEvent): boolean {
+    const source = this.eventSources.get(left);
+    return !!source && source === this.eventSources.get(right);
+  }
+
+  ownEventCleanup(event: ServerEvent, cleanup: () => Promise<void>): () => void {
+    const source = this.eventSources.get(event);
+    if (!source || !this.isSelectedClient(source) || this.disposal.has(source)) throw new Error("Source connection is no longer available");
+    const cleanups = this.ownedCleanups.get(source) ?? new Set<() => Promise<void>>();
+    cleanups.add(cleanup); this.ownedCleanups.set(source, cleanups);
+    return () => { cleanups.delete(cleanup); if (cleanups.size === 0 && this.ownedCleanups.get(source) === cleanups) this.ownedCleanups.delete(source); };
+  }
+
+  private bindClientRequest(client: PooledAppServerClient, options?: AppServerBindingOptions): BoundAppServerRequest {
+    if (options?.localOnly && this.clientRoutes.get(client)?.route.kind !== "local") {
+      throw new Error("Trusted transport requires an existing local stdio connection");
+    }
+    const request = this.guardRequest(client, client.bindRequest()) as BoundAppServerRequest;
+    const captureCleanup = client.bindCleanup();
+    request.owned = <T>(method: string, params: unknown, cleanup: {method:string;params?:unknown;retainAfterResult?:boolean}, onResponse?: (response:AppServerResponse)=>void): OwnedAppServerOperation<T> => {
+      if(this.disposal.has(client)||!this.isSelectedClient(client))throw new Error("The owning operation connection is no longer available");
+      const registered=this.ownedCleanups.get(client) ?? new Set<()=>Promise<void>>();
+      if(registered.size>=4096) throw new Error("Too many owned operations on session connection");
+      this.ownedCleanups.set(client,registered);
+      const perform=captureCleanup(cleanup.method,cleanup.params);
+      let active=true, released:Promise<void>|undefined;
+      const forget=()=>{if(!active)return;active=false;registered.delete(release);if(registered.size===0&&this.ownedCleanups.get(client)===registered)this.ownedCleanups.delete(client);};
+      const release=():Promise<void>=>{
+        if(released)return released;
+        if(!active)return Promise.resolve();
+        forget();released=Promise.resolve().then(perform);return released;
+      };
+      registered.add(release);
+      const result=request<T>(method,params,onResponse);
+      if(!cleanup.retainAfterResult)void result.then(forget,forget);
+      return {result,release,forget};
+    };
+    return request;
+  }
+
+  private disposeAfterOwnedCleanup(client: PooledAppServerClient, shutdown: AppServerShutdownOptions = {}): Promise<void> {
+    const previous=this.disposal.get(client);if(previous)return previous;
+    const releases=[...(this.ownedCleanups.get(client)??[])];
+    const done=(async()=>{
+      let timer:ReturnType<typeof setTimeout>|undefined;
+      try {
+        if(releases.length) await Promise.race([
+          Promise.allSettled(releases.map(release=>release())),
+          new Promise<void>(resolve=>{timer=setTimeout(resolve,OWNED_CLEANUP_TIMEOUT_MS);}),
+        ]);
+      } finally {if(timer)clearTimeout(timer);this.ownedCleanups.delete(client);await client.dispose(shutdown);}
+    })();
+    this.disposal.set(client,done);void done.finally(()=>this.disposal.delete(client)).catch(()=>{});return done;
+  }
+
+  private contextRequest<T>(context: RuntimeContext, method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {
+    const client = this.clientForContext(context);
+    return this.guardRequest(client, client.request.bind(client))<T>(method, params, onResponse);
+  }
+
+  private guardRequest(client: PooledAppServerClient, request: PooledAppServerClient["request"]): PooledAppServerClient["request"] {
+    const metadata = this.clientRoutes.get(client);
+    if (!metadata) throw new Error("Session connection has no selected route");
+    // Idle eviction may occur between a completed reply and its promise
+    // continuation. Fence by the captured selection, not pool residency.
+    const selected = () => {
+      if (!metadata || this.closing) return false;
+      try { return sessionRouteKey(this.sessionRoutes.select(metadata.context)) === sessionRouteKey(metadata.route); }
+      catch { return false; }
+    };
+    return async <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> => {
+      if (this.disposal.has(client) || !selected()) throw new Error("The selected session route is no longer available");
+      let stale = false;
+      const result = await request<T>(method, params, response => {
+        if (!selected()) stale = true;
+        else {
+          this.locateResponse(metadata.route, response.result);
+          onResponse?.(response);
+        }
+      });
+      if (stale || !selected()) throw new SessionOutcomeUnknownError("the selected session route changed");
+      return result;
+    };
+  }
+
+  private locator(route: SessionRoute, sessionID?: string): SessionLocatorV1 {
+    return { version: 1, execution_host: sessionRouteHost(route),
+      ...(sessionID ? { session_id: sessionID } : {}),
+      ...(route.kind === "remote" && route.storage_host ? { storage_host: route.storage_host } : {}),
+      ...(route.kind === "remote" && route.display_host ? { display_host: route.display_host } : {}),
+    };
+  }
+
+  private locateResponse(route: SessionRoute, result: unknown): void {
+    if (!isRecord(result)) return;
+    const threads = [result.thread, ...(Array.isArray(result.threads) ? result.threads : [])];
+    for (const thread of threads) {
+      if (isRecord(thread) && typeof thread.id === "string") thread.session_locator = this.locator(route, thread.id);
+    }
+  }
+
+  private selectedRoute(context: RuntimeContext): SessionRoute {
+    const current = this.clients.get(resolve(context.cwd));
+    let route: SessionRoute;
+    try {
+      const selected = this.sessionRoutes.select(context);
+      // Selectors may reuse mutable configuration objects. Past provenance must
+      // not change when the provider updates that same object in place.
+      route = Object.freeze(selected.kind === "remote"
+        ? { ...selected, connector: Object.freeze({ ...selected.connector }) }
+        : { ...selected });
+    }
+    catch (error) { if (current) this.disposeClient(current); throw error; }
+    const previous = current && this.clientRoutes.get(current)?.route;
+    if (current && previous && sessionRouteKey(previous) !== sessionRouteKey(route)) {
+      this.disposeClient(current);
+      this.emitToRenderer({ kind: "connection-reset", workdir: current.workdir });
+    }
+    return route;
+  }
+
+  private ownerForSession(context: RuntimeContext, sessionID: string): PooledAppServerClient {
+    const route = this.selectedRoute(context);
+    if (route.kind === "disabled") throw new Error(`Desktop session connection disabled: ${route.reason}`);
+    const locator = context.session_locator;
+    if (locator && (locator.version !== 1 || locator.execution_host !== sessionRouteHost(route) ||
+      locator.session_id && locator.session_id !== sessionID ||
+      locator.storage_host && route.kind === "remote" && locator.storage_host !== route.storage_host)) {
+      throw new Error("Session locator does not match the selected desktop connection");
+    }
+    const owner = this.sessionOwners.get(JSON.stringify([sessionRouteHost(route), sessionID]));
+    const relocated = owner && context.kind === "project" &&
+      owner.workspaceId === context.project_id && owner.workdir !== resolve(context.cwd);
+    // Affinity must preserve both the selected connection and user boundary.
+    const crossesUserBoundary = owner && (context.kind === "user" || owner.userBinding !== undefined) &&
+      (context.kind !== "user" || owner.userBinding?.userSpaceId !== context.user_space_id || owner.userBinding?.productDomain !== context.product_domain || (context.composition_profile !== undefined && owner.userBinding?.compositionProfile !== context.composition_profile));
+    return owner && !relocated && !crossesUserBoundary && this.isSelectedClient(owner) ? owner : this.clientForContext(context);
+  }
+
+  requestForWorkdir<T>(workdir: string, method: string, params?: unknown): Promise<T> {
+    const current = this.clients.get(resolve(workdir));
+    const metadata = current && this.clientRoutes.get(current);
+    if (!current || !metadata || !this.isSelectedClient(current)) {
+      return Promise.reject(new Error("activity workspace is no longer connected"));
+    }
+    const threadID = isRecord(params) ? params.thread_id : undefined;
+    const client = typeof threadID === "string" ? this.ownerForSession(metadata.context, threadID) : current;
+    return this.guardRequest(client, client.request.bind(client))<T>(method, params);
+  }
+
+  runningThreadCwds(): string[] {
+    const cwds = new Set<string>();
+    for (const client of this.allClients()) {
+      for (const cwd of client.runningThreadCwds()) {
+        cwds.add(cwd);
+      }
+    }
+    return [...cwds];
+  }
+
+  threadCwdsForWorkdir(workdir: string): string[] {
+    return [...new Set(this.allClients()
+      .filter(client => client.workdir === resolve(workdir))
+      .flatMap(client => client.knownThreadCwds()))];
+  }
+
+  respondToServerRequest(id: string, result: unknown): void {
+    const route = this.serverRequestRoutes.get(id);
+    if (!route) {
+      throw new Error("server request is no longer active");
+    }
+    this.serverRequestRoutes.delete(id);
+    route.client.respond(route.serverID, result);
+  }
+
+  rejectServerRequest(id: string, message: string): void {
+    const route = this.serverRequestRoutes.get(id);
+    if (!route) {
+      throw new Error("server request is no longer active");
+    }
+    this.serverRequestRoutes.delete(id);
+    route.client.reject(route.serverID, message);
+  }
+
+  // Compares the aggregate running set and broadcasts only on change, so
+  // high-rate streaming notifications (which never alter runningThreadIDs) do
+  // not spam the renderer with identical snapshots.
+  private maybeBroadcastRunningThreads(): void {
+    const key = this.runningThreadsKey();
+    if (key === this.lastRunningThreadsKey) {
+      return;
+    }
+    this.lastRunningThreadsKey = key;
+    this.runningThreadsChangedHandler?.(this.runningThreadsSnapshot());
+  }
+
+  private runningThreadsKey(): string {
+    return this.allClients()
+      .flatMap((client) =>
+        client
+          .runningThreadIDsList()
+          .map((threadID) => `${client.workdir}\u0000${threadID}`),
+      )
+      .sort()
+      .join("|");
+  }
+
+  async shutdown(shutdown: AppServerShutdownOptions = {}): Promise<void> {
+    this.closing = true;
+    const stopping: Promise<void>[] = [...this.disposal.values()];
+    const workdirs = new Set<string>();
+    for (const client of this.allClients()) {
+      stopping.push(this.disposeAfterOwnedCleanup(client, shutdown));
+      workdirs.add(client.workdir);
+    }
+    for (const workdir of workdirs) this.clientTorndownHandler?.(workdir);
+    this.clients.clear();
+    this.retiredClients.clear();
+    this.clientRoutes.clear();
+    this.receiverBindings.clear();
+    this.sessionOwners.clear();
+    this.serverRequestRoutes.clear();
+    const results = await Promise.allSettled(stopping);
+    for (const result of results) {
+      if (result.status === "rejected") console.error("App-server shutdown failed", result.reason);
+    }
+  }
+
+  /**
+   * Dispose the pooled app server (if any) that runs in the given workdir.
+   * Used when a project is removed and its local state is about to be
+   * cleaned up: the removed workspace's server must not stay alive and
+   * recreate runtime state mid-cleanup.
+   */
+  disposeWorkdirClient(workdir: string): void {
+    for (const client of this.allClients()) {
+      if (client.workdir === resolve(workdir)) this.disposeClient(client);
+    }
+  }
+
+  private allClients(): PooledAppServerClient[] {
+    return [...this.clients.values(), ...this.retiredClients];
+  }
+
+  private clientForContext(context: RuntimeContext): PooledAppServerClient {
+    if (this.closing) throw new Error("App-server pool is shutting down");
+    const workdir = resolve(context.cwd);
+    const route = this.selectedRoute(context);
+    if (route.kind === "disabled") throw new Error(`Desktop session connection disabled: ${route.reason}`);
+    // Only registered projects carry a stable id; the no-project (对话)
+    // workspace stays path-keyed (its scratch dir never moves).
+    const workspaceId = context.kind === "project" ? context.project_id : "";
+    let client = this.clients.get(workdir);
+    const userBinding = context.kind === "user" ? { userSpaceId: context.user_space_id, productDomain: context.product_domain, compositionProfile: context.composition_profile } : undefined;
+    if (client && (client.workspaceId !== workspaceId || client.userBinding?.userSpaceId !== userBinding?.userSpaceId || client.userBinding?.productDomain !== userBinding?.productDomain || (userBinding?.compositionProfile !== undefined && client.userBinding?.compositionProfile !== userBinding.compositionProfile))) {
+      // Re-registering a path creates a new identity. Let old turns finish,
+      // but never admit new project requests into their former runtime.
+      this.clients.delete(workdir);
+      this.retiredClients.add(client);
+      client = undefined;
+    }
+    if (!client) {
+      const onStateChange = () => {
+        this.evictIdleClients();
+        this.maybeBroadcastRunningThreads();
+      };
+      if (route.kind === "remote") {
+        const remote = new RemoteAppServerClient(
+          workdir, workspaceId, route, this.sessionRoutes.connect.bind(this.sessionRoutes),
+          (source, event) => this.emitServerEvent(source, event), onStateChange,
+          () => this.isSelectedClient(remote),
+          userBinding,
+        );
+        client = remote;
+      } else client = new AppServerClient(
+        workdir,
+        workspaceId,
+        (source, event) => this.emitServerEvent(source, event),
+        onStateChange,
+        this.spawnAppServer,
+        undefined,
+        this.getInitializeParams,
+        userBinding,
+        this.desktopPaths,
+      );
+      this.clients.set(workdir, client);
+      this.clientRoutes.set(client, { context: Object.freeze({ ...context,
+        ...(context.session_locator ? { session_locator: Object.freeze({ ...context.session_locator }) } : {}),
+      }), route });
+    }
+    client.touch();
+    // The caller registers its request synchronously after this returns. Keep
+    // its target alive until pending/running state can protect it from eviction.
+    this.evictIdleClients(client);
+    this.maybeBroadcastRunningThreads();
+    return client;
+  }
+
+  private emitServerEvent(
+    client: PooledAppServerClient,
+    event: AppServerClientEvent,
+  ): void {
+    if (!this.isSelectedClient(client)) {
+      if (client instanceof RemoteAppServerClient && this.clientRoutes.has(client)) this.disposeClient(client);
+      return;
+    }
+    const selected = this.clientRoutes.get(client);
+    if (selected && event.kind === "notification") this.locateResponse(selected.route, event.message.params);
+    if (event.kind === "connection-reset" || event.kind === "server-exit") this.receiverBindings.delete(client);
+    if (event.kind === "connection-reset") this.dropServerRequestRoutesForClient(client);
+    if (event.kind === "notification") {
+      const params = isRecord(event.message.params) ? event.message.params : undefined;
+      const id = params?.thread_id;
+      if (typeof id === "string" && event.message.method === "turn/started") {
+        const route = this.clientRoutes.get(client)?.route;
+        if (route) this.sessionOwners.set(JSON.stringify([sessionRouteHost(route), id]), client);
+      }
+    } else if (event.kind === "server-exit") {
+      this.forgetSessionOwner(client);
+    }
+    const routed = this.routeServerEvent(client, event);
+    this.eventSources.set(routed, client);
+    this.emitToRenderer(routed);
+  }
+
+  private isSelectedClient(client: PooledAppServerClient): boolean {
+    const metadata = this.clientRoutes.get(client);
+    if (!metadata || this.closing) return false;
+    try { return sessionRouteKey(this.sessionRoutes.select(metadata.context)) === sessionRouteKey(metadata.route); }
+    catch { return false; }
+  }
+
+  private forgetSessionOwner(client: PooledAppServerClient): void {
+    this.receiverBindings.delete(client);
+    for (const [id, owner] of this.sessionOwners) {
+      if (owner === client) this.sessionOwners.delete(id);
+    }
+  }
+
+  private routeServerEvent(
+    client: PooledAppServerClient,
+    event: AppServerClientEvent,
+  ): ServerEvent {
+    const route = this.clientRoutes.get(client)?.route;
+    const params = "message" in event && isRecord(event.message) && isRecord(event.message.params) ? event.message.params : undefined;
+    const thread = isRecord(params?.thread) ? params.thread : undefined;
+    const sessionID = params?.thread_id ?? params?.session_id ?? thread?.id;
+    const session_locator = route && this.locator(route, typeof sessionID === "string" ? sessionID : undefined);
+    const binding = client.userBinding;
+    const user_scope: ServerEvent["user_scope"] = binding && (binding.productDomain === "personal" || binding.productDomain === "coding")
+      ? { user_space_id: binding.userSpaceId, product_domain: binding.productDomain, ...(binding.compositionProfile ? { composition_profile: binding.compositionProfile } : {}) } : undefined;
+    if (event.kind !== "server-request") {
+      return { ...event, workdir: client.workdir, session_locator, ...(user_scope ? { user_scope } : {}) };
+    }
+    const publicID = `server-request-${this.nextServerRequestRouteID++}`;
+    this.serverRequestRoutes.set(publicID, {
+      client,
+      serverID: event.message.id,
+    });
+    return {
+      ...event,
+      workdir: client.workdir,
+      session_locator,
+      ...(user_scope ? { user_scope } : {}),
+      message: {
+        ...event.message,
+        id: publicID,
+      },
+    };
+  }
+
+  private evictIdleClients(admittingClient?: PooledAppServerClient): void {
+    for (const client of this.retiredClients) {
+      if (!client.userBinding && !client.isBusy() && !this.isWorkdirPinned?.(client.workdir)) {
+        this.disposeClient(client);
+      }
+    }
+    if (this.clients.size <= MAX_APP_SERVER_CLIENTS) {
+      return;
+    }
+    const activeWorkdir = this.getActiveWorkdir();
+    const idleClients = this.allClients()
+      .filter(
+        (client) =>
+          client !== admittingClient &&
+          client.workdir !== activeWorkdir &&
+          !client.userBinding &&
+          !client.isBusy() &&
+          !this.isWorkdirPinned?.(client.workdir),
+      )
+      .sort((a, b) => a.lastUsed() - b.lastUsed());
+    for (const client of idleClients) {
+      if (this.clients.size <= MAX_APP_SERVER_CLIENTS) {
+        return;
+      }
+      this.disposeClient(client);
+    }
+  }
+
+  private disposeClient(client: PooledAppServerClient): void {
+    const isCurrent = this.clients.get(client.workdir) === client;
+    if (isCurrent) this.clients.delete(client.workdir);
+    this.retiredClients.delete(client);
+    this.clientRoutes.delete(client);
+    this.forgetSessionOwner(client);
+    this.dropServerRequestRoutesForClient(client);
+    void this.disposeAfterOwnedCleanup(client).catch(error => console.error("App-server disconnect failed", error));
+    // After the routes are dropped so any view-recycle broadcast the handler
+    // fires can't collide with an in-flight reply for this client.
+    if (!this.allClients().some(other => other.workdir === client.workdir)) {
+      this.clientTorndownHandler?.(client.workdir);
+    }
+  }
+
+  private dropServerRequestRoutesForClient(client: PooledAppServerClient): void {
+    for (const [id, route] of this.serverRequestRoutes) {
+      if (route.client === client) {
+        this.serverRequestRoutes.delete(id);
+      }
+    }
+  }
+}
+
+export class AppServerClient {
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private pending = new Map<string, PendingRequest>();
+  private threadCwdsByID = new Map<string, string>();
+  private federation?: SessionLocatorV1;
+  private ownerLocal?: SessionLocatorV1;
+  ownerLocalSessionLocator(): SessionLocatorV1 | undefined { return this.child && this.ownerLocal ? {...this.ownerLocal} : undefined; }
+  federationLocator(): SessionLocatorV1 | undefined { return this.child && this.federation ? { ...this.federation } : undefined; }
+  // Only live execution identities are retained; completion/exit removes them.
+  private runningTurnIDs = new Map<string, string | undefined>();
+  private queuedTurnKeys = new Set<string>();
+  private nextRequestID = 1;
+  private stdoutChunks: string[] = [];
+  private disposing = false;
+  private lastUsedAt = Date.now();
+  private lastStderr = "";
+  private stoppedActivityIDs = new Set<string>();
+  private userHostReady?: Promise<unknown>;
+  private userHostVerified = false;
+  private readonly canonicalWorkdir: string;
+
+  constructor(
+    readonly workdir: string,
+    // Stable workspace identity for a registered project, forwarded to the
+    // app-server so its state dir and session listing survive the project
+    // moving on disk. Empty for the no-project (对话) workspace, which stays
+    // keyed by its (fixed) path.
+    readonly workspaceId: string,
+    private readonly emit: (
+      client: AppServerClient,
+      event: AppServerClientEvent,
+    ) => void,
+    private readonly onStateChange: () => void,
+    private readonly spawnAppServer: AppServerSpawn = defaultSpawnAppServer,
+    private readonly resolveCommand: typeof resolveWuuCommand = resolveWuuCommand,
+    private readonly getInitializeParams?: () => unknown,
+    readonly userBinding?: Readonly<{ userSpaceId: string; productDomain: string; compositionProfile?: string }>,
+    private readonly desktopPaths?: DesktopPaths,
+  ) {
+    // Go resolves workspace symlinks for tool execution, while desktop route
+    // keys retain the user's selected path (notably /var vs /private/var).
+    try { this.canonicalWorkdir = realpathSync.native(workdir); }
+    catch { this.canonicalWorkdir = workdir; } // Missing roots still fail at spawn.
+  }
+
+  private routedActivity(value: unknown): unknown {
+    if (!isRecord(value) || value.workdir !== this.canonicalWorkdir || this.canonicalWorkdir === this.workdir) return value;
+    return { ...value, workdir: this.workdir };
+  }
+
+  start(): void {
+    this.touch();
+    this.ensureStarted();
+  }
+
+  bindRequest(): <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void) => Promise<T> {
+    this.start();
+    const child = this.child;
+    return async <T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> => {
+      if (!child || this.child !== child || child.killed || this.disposing) {
+        throw new Error("The owning app-server process is no longer available");
+      }
+      return this.request<T>(method, params, onResponse);
+    };
+  }
+
+  bindCleanup(): (method: string, params?: unknown) => () => Promise<void> {
+    const request=this.bindRequest();
+    return (method,params)=>{
+      const frozen=params===undefined?undefined:JSON.parse(JSON.stringify(params));
+      return async()=>{await request(method,frozen);};
+    };
+  }
+
+  request<T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {
+    this.start();
+    if (this.userBinding) {
+      const child = this.child;
+      return this.userHostReady!.then(() => {
+        if (!child || child !== this.child || child.killed || this.disposing) throw new Error("The owning app-server process is no longer available");
+        return this.sendRequest<T>(method, params, onResponse);
+      });
+    }
+    return this.sendRequest<T>(method, params, onResponse);
+  }
+
+  private sendRequest<T>(method: string, params?: unknown, onResponse?: (response: AppServerResponse) => void): Promise<T> {
+    const id = `client-${this.nextRequestID++}`;
+    const payload: AppServerRequest = { id, method, params };
+    return new Promise<T>((resolveRequest, rejectRequest) => {
+      this.pending.set(JSON.stringify(id), {
+        onResponse,
+        method,
+        params,
+        resolve: (value) => resolveRequest(value as T),
+        reject: rejectRequest,
+      });
+      try {
+        this.write(payload);
+      } catch (error) {
+        this.pending.delete(JSON.stringify(id));
+        rejectRequest(error);
+      }
+    });
+  }
+
+  respond(id: string, result: unknown): void {
+    this.touch();
+    this.ensureStarted();
+    this.writeResponse({ id, result });
+  }
+
+  reject(id: string, message: string): void {
+    this.touch();
+    this.ensureStarted();
+    this.writeResponse({
+      id,
+      error: {
+        code: "error",
+        message,
+      },
+    });
+  }
+
+  private writeResponse(response: AppServerResponse): void {
+    try {
+      this.write(response);
+    } catch (error) {
+      if (!(error instanceof AppServerMessageTooLargeError)) throw error;
+      // Reverse-RPC callers still need a terminal response after their route
+      // is consumed, including when a page supplies an oversized error string.
+      this.write({
+        id: response.id,
+        error: {
+          code: "error",
+          message: "App-server response exceeds the 64 MiB transport limit. Request a smaller result.",
+        },
+      });
+    }
+  }
+
+  private shutdownPromise: Promise<void> | undefined;
+
+  shutdown(shutdown: AppServerShutdownOptions = {}): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    const child = this.child;
+    if (!child) return Promise.resolve();
+    this.shutdownPromise = shutdownChild(child, () => {
+      this.write({ id: "shutdown", method: "shutdown", params: shutdown.reason ? { reason: shutdown.reason } : undefined });
+    });
+    // Idle eviction also uses dispose without awaiting it. Keep failures visible
+    // without producing unhandled promise rejections in those callers.
+    void this.shutdownPromise.catch((error) => console.error("App-server shutdown failed", error));
+    return this.shutdownPromise;
+  }
+
+  dispose(shutdown: AppServerShutdownOptions = {}): Promise<void> {
+    this.disposing = true;
+    for (const pending of this.pending.values()) {
+      pending.reject(pending.method === "thread/archive"
+        ? new SessionOutcomeUnknownError("the app-server stopped before archive acknowledgement")
+        : new Error("app-server stopped"));
+    }
+    this.pending.clear();
+    return this.shutdown(shutdown);
+  }
+
+  touch(): void {
+    this.lastUsedAt = Date.now();
+  }
+
+  lastUsed(): number {
+    return this.lastUsedAt;
+  }
+
+  isBusy(): boolean {
+    return (
+      this.pending.size > 0 ||
+      this.runningTurnIDs.size > 0 ||
+      this.queuedTurnKeys.size > 0
+    );
+  }
+
+  knownThreadCwds(): string[] {
+    return [...new Set([this.workdir, ...this.threadCwdsByID.values()])];
+  }
+
+  runningThreadIDsList(): string[] {
+    return [...this.runningTurnIDs.keys()];
+  }
+
+  runningThreadCwds(): string[] {
+    const cwds = new Set(
+      [...this.runningTurnIDs.keys()].map(
+        (threadID) => this.threadCwdsByID.get(threadID) ?? this.workdir,
+      ),
+    );
+    for (const pending of this.pending.values()) {
+      if (
+        pending.method !== "turn/start" &&
+        pending.method !== "thread/start" &&
+        pending.method !== "thread/resume" &&
+        pending.method !== "thread/fork" &&
+        pending.method !== "thread/edit-message"
+      ) {
+        continue;
+      }
+      const params = isRecord(pending.params) ? pending.params : undefined;
+      const threadID =
+        typeof params?.thread_id === "string"
+          ? params.thread_id
+          : typeof params?.session_id === "string"
+            ? params.session_id
+            : undefined;
+      cwds.add(
+        (threadID && this.threadCwdsByID.get(threadID)) ?? this.workdir,
+      );
+    }
+    return [...cwds];
+  }
+
+  private ensureStarted(): void {
+    if (this.disposing) throw new Error("App-server client has been disposed");
+    if (this.child) {
+      if (!this.child.killed) {
+        return;
+      }
+      this.finalizeChild(
+        this.child,
+        null,
+        "wuu core process was terminated before it exited",
+      );
+    }
+    const sourceRoot = wuuSourceRoot(this.desktopPaths?.appPath);
+    const resourcesPath = (process as { resourcesPath?: string }).resourcesPath;
+    const command = this.resolveCommand(
+      process.env,
+      this.workdir,
+      sourceRoot,
+      resourcesPath,
+    );
+    this.stoppedActivityIDs.clear();
+    const appServerArgs = [
+      ...command.args,
+      "app-server",
+      "--desktop-execution-defaults",
+      "--workdir",
+      this.workdir,
+    ];
+    if (this.workspaceId.trim() !== "") {
+      appServerArgs.push("--workspace-id", this.workspaceId);
+    }
+    if (this.userBinding) {
+      appServerArgs.push("--user-space", this.userBinding.userSpaceId, "--product-domain", this.userBinding.productDomain);
+      if (this.userBinding.compositionProfile) appServerArgs.push("--composition-profile", this.userBinding.compositionProfile);
+    }
+    const helperEnv = appServerHelperEnvironment(
+      process.env,
+      sourceRoot,
+      resourcesPath,
+      process.platform,
+    );
+    helperEnv.WUU_NODE_EXECUTABLE = process.execPath;
+    if (this.desktopPaths?.isPackaged) {
+      configurePackagedCUA(helperEnv, resourcesPath, process.platform);
+    }
+    const desktopOwner = this.userBinding !== undefined;
+    if (desktopOwner) {
+      appServerArgs.push("--desktop-owner-pipe");
+    }
+    this.shutdownPromise = undefined;
+    const child = this.spawnAppServer(command.command, appServerArgs, {
+      cwd: command.cwd,
+      env: helperEnv,
+      stdio: desktopOwner ? ["pipe", "pipe", "pipe", "pipe"] : ["pipe", "pipe", "pipe"],
+    });
+    if (desktopOwner) {
+      const admission = child.stdio[3] as Writable | null;
+      if (!admission) { child.kill(); throw new Error("Desktop owner admission pipe is unavailable"); }
+      admission.on("error", () => child.kill());
+      // The desktop owns the local account space. A requested user host cannot
+      // select a different account owner through renderer JSONL.
+      admission.end(JSON.stringify({ version: 1, user_space_id: this.userBinding!.userSpaceId, product_domain: this.userBinding!.productDomain, mcp_account_user_space_id: "local" }));
+    }
+    this.child = child;
+    this.userHostVerified = false;
+    this.userHostReady = undefined;
+    this.stdoutChunks = [];
+    this.lastStderr = "";
+
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      if (this.child === child) {
+        this.readStdout(chunk);
+      }
+    });
+    child.stdout.on("error", (error) => {
+      this.finalizeChild(
+        child,
+        null,
+        appServerProcessError("stdout failed", error),
+        true,
+      );
+    });
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      if (this.child !== child) {
+        return;
+      }
+      const message = chunk.trim();
+      if (message) {
+        // Keep stderr for process-exit diagnostics. Do not surface it as a
+        // user-facing server-error: app-server writes warnings and debug lines
+        // here while turns are still running, and the composer status row would
+        // otherwise flash "wuu 内部错误" over a healthy request.
+        this.lastStderr = `${this.lastStderr}\n${message}`.trim().slice(-4000);
+        console.warn(`[app-server] ${message}`);
+      }
+    });
+    child.stderr.on("error", (error) => {
+      this.finalizeChild(
+        child,
+        null,
+        appServerProcessError("stderr failed", error),
+        true,
+      );
+    });
+    child.stdin.on("error", (error) => {
+      this.finalizeChild(
+        child,
+        null,
+        appServerProcessError("stdin failed", error),
+        true,
+      );
+    });
+    child.on("error", (error) => {
+      this.finalizeChild(
+        child,
+        null,
+        appServerProcessError("process failed", error),
+        true,
+      );
+    });
+    child.on("exit", (code) => {
+      this.finalizeChild(child, code);
+    });
+    child.on("close", (code) => {
+      this.finalizeChild(child, code);
+    });
+    // Prewarmed and restarted cores can host background identities before a
+    // renderer opens that project. Negotiate host routing on every spawn.
+    if (this.userBinding || this.getInitializeParams) {
+      const initialization = this.sendRequest("initialize", this.getInitializeParams?.());
+      if (this.userBinding) this.userHostReady = initialization;
+      void initialization.catch(error => {
+        if (this.child === child && !this.disposing) {
+          this.emit(this, { kind: "server-error", message: String(error) });
+        }
+      });
+    }
+  }
+
+  private write(payload: unknown): void {
+    const child = this.child;
+    if (!child) {
+      throw new Error("app-server is not running");
+    }
+    try {
+      const wire = `${JSON.stringify(payload)}\n`;
+      if (Buffer.byteLength(wire, "utf8") > MAX_APP_SERVER_FRAME_BYTES) {
+        throw new AppServerMessageTooLargeError("Message exceeds the 64 MiB transport limit after encoding. Remove an attachment or shorten the message and try again.");
+      }
+      child.stdin.write(wire, (error) => {
+        if (error) {
+          this.finalizeChild(
+            child,
+            null,
+            appServerProcessError("stdin write failed", error),
+            true,
+          );
+        }
+      });
+    } catch (error) {
+      // An admission refusal must not finalize the core or reject other work.
+      if (error instanceof AppServerMessageTooLargeError) throw error;
+      this.finalizeChild(
+        child,
+        null,
+        appServerProcessError("stdin write failed", error),
+        true,
+      );
+      throw error;
+    }
+  }
+
+  private finalizeChild(
+    child: ChildProcessWithoutNullStreams,
+    code: number | null,
+    failureDetail = "",
+    terminateChild = false,
+  ): void {
+    if (this.child !== child) {
+      return;
+    }
+
+    const detail = [this.lastStderr.trim(), failureDetail.trim()]
+      .filter(Boolean)
+      .join("\n");
+    const message = appServerExitMessage(code, detail);
+    const pending = [...this.pending.values()];
+
+    // Clear process-owned state before invoking callbacks. A rejection or
+    // renderer event may immediately start a replacement process; late
+    // error/exit/close events from this child must not touch that new child.
+    this.child = null;
+    this.stdoutChunks = [];
+    this.lastStderr = "";
+    this.pending.clear();
+    this.threadCwdsByID.clear();
+    this.federation = undefined;
+    this.ownerLocal = undefined;
+    this.runningTurnIDs.clear();
+    this.queuedTurnKeys.clear();
+
+    if (terminateChild && !child.killed) {
+      try {
+        child.kill();
+      } catch {
+        // The process may already be gone (for example ENOENT). Its state is
+        // still finalized locally, and late child events are identity-guarded.
+      }
+    }
+
+    for (const request of pending) {
+      request.reject(request.method === "thread/archive"
+        ? new SessionOutcomeUnknownError(message)
+        : new Error(message));
+    }
+    if (!this.disposing) {
+      this.emit(this, { kind: "server-exit", code, message });
+    }
+    this.onStateChange();
+  }
+
+  private readStdout(chunk: string): void {
+    // A history response can span hundreds of pipe reads. Scan each new chunk
+    // once and join only at a line boundary, rather than repeatedly flattening
+    // and searching the entire growing response.
+    const child = this.child;
+    let start = 0;
+    for (;;) {
+      const index = chunk.indexOf("\n", start);
+      if (index < 0) {
+        if (start < chunk.length) this.stdoutChunks.push(chunk.slice(start));
+        return;
+      }
+      const tail = chunk.slice(start, index);
+      let line = tail;
+      if (this.stdoutChunks.length > 0) {
+        this.stdoutChunks.push(tail);
+        line = this.stdoutChunks.join("");
+        this.stdoutChunks = [];
+      }
+      line = line.trim();
+      start = index + 1;
+      if (line) {
+        this.handleLine(line);
+        if (this.child !== child) return;
+      }
+    }
+  }
+
+  private handleLine(line: string): void {
+    let message:
+      AppServerResponse | AppServerNotification | Required<AppServerRequest>;
+    try {
+      message = JSON.parse(line);
+    } catch {
+      this.emit(this, {
+        kind: "server-error",
+        message: `Invalid app-server JSON: ${line}`,
+      });
+      return;
+    }
+
+    const maybeRequest = message as Required<AppServerRequest>;
+    // Unverified processes cannot acquire reverse-RPC authority or publish
+    // session ownership. initialize's response validates scope synchronously.
+    if (this.userBinding && !this.userHostVerified && maybeRequest.method) {
+      if (maybeRequest.id !== undefined) this.writeResponse({ id: maybeRequest.id, error: { code: "user_host_binding_unverified", message: "User host binding has not been verified" } });
+      return;
+    }
+    if (maybeRequest.method && maybeRequest.id !== undefined) {
+      const rejection = activityServerRequestRejection(
+        maybeRequest,
+        this.stoppedActivityIDs,
+      );
+      if (rejection) {
+        this.reject(maybeRequest.id, rejection);
+        return;
+      }
+      this.emit(this, { kind: "server-request", message: maybeRequest });
+      return;
+    }
+
+    const maybeNotification = message as AppServerNotification;
+    if (maybeNotification.method) {
+      if (maybeNotification.method.startsWith("activity/")) {
+        maybeNotification.params = this.routedActivity(maybeNotification.params);
+      }
+      updateStoppedActivityIDs(this.stoppedActivityIDs, maybeNotification);
+      const composerUpdate = pendingComposerUpdateFromNotification(maybeNotification, wireComposerMessage);
+      if (composerUpdate) {
+        for (const pending of this.pendingResumesForThread(composerUpdate.threadID)) {
+          (pending.composerUpdates ??= []).push(composerUpdate);
+        }
+      }
+      this.updateRunningFromNotification(maybeNotification);
+      this.emit(this, { kind: "notification", message: maybeNotification });
+      this.onStateChange();
+      return;
+    }
+
+    const response = message as AppServerResponse;
+    const key = JSON.stringify(response.id);
+    const pending = this.pending.get(key);
+    if (!pending) {
+      return;
+    }
+    this.pending.delete(key);
+    if (pending.method === "initialize" && !response.error) {
+      const result = isRecord(response.result) ? response.result : undefined;
+      const local = isRecord(result?.owner_local_session_control) ? result.owner_local_session_control : undefined;
+      this.ownerLocal = local?.version === 1 && typeof local.execution_host === "string" && local.execution_host.startsWith("desktop-local:") && local.storage_host === local.execution_host
+        ? {version:1,execution_host:local.execution_host,storage_host:local.execution_host} : undefined;
+      const locator = isRecord(result?.session_federation) ? result.session_federation : undefined;
+      this.federation = locator?.version === 1 && typeof locator.execution_host === "string" && locator.execution_host !== "local"
+        ? { version: 1, execution_host: locator.execution_host, ...(typeof locator.storage_host === "string" ? { storage_host: locator.storage_host } : {}) } : undefined;
+    }
+    if (this.userBinding && pending.method === "initialize" && !response.error) {
+      const result = isRecord(response.result) ? response.result : {};
+      if (result.user_space_id !== this.userBinding.userSpaceId || result.product_domain !== this.userBinding.productDomain) {
+        const message = "user_host_binding_mismatch: The initialized host does not match the requested user space and product domain";
+        pending.reject(new Error(message));
+        if (this.child) this.finalizeChild(this.child, null, message, true);
+        return;
+      }
+      this.userHostVerified = true;
+    }
+    if (!response.error && pending.composerUpdates) {
+      response.result = rebaseResumeComposerResult(response.result, pending.composerUpdates);
+    }
+    if (pending.method.startsWith("activity/") && isRecord(response.result)) {
+      const result = response.result;
+      if (result.activity) result.activity = this.routedActivity(result.activity);
+      if (Array.isArray(result.activities)) result.activities = result.activities.map(activity => this.routedActivity(activity));
+    }
+    this.updateRunningFromResponse(
+      pending.method,
+      pending.params,
+      response.result,
+      pending.settledTurnIDs,
+      pending.startedTurnIDs,
+    );
+    this.onStateChange();
+    // Forward before parsing the next stdout line. Promise continuations can
+    // otherwise put a newer notification ahead of this snapshot response.
+    pending.onResponse?.(response);
+    if (response.error) {
+      pending.reject(new AppServerResponseError(response.error.message, response.error.code));
+      return;
+    }
+    pending.resolve(response.result);
+  }
+
+  private updateRunningFromNotification(message: AppServerNotification): void {
+    const params = isRecord(message.params) ? message.params : undefined;
+    const threadID =
+      typeof params?.thread_id === "string" ? params.thread_id : undefined;
+    switch (message.method) {
+      case "turn/queued": {
+        const queued = isRecord(params?.queued) ? params.queued : undefined;
+        if (
+          typeof queued?.thread_id === "string" &&
+          typeof queued.id === "string"
+        ) {
+          this.queuedTurnKeys.add(queuedTurnKey(queued.thread_id, queued.id));
+        }
+        return;
+      }
+      case "turn/started":
+        if (threadID) {
+          const turn = isRecord(params?.turn) ? params.turn : undefined;
+          const turnID = typeof turn?.id === "string" ? turn.id : undefined;
+          this.runningTurnIDs.set(threadID, turnID);
+          for (const pending of this.pendingResumesForThread(threadID)) {
+            (pending.startedTurnIDs ??= new Map()).set(threadID, turnID);
+          }
+          if (typeof params?.queue_id === "string") {
+            this.queuedTurnKeys.delete(
+              queuedTurnKey(threadID, params.queue_id),
+            );
+          }
+        }
+        return;
+      case "turn/dequeued":
+        if (threadID && typeof params?.queue_id === "string") {
+          this.queuedTurnKeys.delete(queuedTurnKey(threadID, params.queue_id));
+        }
+        return;
+      case "turn/held":
+        if (threadID) {
+          // Interrupt moves ordinary in-memory queue entries into the durable
+          // held snapshot. They no longer require this app-server process to
+          // stay resident.
+          this.deleteQueuedTurnsForThread(threadID);
+        }
+        return;
+      case "turn/completed":
+      case "turn/error":
+        if (threadID) {
+          const turn = isRecord(params?.turn) ? params.turn : undefined;
+          const turnID = typeof turn?.id === "string" ? turn.id : undefined;
+          const activeID = this.runningTurnIDs.get(threadID);
+          // A delayed terminal for A cannot settle the already-started B.
+          // Legacy events without identity retain their existing semantics.
+          if (!activeID || !turnID || activeID === turnID) this.runningTurnIDs.delete(threadID);
+          if (typeof turn?.id === "string") {
+            for (const pending of this.pendingResumesForThread(threadID)) {
+              const settled = pending.settledTurnIDs ??= new Map();
+              const turns = settled.get(threadID) ?? new Set<string>();
+              turns.add(turn.id);
+              settled.set(threadID, turns);
+            }
+          }
+        }
+        return;
+      case "thread/started":
+      case "thread/resumed":
+      case "thread/updated":
+        this.updateRunningFromThread(params?.thread);
+        return;
+    }
+  }
+
+  private *pendingResumesForThread(threadID: string): Iterable<PendingRequest> {
+    for (const pending of this.pending.values()) {
+      if (pending.method !== "thread/resume") continue;
+      const sessionID = isRecord(pending.params) ? pending.params.session_id : undefined;
+      if (typeof sessionID === "string" && sessionID.trim() !== "" && sessionID.trim() !== threadID) continue;
+      yield pending;
+    }
+  }
+
+  private updateRunningFromResponse(
+    method: string,
+    params: unknown,
+    result: unknown,
+    settledTurnIDs?: Map<string, Set<string>>,
+    startedTurnIDs?: Map<string, string | undefined>,
+  ): void {
+    if (method === "turn/queue" && isRecord(result)) {
+      const queued = isRecord(result.queued) ? result.queued : undefined;
+      if (
+        typeof queued?.thread_id === "string" &&
+        typeof queued.id === "string"
+      ) {
+        // The response is handled before the following turn/queued
+        // notification. Track it here so LRU eviction cannot tear down the
+        // app-server in that one-line gap.
+        this.queuedTurnKeys.add(queuedTurnKey(queued.thread_id, queued.id));
+      }
+    }
+    if (
+      method === "thread/list" &&
+      isRecord(result) &&
+      Array.isArray(result.threads)
+    ) {
+      for (const thread of result.threads) {
+        this.updateRunningFromThread(thread);
+      }
+      return;
+    }
+    if (
+      (method === "thread/start" ||
+        method === "thread/resume" ||
+        method === "thread/fork" ||
+        method === "thread/edit-message") &&
+      isRecord(result)
+    ) {
+      this.updateRunningFromThread(result.thread, settledTurnIDs, startedTurnIDs);
+      return;
+    }
+    if (
+      method === "turn/start" &&
+      isRecord(params) &&
+      typeof params.thread_id === "string"
+    ) {
+      const turn = isRecord(result) ? result.turn : undefined;
+      if (isRecord(turn) && turn.status === "in_progress") {
+        this.runningTurnIDs.set(params.thread_id, typeof turn.id === "string" ? turn.id : undefined);
+      }
+    }
+  }
+
+  private updateRunningFromThread(
+    value: unknown, settledTurnIDs?: Map<string, Set<string>>, startedTurnIDs?: Map<string, string | undefined>,
+  ): void {
+    if (!isRecord(value) || typeof value.id !== "string") {
+      return;
+    }
+    if (typeof value.cwd === "string" && value.cwd !== "") {
+      this.threadCwdsByID.set(value.id, value.cwd);
+    }
+    const turns = Array.isArray(value.turns) ? value.turns.filter(isRecord) : [];
+    const startedID = startedTurnIDs?.get(value.id);
+    if (startedTurnIDs?.has(value.id) && this.runningTurnIDs.has(value.id) && this.runningTurnIDs.get(value.id) === startedID) {
+      const started = turns.find(turn => turn.id === startedID);
+      const settled = started?.status === "completed" || started?.status === "interrupted" || started?.status === "failed";
+      // A read missing the newly observed turn is older than its start. Only
+      // an explicit terminal status for that turn can repair a missed terminal
+      // event; an idle flag or missing/unknown status alone cannot settle it.
+      if (startedID !== undefined && !settled && (started?.status !== "in_progress" || value.status !== "in_progress")) return;
+      if (startedID === undefined && value.status !== "in_progress") return;
+    }
+    if (value.status === "in_progress") {
+      const settled = settledTurnIDs?.get(value.id);
+      if (settled && Array.isArray(value.turns)) {
+        const active = value.turns.filter(turn => isRecord(turn) && turn.status === "in_progress");
+        if (active.length > 0 && active.every(turn => typeof turn.id === "string" && settled.has(turn.id))) {
+          // Ignore this stale running fact, rather than clearing a newer turn
+          // which may already have started while the resume was in flight.
+          return;
+        }
+      }
+      const active = turns.filter(turn => turn.status === "in_progress");
+      const turn = (startedID === undefined ? undefined : active.find(turn => turn.id === startedID)) ?? active.at(-1);
+      // Summary-only reads can confirm busy without supplying a new identity.
+      // Do not discard the identity needed to reject an older terminal event.
+      this.runningTurnIDs.set(value.id, typeof turn?.id === "string" ? turn.id : this.runningTurnIDs.get(value.id));
+    } else {
+      this.runningTurnIDs.delete(value.id);
+    }
+  }
+
+  private deleteQueuedTurnsForThread(threadID: string): void {
+    const prefix = `${threadID}\u0000`;
+    for (const key of this.queuedTurnKeys) {
+      if (key.startsWith(prefix)) {
+        this.queuedTurnKeys.delete(key);
+      }
+    }
+  }
+}
+
+function queuedTurnKey(threadID: string, queueID: string): string {
+  return `${threadID}\u0000${queueID}`;
+}
+
+interface AppServerHelper {
+  environment: string;
+  executable: string;
+  platform?: NodeJS.Platform;
+}
+
+const APP_SERVER_HELPERS: readonly AppServerHelper[] = [
+  { environment: "WUU_CUA_MAC_HELPER", executable: "wuu-cua-mac", platform: "darwin" },
+  { environment: "WUU_CUA_LINUX_HELPER", executable: "wuu-cua-linux", platform: "linux" },
+];
+
+export function appServerHelperEnvironment(
+  env: NodeJS.ProcessEnv,
+  sourceRoot: string | undefined,
+  resourcesPath: string | undefined,
+  platform: NodeJS.Platform,
+  exists: (path: string) => boolean = existsSync,
+): NodeJS.ProcessEnv {
+  const result = { ...env };
+  for (const helper of APP_SERVER_HELPERS) {
+    if (helper.platform && helper.platform !== platform) {
+      continue;
+    }
+    if (result[helper.environment]) {
+      continue;
+    }
+    const executable = platform === "win32" ? `${helper.executable}.exe` : helper.executable;
+    const candidates = [
+      resourcesPath ? join(resourcesPath, "bin", executable) : undefined,
+      sourceRoot ? join(sourceRoot, "desktop", "build", "bin", executable) : undefined,
+    ].filter((candidate): candidate is string => Boolean(candidate));
+    const discovered = candidates.find(exists);
+    if (discovered) {
+      result[helper.environment] = discovered;
+    }
+  }
+  const rg = platform === "win32" ? "rg.exe" : "rg";
+  const toolsDir = [
+    resourcesPath ? join(resourcesPath, "tools") : undefined,
+    sourceRoot ? join(sourceRoot, "desktop", "build", "tools") : undefined,
+  ]
+    .filter((dir): dir is string => Boolean(dir))
+    .find((dir) => exists(join(dir, rg)));
+  if (toolsDir) {
+    // Appended so a user-installed rg keeps precedence; the bundled copy only
+    // fills the gap for core search tools and agent shell commands.
+    const pathKey =
+      Object.keys(result).find((key) =>
+        platform === "win32" ? key.toUpperCase() === "PATH" : key === "PATH",
+      ) ?? "PATH";
+    const delimiter = platform === "win32" ? ";" : ":";
+    const entries = (result[pathKey] ?? "").split(delimiter).filter(Boolean);
+    if (!entries.includes(toolsDir)) {
+      result[pathKey] = [...entries, toolsDir].join(delimiter);
+    }
+  }
+  return result;
+}
+
+export function updateStoppedActivityIDs(
+  stoppedActivityIDs: Set<string>,
+  notification: AppServerNotification,
+): void {
+  if (notification.method !== "activity/stopped" || !isRecord(notification.params)) {
+    return;
+  }
+  const activityID = notification.params.id;
+  if (typeof activityID === "string" && activityID.trim() !== "") {
+    stoppedActivityIDs.add(activityID);
+  }
+}
+
+export function activityServerRequestRejection(
+  request: Required<AppServerRequest>,
+  stoppedActivityIDs: ReadonlySet<string>,
+): string | undefined {
+  if (!isRecord(request.params)) {
+    return undefined;
+  }
+  const activityID = request.params.activity_id;
+  if (typeof activityID !== "string" || !stoppedActivityIDs.has(activityID)) {
+    return undefined;
+  }
+  return `activity ${activityID} is stopped`;
+}
+
+export function appServerExitMessage(
+  code: number | null,
+  stderr: string,
+): string {
+  const detail = stderr.trim();
+  const prefix = `wuu core exited${code === null ? "" : ` (code ${code})`}`;
+  return detail ? `${prefix}: ${detail}` : prefix;
+}
+
+function appServerProcessError(context: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `${context}: ${message}`;
+}
+
+function wuuSourceRoot(appPath?: string): string | undefined {
+  const candidates = [
+    process.env.WUU_SOURCE_ROOT,
+    process.cwd(),
+    resolve(process.cwd(), ".."),
+    appPath,
+    appPath ? resolve(appPath, "..") : undefined,
+    resolve(__dirname, "..", "..", ".."),
+  ].filter((candidate): candidate is string => Boolean(candidate));
+  return candidates.find(
+    (candidate) =>
+      existsSync(join(candidate, "go.mod")) &&
+      existsSync(join(candidate, "cmd", "wuu")),
+  );
+}
+
+// Packaged apps resolve CUA only inside their own bundle. Developer overrides
+// must not accidentally attach a released app to an old checkout's helper.
+export function configurePackagedCUA(
+  env: NodeJS.ProcessEnv,
+  resourcesPath: string | undefined,
+  platform: NodeJS.Platform,
+  exists: (path: string) => boolean = existsSync,
+): void {
+  delete env.WUU_ENABLE_CUA_MAC;
+  delete env.WUU_CUA_MAC_HELPER;
+  delete env.WUU_CUA_MAC_PIP_HELPER;
+  delete env.WUU_ENABLE_CUA_LINUX;
+  delete env.WUU_CUA_LINUX_HELPER;
+  if (!resourcesPath) return;
+  if (platform === "linux") {
+    const helper = join(resourcesPath, "bin", "wuu-cua-linux");
+    if (!exists(helper)) return;
+    env.WUU_ENABLE_CUA_LINUX = "1";
+    env.WUU_CUA_LINUX_HELPER = helper;
+    return;
+  }
+  if (platform !== "darwin") return;
+  const helper = join(resourcesPath, "bin", "wuu-cua-mac");
+  const pip = join(resourcesPath, "bin", "wuu-cua-mac-pip");
+  if (!exists(helper) || !exists(pip)) return;
+  env.WUU_ENABLE_CUA_MAC = "1";
+  env.WUU_CUA_MAC_HELPER = helper;
+  env.WUU_CUA_MAC_PIP_HELPER = pip;
+}

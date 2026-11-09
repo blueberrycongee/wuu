@@ -1,0 +1,8 @@
+Wuu uses vivo Sans SC, Copyright vivo Mobile Communication Co., Ltd.
+
+Original, unmodified variable font from the official vivo Sans distribution.
+Source: https://developers.vivo.com/doc/d/314fa33cbaec4a93be351cd44757d9d9
+Download: https://h5-pre.vivo.com.cn/pcvivo/OS5-font/vivo%20Sans.zip
+SHA-256 (vivoSansSCVF.ttf): abffd2d811975e0ac0ded020be5ecb8d82e11985044ed71267f68ddb7ce9ca6e
+
+This font is subject to the accompanying LICENSE.txt, not the Wuu MIT license.

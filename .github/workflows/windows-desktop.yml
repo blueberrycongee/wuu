@@ -1,0 +1,169 @@
+name: Windows Desktop
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".github/workflows/windows-desktop.yml"
+      - "desktop/**"
+      - "clients/core/**"
+      - "clients/mobile-web/**"
+      - "plugins/**"
+      - "packages/**"
+      - "internal/**"
+      - "cmd/**"
+      - "scripts/**"
+      - "go.mod"
+      - "go.sum"
+      - "VERSION"
+      - ".node-version"
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+    paths:
+      - ".github/workflows/windows-desktop.yml"
+      - "desktop/**"
+      - "clients/core/**"
+      - "clients/mobile-web/**"
+      - "plugins/**"
+      - "packages/**"
+      - "internal/**"
+      - "cmd/**"
+      - "scripts/**"
+      - "go.mod"
+      - "go.sum"
+      - "VERSION"
+      - ".node-version"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-desktop-${{ github.workflow }}-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build-windows-x64:
+    name: Build Windows x64 installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      NODE_OPTIONS: "--max-old-space-size=4096"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            plugins/package-lock.json
+            clients/core/package-lock.json
+            clients/mobile-web/package-lock.json
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+
+      - name: Install locked workspace dependencies
+        shell: bash
+        run: |
+          pids=()
+          for workspace in desktop plugins clients/core clients/mobile-web; do
+            npm ci --prefix "$workspace" &
+            pids+=("$!")
+          done
+          status=0
+          for pid in "${pids[@]}"; do
+            wait "$pid" || status=1
+          done
+          exit "$status"
+
+      - name: Verify Electron runtime
+        working-directory: desktop
+        run: |
+          node node_modules/electron/install.js
+          node -e "const electron = require('electron'); if (!electron) process.exit(1); console.log(electron)"
+
+      - name: Restore Electron native module build
+        uses: actions/cache/restore@v4
+        id: windows-pty-cache
+        with:
+          # npm ci has already restored the exact sources. Electron rebuild still
+          # checks its architecture/ABI marker before reusing these build outputs.
+          path: desktop/node_modules/node-pty/build/Release
+          key: windows-pty-v1-${{ runner.arch }}-${{ env.ImageOS }}-${{ hashFiles('desktop/package-lock.json') }}
+
+      - name: Build core and presentation inputs
+        id: build-inputs
+        working-directory: desktop
+        shell: bash
+        run: |
+          node --test scripts/fetch-ripgrep.test.cjs
+          (npm run build:core:win && npm run build:renderer) &
+          core_pid=$!
+          (npm run build:web && npm run build:ripgrep:win) &
+          presentation_pid=$!
+          core_result=0
+          presentation_result=0
+          wait "$core_pid" || core_result=$?
+          wait "$presentation_pid" || presentation_result=$?
+          test "$core_result" -eq 0 && test "$presentation_result" -eq 0
+
+      - name: Verify Windows packaging event routing
+        run: node --test desktop/scripts/build-windows-ci.test.cjs
+
+      - name: Build Windows installer and portable archive
+        working-directory: desktop
+        run: node scripts/build-windows-ci.cjs
+
+      - name: Exercise the packaged terminal native module
+        working-directory: desktop
+        env:
+          ELECTRON_RUN_AS_NODE: "1"
+        run: |
+          & ./release/win-unpacked/wuu.exe -e '
+            const pty = require("./release/win-unpacked/resources/app.asar/node_modules/node-pty");
+            const terminal = pty.spawn("cmd.exe", ["/d", "/c", "echo wuu-packaged-pty"], { cols: 80, rows: 24 });
+            let output = "";
+            const timeout = setTimeout(() => { terminal.kill(); process.exit(1); }, 15000);
+            terminal.onData(data => { output += data; });
+            terminal.onExit(({ exitCode }) => {
+              clearTimeout(timeout);
+              console.log(output);
+              process.exit(exitCode === 0 && output.includes("wuu-packaged-pty") ? 0 : 1);
+            });
+          '
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify packaged Windows runtime
+        working-directory: desktop
+        run: node scripts/verify-windows-package.cjs
+
+      - name: Upload Windows desktop packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: wuu-windows-x64-${{ github.sha }}
+          path: |
+            desktop/release/wuu-win-x64-setup.exe
+            desktop/release/wuu-win-x64.zip
+            desktop/release/*.yml
+            desktop/release/*.blockmap
+            desktop/release/builder-effective-config.yaml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Save Electron native module build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.windows-pty-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: desktop/node_modules/node-pty/build/Release
+          key: ${{ steps.windows-pty-cache.outputs.cache-primary-key }}

@@ -1,0 +1,120 @@
+{
+  "format": {
+    "version": 1,
+    "encoding": "all byte fields are unpadded base64url (RFC 4648 §5)",
+    "signing_buffer": "label || 0x00 || (len(part) as uint32 BE || part)... ; signed with Ed25519",
+    "sealed_layout": "nonce(12) || AES-256-GCM ciphertext+tag, aad = transcript",
+    "channel_nonce": "12 bytes: 4 zero bytes || uint64 BE counter; counter starts at 1 per direction",
+    "hkdf": "HKDF-SHA256(secret=shared, salt=transcript, info=<info string>) -> 32-byte key",
+    "generator": "go test ./internal/remote/secure -run TestVectors -update"
+  },
+  "identities": {
+    "host": {
+      "seed": "tO3nY2yop1NSTIF95HKQ1QF0jJCMIUAV51FrvaJolm0",
+      "public": "-Hk3tMl62l6u3yGD1WDwvWH1lko58RgI-hGU36oVOKI",
+      "fingerprint": "c8465106f505"
+    },
+    "phone": {
+      "seed": "4Yxwscu9AXnFoXJkd-VQ3-CESwiDldRP4YXkla7kOXI",
+      "public": "-yy5BmoxzRhqVEmIv1bynQUcrRHPo66aRq6vUXfZ6vo",
+      "fingerprint": "2579e6ff1255"
+    }
+  },
+  "relay_auth": [
+    {
+      "signer": "phone",
+      "role": "phone",
+      "nonce": "7SlatUzvq_mKJiLsN8a0IZztjWIvwg7AgjhRx12kRgY",
+      "signing_buffer": "d3V1L3JlbGF5L2F1dGgvdjEAAAAAIO0pWrVM76v5iiYi7DfGtCGc7Y1iL8IOwII4UcddpEYGAAAAIPssuQZqMc0YalRJiL9W8p0FHK0Rz6Oumkaur1F32er6AAAABXBob25l",
+      "sig": "D3zcAOFooDUQJEEi3dPZ8bLqw3khpjNy-KaXxsQ8MfUrs866EH3-syKe-GxQYrAGecHiseM39heS64y07hRUAw"
+    },
+    {
+      "signer": "host",
+      "role": "host",
+      "nonce": "59tESY150-UAjAnLYEVpFUWkCtD2nmOD5VniodtRqQU",
+      "signing_buffer": "d3V1L3JlbGF5L2F1dGgvdjEAAAAAIOfbREmNedPlAIwJy2BFaRVFpArQ9p5jg-VZ4qHbUakFAAAAIPh5N7TJetpert8hg9Vg8L1h9ZZKOfEYCPoRlN-qFTiiAAAABGhvc3Q",
+      "sig": "qoz8YJw1BC52zescKzR65EZtp_EMTQhtHfVFu-KPgaO24oxGMLfKS44s52Khpg0VwAi5pHbhXiaf57dL7Bg0CQ"
+    }
+  ],
+  "pairing": {
+    "relay_url": "ws://127.0.0.1:8787/v1/connect",
+    "pairing_id": "AmmhdF8vm1g4DAK7tr4TRw",
+    "host_eph_priv": "t5UC44kHNe9SRmgekqu9MrCkb1bHoqeqAOBYLJ907cA",
+    "host_eph_pub": "5CAmxTpS0KWC8PAhdWRbCtpO-m7hZ2N1ZVhZXgkv1iM",
+    "uri": "wuu://pair?h=-Hk3tMl62l6u3yGD1WDwvWH1lko58RgI-hGU36oVOKI&k=5CAmxTpS0KWC8PAhdWRbCtpO-m7hZ2N1ZVhZXgkv1iM&p=AmmhdF8vm1g4DAK7tr4TRw&r=ws%3A%2F%2F127.0.0.1%3A8787%2Fv1%2Fconnect&v=1",
+    "phone_eph_priv": "8N3cUTisr1i2SuR4RXWE58KOiXWjBfCTPsvvGYadANM",
+    "phone_eph_pub": "EYM6YEauqr2rFr4ZNY0femShWJHZ2Sw1p2sJhX5Skkw",
+    "shared": "ADrCptL1_pqTQNKFERdPtQJpAKGOv9Kl6qRreC9klkQ",
+    "transcript": "FzkvOlDODytvFS-5j6W6u34U6wwbA_57XIfRzO42tG8",
+    "offer_name": "vector phone",
+    "offer_platform": "android",
+    "offer_nonce": "EndjLgsrffplO2S2",
+    "offer_plaintext": "eyJkZXZpY2VfcHViIjoiLXl5NUJtb3h6UmhxVkVtSXYxYnluUVVjclJIUG82NmFScTZ2VVhmWjZ2byIsIm5hbWUiOiJ2ZWN0b3IgcGhvbmUiLCJwbGF0Zm9ybSI6ImFuZHJvaWQifQ",
+    "offer_key": "HHRR4YXNSvfjV_80xPtK5n00tMwAC1stSIh9p6GUhsQ",
+    "sealed_offer": "EYM6YEauqr2rFr4ZNY0femShWJHZ2Sw1p2sJhX5SkkwSd2MuCyt9-mU7ZLYAwtjh4Q2Pj2CroDoPBOEbgzMBxEyzELEXt1rx1m__ZpESFW_HkQBZSJ3BFyOuK0LYZd4XfV39U0IyVJRbVmbHzLrvlULiifk57Lsa-V_HhZvaAxylCzjs0cg_4ZqA0Tc3CqjKzIH2xFyUjYNvRrV0Eo1N62WvyA",
+    "host_name": "vector host",
+    "confirm_signing_buffer": "d3V1L3BhaXIvY29uZmlybS92MQAAAAAgFzkvOlDODytvFS-5j6W6u34U6wwbA_57XIfRzO42tG8AAAAg-yy5BmoxzRhqVEmIv1bynQUcrRHPo66aRq6vUXfZ6vo",
+    "confirm_sig": "LuS940FPlbYMVzrVmXTAEXUBUDLnJbQsm2CGE-ug8v-y2kYJ1C8fV8t4zeWEy2UREc9Cq07SFkbwoXrfTvlmBA",
+    "answer_nonce": "eESk9tt72hgv-Gt8",
+    "answer_plaintext": "eyJob3N0X3B1YiI6Ii1IazN0TWw2Mmw2dTN5R0QxV0R3dldIMWxrbzU4UmdJLWhHVTM2b1ZPS0kiLCJob3N0X25hbWUiOiJ2ZWN0b3IgaG9zdCIsInNpZyI6Ikx1Uzk0MEZQbGJZTVZ6clZtWFRBRVhVQlVETG5KYlFzbTJDR0UtdWc4di15MmtZSjFDOGZWOHQ0emVXRXkyVVJFYzlDcTA3U0ZrYndvWHJmVHZsbUJBIn0",
+    "answer_key": "I_Uwq_0eU9UkuWzknU9JILH3Vc7fk9uGH-TKgg4VXok",
+    "sealed_answer": "eESk9tt72hgv-Gt8ML30k_qLuS8PmoEbIR2lXTmb1k5SkanPrDL51hCJZGEorwbzddHE0DzI5UM31qWUc96ZHOJ8aHrucUqO-1udEKoHN6w7clUoQb7y6IbGrYwyh6zZt8tnd7iKx-ZsGwk6T4I3KLD0txbkpxwKdrVsMeYThpH-PsdVP53fu17Lx_7uaPbZUMUUoOAUxtHUHdvIatTjhcfSXfwSmKrxejfTd5HtG_jscUmcdrw8BNLmk0my8kzsEcSXgS-0IFQ6MXbrfDug"
+  },
+  "handshake": {
+    "phone_eph_priv": "bFRhvEE1V9RyRESSh47agqmtlGaCXjMTjuZpfYeKaK0",
+    "phone_eph_pub": "XKD0tkxBSrr8kx_RqqeloZXUH2d6svln91wIw-NpGiY",
+    "phone_nonce": "uTKSnzSbMdWjSZwQo4iHWQ",
+    "hs1_signing_buffer": "d3V1L2hzMS92MQAAAAAg-Hk3tMl62l6u3yGD1WDwvWH1lko58RgI-hGU36oVOKIAAAAg-yy5BmoxzRhqVEmIv1bynQUcrRHPo66aRq6vUXfZ6voAAAAgXKD0tkxBSrr8kx_RqqeloZXUH2d6svln91wIw-NpGiYAAAAQuTKSnzSbMdWjSZwQo4iHWQ",
+    "hs1": {
+      "device_pub": "-yy5BmoxzRhqVEmIv1bynQUcrRHPo66aRq6vUXfZ6vo",
+      "eph": "XKD0tkxBSrr8kx_RqqeloZXUH2d6svln91wIw-NpGiY",
+      "nonce": "uTKSnzSbMdWjSZwQo4iHWQ",
+      "sig": "dGSnvVuLB8KcoJD3Km4rnODjRBThT3Y_JBidH7EDEqrNd7D2Drip4rLVNABCRI6ByLBDolYc268gwrGb9GP0BQ"
+    },
+    "host_eph_priv": "8bJVOLHriycya6FmYkt0fPWXxIQGGVP4cjbS4YntTBo",
+    "host_eph_pub": "FmjZPy2ibJ2Bn84txZTM9roHEOMY_MpvRNHgnRjQhwU",
+    "host_nonce": "73N5aDhRya5fO29fMiMqTg",
+    "hs2_signing_buffer": "d3V1L2hzMi92MQAAAAAg-Hk3tMl62l6u3yGD1WDwvWH1lko58RgI-hGU36oVOKIAAAAg-yy5BmoxzRhqVEmIv1bynQUcrRHPo66aRq6vUXfZ6voAAAAgXKD0tkxBSrr8kx_RqqeloZXUH2d6svln91wIw-NpGiYAAAAQuTKSnzSbMdWjSZwQo4iHWQAAACAWaNk_LaJsnYGfzi3FlMz2ugcQ4xj8ym9E0eCdGNCHBQAAABDvc3loOFHJrl87b18yIypO",
+    "hs2": {
+      "eph": "FmjZPy2ibJ2Bn84txZTM9roHEOMY_MpvRNHgnRjQhwU",
+      "nonce": "73N5aDhRya5fO29fMiMqTg",
+      "sig": "c8q543yK0zEF1gkLYOYkstZo3-RlQWjtvtuQN6Zw80zbn5JSfSE64yfGChCLjznaL_d8vMX1TlI1PrjwdgX-Dw"
+    },
+    "shared": "7m04smrnw6Ze4LRwsN4zMQXTX47eCxLNlBh_xQb3KDo",
+    "transcript": "qE1-R4qo148jV39azZgImQcYgU6oCIMl93ZGQtwip8c",
+    "key_phone_to_host": "E6Pn9fGudxXIAfXfN_VGbKUgQj7TEyihk7elm0_cJN0",
+    "key_host_to_phone": "Xr82rYR79AB6_41qp0WQlWIG4eq1AG5_s_6G9UkzM6k"
+  },
+  "channel": {
+    "note": "keys and transcript come from the handshake section; aad = transcript",
+    "phone_to_host": [
+      {
+        "counter": 1,
+        "plaintext": "eyJpZCI6IjEiLCJtZXRob2QiOiJpbml0aWFsaXplIiwicGFyYW1zIjp7fX0K",
+        "sealed": "AAAAAAAAAAAAAAABNPgt9aU7lsVM27S0hKYHSGglgVNHg5pTDRukVqL5hcxpwj20i7G_aSR16KuWSrh4Be1ENDnK5BTTR8Ot7A"
+      },
+      {
+        "counter": 2,
+        "plaintext": "",
+        "sealed": "AAAAAAAAAAAAAAACMFFBfnrSyNAuNXtJts4oxw"
+      },
+      {
+        "counter": 3,
+        "plaintext": "OX2wfogXAU1aFHhLX4oG3Su--ziWgDf50MlPi1uJL2SD",
+        "sealed": "AAAAAAAAAAAAAAADSFMAwhzR-fBArwt0vec86AJ-zWa25UojavuUoF6qlAi9xmUAO0a_1_soyYA8OtuFRw"
+      }
+    ],
+    "host_to_phone": [
+      {
+        "counter": 1,
+        "plaintext": "eyJpZCI6IjEiLCJyZXN1bHQiOnsicHJvdG9jb2xWZXJzaW9uIjoid3V1LWFwcC1zZXJ2ZXIvdjAuMSJ9fQo",
+        "sealed": "AAAAAAAAAAAAAAABZ1jWXBAHzZ-tkWEfUtdiyDARKM55oM2Aob-rst_yaKzswjtI1rmkGNFmax3CbdQKVRIeLr-hG1_rC9uwMGhhVN2EmymyKQfFxZlpmda3"
+      },
+      {
+        "counter": 2,
+        "plaintext": "5L-u5LiA5LiL55m75b2V6aG155qE5oql6ZSZIPCfmoA",
+        "sealed": "AAAAAAAAAAAAAAACCTPt0gpXERs6tL_z9CYQFQ2ciTiHY2xxDKnRwUBkpSxdeOPtvFRvJSF_BVnRqsI8"
+      }
+    ]
+  }
+}

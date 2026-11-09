@@ -1,0 +1,1022 @@
+import { ComposerInput, type ComposerInputHandle } from "./ComposerInput";
+import { pluginReferenceDraft, pluginReferenceParts } from "./ComposerPluginReferences";
+import { draftSkillReference, skillReferenceArguments, skillReferenceTitle } from "./ComposerSkillReferences";
+import { Tooltip } from "./Tooltip";
+import { TruncatedText } from "./TruncatedText";
+import { COMPOSER_ATTACHMENT_ACCEPT } from "./ComposerMessages";
+import {
+  memo,
+  type ChangeEvent as ReactChangeEvent,
+  type ClipboardEvent as ReactClipboardEvent,
+  type DragEvent as ReactDragEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
+import { ArrowUp, ChevronDown, ChevronUp, FileText, Info, LoaderCircle, MessagesSquare, Plus } from "./WuuIcons";
+import type { InputFile, InputImage, MessageContentPart, ThreadItem, Turn } from "../shared/protocol";
+import { CollapsedComposerPromptCard, collapsedComposerPromptPreviewLines } from "./ComposerCollapsedPrompt";
+import { FileSelectionCards } from "./FileSelectionCards";
+import { buildFileSelectionPart } from "./FileSelectionContext";
+import {
+  clipboardAttachmentFiles,
+  composerContextFromMessage,
+  createComposerMessage,
+  composerFileFromFile,
+  composerImageFromFile,
+  isComposerImageFile
+} from "./ComposerMessages";
+import { isComposerTextComposing } from "./ComposerSlashCommands";
+import {
+  isInternalUserNotificationItem,
+  isProcessNotificationItem,
+} from "./InternalUserNotification";
+import {
+  collapsedLongTextPreview,
+  useLongTextCollapse,
+} from "./LongTextCollapse";
+import { RichContent } from "./RichContent";
+import { ArtifactThreadContext } from "./ArtifactPreviewContext";
+import { AssistantResponseArticle, ResponseSelectionReference } from "./ResponseSelection";
+import {
+  AgentMessageActions,
+  EmptyMessageActions,
+  MessageCopyButton,
+  MessageEditButton,
+  MessageFileList,
+  MessageImageGrid,
+  MessageTime,
+} from "./MessageActions";
+import { ApplicationStreamingMarkdown } from "./StreamingMarkdown";
+import { userMessageBodyText } from "./ThreadItemText";
+import { ToolActivityRow } from "./ToolActivity";
+import { RemoteItemContent } from "./RemoteItemContent";
+import {
+  ContextCompactionNotice,
+  StreamReconnectNotice,
+  TurnNotice,
+} from "./TurnNotice";
+import { CONVERSATION_TURN_REVEAL_EVENT, type ConversationTurnRevealDetail, messageAnchorID, userMessageAnchorID } from "./TurnViewHelpers";
+import { showErrorToast } from "./Toast";
+import {
+  userFacingErrorForMessage,
+} from "./UserFacingErrors";
+import { useI18n } from "./i18n";
+import { useConversationControls } from "./ConversationControlsContext";
+import { toConversationItemSnapshot } from "./plugins/ApplicationSnapshots";
+import { streamTextKey, useStreamedText } from "./StreamText";
+import { placeUserMessageActions } from "./UserMessageActionPlacement";
+
+interface ThreadItemViewProps {
+  turnID: string;
+  turnStatus: Turn["status"];
+  turnStartedAt?: string | null;
+  turnAnswerReadyAt?: string | null;
+  item: ThreadItem;
+  cwd?: string;
+  onOpenFile?: (path: string) => void;
+  streaming: boolean;
+  pendingCompanionReasoning?: boolean;
+  actionableAgentMessageID?: string;
+  latestAgentMessageID?: string;
+  /**
+   * The owning turn was submitted live in this mounted conversation. This
+   * lets an already-completed fast answer still play its one-shot action
+   * entrance without replaying that entrance for historical messages.
+   */
+  animateCompletionActions?: boolean;
+  onStreamFrame: () => void;
+  onForkMessage?: (turnID: string, itemID: string) => void;
+  onEditMessage?: (turnID: string, item: ThreadItem) => void;
+  editing?: boolean;
+  editSubmitting?: boolean;
+  onCancelEditMessage?: () => void;
+  onSubmitEditMessage?: (
+    turnID: string,
+    item: ThreadItem,
+    text: string,
+    images: InputImage[],
+    files: InputFile[],
+    contentParts?: MessageContentPart[],
+  ) => void;
+  onOpenAgent?: (agentID: string) => void;
+  editSummaryCard?: JSX.Element;
+  linkPolicy?: "external-only";
+  /** Independent transports can expose copy/time without Coding fork actions. */
+  messageActions?: "copy-only" | "none";
+  messageAttachments?: React.ReactNode;
+}
+
+export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemViewProps): JSX.Element | null {
+  const { item } = props;
+  const { slots, slotOwner } = useConversationControls();
+  const threadId = useContext(ArtifactThreadContext);
+  const text = useStreamedText(streamTextKey(props.turnID, item.id, "text"), item.text,
+    props.streaming && item.status === "in_progress");
+  // Memoizing on the whole props object is deliberate: store-driven re-renders
+  // reuse the same pendingProps, so the built-in subtree is skipped per stream
+  // frame while the slot context below stays current.
+  const nativeContent = useMemo(() => <BuiltInThreadItemView {...props} />, [props]);
+  if (item.remote_content_ref && item.type !== "tool_call") {
+    return <RemoteItemContent key={item.remote_content_ref} item={item} render={complete => <ThreadItemView {...props} item={complete} />} />;
+  }
+  if (item.type === "user_message" && isInternalUserNotificationItem(item)) {
+    return null;
+  }
+  const context = Object.freeze({ threadId, turnId: props.turnID, itemId: item.id,
+    snapshot: toConversationItemSnapshot(item, undefined, item.text === undefined && text === "" ? undefined : text) });
+  return <>
+    <slots.Slot name={`${slotOwner}/conversation.message.before`} context={context} />
+    <slots.Slot name={`${slotOwner}/conversation.message`} context={context} fallback={nativeContent} />
+    <slots.Slot name={`${slotOwner}/conversation.message.after`} context={context} />
+  </>;
+});
+
+function BuiltInThreadItemView({
+  turnID,
+  turnStatus,
+  turnStartedAt,
+  turnAnswerReadyAt,
+  item,
+  cwd,
+  onOpenFile,
+  streaming,
+  pendingCompanionReasoning,
+  actionableAgentMessageID,
+  latestAgentMessageID,
+  animateCompletionActions,
+  onStreamFrame,
+  onForkMessage,
+  onEditMessage,
+  editing,
+  editSubmitting,
+  onCancelEditMessage,
+  onSubmitEditMessage,
+  onOpenAgent,
+  editSummaryCard,
+  linkPolicy,
+  messageActions,
+  messageAttachments,
+}: ThreadItemViewProps): JSX.Element | null {
+  const { t } = useI18n();
+  const owningThreadId = useContext(ArtifactThreadContext);
+  const { application, slots, slotOwner } = useConversationControls();
+  const [emptyActions, setEmptyActions] = useState(false);
+  const hasPluginActions = messageActions === undefined && !editing && !emptyActions;
+  const pluginActions = editing || messageActions !== undefined ? null : <slots.Slot
+    name={`${slotOwner}/conversation.message.actions`}
+    context={{ threadId: owningThreadId, turnId: turnID, itemId: item.id, snapshot: toConversationItemSnapshot(item) }}
+    fallback={<EmptyMessageActions onEmpty={setEmptyActions} />}
+  />;
+  const streamLive = item.status === "in_progress" && turnStatus === "in_progress";
+  // Only a live item/turn completion handoff should animate. Historical
+  // completed messages mount without this marker, so virtualized content does
+  // not replay the entrance while the user scrolls.
+  const [settleEntered, setSettleEntered] = useState(
+    () =>
+      Boolean(animateCompletionActions) &&
+      item.type === "agent_message" &&
+      item.status === "completed" &&
+      item.terminal === true,
+  );
+  const previousTurnStatusRef = useRef(turnStatus);
+  const previousItemStatusRef = useRef(item.status);
+  useLayoutEffect(() => {
+    const previousTurnStatus = previousTurnStatusRef.current;
+    const previousItemStatus = previousItemStatusRef.current;
+    previousTurnStatusRef.current = turnStatus;
+    previousItemStatusRef.current = item.status;
+    if (
+      (previousTurnStatus === "in_progress" && turnStatus === "completed") ||
+      (previousItemStatus === "in_progress" && item.status === "completed")
+    ) {
+      setSettleEntered(true);
+    }
+  }, [item.status, turnStatus]);
+  switch (item.type) {
+    case "user_message": {
+      const text = item.text ?? "";
+      if (isProcessNotificationItem(item)) {
+        return null;
+      }
+      const displayText = text;
+      if (isInternalUserNotificationItem(item)) {
+        return null;
+      }
+      const copyable = messageActions !== "none" && displayText.trim() !== "";
+      const editable = Boolean(
+        !item.read_only &&
+          onEditMessage &&
+          (copyable || (item.images?.length ?? 0) > 0 || (item.files?.length ?? 0) > 0),
+      );
+      const editActionVisible = editable;
+      // Some host and plugin messages point to a durable related session. Keep that
+      // navigation on the message itself rather than coupling it to a
+      // separate inspector plugin.
+      const deliveryText = item.input_text?.trim() ?? "";
+      const relatedSessionID = item.related_session_id?.trim() || undefined;
+      const sessionMessage = (item.origin === "host" || item.origin === "plugin") && item.presentation_kind === "session_message";
+      const sourceName = item.name?.trim() || relatedSessionID || t("message.anotherSession");
+      // input_text equals the bubble for ordinary messages (or would, if a
+      // stale server projection ever leaks it); only hidden messages with a
+      // related session get a navigation action.
+      const relatedSessionAvailable = relatedSessionID !== undefined
+        && (sessionMessage || (deliveryText !== "" && deliveryText !== displayText.trim()));
+      const openRelatedSession = (): void => {
+        if (relatedSessionID !== undefined && relatedSessionAvailable) {
+          void application.invoke(sessionMessage ? "thread.activate" : "conversation.open-split", { threadId: relatedSessionID }).catch(showErrorToast);
+        }
+      };
+      return (
+        <div
+          className={`user-message-block${copyable || editActionVisible || relatedSessionAvailable || hasPluginActions ? " user-message-block-with-actions" : ""}`}
+          data-wuu-component="message"
+          data-wuu-variant="user"
+          id={userMessageAnchorID(turnID, item.id)}
+          data-user-message-id={item.id}
+          data-turn-id={turnID}
+        >
+          <div className="user-message-motion" data-message-arrival>
+          {sessionMessage ? (
+            <button
+              type="button"
+              className="session-message-source"
+              onClick={openRelatedSession}
+              disabled={!relatedSessionAvailable}
+              aria-label={`${t("message.openRelatedSession")}: ${sourceName}`}
+            >
+              <MessagesSquare aria-hidden="true" />
+              <TruncatedText text={sourceName} />
+            </button>
+          ) : null}
+          {editing ? (
+            <UserMessageInlineEditor
+              item={item}
+              initialText={text}
+              submitting={Boolean(editSubmitting)}
+              onOpenFile={onOpenFile}
+              onCancel={onCancelEditMessage}
+              onSubmit={(nextText, nextImages, nextFiles, contentParts) =>
+                onSubmitEditMessage?.(turnID, item, nextText, nextImages, nextFiles, contentParts)
+              }
+            />
+          ) : (
+            <UserMessageContent
+              linkPolicy={linkPolicy}
+              anchorID={userMessageAnchorID(turnID, item.id)}
+              text={displayText}
+              contentParts={item.content_parts}
+              images={item.images ?? []}
+              files={item.files ?? []}
+              cwd={cwd}
+              onOpenFile={onOpenFile}
+            />
+          )}
+          </div>
+          {messageAttachments}
+          {!editing && messageActions !== "none" ? (
+            <div
+              style={copyable || editActionVisible || relatedSessionAvailable || hasPluginActions ? undefined : { display: "none" }}
+              ref={placeUserMessageActions}
+              className="message-actions user-message-actions"
+              data-wuu-component="message-actions"
+              data-wuu-placement="overlay"
+              aria-label={t("message.userActions")}
+            >
+              <MessageTime timestamp={turnStartedAt} className="user-message-time" />
+              {copyable ? (
+                <MessageCopyButton
+                  getText={() => displayText}
+                  className="message-action-button"
+                  iconSize={15}
+                />
+              ) : null}
+              {relatedSessionAvailable && !sessionMessage ? (
+                <Tooltip asChild content={t("message.openRelatedSession")}><button
+                  type="button"
+                  className="message-action-button"
+                  aria-label={t("message.openRelatedSession")}
+                  onClick={openRelatedSession}
+                >
+                  <Info size={15} />
+                </button></Tooltip>
+              ) : null}
+              {editActionVisible && onEditMessage ? (
+                <MessageEditButton
+                  onEdit={() => onEditMessage(turnID, item)}
+                  className="message-action-button"
+                  iconSize={15}
+                />
+              ) : null}
+              {pluginActions}
+            </div>
+          ) : null}
+        </div>
+      );
+    }
+    case "agent_message": {
+      const agentText = owningThreadId ? application.conversationText.getSnapshot({ threadId: owningThreadId, turnId: turnID, itemId: item.id, field: "text" }) ?? item.text ?? "" : item.text ?? "";
+      const copyable = agentText.trim() !== "";
+      const isProcessText = !item.terminal;
+      const finalItemCompletedBeforeTurn =
+        turnStatus === "in_progress" &&
+        item.status === "completed" &&
+        item.id === latestAgentMessageID &&
+        copyable &&
+        !isProcessText;
+      const forkVisible =
+        finalItemCompletedBeforeTurn ||
+        (turnStatus === "completed" &&
+          item.id === actionableAgentMessageID &&
+          copyable &&
+          !isProcessText);
+      // A completed final item is the user-visible completion boundary. The
+      // backend can materialize a fork from the live turn snapshot while
+      // provider cleanup and durable turn settlement continue independently.
+      const actionsVisible = messageActions !== "none" && (forkVisible || hasPluginActions);
+      const actionsPersistent =
+        actionsVisible &&
+        (!isProcessText || item.id === latestAgentMessageID);
+      // Without contributed actions, reserve space only for final answers.
+      // Live commentary must not gain an empty answer-action gap.
+      const reserveActionSlot = messageActions !== "none" && (hasPluginActions || (!isProcessText &&
+        (copyable || item.status === "in_progress")));
+      return (
+        <AssistantResponseArticle
+          id={messageAnchorID(turnID, item.id)}
+          turnID={turnID}
+          itemID={item.id}
+          data-wuu-component="message"
+          data-wuu-variant="agent"
+          className={`agent-block${
+            reserveActionSlot
+              ? ` agent-block-with-action-slot${actionsVisible ? ` agent-actions-available${settleEntered ? " agent-actions-enter" : ""}${actionsPersistent ? " agent-actions-persistent" : " agent-actions-overlay"}` : ""}`
+              : ""
+          }`}
+        >
+          <div className="agent-text">
+            <AgentMessageContent
+              linkPolicy={linkPolicy}
+              turnID={turnID}
+              item={item}
+              cwd={cwd}
+              onOpenFile={onOpenFile}
+              live={streamLive}
+              pendingCompanionReasoning={pendingCompanionReasoning}
+              onStreamFrame={onStreamFrame}
+            />
+            {(item.images?.length ?? 0) > 0 ? <MessageImageGrid images={item.images ?? []} collapsedLimit={4} /> : null}
+          </div>
+          {messageAttachments}
+          {editSummaryCard}
+          {messageActions !== "none" && <AgentMessageActions
+              hidden={!actionsVisible && !reserveActionSlot}
+              reserved={!actionsVisible}
+              getText={() => owningThreadId ? application.conversationText.getSnapshot({ threadId: owningThreadId, turnId: turnID, itemId: item.id, field: "text" }) ?? item.text ?? "" : item.text ?? ""}
+              placement={actionsPersistent ? "persistent" : "overlay"}
+              timestamp={actionsVisible ? turnAnswerReadyAt : undefined}
+              showCopy={actionsVisible && copyable}
+              showFork={forkVisible && messageActions !== "copy-only"}
+              onFork={
+                forkVisible && onForkMessage
+                  ? () => onForkMessage(turnID, item.id)
+                  : undefined
+              }
+            >
+              {pluginActions}
+            </AgentMessageActions>}
+        </AssistantResponseArticle>
+      );
+    }
+    case "reasoning":
+      return (
+        <article className="reasoning-block">
+          <ReasoningContent
+            turnID={turnID}
+            item={item}
+            cwd={cwd}
+            onOpenFile={onOpenFile}
+            live={streamLive}
+            onStreamFrame={onStreamFrame}
+          />
+        </article>
+      );
+    case "tool_call":
+      return <ToolActivityRow items={[item]} />;
+    case "context_compaction":
+      return (
+        <ContextCompactionNotice
+          text={item.text}
+          reason={item.reason}
+          status={item.status}
+          summary={item.summary}
+        />
+      );
+    case "stream_reconnect":
+      return <StreamReconnectNotice item={item} />;
+    case "error":
+      return (
+        <TurnNotice display={userFacingErrorForMessage(item.error, "turn")} />
+      );
+    default:
+      return null;
+  }
+}
+
+function UserMessageContent({
+  linkPolicy,
+  anchorID,
+  text,
+  contentParts,
+  images,
+  files,
+  cwd,
+  onOpenFile,
+}: {
+  linkPolicy?: "external-only";
+  anchorID: string;
+  text: string;
+  contentParts?: MessageContentPart[];
+  images: InputImage[];
+  files: InputFile[];
+  cwd?: string;
+  onOpenFile?: (path: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const structured = Boolean(contentParts?.length);
+  const pastedParts = (contentParts ?? []).filter(
+    (part): part is Extract<MessageContentPart, { type: "pasted_text" }> =>
+      part.type === "pasted_text",
+  );
+  const selectionParts = (contentParts ?? []).filter(part => part.type === "response_selection");
+  const textParts = (contentParts ?? []).filter((part) => part.type === "text" || part.type === "plugin_reference");
+  const fileParts = (contentParts ?? []).filter((part) => part.type === "file_selection");
+  const skillReference = draftSkillReference(text);
+  const skillArguments = skillReference ? skillReferenceArguments(text, skillReference) : "";
+  const hasAttachments = images.length > 0 || files.length > 0 || pastedParts.length > 0 || fileParts.length > 0;
+  const hasTextBubble = Boolean(skillReference) || (structured
+    ? textParts.some((part) => part.text.length > 0)
+    : text.length > 0);
+  // Threshold + preview logic + state keying all live in
+  // `./LongTextCollapse` so the chat bubble can reuse the exact same
+  // numbers. The hook's `{text, expanded}` state shape is what makes
+  // the toggle survive a parent re-render with a new message body
+  // without flashing the previous expansion — see the module doc.
+  const bubbleText = skillReference ? skillArguments : userMessageBodyText(text, contentParts);
+  const { collapsible, expanded, toggleExpanded } = useLongTextCollapse(bubbleText);
+  const collapsed = collapsible && !expanded;
+  const displayedText = collapsed ? collapsedLongTextPreview(bubbleText) : bubbleText;
+  useEffect(() => {
+    if (!collapsed) return;
+    const reveal = (event: Event): void => {
+      const { turnID, itemID } = (event as CustomEvent<ConversationTurnRevealDetail>).detail;
+      if (!itemID || userMessageAnchorID(turnID, itemID) !== anchorID) return;
+      // Jump retries can arrive before the expansion's effect cleanup. Consume
+      // this listener now so a second reveal cannot toggle the message closed.
+      window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+      toggleExpanded();
+    };
+    window.addEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+    return () => window.removeEventListener(CONVERSATION_TURN_REVEAL_EVENT, reveal);
+  }, [anchorID, collapsed, toggleExpanded]);
+
+  return (
+    <>
+      {selectionParts.map((part, index) => <ResponseSelectionReference key={`${part.selection.id}-${index}`} selection={part.selection} />)}
+      {hasAttachments ? (
+        <div className="user-message-attachments" data-wuu-component="message-attachments">
+          <div className="user-message-media-row">
+            {images.length ? <MessageImageGrid images={images} collapsedLimit={4} /> : null}
+            {files.length ? <MessageFileList files={files} collapsedLimit={3} tile /> : null}
+            {pastedParts.map((part, index) => (
+              <MessagePastedTextPart key={`${part.type}-${index}`} part={part} />
+            ))}
+          </div>
+          <FileSelectionCards parts={fileParts} onOpenFile={onOpenFile} />
+        </div>
+      ) : null}
+      {hasTextBubble ? (
+        <div
+          className={`message user-message${
+            collapsible
+              ? ` user-message-long-card ${expanded ? "expanded" : "collapsed"}`
+              : ""
+          }`}
+          data-wuu-component="message-bubble"
+          data-wuu-variant="user"
+        >
+          {skillReference ? (
+            <div className="user-message-skill-invocation">
+              <span className="composer-skill-reference" title={skillReferenceTitle(skillReference)}>
+                <span className="composer-reference-mark" aria-hidden="true">✦</span>
+                <span className="composer-reference-name">/{skillReference.name}</span>
+              </span>
+              {skillArguments ? (
+                collapsed ? (
+                  <div className="user-message-raw-query">{displayedText}</div>
+                ) : (
+                  <div className="user-message-skill-arguments">
+                    <RichContent linkPolicy={linkPolicy} text={skillArguments} cwd={cwd} onOpenFile={onOpenFile} />
+                  </div>
+                )
+              ) : null}
+            </div>
+          ) : collapsed ? (
+            <div className="user-message-raw-query">{displayedText}</div>
+          ) : textParts.some(part => part.type === "plugin_reference") ? (
+            <div className="user-message-raw-query">{textParts.map((part, index) => part.type === "plugin_reference"
+              ? <span key={index} className="composer-plugin-reference" title={[part.plugin.plugin_id, part.plugin.mcp_server].filter(Boolean).join(" · ")}>{part.text}</span>
+              : <span key={index}>{part.text}</span>)}</div>
+          ) : structured ? (
+            <div className="user-message-content-parts">
+              {textParts.map((part, index) =>
+                part.text ? (
+                  <div className="user-message-text-part" key={`${part.type}-${index}`}>
+                    <RichContent linkPolicy={linkPolicy} text={part.text} cwd={cwd} onOpenFile={onOpenFile} />
+                  </div>
+                ) : null,
+              )}
+            </div>
+          ) : collapsible ? (
+            <div className="user-message-raw-query">{displayedText}</div>
+          ) : (
+            <RichContent linkPolicy={linkPolicy} text={text} cwd={cwd} onOpenFile={onOpenFile} />
+          )}
+          {collapsible ? (
+            <button
+              type="button"
+              className="user-message-expand-toggle"
+              aria-expanded={expanded}
+              onClick={toggleExpanded}
+            >
+              <span>{expanded ? t("common.collapse") : t("common.showMore")}</span>
+              {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+// The label names the paste by its own first line — never a synthetic
+// ".txt" filename, which is what the pre-#1291 card did.
+function pastedTextLabel(text: string): string {
+  return text
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .find(Boolean)
+    ?.slice(0, 80) ?? "";
+}
+
+// Collapsed, the paste reads as a page thumbnail in the shared 72px media
+// row; expanded it becomes a full-width card below the thumbs.
+function MessagePastedTextPart({
+  part,
+}: {
+  part: Extract<MessageContentPart, { type: "pasted_text" }>;
+}): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const title = part.title || pastedTextLabel(part.text);
+  const previewLines = useMemo(() => collapsedComposerPromptPreviewLines(part.text), [part.text]);
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        className="user-message-pasted-thumb"
+        aria-expanded={false}
+        title={title}
+        onClick={() => setExpanded(true)}
+      >
+        <span className="user-message-pasted-thumb-lines" aria-hidden="true">
+          {previewLines.map((line, index) => <span key={index}>{line || " "}</span>)}
+        </span>
+      </button>
+    );
+  }
+  return (
+    <section className="user-message-pasted-text expanded">
+      <button
+        type="button"
+        className="user-message-pasted-text-toggle"
+        aria-expanded={true}
+        onClick={() => setExpanded(false)}
+      >
+        <span className="user-message-pasted-text-icon" aria-hidden="true">
+          <FileText />
+        </span>
+        <strong className="user-message-pasted-text-title">{title}</strong>
+        <ChevronUp aria-hidden="true" />
+      </button>
+      <pre className="user-message-pasted-text-content">{part.text}</pre>
+    </section>
+  );
+}
+
+// Both helpers (collapsedUserMessagePreview + isCollapsibleUserMessage) and
+// the four COLLAPSIBLE_USER_MESSAGE_* constants moved to `./LongTextCollapse`
+// so the chat bubble can reuse the same thresholds and preview estimator.
+function UserMessageInlineEditor({
+  item,
+  initialText,
+  submitting,
+  onCancel,
+  onSubmit,
+  onOpenFile,
+}: {
+  item: ThreadItem;
+  initialText: string;
+  submitting: boolean;
+  onCancel?: () => void;
+  onOpenFile?: (path: string) => void;
+  onSubmit?: (
+    text: string,
+    images: InputImage[],
+    files: InputFile[],
+    contentParts?: MessageContentPart[],
+  ) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const initialContext = composerContextFromMessage(initialText, item.content_parts);
+  const initialAttachedParts = (initialContext.contentParts ?? []).filter((part) => part.type !== "text" && part.type !== "plugin_reference");
+  const initialTextParts = (initialContext.contentParts ?? []).filter((part) => part.type === "text" || part.type === "plugin_reference");
+  const [text, setText] = useState(
+    pluginReferenceDraft(item.content_parts?.length ? initialTextParts.map((part) => part.text).join("") : initialText, initialTextParts),
+  );
+  const [attachedParts, setAttachedParts] = useState(initialAttachedParts);
+  const [selections, setSelections] = useState(initialContext.selections);
+  const [images, setImages] = useState<InputImage[]>(item.images ?? []);
+  const [files, setFiles] = useState<InputFile[]>(item.files ?? []);
+  const [dragOver, setDragOver] = useState(false);
+  const textareaRef = useRef<ComposerInputHandle>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const hasAttachments = images.length > 0 || files.length > 0 || attachedParts.length > 0;
+  const canSubmit = text.trim().length > 0 || hasAttachments || selections.length > 0;
+
+  // Re-seed local state when the editor is reopened on a different user
+  // message, or when the upstream item swaps its attachment arrays (e.g.
+  // after a stream update). Without this, editing message B and then
+  // cancelling back to message A would show B's draft in A.
+  useEffect(() => {
+    const nextParts = item.content_parts ?? [];
+    const nextAttachedParts = nextParts.filter((part) => part.type !== "text" && part.type !== "response_selection" && part.type !== "plugin_reference");
+    const nextTextParts = nextParts.filter(
+      (part) => part.type === "text" || part.type === "plugin_reference",
+    );
+    setText(pluginReferenceDraft(nextParts.length ? nextTextParts.map((part) => part.text).join("") : initialText, nextTextParts));
+    setAttachedParts(nextAttachedParts);
+    setSelections(composerContextFromMessage(initialText, item.content_parts).selections);
+    setImages(item.images ?? []);
+    setFiles(item.files ?? []);
+  }, [initialText, item.id, item.images, item.files, item.content_parts]);
+
+  useEffect(() => {
+    window.requestAnimationFrame(() => {
+      const textarea = textareaRef.current;
+      if (!textarea) {
+        return;
+      }
+      // preventScroll: the conversation pane owns its scroll position, so
+      // the browser's default focus-scroll must not yank the viewport to
+      // bring the textarea into view — that scroll would disarm auto-follow
+      // and surface the "跳到最新" pill on what is otherwise a deliberate
+      // edit action. We scroll the editor into view ourselves on edit start
+      // (see startEditingThreadMessageFromHistory) so this stays consistent
+      // with the rest of the conversation scroll contract.
+      textarea.focus({ preventScroll: true });
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    });
+  }, []);
+
+  function submit(): void {
+    if (!canSubmit || submitting) {
+      return;
+    }
+    const contentParts = pluginReferenceParts(text, [
+      ...attachedParts,
+      ...(text.length > 0 ? [{ type: "text" as const, text }] : []),
+    ]) ?? [];
+    const fullText = contentParts.length
+      ? contentParts.map((part) => part.text).join("")
+      : text;
+    const message = createComposerMessage(fullText, [], [], contentParts.length ? contentParts : undefined, selections);
+    onSubmit?.(message?.text ?? fullText, images, files, message?.contentParts);
+  }
+
+  function revealPastedPart(index: number): void {
+    const part = attachedParts[index];
+    if (!part || part.type !== "pasted_text") return;
+    setAttachedParts((current) => current.filter((_, currentIndex) => currentIndex !== index));
+    setText((current) => `${current}${part.text}`);
+  }
+
+  function removePastedPart(index: number): void {
+    setAttachedParts((current) => current.filter((_, currentIndex) => currentIndex !== index));
+  }
+
+  async function addAttachmentFiles(filesToAdd: File[]): Promise<void> {
+    const imageAdditions: InputImage[] = [];
+    const fileAdditions: InputFile[] = [];
+    for (const file of filesToAdd) {
+      if (isComposerImageFile(file)) {
+        try {
+          const composed = await composerImageFromFile(file);
+          imageAdditions.push({ media_type: composed.media_type, data: composed.data });
+        } catch {
+          // Skip the individual failed image; the rest still land.
+        }
+      } else {
+        try {
+          const composed = await composerFileFromFile(file);
+          fileAdditions.push({
+            media_type: composed.media_type,
+            data: composed.data,
+            filename: composed.filename
+          });
+        } catch {
+          // Same per-file resilience — unreadable files should not kill the batch.
+        }
+      }
+    }
+    if (imageAdditions.length > 0) {
+      setImages((prev) => [...prev, ...imageAdditions]);
+    }
+    if (fileAdditions.length > 0) {
+      setFiles((prev) => [...prev, ...fileAdditions]);
+    }
+  }
+
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLElement>): void {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      onCancel?.();
+      return;
+    }
+    if (isComposerTextComposing(event)) {
+      return;
+    }
+    if (event.key === "Enter" && !event.shiftKey) {
+      event.preventDefault();
+      submit();
+    }
+  }
+
+  function handlePaste(event: ReactClipboardEvent<HTMLElement>): void {
+    if (submitting) {
+      return;
+    }
+    const pasted = clipboardAttachmentFiles(event);
+    if (pasted.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    void addAttachmentFiles(pasted);
+  }
+
+  function handleFileInputChange(event: ReactChangeEvent<HTMLInputElement>): void {
+    const selected = Array.from(event.currentTarget.files ?? []);
+    event.currentTarget.value = "";
+    if (selected.length > 0) {
+      void addAttachmentFiles(selected);
+    }
+  }
+
+  function handleDragOver(event: ReactDragEvent<HTMLDivElement>): void {
+    if (submitting) {
+      return;
+    }
+    if (!event.dataTransfer.types.includes("Files")) {
+      return;
+    }
+    event.preventDefault();
+    setDragOver(true);
+  }
+
+  function handleDragLeave(event: ReactDragEvent<HTMLDivElement>): void {
+    if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+      return;
+    }
+    setDragOver(false);
+  }
+
+  function handleDrop(event: ReactDragEvent<HTMLDivElement>): void {
+    if (submitting) {
+      return;
+    }
+    const dropped = Array.from(event.dataTransfer?.files ?? []);
+    if (dropped.length === 0) {
+      return;
+    }
+    event.preventDefault();
+    setDragOver(false);
+    void addAttachmentFiles(dropped);
+  }
+
+  function removeImage(index: number): void {
+    setImages((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
+  }
+
+  function removeFile(index: number): void {
+    setFiles((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
+  }
+
+  return (
+    <div
+      className={`user-message-edit${dragOver ? " user-message-edit-drop-active" : ""}`}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <input
+        ref={fileInputRef}
+        className="user-message-edit-file-input"
+        type="file"
+        accept={COMPOSER_ATTACHMENT_ACCEPT}
+        multiple
+        tabIndex={-1}
+        onChange={handleFileInputChange}
+      />
+      {images.length > 0 ? (
+        <MessageImageGrid images={images} onRemove={removeImage} />
+      ) : null}
+      {files.length > 0 ? (
+        <MessageFileList files={files} onRemove={removeFile} />
+      ) : null}
+      {attachedParts.some((part) => part.type === "pasted_text") ? (
+        <div className="user-message-edit-pasted-texts">
+          {attachedParts.map((part, index) => part.type === "pasted_text" ? (
+            <CollapsedComposerPromptCard
+              key={`${part.type}-${index}`}
+              text={part.text}
+              onReveal={() => revealPastedPart(index)}
+              onRemove={() => removePastedPart(index)}
+            />
+          ) : null)}
+        </div>
+      ) : null}
+      <FileSelectionCards
+        parts={attachedParts.filter((part) => part.type === "file_selection")}
+        onOpenFile={onOpenFile}
+        onRemove={submitting ? undefined : (id) => setAttachedParts((current) =>
+          current.filter((part) => part.type !== "file_selection" || !(Array.isArray(id) ? id : [id]).includes(part.id)))}
+        onEdit={submitting ? undefined : (part, comment) => setAttachedParts((current) =>
+          current.map((candidate) => candidate.type === "file_selection" && candidate.id === part.id
+            ? buildFileSelectionPart(part.source, part.intent, comment, part.id)
+            : candidate))}
+      />
+      {selections.map(selection => <ResponseSelectionReference key={selection.id} selection={selection} />)}
+      <ComposerInput
+        ref={textareaRef}
+        className="user-message-edit-input"
+        value={text}
+        disabled={submitting}
+        onValueChange={setText}
+        onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
+        rows={Math.max(1, Math.min(8, text.split("\n").length))}
+      />
+      <div className="user-message-edit-toolbar">
+        <Tooltip asChild content={t("message.addImageOrPdf")}><button
+          type="button"
+          className="composer-tool-button user-message-edit-attach-button"
+          aria-label={t("composer.addAttachment")}
+          disabled={submitting}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <Plus aria-hidden="true" />
+        </button></Tooltip>
+        <div className="user-message-edit-spacer" />
+        <div className="user-message-edit-actions">
+          <button
+            className="user-message-edit-button secondary"
+            type="button"
+            disabled={submitting}
+            onClick={onCancel}
+          >
+            {t("common.cancel")}
+          </button>
+          <Tooltip asChild content={t("composer.send")}><button
+            className="composer-action-button composer-send-button"
+            type="button"
+            aria-label={t("composer.send")}
+            disabled={!canSubmit || submitting}
+            aria-busy={submitting}
+            onClick={submit}
+          >
+            {submitting ? <LoaderCircle className="control-busy-icon" aria-hidden="true" /> : <ArrowUp aria-hidden="true" />}
+          </button></Tooltip>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AgentMessageContent({
+  linkPolicy,
+  turnID,
+  item,
+  cwd,
+  onOpenFile,
+  live,
+  pendingCompanionReasoning,
+  onStreamFrame,
+}: {
+  linkPolicy?: "external-only";
+  turnID: string;
+  item: ThreadItem;
+  cwd?: string;
+  onOpenFile?: (path: string) => void;
+  /** The item is in progress inside a turn that is still running. */
+  live: boolean;
+  /**
+   * True when the turn has a reasoning block that the model just finished
+   * writing. The first answer item waits a short beat so the reasoning
+   * cursor can fully settle before the text cursor starts animating.
+   */
+  pendingCompanionReasoning?: boolean;
+  onStreamFrame: () => void;
+}): JSX.Element {
+  const threadId = useContext(ArtifactThreadContext);
+  // Liveness comes from the back-end state alone: once the item or its turn
+  // is terminal the surface must settle, whatever the streaming buffer holds.
+  // A terminal turn ends every stream even if an item completion was missed.
+  const isLive = live;
+  // Hold the cursor back when a just-completed reasoning block is still
+  // visually settling. The reasoning and text streams are sequential on
+  // the wire, but the cursor reveal and the next text's reveal can briefly
+  // race in the UI.
+  const [cursorArmed, setCursorArmed] = useState<boolean>(
+    !pendingCompanionReasoning,
+  );
+  useEffect(() => {
+    if (!pendingCompanionReasoning) {
+      setCursorArmed(true);
+      return;
+    }
+    // 240ms is enough to let the reasoning cursor finish its tail reveal
+    // (it's bound by max cps but typically clears in ~150ms for short
+    // reasoning). Tuned by hand; bump up if you can still see overlap.
+    const timer = window.setTimeout(() => {
+      setCursorArmed(true);
+    }, 240);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [pendingCompanionReasoning]);
+
+
+  return (
+    <ApplicationStreamingMarkdown
+      linkPolicy={linkPolicy}
+      threadId={threadId} turnId={turnID} itemId={item.id}
+      initialText={item.text}
+      cwd={cwd}
+      onOpenFile={onOpenFile}
+      isLive={isLive && cursorArmed}
+      phase={
+        item.terminal || item.status === "in_progress"
+          ? "final_answer"
+          : "commentary"
+      }
+      onFrame={onStreamFrame}
+    />
+  );
+}
+
+function ReasoningContent({
+  turnID,
+  item,
+  cwd,
+  onOpenFile,
+  live,
+  onStreamFrame,
+}: {
+  turnID: string;
+  item: ThreadItem;
+  cwd?: string;
+  onOpenFile?: (path: string) => void;
+  live: boolean;
+  onStreamFrame: () => void;
+}): JSX.Element {
+  const threadId = useContext(ArtifactThreadContext);
+  const isLive = live;
+
+
+  return (
+    <ApplicationStreamingMarkdown
+      threadId={threadId} turnId={turnID} itemId={item.id}
+      initialText={item.text}
+      className="streaming-markdown rich-content reasoning-stream"
+      cwd={cwd}
+      onOpenFile={onOpenFile}
+      isLive={isLive}
+      phase="commentary"
+      onFrame={onStreamFrame}
+    />
+  );
+}

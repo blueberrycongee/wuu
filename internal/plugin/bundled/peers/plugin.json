@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "peers",
+  "name": "Peers",
+  "description": "Coordinate independent user-visible sessions with bounded request and reply turns.",
+  "icon": { "path": "icon.webp" },
+  "version": "0.1.0",
+  "defaultEnabled": true,
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "0.1.0",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
+  "desktop": { "entry": "desktop.js", "required_services": [{ "name": "ui.application", "major_version": 1, "required": false }] },
+  "contributes": {
+    "commands": [
+      {
+        "id": "peer",
+        "title": "Contact peer session",
+        "description": "List peer sessions or send one a bounded request.",
+        "kind": "prompt_template",
+        "prompt": "./prompts/peer.md",
+        "aliases": ["peers"],
+        "keywords": ["session", "message", "coordinate", "会话", "协作"]
+      }
+    ]
+  },
+  "interface": { "displayName": "Peers", "shortDescription": "Coordinate independent sessions.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
+}

@@ -1,0 +1,545 @@
+import { isTouchWebShell } from "./ComposerFocus";
+import * as monaco from "monaco-editor";
+import { codeEditorTypography, observeAppearance } from "./AppearancePreferences";
+import { readWorkspacePreviewScroll, writeWorkspacePreviewScroll } from "./WorkspacePreviewRecovery";
+import CssWorker from "monaco-editor/esm/vs/language/css/css.worker?worker";
+import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
+import HtmlWorker from "monaco-editor/esm/vs/language/html/html.worker?worker";
+import JsonWorker from "monaco-editor/esm/vs/language/json/json.worker?worker";
+import TsWorker from "monaco-editor/esm/vs/language/typescript/ts.worker?worker";
+import { useEffect, useMemo, useRef } from "react";
+import type { WorkspaceFileSelection } from "./LinkTargets";
+import { fileSelectionLineIndex, fileSelectionModelRange, type FileSelectionSource } from "./FileSelectionMapping";
+import type { FileEditorSelection, FileSelectionControls } from "./FileSelectionSurface";
+import { useI18n } from "./i18n";
+import { currentAppliedTheme, observeAppliedTheme, type AppliedTheme } from "./Theme";
+import { resolveCssColors } from "./CssColors";
+
+declare global {
+  interface Window {
+    MonacoEnvironment?: {
+      getWorker: (_workerId: string, label: string) => Worker;
+    };
+  }
+}
+
+type MonacoLanguage =
+  | "css"
+  | "go"
+  | "html"
+  | "javascript"
+  | "json"
+  | "markdown"
+  | "plaintext"
+  | "python"
+  | "rust"
+  | "shell"
+  | "sql"
+  | "typescript"
+  | "xml"
+  | "yaml";
+
+// A viewer answers to the reader's selection, not to the word under an idle
+// caret; an editor keeps the usual occurrence marks.
+function workspaceMonacoOccurrences(readOnly: boolean): "off" | "singleFile" {
+  return readOnly ? "off" : "singleFile";
+}
+
+export type WorkspaceMonacoViewState = monaco.editor.ICodeEditorViewState;
+
+export function WorkspaceMonacoEditor({
+  path,
+  resourceID,
+  text,
+  initialViewState,
+  selection,
+  readOnly = false,
+  onChange,
+  onSave,
+  onViewStateChange,
+  onSelectionChange,
+  persistentSelection,
+  revealSelection,
+}: {
+  path: string;
+  resourceID: string;
+  text: string;
+  initialViewState?: WorkspaceMonacoViewState | null;
+  selection?: WorkspaceFileSelection;
+  readOnly?: boolean;
+  onChange?: (value: string) => void;
+  onSave?: () => void;
+  onViewStateChange?: (state: WorkspaceMonacoViewState | null) => void;
+  onSelectionChange?: (selection: FileEditorSelection | null) => void;
+  persistentSelection?: FileSelectionSource;
+  revealSelection?: FileSelectionControls["revealSelection"];
+}): JSX.Element {
+  const { t } = useI18n();
+  const hostRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const modelRef = useRef<monaco.editor.ITextModel | null>(null);
+  const textRef = useRef(text);
+  textRef.current = text;
+  const lineIndex = useMemo(() => fileSelectionLineIndex(text), [text]);
+  const lineIndexRef = useRef(lineIndex);
+  lineIndexRef.current = lineIndex;
+  const onChangeRef = useRef(onChange);
+  const onSaveRef = useRef(onSave);
+  const onViewStateChangeRef = useRef(onViewStateChange);
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  const decorationRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const anchorDecorationRef = useRef<monaco.editor.IEditorDecorationsCollection | null>(null);
+  const initialSelectionRef = useRef(true);
+  const language = useMemo(() => monacoLanguageForPath(path), [path]);
+
+  useEffect(() => {
+    onChangeRef.current = onChange;
+    onSaveRef.current = onSave;
+    onViewStateChangeRef.current = onViewStateChange;
+    onSelectionChangeRef.current = onSelectionChange;
+  }, [onChange, onSave, onViewStateChange, onSelectionChange]);
+
+  useEffect(() => {
+    installMonacoWorkers();
+  }, []);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) {
+      return undefined;
+    }
+
+    const model = createWorkspaceMonacoModel(text, language, workspaceMonacoModelURI(resourceID));
+    const editor = monaco.editor.create(host, {
+      ...workspaceMonacoReadingOptions(host),
+      model,
+      detectIndentation: true,
+      occurrencesHighlight: workspaceMonacoOccurrences(readOnly),
+      readOnly,
+      tabSize: 2,
+      theme: defineWorkspaceMonacoTheme(currentAppliedTheme()),
+      wordWrap: "on",
+    });
+    const stopObservingTheme = observeAppliedTheme((theme) => {
+      monaco.editor.setTheme(defineWorkspaceMonacoTheme(theme));
+    });
+    const stopObservingAppearance = observeAppearance(() => editor.updateOptions(codeEditorTypography()));
+
+    const changeDisposable = editor.onDidChangeModelContent(() => {
+      onChangeRef.current?.(model.getValue());
+    });
+    // A public range decoration gives exact painted spans for wrapping and
+    // bidi text without reading Monaco's private selection DOM.
+    const anchorDecorations = editor.createDecorationsCollection();
+    anchorDecorationRef.current = anchorDecorations;
+    const reportSelection = () => {
+      const range = editor.getSelection();
+      if (!range || range.isEmpty()) { onSelectionChangeRef.current?.(null); return; }
+      const mapped = fileSelectionModelRange(textRef.current, range, lineIndexRef.current);
+      if (!mapped) { onSelectionChangeRef.current?.(null); return; }
+      onSelectionChangeRef.current?.({
+        ...mapped,
+        getRect: () => {
+          if (!monaco.Range.equalsRange(anchorDecorations.getRange(0), range)) {
+            anchorDecorations.set([{ range, options: { className: "file-selection-anchor" } }]);
+          }
+          editor.render();
+          const bounds = host.getBoundingClientRect();
+          const layout = editor.getLayoutInfo();
+          const left = bounds.left + layout.contentLeft;
+          const right = left + layout.contentWidth;
+          const rects = Array.from(host.querySelectorAll<HTMLElement>(".file-selection-anchor"))
+            .flatMap(element => Array.from(element.getClientRects()))
+            .map(rect => ({ left: Math.max(left, rect.left), right: Math.min(right, rect.right),
+              top: Math.max(bounds.top, rect.top), bottom: Math.min(bounds.bottom, rect.bottom) }))
+            .filter(rect => rect.right > rect.left && rect.bottom > rect.top);
+          if (rects.length === 0) return new DOMRect(bounds.left, bounds.top - 100, 0, 0);
+          const x = Math.min(...rects.map(rect => rect.left));
+          const y = Math.min(...rects.map(rect => rect.top));
+          return new DOMRect(x, y, Math.max(...rects.map(rect => rect.right)) - x, Math.max(...rects.map(rect => rect.bottom)) - y);
+        },
+      });
+    };
+    let dragging = false;
+    const down = (event: PointerEvent) => { if (event.button === 0) dragging = true; };
+    const up = () => { if (!dragging) return; dragging = false; reportSelection(); };
+    host.addEventListener("pointerdown", down, true);
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+    const selectionDisposable = editor.onDidChangeCursorSelection(() => { if (!dragging) reportSelection(); });
+    decorationRef.current = editor.createDecorationsCollection();
+    editor.addCommand(
+      monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS,
+      () => onSaveRef.current?.(),
+    );
+
+    modelRef.current = model;
+    editorRef.current = editor;
+    if (initialViewState) {
+      editor.restoreViewState(initialViewState);
+    } else {
+      const scroll = readWorkspacePreviewScroll(resourceID);
+      if (scroll !== undefined) editor.setScrollTop(scroll);
+    }
+    const scrollDisposable = editor.onDidScrollChange(() => {
+      writeWorkspacePreviewScroll(resourceID, editor.getScrollTop());
+      document.dispatchEvent(new Event("file-selection-layout"));
+    });
+    // A viewer leaves focus where the reader was (the file tree keeps its
+    // keyboard path); only an editor takes the caret.
+    if (!readOnly) {
+      editor.focus();
+    }
+
+    return () => {
+      onViewStateChangeRef.current?.(editor.saveViewState());
+      stopObservingTheme();
+      stopObservingAppearance();
+      changeDisposable.dispose();
+      selectionDisposable.dispose();
+      host.removeEventListener("pointerdown", down, true);
+      window.removeEventListener("pointerup", up, true);
+      window.removeEventListener("pointercancel", up, true);
+      scrollDisposable.dispose();
+      anchorDecorations.clear();
+      anchorDecorationRef.current = null;
+      decorationRef.current?.clear();
+      decorationRef.current = null;
+      editor.dispose();
+      model.dispose();
+      if (editorRef.current === editor) {
+        editorRef.current = null;
+      }
+      if (modelRef.current === model) {
+        modelRef.current = null;
+      }
+    };
+  }, [language, resourceID]);
+
+  useEffect(() => {
+    const model = modelRef.current;
+    if (!model || model.getValue(undefined, true) === text) {
+      return;
+    }
+    model.pushEditOperations(
+      [],
+      [
+        {
+          range: model.getFullModelRange(),
+          text,
+        },
+      ],
+      () => null,
+    );
+  }, [text]);
+
+  useEffect(() => {
+    editorRef.current?.updateOptions({ readOnly, occurrencesHighlight: workspaceMonacoOccurrences(readOnly) });
+  }, [readOnly]);
+
+  useEffect(() => {
+    if (!persistentSelection) anchorDecorationRef.current?.clear();
+    decorationRef.current?.set(persistentSelection ? [{
+      range: sourceMonacoRange(persistentSelection, text),
+      options: { className: "file-selection-persistent", stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges },
+    }] : []);
+  }, [persistentSelection, resourceID, language, text]);
+
+  useEffect(() => {
+    if (!revealSelection) return;
+    const source = revealSelection.source;
+    editorRef.current?.revealRangeInCenter(sourceMonacoRange(source, textRef.current), monaco.editor.ScrollType.Immediate);
+  }, [revealSelection]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const model = modelRef.current;
+    if (!editor || !model || !selection) {
+      return;
+    }
+    const savedScroll = initialSelectionRef.current ? readWorkspacePreviewScroll(resourceID) : undefined;
+    initialSelectionRef.current = false;
+    const start = model.validatePosition({
+      lineNumber: selection.startLineNumber,
+      column: selection.startColumn,
+    });
+    const end = model.validatePosition({
+      lineNumber: selection.endLineNumber ?? selection.startLineNumber,
+      column: selection.endColumn ?? selection.startColumn,
+    });
+    const editorSelection = new monaco.Selection(
+      start.lineNumber,
+      start.column,
+      end.lineNumber,
+      end.column,
+    );
+    editor.setSelection(editorSelection);
+    editor.revealRangeInCenter(editorSelection, monaco.editor.ScrollType.Immediate);
+    if (savedScroll !== undefined) editor.setScrollTop(savedScroll);
+    if (!readOnly) {
+      editor.focus();
+    }
+  }, [
+    selection?.endColumn,
+    selection?.endLineNumber,
+    selection?.startColumn,
+    selection?.startLineNumber,
+  ]);
+
+  return (
+    <div
+      aria-label={t(readOnly ? "workspace.monaco.viewer" : "workspace.monaco.editor", { path })}
+      className="workspace-monaco-editor"
+      data-language={language}
+      data-path={path}
+      data-resource-id={resourceID}
+      ref={hostRef}
+    />
+  );
+}
+
+function sourceMonacoRange(source: FileSelectionSource, text: string): monaco.Range {
+  const column = (line: number, value: number) => Math.max(1, value - (line === 1 && text.startsWith("\uFEFF") ? 1 : 0));
+  return new monaco.Range(source.start_line, column(source.start_line, source.start_column), source.end_line, column(source.end_line, source.end_column));
+}
+
+export function workspaceScrollbarSize(host: HTMLElement): number {
+  const configuredSize = Number.parseFloat(
+    window.getComputedStyle(host).getPropertyValue("--scrollbar-width"),
+  );
+  return Number.isFinite(configuredSize) && configuredSize > 0
+    ? configuredSize
+    : 10;
+}
+
+/**
+ * A model for the workspace editors. Brackets keep the syntax colour of their
+ * language: rainbow pairs are a model option in the standalone editor, which
+ * the editor-level switch does not reach.
+ */
+export function createWorkspaceMonacoModel(text: string, language: string, uri: monaco.Uri): monaco.editor.ITextModel {
+  const model = monaco.editor.createModel(text, language, uri);
+  model.updateOptions({ bracketColorizationOptions: { enabled: false, independentColorPoolPerBracketType: false } });
+  return model;
+}
+
+export function workspaceMonacoModelURI(resourceID: string): monaco.Uri {
+  return monaco.Uri.parse(`wuu-workspace:///${encodeURIComponent(resourceID)}`);
+}
+
+export function installMonacoWorkers(): void {
+  if (typeof window === "undefined" || window.MonacoEnvironment) {
+    return;
+  }
+
+  window.MonacoEnvironment = {
+    getWorker: (_workerId: string, label: string) => {
+      if (label === "json") {
+        return new JsonWorker();
+      }
+      if (label === "css" || label === "scss" || label === "less") {
+        return new CssWorker();
+      }
+      if (label === "html" || label === "handlebars" || label === "razor") {
+        return new HtmlWorker();
+      }
+      if (label === "typescript" || label === "javascript") {
+        return new TsWorker();
+      }
+      return new EditorWorker();
+    },
+  };
+}
+
+export function monacoLanguageForPath(path: string): MonacoLanguage {
+  const basename = path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+  const extension = basename.includes(".") ? basename.split(".").at(-1)?.toLowerCase() : undefined;
+
+  if (extension === "ts" || extension === "tsx") {
+    return "typescript";
+  }
+  if (extension === "js" || extension === "jsx" || extension === "mjs" || extension === "cjs") {
+    return "javascript";
+  }
+  if (extension === "json" || extension === "jsonc") {
+    return "json";
+  }
+  if (extension === "md" || extension === "mdx") {
+    return "markdown";
+  }
+  if (extension === "yaml" || extension === "yml") {
+    return "yaml";
+  }
+  if (extension === "css" || extension === "scss" || extension === "less") {
+    return "css";
+  }
+  if (extension === "html" || extension === "htm") {
+    return "html";
+  }
+  if (extension === "xml" || extension === "svg") {
+    return "xml";
+  }
+  if (basename === "go.mod" || basename === "go.sum" || extension === "go") {
+    return "go";
+  }
+  if (extension === "py") {
+    return "python";
+  }
+  if (extension === "rs") {
+    return "rust";
+  }
+  if (extension === "sql") {
+    return "sql";
+  }
+  if (extension === "sh" || extension === "bash" || extension === "zsh") {
+    return "shell";
+  }
+  return "plaintext";
+}
+
+/**
+ * Defines the workspace editor theme from the current CSS tokens and returns
+ * its name. Editors paint what the rest of the product paints: ink on paper,
+ * the product text selection, and the syntax palette of rendered code blocks.
+ * Callers re-define on every theme change, so
+ * extension themes reach the editor as well.
+ */
+export function defineWorkspaceMonacoTheme(theme: AppliedTheme): string {
+  const name = theme === "dark" ? "wuu-workspace-dark" : "wuu-workspace";
+  const color = resolveCssColors({
+    ink: "var(--ink)",
+    inkTertiary: "var(--ink-tertiary)",
+    inkFaint: "var(--ink-faint)",
+    danger: "var(--danger)",
+    selection: "var(--selection-bg)",
+    selectionSoft: "color-mix(in srgb, var(--selection-bg) 50%, transparent)",
+    lineHighlight: "var(--ink-overlay-4)",
+    hairlineSoft: "var(--hairline-soft)",
+    hairlineStrong: "var(--hairline-strong)",
+    menu: "var(--menu-bg)",
+    menuBorder: "var(--menu-border)",
+    field: "var(--field-bg)",
+    fieldBorder: "var(--field-border)",
+    focus: "var(--focus-ring)",
+    thumb: "var(--scrollbar-thumb)",
+    thumbHover: "var(--scrollbar-thumb-hover)",
+    thumbActive: "var(--scrollbar-thumb-active)",
+    keyword: "var(--hljs-keyword)",
+    function: "var(--hljs-function)",
+    string: "var(--hljs-string)",
+    number: "var(--hljs-number)",
+    comment: "var(--hljs-comment)",
+    tag: "var(--hljs-tag)",
+    literal: "var(--hljs-literal)",
+    meta: "var(--hljs-meta)",
+  });
+  // Token rules take opaque RRGGBB without the hash.
+  const token = (value: string): string => value.slice(1, 7);
+  const transparent = "#00000000";
+  monaco.editor.defineTheme(name, {
+    base: theme === "dark" ? "vs-dark" : "vs",
+    // Every token maps onto the product's syntax roles; nothing is left to the
+    // stock palette, whose saturated hues would be the only colour on screen.
+    inherit: false,
+    rules: [
+      { token: "", foreground: token(color.ink) },
+      { token: "invalid", foreground: token(color.danger) },
+      { token: "emphasis", fontStyle: "italic" },
+      { token: "strong", fontStyle: "bold" },
+      { token: "comment", foreground: token(color.comment), fontStyle: "italic" },
+      { token: "keyword", foreground: token(color.keyword) },
+      { token: "keyword.json", foreground: token(color.literal) },
+      { token: "string", foreground: token(color.string) },
+      { token: "string.key.json", foreground: token(color.tag) },
+      { token: "regexp", foreground: token(color.string) },
+      { token: "number", foreground: token(color.number) },
+      { token: "constant", foreground: token(color.literal) },
+      { token: "type", foreground: token(color.function) },
+      { token: "predefined", foreground: token(color.function) },
+      { token: "annotation", foreground: token(color.meta) },
+      { token: "meta", foreground: token(color.meta) },
+      { token: "metatag", foreground: token(color.meta) },
+      { token: "tag", foreground: token(color.tag) },
+      { token: "attribute.name", foreground: token(color.tag) },
+      { token: "attribute.value", foreground: token(color.string) },
+      { token: "attribute.value.number", foreground: token(color.number) },
+      { token: "attribute.value.unit", foreground: token(color.number) },
+      { token: "key", foreground: token(color.tag) },
+      { token: "variable", foreground: token(color.meta) },
+      { token: "variable.predefined", foreground: token(color.literal) },
+    ],
+    colors: {
+      "editor.background": transparent,
+      "editor.foreground": color.ink,
+      "editorGutter.background": transparent,
+      "editorLineNumber.foreground": color.inkTertiary,
+      "editorLineNumber.activeForeground": color.ink,
+      "editorLineNumber.dimmedForeground": color.inkTertiary,
+      "editorCursor.foreground": color.ink,
+      "editor.selectionBackground": color.selection,
+      // A linked range stays marked while focus remains in the conversation.
+      "editor.inactiveSelectionBackground": color.selection,
+      "editor.selectionHighlightBackground": color.selectionSoft,
+      "editor.wordHighlightBackground": color.selectionSoft,
+      "editor.wordHighlightStrongBackground": color.selectionSoft,
+      "editor.findMatchBackground": color.selection,
+      "editor.findMatchHighlightBackground": color.selectionSoft,
+      "editor.lineHighlightBackground": color.lineHighlight,
+      "editor.lineHighlightBorder": transparent,
+      "editorBracketMatch.background": color.selectionSoft,
+      "editorBracketMatch.border": transparent,
+      "editorIndentGuide.background1": color.hairlineSoft,
+      "editorIndentGuide.activeBackground1": color.hairlineStrong,
+      "editorWhitespace.foreground": color.inkFaint,
+      "editorWidget.background": color.menu,
+      "editorWidget.foreground": color.ink,
+      "editorWidget.border": color.menuBorder,
+      "editorHoverWidget.background": color.menu,
+      "editorHoverWidget.border": color.menuBorder,
+      "input.background": color.field,
+      "input.border": color.fieldBorder,
+      "input.foreground": color.ink,
+      "input.placeholderForeground": color.inkTertiary,
+      "inputOption.activeBorder": color.focus,
+      focusBorder: color.focus,
+      "scrollbar.shadow": transparent,
+      "scrollbarSlider.background": color.thumb,
+      "scrollbarSlider.hoverBackground": color.thumbHover,
+      "scrollbarSlider.activeBackground": color.thumbActive,
+    },
+  });
+  return name;
+}
+
+/** Reading options for the workspace file editor. */
+export function workspaceMonacoReadingOptions(host: HTMLElement): monaco.editor.IEditorOptions {
+  const scrollbarSize = workspaceScrollbarSize(host);
+  return {
+    automaticLayout: true,
+    contextmenu: false,
+    ...codeEditorTypography(),
+    glyphMargin: false,
+    guides: { bracketPairs: false, indentation: true, highlightActiveIndentation: false },
+    hideCursorInOverviewRuler: true,
+    lineDecorationsWidth: 6,
+    lineNumbersMinChars: 3,
+    minimap: { enabled: false },
+    overviewRulerBorder: false,
+    overviewRulerLanes: 0,
+    padding: { top: 12, bottom: 12 },
+    renderLineHighlight: "line",
+    renderLineHighlightOnlyWhenFocus: true,
+    scrollBeyondLastLine: false,
+    showFoldingControls: "never",
+    scrollbar: {
+      vertical: isTouchWebShell() ? "hidden" : "auto",
+      horizontal: isTouchWebShell() ? "hidden" : "auto",
+      alwaysConsumeMouseWheel: false,
+      horizontalScrollbarSize: scrollbarSize,
+      horizontalSliderSize: Math.max(4, scrollbarSize - 2),
+      useShadows: false,
+      verticalScrollbarSize: scrollbarSize,
+      verticalSliderSize: Math.max(4, scrollbarSize - 2),
+    },
+  };
+}

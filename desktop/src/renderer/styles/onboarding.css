@@ -1,0 +1,562 @@
+/* First-run setup. The window opens at 920x720 and cannot be resized, so the
+ * layout is drawn for that landscape frame and narrows only on small
+ * displays. Each step is a title, its choices and the actions that move on,
+ * built from the product's own controls. */
+
+.first-run-onboarding {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+  overflow: hidden;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.onboarding-chrome {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding-inline: var(--window-titlebar-padding-inline);
+  -webkit-app-region: drag;
+}
+
+/* Finished steps are ink dots, the current step a short capsule, the steps
+ * still to come faint dots. */
+.onboarding-progress {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.onboarding-progress-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--hairline-strong);
+  transition:
+    width var(--motion-base) var(--ease-out),
+    background-color var(--motion-base) var(--ease-out);
+}
+
+.onboarding-progress-dot[data-state] {
+  background: var(--ink-strong);
+}
+
+.onboarding-progress-dot[data-state="current"] {
+  width: 18px;
+}
+
+.onboarding-preview-exit {
+  grid-column: 3;
+  justify-self: end;
+  -webkit-app-region: no-drag;
+}
+
+/* The choice steps put the companion, which wears what is chosen, beside
+ * the title and choices, both centred in the frame's height. The actions
+ * keep the bottom edge, so they stay put as the steps change length. */
+.onboarding-stage {
+  display: grid;
+  box-sizing: border-box;
+  width: min(100%, calc(var(--content-column-width) + var(--page-padding) * 2));
+  min-height: 0;
+  grid-template:
+    "mascot panel" minmax(0, 1fr)
+    "actions actions" auto
+    / minmax(0, 2fr) minmax(0, 3fr);
+  gap: var(--space-4) var(--space-8);
+  margin-inline: auto;
+  padding: var(--space-2) var(--page-padding) var(--page-padding);
+}
+
+.onboarding-stage > .onboarding-plugin-mascot-stage {
+  grid-area: mascot;
+  place-self: center;
+}
+
+.onboarding-panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  grid-area: panel;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--space-4);
+}
+
+.onboarding-heading {
+  display: grid;
+  flex: none;
+  min-width: 0;
+  gap: var(--space-2);
+  --enter-y: 8px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+}
+
+.onboarding-heading > h1 {
+  margin: 0;
+  color: var(--ink-strong);
+  font-size: var(--font-display);
+  font-weight: var(--weight-semibold);
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+/* A step's title takes focus when the step opens so that it is announced;
+ * it is not a control and draws no ring. */
+.first-run-onboarding .onboarding-heading > h1:focus-visible {
+  outline: none;
+}
+
+.onboarding-lead {
+  max-width: 60ch;
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+}
+
+/* On a display narrower than the window the choices keep the full width;
+ * the companion is decoration and steps aside. */
+@media (max-width: 640px) {
+  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider, .onboarding-stage-permissions, .onboarding-stage-browser, .onboarding-stage-ready) {
+    grid-template: "panel" minmax(0, 1fr) "actions" auto / minmax(0, 1fr);
+  }
+
+  :is(.onboarding-stage-plugins, .onboarding-stage-runtime, .onboarding-stage-provider, .onboarding-stage-permissions, .onboarding-stage-browser, .onboarding-stage-ready) > .onboarding-plugin-mascot-stage {
+    display: none;
+  }
+}
+
+/* The welcome shares the home's UI typography and companion, centered
+ * above its primary action. */
+.onboarding-stage-welcome {
+  grid-template: "mascot" auto "panel" auto "actions" auto / minmax(0, 1fr);
+  align-content: center;
+  row-gap: var(--space-6);
+  text-align: center;
+}
+
+.onboarding-stage-welcome .onboarding-heading > h1 {
+  font-family: var(--empty-home-title-font);
+  font-size: var(--font-hero);
+  font-weight: var(--weight-medium);
+  line-height: 1.2;
+}
+
+.onboarding-stage-welcome .onboarding-lead {
+  margin-inline: auto;
+}
+
+.onboarding-plugin-mascot-stage {
+  /* Outfit: navy headband, indigo canvas, caramel leather, ivory hardware.
+     Dark clothing separates from the cyan body; amber is a small accent. */
+  --companion-blue: #c4ddff;
+  --companion-sage: #c4eee4;
+  --equipment-ink: #23344f;
+  --equipment-headband: #293f68;
+  --equipment-stitch: #b9c6df;
+  --equipment-fabric: #3f5689;
+  --equipment-edge: #233653;
+  --equipment-shell: #f4ead7;
+  --equipment-paper: #fffaf0;
+  --equipment-binding: #b87540;
+  --equipment-accent: #f4b34f;
+  /* The frame holds the mascot; split companions spill over its top edge. */
+  position: relative;
+  display: grid;
+  width: 280px;
+  max-width: 100%;
+  height: 200px;
+  place-items: center;
+  overflow: visible;
+}
+
+.onboarding-mascot-pack {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  isolation: isolate;
+}
+
+.onboarding-mascot-clone {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 200px;
+  height: 200px;
+  overflow: visible;
+  transform: translate(-50%, -50%);
+  transition:
+    transform 520ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 360ms ease,
+    display 520ms allow-discrete;
+}
+
+.onboarding-mascot-clone-0 {
+  z-index: 3;
+}
+
+.onboarding-plugin-mascot-stage.is-split .onboarding-mascot-clone-0 {
+  transform: translate(-50%, calc(-50% + 28px));
+}
+
+.onboarding-mascot-clone-1 {
+  z-index: 1;
+}
+
+.onboarding-mascot-clone-2 {
+  z-index: 2;
+}
+
+.onboarding-plugin-mascot-stage.is-split .onboarding-mascot-clone-1 {
+  transform: translate(calc(-50% - 52px), calc(-50% - 40px)) scale(0.66) rotate(-9deg);
+}
+
+.onboarding-plugin-mascot-stage.is-split .onboarding-mascot-clone-2 {
+  transform: translate(calc(-50% + 52px), calc(-50% - 36px)) scale(0.66) rotate(8deg);
+}
+
+/* Discrete display transitions let the satellites merge back before hiding,
+   without timers or remounting the foreground mascot on each plugin click. */
+.onboarding-mascot-clone[hidden] {
+  display: none;
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.55);
+}
+
+@starting-style {
+  .onboarding-plugin-mascot-stage.is-split .onboarding-mascot-clone:not(.onboarding-mascot-clone-0) {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.55);
+  }
+}
+
+.onboarding-mascot-clone .onboarding-mascot {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.onboarding-mascot-equipment {
+  pointer-events: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.onboarding-equipment-module {
+  transform-box: fill-box;
+  transform-origin: center;
+  --enter-opacity: 0.35;
+  --enter-y: 3px;
+  --enter-scale: 0.78;
+  animation: wuu-enter var(--motion-slower) var(--ease-out) both;
+}
+
+.equipment-edge { fill: var(--equipment-edge); }
+.equipment-headband { fill: var(--equipment-headband); }
+.equipment-fabric { fill: var(--equipment-fabric); }
+.equipment-shell { fill: var(--equipment-shell); }
+.equipment-paper { fill: var(--equipment-paper); }
+.equipment-binding { fill: var(--equipment-binding); }
+.equipment-bookmark { fill: var(--equipment-accent); }
+
+.onboarding-engine-mark {
+  fill: var(--equipment-ink);
+}
+
+.equipment-seam,
+.equipment-detail {
+  fill: none;
+  stroke: var(--equipment-ink);
+  stroke-width: 1.3;
+}
+
+.equipment-seam { opacity: 0.65; stroke-width: 0.85; }
+.equipment-seam.equipment-stitch {
+  stroke: var(--equipment-stitch);
+  opacity: 0.8;
+}
+.equipment-mic-boom { stroke-width: 2.2; }
+
+.equipment-progress-done,
+.equipment-progress-current,
+.equipment-progress-next {
+  fill: none;
+  stroke: var(--equipment-shell);
+  stroke-width: 2.5;
+}
+
+.equipment-progress-current { stroke: var(--equipment-accent); }
+.equipment-progress-next { opacity: 0.25; }
+
+/* The choices scroll under the title when they outgrow the frame, and the
+ * edge fade says when there are more. The inline bleed keeps row hover surfaces and
+ * focus rings inside the scroller while the text stays on the column edge.
+ * Keep entrance animations off this scroll owner: their animation shorthand
+ * would replace the shared scroll-fade animations and reset their timelines. */
+.onboarding-body {
+  display: flex;
+  min-height: 0;
+  flex: 0 1 auto;
+  flex-direction: column;
+  gap: var(--space-4);
+  margin-inline: calc(var(--space-2) * -1);
+  overflow: auto;
+  padding: var(--space-1) var(--space-2);
+}
+
+.onboarding-body[data-scroll-fade-fitting] {
+  animation: none;
+  mask-image: none;
+}
+
+/* The shared Settings surface stays outside the scrolling choices, so its
+ * border and shadow remain intact as long lists move inside the card. */
+.onboarding-choice-card {
+  min-height: 0;
+  flex: 0 1 auto;
+  gap: var(--space-3);
+  padding: var(--card-padding);
+}
+
+/* Its children are a control and a scrolling list, not divided rows. */
+.settings-group.onboarding-choice-card > :not([hidden]) ~ :not([hidden]) {
+  border-top: 0;
+}
+
+.first-run-onboarding :is(.model-service-catalog, .system-permission-row) {
+  border-color: var(--hairline-soft);
+  border-radius: var(--settings-card-radius);
+  background: var(--settings-card-bg);
+}
+
+.first-run-onboarding .system-permission-row {
+  padding: var(--card-padding);
+}
+
+.onboarding-browser-refresh {
+  align-self: flex-start;
+}
+
+.onboarding-presets {
+  align-self: flex-start;
+  flex: none;
+}
+
+.onboarding-plugins,
+.onboarding-engines {
+  display: grid;
+}
+
+/* A plugin reads like its catalog row, with the switch that turns it on;
+ * an agent reads like its Settings row, with the radio that makes it the
+ * default. The whole row is the control's label. */
+.onboarding-plugin,
+.onboarding-engine {
+  display: grid;
+  min-width: 0;
+  align-items: center;
+  column-gap: var(--space-3);
+  margin-inline: calc(var(--space-2) * -1);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+
+.onboarding-plugin {
+  grid-template-columns: var(--icon-size-lg) minmax(0, 1fr) auto;
+}
+
+.onboarding-plugin > .settings-switch {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.onboarding-engine {
+  grid-template-columns: auto var(--icon-size-lg) minmax(0, 1fr);
+}
+
+.onboarding-engine > .settings-engine-radio {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.onboarding-engine > .catalog-row-mark {
+  grid-column: 2;
+}
+
+.onboarding-engine > .catalog-row-title {
+  grid-column: 3;
+}
+
+.onboarding-plugin:hover,
+.onboarding-engine:hover {
+  background: var(--surface-1);
+}
+
+/* Service rows carry vendor marks at the size the Model services tiles use,
+ * so a lettered mark stays legible; the name keeps one column across rows. */
+.onboarding-body .catalog-row:has(.provider-mark) {
+  --onboarding-service-mark: round(up, calc(var(--font-ui) * 2.2), 2px);
+  grid-template-columns:
+    var(--onboarding-service-mark) minmax(0, 1fr) auto
+    calc(var(--icon-size) * (1 - var(--chevron-tip-inset)));
+}
+
+.onboarding-body .catalog-row-mark:has(> .provider-mark) {
+  width: var(--onboarding-service-mark);
+  height: var(--onboarding-service-mark);
+}
+
+.onboarding-body .catalog-row-mark > .provider-mark {
+  --provider-mark-size: var(--onboarding-service-mark);
+}
+
+.onboarding-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+  color: var(--ink-tertiary);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+}
+
+.onboarding-error {
+  display: grid;
+  flex: none;
+  gap: 2px;
+  margin: 0;
+  color: var(--danger);
+  font-size: var(--font-ui);
+  line-height: 1.5;
+}
+
+.onboarding-error > span {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+/* Back leads the row with its text on the column edge; the actions that move
+ * on end it. */
+.onboarding-actions {
+  display: flex;
+  grid-area: actions;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.onboarding-actions > .settings-button-ghost:first-child {
+  margin-inline: calc(var(--control-padding-inline) * -1) auto;
+}
+
+.onboarding-stage-welcome .onboarding-actions {
+  justify-content: center;
+}
+
+/* The companions' transitions use their own timing; reduced motion stops
+ * them with the rest of the motion. */
+@container style(--motion-reduced: 1) {
+  .onboarding-plugin-mascot-stage *,
+  .onboarding-plugin-mascot-stage *::before,
+  .onboarding-plugin-mascot-stage *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.onboarding-stage-permissions {
+  grid-template: "panel" minmax(0, 1fr) "actions" auto / minmax(0, 1fr);
+}
+
+.onboarding-stage-permissions > .onboarding-plugin-mascot-stage { display: none; }
+.onboarding-stage-permissions .onboarding-panel {
+  width: min(100%, 38em);
+  justify-self: center;
+}
+.onboarding-stage-permissions .onboarding-heading { text-align: left; }
+.onboarding-stage-permissions .onboarding-lead { max-width: 34em; }
+
+/* The scroller reaches through the card's padding and 1px border so the
+ * scrollbar sits outside the card. Add the border width to the scroller's
+ * padding too, keeping row content aligned with the footer. */
+.onboarding-workspaces {
+  margin-inline-end: calc((var(--card-padding) + var(--scrollbar-width) + 1px) * -1);
+  padding-inline-end: calc(var(--space-2) + 1px);
+  scrollbar-gutter: stable;
+}
+.onboarding-workspaces > .onboarding-status { padding-inline: var(--space-2); }
+.onboarding-workspace-toolbar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--hairline-soft);
+  padding: var(--space-3) var(--space-2) 0;
+}
+.onboarding-workspace-tools { display: flex; align-items: center; gap: var(--space-1); margin-left: auto; }
+.onboarding-workspace-tools > .settings-icon-button:last-child {
+  margin-inline-end: calc((var(--control-field-height) - var(--icon-size)) / -2);
+}
+.onboarding-workspace-select {
+  margin-inline-start: calc(var(--control-padding-inline) * -1);
+  font-weight: var(--weight-regular);
+}
+.onboarding-workspace-notice { align-items: flex-start; color: var(--ink-soft); }
+.onboarding-workspace-notice > .icon { flex: none; margin-top: calc((1lh - var(--icon-size)) / 2); }
+.onboarding-workspace-list { display: grid; gap: var(--space-1); }
+.onboarding-workspace-list:empty { display: none; }
+.onboarding-workspace-row {
+  display: grid;
+  grid-template-columns: var(--icon-size-lg) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-3) var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--motion-fast) var(--ease-out);
+}
+.onboarding-workspace-row:hover:not(:has(input:disabled)) { background: var(--surface-1); }
+.onboarding-workspace-row:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.onboarding-workspace-row:has(input:disabled) { cursor: default; }
+.onboarding-workspace-check { position: relative; display: flex; grid-column: 1; width: var(--icon-size-lg); height: var(--icon-size-lg); }
+.onboarding-workspace-check input {
+  appearance: none;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  border: 1px solid var(--control-boundary);
+  border-radius: var(--radius-xs);
+  background: var(--paper);
+  cursor: inherit;
+}
+.onboarding-workspace-check input:checked { border-color: var(--ink-strong); background: var(--ink-strong); }
+html[data-focus-modality="keyboard"] .onboarding-workspace-check input:focus-visible { outline: none; }
+.onboarding-workspace-check > .icon {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 2px;
+  color: var(--paper);
+  opacity: 0;
+  pointer-events: none;
+}
+.onboarding-workspace-check input:checked + .icon { opacity: 1; }
+.onboarding-workspace-details { display: grid; grid-column: 2; min-width: 0; gap: var(--space-1); }
+.onboarding-workspace-name { overflow-wrap: anywhere; font-weight: var(--weight-medium); }
+.onboarding-workspace-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.onboarding-workspace-path { color: var(--ink-soft); }
+.onboarding-workspace-sources { display: flex; grid-column: 3; justify-content: flex-end; gap: var(--space-2); color: var(--ink-soft); }
+.onboarding-workspace-source-icon { display: block; width: var(--icon-size); height: var(--icon-size); }
+.onboarding-workspace-empty { display: grid; justify-items: center; gap: var(--space-4); margin: auto; padding: var(--space-8); text-align: center; }
+.onboarding-workspace-empty > svg { width: var(--space-8); height: var(--space-8); color: var(--ink-muted); }

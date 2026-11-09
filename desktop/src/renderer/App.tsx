@@ -1,0 +1,1995 @@
+import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
+import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UIFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
+import { RestartRecovery } from "./RestartRecoveryNotice";
+import { AccountScreen } from "./AccountScreen";
+import { isTouchWebShell } from "./ComposerFocus";
+import { FileSelectionProvider } from "./FileSelectionContext";
+import { SideConversationAvailableContext } from "./ResponseSelection";
+import { SettingsControlsProvider } from "./SettingsControlsContext";
+import { ArtifactInteractionProvider } from "./ArtifactInteractionContext";
+/// <reference path="../shared/jsx-compat.d.ts" />
+
+import {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties
+} from "react";
+import { type PageContextSnapshot } from "../shared/pageContext";
+import type {
+ResponseSelection,
+RuntimeContext,
+SideThreadSelection,
+Thread
+} from "../shared/protocol";
+import { WEB_WORKSPACE_RIBBON_ID, WEB_WORKSPACE_TAB_LIMIT } from "../shared/webWorkspace";
+import { observeAppearance } from "./AppearancePreferences";
+import {
+  SIDEBAR_MAX_WIDTH,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_RIBBON_WIDTH,
+  sidebarDrawerExitMs,
+  sidebarMotionMs,
+  useAppLayoutState,
+  WORKSPACE_RIGHT_PANEL_MAX_WIDTH,
+  WORKSPACE_RIGHT_PANEL_MIN_WIDTH
+} from "./AppLayoutState";
+import { ApplicationFirstRunOnboarding } from "./ApplicationFirstRunOnboarding";
+import {
+  isThreadRunning,
+  latestTodoUpdateForThread,
+  runtimeContextKey,
+  sameRuntimeContext,
+  workspacePanelContext
+} from "./AppState";
+import { useArtifactAutoPreview } from "./ArtifactAutoPreview";
+import { ArtifactPreviewContext } from "./ArtifactPreviewContext";
+import { BrowserPiPHostReporter } from "./BrowserPiPHostReporter";
+import { isForegroundControlled } from "./BrowserVisibility";
+import { isInsideFloatingMenu } from "./ComposerView";
+import { ContextChatCapsule } from "./ContextChatCapsule";
+import type { ContextCompositionEntry } from "./ContextCompositionCard";
+import {
+  useConversationScrollState
+} from "./ConversationScrollState";
+import { useConversationSearchNavigation } from "./ConversationSearchNavigation";
+import { ConversationSearchOverlay } from "./ConversationSearchOverlay";
+import { useConversationSearch } from "./ConversationSearchState";
+import {
+  ConversationSidePanels,
+  ConversationTitleActions,
+  ConversationTitleContent
+} from "./ConversationShellRenderers";
+import { setOpenThreadInSplitHandler } from "./ConversationSplitBridge";
+import { ConversationStatusCluster } from "./ConversationStatusCluster";
+import { useConversationSwitchReady } from "./ConversationSwitchReady";
+import { threadHasConversationMedia } from "./ConversationMediaSettle";
+import { UICompositionPendingContext } from "./plugins/ApplicationShell";
+import { ConversationPresentationLoading, type ConversationPresentationRegion, useConversationPresentationTransition, usePresentedNavigation, reportPresentedNavigationError } from "./ConversationPresentationTransition";
+import { createEnvironmentPanelActions } from "./EnvironmentActions";
+import {
+  type EnvironmentPanelMenu,
+  type EnvironmentPanelMotionState,
+} from "./EnvironmentPanel";
+import {
+  ENABLE_ACCOUNT,
+  ENABLE_EMBEDDED_BROWSER,
+  ENABLE_ENVIRONMENT_PANEL,
+} from "./FeatureFlags";
+import { CommitChangesDialog, PullRequestDialog } from "./GitDialogs";
+import { HoverRevealScopeContext } from "./HoverReveal";
+import { resolveLocalizedText, translateCurrent, useI18n } from "./i18n";
+import { ImagePreviewProvider } from "./ImagePreview";
+import { JumpToLatestPill } from "./JumpToLatestPill";
+import { useApplicationNavigationState } from "./modules/ApplicationNavigationState";
+import { motionDurationMs } from "./motion";
+import { useNavigationRibbonPreferences } from "./NavigationRibbonPreferences";
+import { RibbonVisibilityToggle } from "./RibbonVisibilityToggle";
+import {
+  pullRequestUnavailableReason
+} from "./RuntimeHelpers";
+import { submittedThreadRuntime } from "./SessionRuntimeState";
+import type { SettingsPage } from "./SettingsView";
+import { useSidebarDrawerState } from "./SidebarDrawerState";
+import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
+import { SkillsCatalog, type SkillsCatalogSection } from "./SkillsCatalog";
+import {
+  baseThreadTitle,
+  conversationHeadingTitle
+} from "./ThreadTitles";
+import { showErrorToast, showToast } from "./Toast";
+import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
+import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
+import { WebWorkspacePanel } from "./WebWorkspace";
+import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
+import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
+import {
+  openWorkspaceBrowserOrExternal,
+  workspaceBrowserFocusDecision,
+  WorkspaceBrowserOpenContext,
+  type WorkspaceBrowserOpenTarget,
+} from "./WorkspaceBrowserOpen";
+import { useWorkspaceToolState } from "./WorkspaceToolState";
+import type { WorkspaceViewTab } from "./WorkspaceViewTabs";
+import { WuuMascotRuntimeProvider } from "./WuuMascot";
+import { ShellCanvasArtwork } from "./background/ShellCanvasArtwork";
+export { SIDEBAR_DRAWER_HOVER_OPEN_DELAY_MS } from "./SidebarDrawerState";
+
+const ENGINE_INVENTORY_STALE_MS = 2 * 60 * 1000;
+// Globalized-sheet phases: docked (grid child) → arming (promoted to a
+// full-window fixed sheet, teleported over its dock slot for one frame) →
+// open (slid to cover the window) → exiting (sliding back to park) →
+// docking (teleported back into the grid for one frame, no transition) →
+// docked. Transitions retarget mid-flight, so rapid toggles stay continuous.
+type WorkspaceSheetPhase = "docked" | "arming" | "open" | "exiting" | "docking";
+const ENVIRONMENT_PANEL_WIDTH_PX = 280;
+// The panel's width grows with the UI text size, like
+// --environment-panel-width in conversation-shell.css; the reserved column
+// adds the gap to the conversation.
+const ENVIRONMENT_PANEL_WIDTH_PER_UI_PX = ENVIRONMENT_PANEL_WIDTH_PX / 14.5;
+const ENVIRONMENT_PANEL_FLOW_GAP_PX = 44;
+// The info panel docks beside the conversation only while the conversation
+// pane keeps a readable column next to it: the reserved width, two 32px page
+// insets and a 480px column, the width at which the composer's controls stop
+// fitting. The window alone cannot decide this, because the sidebar and the
+// right panel take their share first. A narrower pane shows it as an overlay.
+const ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX = 680;
+
+function environmentPanelFits(paneWidth: number): boolean {
+  const uiSize = parseFloat(getComputedStyle(document.documentElement).fontSize) || 14.5;
+  const panelWidth = Math.max(
+    ENVIRONMENT_PANEL_WIDTH_PX,
+    Math.ceil((uiSize * ENVIRONMENT_PANEL_WIDTH_PER_UI_PX) / 4) * 4,
+  );
+  return paneWidth >= panelWidth + ENVIRONMENT_PANEL_FLOW_GAP_PX + 2 * 32 + 480 &&
+    window.innerHeight >= ENVIRONMENT_PANEL_ROOM_MIN_HEIGHT_PX;
+}
+type EnvironmentDialog = "commit" | "pull-request" | null;
+
+type EngineRuntimeSelection = { model: string; effort: string; speed?: string; model_options?: Record<string, string> };
+
+function useStableCallback<T extends (...args: any[]) => any>(callback: T): T {
+  const callbackRef = useRef(callback);
+  useLayoutEffect(() => {
+    callbackRef.current = callback;
+  });
+  return useCallback(
+    ((...args: Parameters<T>): ReturnType<T> => callbackRef.current(...args)) as T,
+    [],
+  );
+}
+
+type MainComposerFocusRequest = {
+  origin: Element | null;
+  interactionVersion: number;
+  matchesDestination?: (snapshot: ApplicationSnapshotV1) => boolean;
+};
+
+export function App({ application, slots, shellPluginId }: {
+  application: ApplicationServiceV1;
+  slots: UICompositionV1;
+  shellPluginId: string;
+}): JSX.Element {
+  const { t } = useI18n();
+  const presentNavigation = usePresentedNavigation();
+  const popOutInit = application.desktop.popOut.kind && application.desktop.popOut.context ? application.desktop.popOut : null;
+  const poppedOutMode = Boolean(popOutInit?.kind && popOutInit.context);
+  const workspaceSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().workspaces);
+  const tabs = useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs);
+  const configuration = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.configuration);
+  const navigationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigationWorkspace);
+  const userSpaceViewActive = navigationWorkspace.activePluginView?.layout === "user-space";
+  const initialized = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigationWorkspace.initialized);
+  const environmentSnapshot = useSyncExternalStore(application.environment.subscribe, application.environment.getSnapshot);
+  const gitStatus = environmentSnapshot.status;
+  const activeContext = useMemo<RuntimeContext | undefined>(() => workspaceSnapshot.activeRoot
+    ? workspaceSnapshot.activeWorkspaceId
+      ? { kind: "project", project_id: workspaceSnapshot.activeWorkspaceId, cwd: workspaceSnapshot.activeRoot }
+      : { kind: "no_project", cwd: workspaceSnapshot.activeRoot }
+    : undefined, [workspaceSnapshot.activeRoot, workspaceSnapshot.activeWorkspaceId]);
+  // Conversation notices share the latest settings navigation callback.
+  useEffect(() => {
+    const open = (event: Event): void => openSettingsPage((event as CustomEvent<OpenSettingsDetail>).detail.page);
+    window.addEventListener(OPEN_SETTINGS_EVENT, open);
+    return () => window.removeEventListener(OPEN_SETTINGS_EVENT, open);
+  }, [application]);
+  const conversationActions = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationActions);
+  const submissionView = useSyncExternalStore(application.subscribe, () => application.getSnapshot().submission);
+  const conversationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationWorkspace);
+  const composerRuntime = useSyncExternalStore(application.subscribe, () => application.getSnapshot().composerRuntime);
+  const primarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.primaryThreadId);
+  const secondarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.secondaryThreadId);
+  // These display helpers read frozen snapshots; mutations use application actions.
+  const primaryThread = primarySource as Thread | undefined;
+  const secondaryThread = secondarySource as Thread | undefined;
+  const activeThread = conversationWorkspace.activePane === "secondary" ? secondaryThread : primaryThread;
+  const activities = useSyncExternalStore(application.subscribe, () => application.getSnapshot().activities);
+  const appShellRef = useRef<HTMLDivElement>(null);
+  const settingsShellRef = useRef<HTMLDivElement>(null);
+  const settingsOpen = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.open);
+  const openSettingsPage = (page: SettingsPage): void => {
+    void application.invoke("settings.open", { pageId: page }).catch(showErrorToast);
+  };
+  const setSettingsOpen = useCallback((open: boolean): void => {
+    void application.invoke(open ? "settings.open" : "settings.close", {}).catch(showErrorToast);
+  }, [application]);
+  const [nativeRibbonPresent, setNativeRibbonPresent] = useState(false);
+  const [runtimeControlsTarget, setRuntimeControlsTarget] = useState<HTMLElement | null>(null);
+  const ribbonPreferences = useNavigationRibbonPreferences();
+  const ribbonCollapsed = nativeRibbonPresent && ribbonPreferences.collapsed === true;
+  const [ribbonInset, setRibbonInset] = useState(0);
+  const ribbonWidth = ribbonCollapsed ? ribbonInset : nativeRibbonPresent ? ribbonPreferences.width ?? SIDEBAR_RIBBON_WIDTH : SIDEBAR_RIBBON_WIDTH;
+  useLayoutEffect(() => {
+    if (!ribbonCollapsed) return;
+    const shell = appShellRef.current!;
+    // CSS owns the concentric frame inset; panel docking uses its resolved width.
+    const measure = () => setRibbonInset(Number.parseFloat(getComputedStyle(shell, "::before").left));
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(shell);
+    const stopObserving = observeAppearance(measure);
+    return () => { observer.disconnect(); stopObserving(); };
+  }, [ribbonCollapsed]);
+  const embeddedSettings = !poppedOutMode && nativeRibbonPresent;
+  const [mainComposerFocusRequest, setMainComposerFocusRequest] =
+    useState<MainComposerFocusRequest | null>(null);
+  const [surfaceFocusTargets, setSurfaceFocusTargets] = useState<Partial<Record<"primary" | "secondary" | "preview", UIFocusTargetV1>>>({});
+  // Child layout effects publish before the shell coordinates focus. The ref
+  // exposes that current handle; state retries pending focus when a surface mounts.
+  const liveSurfaceFocusTargets = useRef(surfaceFocusTargets);
+  const registerSurfaceFocusTarget = useCallback((region: "primary" | "secondary" | "preview", target: UIFocusTargetV1) => {
+    liveSurfaceFocusTargets.current = { ...liveSurfaceFocusTargets.current, [region]: target };
+    setSurfaceFocusTargets(liveSurfaceFocusTargets.current);
+    return () => {
+      if (liveSurfaceFocusTargets.current[region] !== target) return;
+      const next = { ...liveSurfaceFocusTargets.current }; delete next[region];
+      liveSurfaceFocusTargets.current = next; setSurfaceFocusTargets(next);
+    };
+  }, []);
+  const composerFocusTargets = useMemo(() => ({
+    primary: (target: UIFocusTargetV1) => registerSurfaceFocusTarget("primary", target),
+    secondary: (target: UIFocusTargetV1) => registerSurfaceFocusTarget("secondary", target),
+  }), [registerSurfaceFocusTarget]);
+  const registerPreviewFocusTarget = useCallback((target: UIFocusTargetV1) => registerSurfaceFocusTarget("preview", target), [registerSurfaceFocusTarget]);
+  const conversationHeadingRef = useRef<HTMLHeadingElement>(null);
+  const userInteractionVersionRef = useRef(0);
+  const {
+    sidebarWidth,
+    sidebarCollapsed,
+    resizingSidebar,
+    sidebarAnimating,
+    clampedWorkspaceRightPanelWidth,
+    resizingRightPanel,
+    rightPanelOpen: savedRightPanelOpen,
+    rightPanelAnimating: savedRightPanelAnimating,
+    effectiveSidebarWidth,
+    workspaceRightPanelAutoGlobalized,
+    workspaceRightPanelDockableWithoutSidebar,
+    setRightPanelOpenWithMotion,
+    animateRightPanelLayout,
+    animateSidebarLayout,
+    startSidebarResize,
+    trackSidebarResizerPointer,
+    startRightPanelResize,
+    handleRightPanelSeparatorKey,
+    resetWorkspaceRightPanelWidth,
+    toggleSidebar,
+    handleSidebarSeparatorKey,
+    splitLeftPercent,
+    resizingSplit,
+    startSplitResize,
+    handleSplitSeparatorKey,
+    resetSplitPercent,
+  } = useAppLayoutState({
+    layoutRootRef: appShellRef,
+    settingsLayoutRootRef: settingsShellRef,
+    collapsedSidebarWidth: SIDEBAR_RIBBON_WIDTH,
+    additionalNavigationWidth: ribbonWidth - SIDEBAR_RIBBON_WIDTH,
+    // The selected navigation surface owns its menus.
+    onCloseWorkspaceMenu: () => {},
+  });
+  // Independent user-space views do not borrow or overwrite Coding panel state.
+  const rightPanelOpen = savedRightPanelOpen && !userSpaceViewActive;
+  const rightPanelAnimating = savedRightPanelAnimating && !userSpaceViewActive;
+  const [rightPanelManualGlobalized, setRightPanelManualGlobalized] =
+    useState(false);
+  const rightPanelAutoGlobalized =
+    rightPanelOpen && workspaceRightPanelAutoGlobalized;
+  const rightPanelGlobalized =
+    rightPanelOpen &&
+    (rightPanelManualGlobalized || rightPanelAutoGlobalized);
+  const [workspaceSheetPhase, setWorkspaceSheetPhase] =
+    useState<WorkspaceSheetPhase>(rightPanelGlobalized ? "open" : "docked");
+  useLayoutEffect(() => {
+    if (rightPanelGlobalized) {
+      if (workspaceSheetPhase === "open" || workspaceSheetPhase === "arming") {
+        return undefined;
+      }
+      // An exiting sheet is already promoted. Retarget its live transform;
+      // arming would disable the transition and teleport it back to the dock.
+      setWorkspaceSheetPhase(workspaceSheetPhase === "exiting" ? "open" : "arming");
+      return undefined;
+    }
+    if (workspaceSheetPhase === "docked") {
+      return undefined;
+    }
+    if (workspaceSheetPhase === "arming") {
+      // Interrupted before the slide even started: demote instantly.
+      setWorkspaceSheetPhase("docked");
+      return undefined;
+    }
+    if (workspaceSheetPhase === "docking") {
+      return undefined;
+    }
+    setWorkspaceSheetPhase("exiting");
+    const timer = window.setTimeout(
+      () => setWorkspaceSheetPhase("docking"),
+      motionDurationMs("--sheet-exit-duration", 220),
+    );
+    return () => window.clearTimeout(timer);
+  }, [rightPanelGlobalized, workspaceSheetPhase]);
+  useEffect(() => {
+    if (workspaceSheetPhase !== "arming" && workspaceSheetPhase !== "docking") {
+      return undefined;
+    }
+    // Double rAF: arming lets the parked transform commit before retargeting
+    // to open (so the enter transition has a start value); docking lets the
+    // grid snap commit transition-free before the data attribute clears.
+    const next = workspaceSheetPhase === "arming" ? "open" : "docked";
+    const from = workspaceSheetPhase;
+    let raf = requestAnimationFrame(() => {
+      raf = requestAnimationFrame(() => {
+        setWorkspaceSheetPhase((current) => (current === from ? next : current));
+      });
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [workspaceSheetPhase]);
+  // The bell view is a sidebar-level navigation mode rather than sidebar-local
+  // state so section changes and the account page retain the view the user left.
+  // A manually expanded workspace owns the main stage, not the navigation
+  // rail. Keep a docked sidebar docked; only an already-collapsed sidebar
+  // remains a drawer while the workspace is expanded.
+  const sidebarDrawerMode = sidebarCollapsed;
+  const {
+    sidebarDrawerPhase,
+    sidebarHoverScope,
+    sidebarHoverZoneRef,
+    cancelSidebarDrawerOpen,
+    openSidebarDrawer,
+    openSidebarDrawerNow,
+    scheduleSidebarDrawerOpen,
+    closeSidebarDrawer,
+    scheduleSidebarDrawerCloseFromPointerLeave,
+  } = useSidebarDrawerState({
+    appShellRef,
+    sidebarSelector: settingsOpen ? ".settings-sidebar" : ".sidebar",
+    sidebarCollapsed: sidebarDrawerMode && !poppedOutMode && (!settingsOpen || embeddedSettings),
+    resizingSidebar,
+    motionMs: sidebarDrawerExitMs,
+    dockingMotionMs: sidebarMotionMs,
+  });
+  const sidebarDrawerVisible = sidebarDrawerPhase === "open";
+  const nativeSection = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.section);
+  const setNativeSection = useCallback((section: "conversations" | "catalog") => {
+    void application.invoke("navigation.show-section", { section }).catch(showErrorToast);
+  }, [application]);
+  const ribbonBrowser = { state: navigationWorkspace.browser };
+  const activeWebsiteID = navigationWorkspace.activeWebsiteId;
+  const setActiveWebsiteID = useCallback((id: string | undefined): void => {
+    void application.invoke(id ? "navigation.reveal-browser" : "navigation.show-native", {}).catch(showErrorToast);
+  }, [application]);
+  const activeWebsite = ribbonBrowser.state?.tabs?.find((website) => website.id === ribbonBrowser.state?.activeTabId);
+  const showingWebsite = Boolean(activeWebsiteID && activeWebsite);
+  const catalogSection = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.catalogSection);
+  const catalogPluginID = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.catalogPluginId);
+  const setCatalogSection = useCallback((section: SkillsCatalogSection) => {
+    void application.invoke("catalog.select-section", { section }).catch(showErrorToast);
+  }, [application]);
+  const setCatalogPluginID = useCallback((pluginId: string) => {
+    void application.invoke("catalog.select-plugin", { pluginId }).catch(showErrorToast);
+  }, [application]);
+  const [catalogVisited, setCatalogVisited] = useState(false);
+  const primaryPageView = navigationWorkspace.activePluginView;
+  const showingPrimaryPluginView = primaryPageView !== undefined;
+  const showingPluginWebPage = primaryPageView?.webPage === true;
+  const showingWebPage = showingWebsite || showingPluginWebPage;
+  const handledRegionRequest = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    const request = navigationWorkspace.regionVisibilityRequest;
+    if (!request || handledRegionRequest.current === request.id) return;
+    handledRegionRequest.current = request.id;
+    if (request.region === "primary" && rightPanelGlobalized) {
+      void application.invoke("preview.show-conversation", {}).catch(showErrorToast);
+    }
+    if (request.region === "auxiliary") setRightPanelOpenWithMotion(true);
+    if (request.region === "inspector") {
+      setEnvironmentPanelDismissed(false);
+      setEnvironmentPanelOpen(true);
+    }
+  }, [application, navigationWorkspace.regionVisibilityRequest, rightPanelGlobalized, setRightPanelOpenWithMotion]);
+  const accountOpen = navigationWorkspace.accountOpen;
+  const setAccountOpen = useCallback((open: boolean): void => {
+    void application.invoke("navigation.show-account", { open }).catch(showErrorToast);
+  }, [application]);
+  const onboardingComplete = useSyncExternalStore(application.onboarding.subscribe, () => application.onboarding.getSnapshot().completed);
+
+  const {
+    workspaceViewTabs,
+    workspaceConversationOpen,
+    workspaceConversationActive,
+    focusWorkspaceConversation,
+    workspaceActiveViewTabID,
+    workspaceActiveFileTabID,
+    ensureWorkspaceToolTab,
+    openWorkspaceTool,
+    openWorkspaceArtifactTab,
+    focusWorkspaceViewTab,
+    closeWorkspaceViewTab,
+    closeWorkspaceViewTabsWhere,
+    toggleRightPanel,
+  } = useWorkspaceToolState({
+    application,
+    rightPanelOpen,
+    rightPanelGlobalized,
+    setRightPanelOpenWithMotion,
+  });
+  // Provided above the whole shell; a new function per render makes React
+  // rescan every mounted turn for consumers on each stream frame.
+  const openArtifactPreview = useStableCallback(openWorkspaceArtifactTab);
+  const workspaceToolsCoverConversation = rightPanelGlobalized && !workspaceConversationActive;
+  const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false);
+  const [environmentPanelDismissed, setEnvironmentPanelDismissed] =
+    useState(false);
+  // Everything the window gives to other columns before the conversation.
+  const environmentPanelPaneOffset =
+    effectiveSidebarWidth + ribbonWidth - SIDEBAR_RIBBON_WIDTH +
+    (rightPanelOpen && !rightPanelGlobalized ? clampedWorkspaceRightPanelWidth : 0);
+  const [environmentPanelHasRoom, setEnvironmentPanelHasRoom] = useState(() =>
+    typeof window === "undefined"
+      ? false
+      : environmentPanelFits(window.innerWidth - environmentPanelPaneOffset),
+  );
+  const [environmentPanelMounted, setEnvironmentPanelMounted] = useState(false);
+  const [environmentPanelClosing, setEnvironmentPanelClosing] = useState(false);
+  const [environmentPanelReserved, setEnvironmentPanelReserved] =
+    useState(false);
+  const [environmentPanelMenu, setEnvironmentPanelMenu] =
+    useState<EnvironmentPanelMenu>(null);
+  const [rightPanelFilePath, setRightPanelFilePath] = useState<
+    string | undefined
+  >(undefined);
+  const focusedWorkspace = navigationWorkspace.workspaces.find(workspace => workspace.id === navigationWorkspace.focusedWorkspaceId);
+  const focusedWorkspaceContext: RuntimeContext | undefined = focusedWorkspace
+    ? { kind: "project", project_id: focusedWorkspace.id, cwd: focusedWorkspace.path } : undefined;
+  const setFocusedWorkspaceContext = useCallback((context: RuntimeContext | undefined): void => {
+    void application.invoke("navigation.focus-workspace", { workspaceId: context?.kind === "project" ? context.project_id : undefined }).catch(showErrorToast);
+  }, [application]);
+  useEffect(() => {
+    if (!navigationWorkspace.focusedWorkspaceId) return;
+    closePrimaryPluginView();
+    openWorkspaceTool("files");
+  }, [navigationWorkspace.focusedWorkspaceId]);
+  useEffect(() => {
+    if (!rightPanelOpen) {
+      setFocusedWorkspaceContext(undefined);
+    }
+  }, [rightPanelOpen]);
+  // Manual focus is user intent; automatic focus is derived independently
+  // from current layout capacity above. Closing the workspace clears only the
+  // manual request, while resizing can freely enter/leave automatic focus.
+  useEffect(() => {
+    if (!rightPanelOpen) {
+      setRightPanelManualGlobalized(false);
+    }
+  }, [rightPanelOpen]);
+  const toggleWorkspacePanelGlobalized = useCallback((): void => {
+    animateRightPanelLayout();
+    // The under-stage sidebar column collapses/restores while the sheet
+    // covers it; give that structural change its shared motion too.
+    animateSidebarLayout();
+    if (!rightPanelGlobalized) {
+      setRightPanelManualGlobalized(true);
+      return;
+    }
+    setRightPanelManualGlobalized(false);
+    if (
+      rightPanelAutoGlobalized &&
+      workspaceRightPanelDockableWithoutSidebar &&
+      !sidebarCollapsed
+    ) {
+      toggleSidebar();
+    }
+  }, [
+    animateRightPanelLayout,
+    animateSidebarLayout,
+    rightPanelAutoGlobalized,
+    rightPanelGlobalized,
+    sidebarCollapsed,
+    toggleSidebar,
+    workspaceRightPanelDockableWithoutSidebar,
+  ]);
+  const revealConversationFromFocusedWorkspace = useCallback((): void => {
+    setActiveWebsiteID(undefined);
+    void application.invoke("navigation.show-native", {}).catch(showErrorToast);
+    setSettingsOpen(false);
+    setNativeSection("conversations");
+    if (rightPanelGlobalized) focusWorkspaceConversation();
+  }, [application, focusWorkspaceConversation, rightPanelGlobalized, setActiveWebsiteID, setSettingsOpen, setNativeSection]);
+  const [environmentDialog, setEnvironmentDialog] =
+    useState<EnvironmentDialog | null>(null);
+  const conversationDetails = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationDetails);
+  const contextCompositionEntries = useMemo(() => structuredClone(conversationDetails.filter(entry => entry.kind === "context")) as ContextCompositionEntry[], [conversationDetails]);
+  const pendingFork = conversationActions.pendingFork;
+  const cancelPendingFork = (): void => { void application.invoke("history.cancel-fork", {}).catch(showErrorToast); };
+  const {
+    pendingViewSwitch,
+    visiblePendingThreadID,
+    viewSwitchPending,
+    viewContextSwitchPending,
+    finishViewSwitch,
+  } = useApplicationNavigationState(application);
+  const windowResizingRef = useRef(false);
+  const environmentPanelHasRoomRef = useRef(environmentPanelHasRoom);
+  const pendingEnvironmentPanelHasRoomRef = useRef<boolean | undefined>(
+    undefined,
+  );
+  const environmentToggleRef = useRef<HTMLButtonElement>(null);
+  const environmentPanelRef = useRef<HTMLDivElement>(null);
+  const workspaceHasDirtyFilesRef = useRef(false);
+  const lastFocusOutsideWorkspaceRef = useRef<{
+    element: HTMLElement;
+    owner: string;
+  } | null>(null);
+  const previousWorkspaceFocusModeRef = useRef({
+    fullPanel: false,
+    open: false,
+  });
+  const currentSessionTab = tabs.items.find(tab => tab.id === tabs.activeTabId);
+
+  useEffect(() => {
+    const handleBeforeUnload = (event: BeforeUnloadEvent): void => {
+      if (!workspaceHasDirtyFilesRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, []);
+
+  const workspaceFocusOwner = JSON.stringify([
+    activeContext ? runtimeContextKey(activeContext) : "",
+    activeContext?.cwd,
+    tabs.activeTabId,
+    activeThread?.id,
+    activeThread?.cwd,
+  ]);
+  useLayoutEffect(() => {
+    const handleFocusIn = (event: FocusEvent): void => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        !liveSurfaceFocusTargets.current.preview?.contains(target) &&
+        // Closing via window chrome must not replace the reading position's
+        // focus target. When it opens the panel, the toggle is a valid owner.
+        !(rightPanelOpen && target.closest('[data-wuu-component="right-sidebar-toggle"]'))
+      ) {
+        lastFocusOutsideWorkspaceRef.current = { element: target, owner: workspaceFocusOwner };
+      }
+    };
+    document.addEventListener("focusin", handleFocusIn);
+    return () => document.removeEventListener("focusin", handleFocusIn);
+  }, [rightPanelOpen, workspaceFocusOwner, surfaceFocusTargets.preview]);
+
+  useLayoutEffect(() => {
+    const fullPanel = rightPanelOpen && rightPanelGlobalized;
+    const previous = previousWorkspaceFocusModeRef.current;
+    previousWorkspaceFocusModeRef.current = { fullPanel, open: rightPanelOpen };
+
+    if (fullPanel && !previous.fullPanel) {
+      liveSurfaceFocusTargets.current.preview?.focus({ preventScroll: true });
+      return;
+    }
+    if ((previous.fullPanel && !fullPanel) || (previous.open && !rightPanelOpen)) {
+      if (viewSwitchPending) return;
+      // An explicit return-to-conversation request owns focus over passive restoration.
+      if (mainComposerFocusRequest?.interactionVersion === userInteractionVersionRef.current) return;
+      const previousFocus = lastFocusOutsideWorkspaceRef.current;
+      // Focus return must not reveal old history or follow a reused control into
+      // a different conversation. Reading position remains owned by scrolling.
+      if (
+        previousFocus?.owner === workspaceFocusOwner &&
+        previousFocus.element.isConnected &&
+        !previousFocus.element.closest('[inert], [hidden], [aria-hidden="true"]')
+      ) {
+        previousFocus.element.focus({ preventScroll: true });
+        return;
+      }
+      conversationHeadingRef.current?.focus({ preventScroll: true });
+    }
+  }, [rightPanelGlobalized, rightPanelOpen, sidebarDrawerMode, sidebarDrawerVisible, viewSwitchPending, workspaceFocusOwner, mainComposerFocusRequest, surfaceFocusTargets.preview]);
+
+  // Workspace panel (file tree / file preview / terminal / review) root: follows the
+  // active thread's own cwd when it differs from activeContext — the
+  // main remaining case is a worktree-fork thread, whose cwd is a git
+  // worktree directory distinct from the project root activeContext stays
+  // pinned to.
+  const conversationWorkspaceContext = useMemo(
+    () => workspacePanelContext(activeContext, primaryThread),
+    [activeContext, primaryThread],
+  );
+  const workspaceContext = focusedWorkspaceContext ?? conversationWorkspaceContext;
+  const activeWorkspaceViewTab = workspaceActiveViewTabID
+    ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID)
+    : undefined;
+  const workspaceSelectionEnabled =
+    workspaceToolsCoverConversation &&
+    (activeWorkspaceViewTab?.kind === "files" ||
+      activeWorkspaceViewTab?.kind === "file");
+  const activeWorkspaceFileTab = workspaceActiveFileTabID
+    ? workspaceViewTabs.find((tab) => tab.id === workspaceActiveFileTabID)
+    : undefined;
+  const activeWorkspaceFileTabID =
+    activeWorkspaceFileTab?.kind === "file" &&
+    sameRuntimeContext(activeWorkspaceFileTab.context, workspaceContext)
+      ? activeWorkspaceFileTab.id
+      : undefined;
+  const activeThreadID = activeThread?.id;
+  const activeThreadCwd = activeThread?.cwd;
+  const previousThreadWorkspace = useRef({ id: activeThreadID, cwd: activeThreadCwd });
+  useEffect(() => {
+    const previous = previousThreadWorkspace.current;
+    previousThreadWorkspace.current = { id: activeThreadID, cwd: activeThreadCwd };
+    if (activeThreadID && previous.id === activeThreadID && previous.cwd &&
+      activeThreadCwd && previous.cwd !== activeThreadCwd) {
+      showToast({
+        message: translateCurrent("app.workspaceSwitched"),
+        dedupeKey: `workspace-switched:${activeThreadID}:${activeThreadCwd}`,
+      });
+    }
+  }, [activeThreadID, activeThreadCwd]);
+  const environmentContext = workspacePanelContext(activeContext, activeThread);
+  const sideSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().sideConversation);
+  const sideCommandID = sideSnapshot.commandId;
+  const sideConversationAvailable = sideSnapshot.commands.length > 0;
+  const sideThread = useMemo(() => ({
+    entry: sideSnapshot.entry,
+    open: () => { if (sideSnapshot.parentThreadId) void application.invoke("side.open", { parentThreadId: sideSnapshot.parentThreadId }).catch(showErrorToast); },
+    close: () => { if (sideSnapshot.parentThreadId) void application.invoke("side.close", { parentThreadId: sideSnapshot.parentThreadId }).catch(showErrorToast); },
+    setDraftSelection: (selection?: SideThreadSelection) => { if (sideSnapshot.parentThreadId) void application.invoke("side.set-selection", { parentThreadId: sideSnapshot.parentThreadId, selection }).catch(showErrorToast); },
+  }), [application, sideSnapshot]);
+  const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
+  useEffect(() => {
+    const syncVisibleCUAThread = () => {
+      try { application.desktop.setActiveCUAThread?.(activeThreadID); }
+      catch (error) {
+        // The retained shell can receive focus before its replacement binds.
+        if (!isPluginLifecycleCancellation(error)) throw error;
+      }
+    };
+    syncVisibleCUAThread();
+    window.addEventListener("focus", syncVisibleCUAThread);
+    return () => window.removeEventListener("focus", syncVisibleCUAThread);
+  }, [application, activeThreadID]);
+  const activeBrowserActivity = useMemo(
+    () =>
+      ENABLE_EMBEDDED_BROWSER
+        ? activities.filter(activity => activity.workdir === activeContext?.cwd && activity.thread_id === activeThreadID)
+            .filter((activity) => activity.kind === "browser" && activity.state !== "stopped")
+            .at(-1)
+        : undefined,
+    [activities, activeThreadID, activeContext?.cwd],
+  );
+
+  const mascotProviderNames = useMemo(() => configuration?.providers?.map(provider => provider.name), [configuration?.providers]);
+  // On a draft tab the mascot previews the runtime the submitted thread will
+  // pin, so its hue and accessory stay put across the first send.
+  const mascotRuntime = useMemo(() => {
+    const owner = composerRuntime.owners.find(owner => owner.ownerTabId === composerRuntime.activeOwnerTabId);
+    return submittedThreadRuntime(owner?.selection, owner?.engines, configuration ?? {});
+  }, [composerRuntime, configuration]);
+  const {
+    conversationSearch,
+    conversationSearchResults,
+    conversationSearchRef,
+    conversationSearchInputRef,
+    toggleConversationSearch,
+    closeConversationSearch,
+    selectConversationSearchResult,
+    handleConversationSearchKeyDown,
+    setConversationSearchQuery,
+    clearConversationSearchQuery,
+    setConversationSearchSelectedIndex,
+  } = useConversationSearch({
+    application,
+    open: navigationWorkspace.searchOpen,
+    onOpenChange: open => { void application.invoke("navigation.show-search", { open }).catch(showErrorToast); },
+    onOpen: () => {
+      setEnvironmentDialog(null);
+      cancelPendingFork();
+    },
+    onSelect: closePrimaryPluginView,
+  });
+
+  // Cmd/Ctrl+P toggles the conversation search overlay. Mirrors the
+  // "Quick Open / Go to file" convention from VS Code, Sublime, and
+  // JetBrains — semantically "navigate to a thing by name" rather than
+  // Cmd+F's "find text in current view". preventDefault stops the
+  // browser's Print dialog. Works from anywhere in the app, including
+  // while typing in the chat composer.
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key.toLowerCase() === "p"
+      ) {
+        event.preventDefault();
+        toggleConversationSearch();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [toggleConversationSearch]);
+
+  function openEnvironmentDialog(dialog: EnvironmentDialog): void {
+    closeConversationSearch({ immediate: true });
+    cancelPendingFork();
+    setEnvironmentDialog(dialog);
+  }
+  // A visible agent browser view is a main-owned WebContentsView that floats
+  // above the DOM; any full-window overlay would occlude it, so we tell main to
+  // hide the view while one is open. This covers the common full-window
+  // surfaces: settings (a modal panel over the workbench), the commit / PR
+  // dialogs, the fork dialog, and the conversation search overlay. TODO: other
+  // ad-hoc modals/portals (e.g. participant panels) are not yet
+  // enumerated here; extend this predicate as more full-window overlays land.
+  const browserOverlaySuppressed =
+    settingsOpen || accountOpen || showingWebsite || nativeSection === "catalog" || showingPrimaryPluginView ||
+    environmentDialog !== null ||
+    Boolean(pendingFork) ||
+    conversationSearch.open;
+  const activeTodoUpdate = latestTodoUpdateForThread(activeThread);
+  const splitConversation = Boolean(primaryThread && secondaryThread);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    let resizeEndTimer: number | undefined;
+    let resizing = false;
+    let lastResizeWidth = window.innerWidth;
+
+    function setResizeState(nextResizing: boolean): void {
+      if (resizing === nextResizing) {
+        return;
+      }
+      resizing = nextResizing;
+      windowResizingRef.current = nextResizing;
+      if (nextResizing) {
+        root.classList.add(WINDOW_RESIZING_CLASS);
+      } else {
+        // Apply frozen composer/scroll/footer geometry while transitions are
+        // still off. Waiting until after the class drops left a delayed jump
+        // once the window chrome was already still.
+        releaseWindowResizeClass(WINDOW_RESIZING_CLASS);
+      }
+      if (
+        !nextResizing &&
+        pendingEnvironmentPanelHasRoomRef.current !== undefined
+      ) {
+        const pendingHasRoom = pendingEnvironmentPanelHasRoomRef.current;
+        pendingEnvironmentPanelHasRoomRef.current = undefined;
+        if (environmentPanelHasRoomRef.current !== pendingHasRoom) {
+          environmentPanelHasRoomRef.current = pendingHasRoom;
+          setEnvironmentPanelHasRoom(pendingHasRoom);
+        }
+      }
+    }
+
+    function scheduleResizeEnd(delay = 140): void {
+      if (resizeEndTimer !== undefined) {
+        window.clearTimeout(resizeEndTimer);
+      }
+      resizeEndTimer = window.setTimeout(() => {
+        resizeEndTimer = undefined;
+        setResizeState(false);
+      }, delay);
+    }
+
+    function handleWindowResize(): void {
+      const nextWidth = window.innerWidth;
+      // Keyboard/browser chrome height-only changes must not enter the desktop
+      // window-resize suppression: it drops sidebar material and pauses layout
+      // animations for the settle window even though the width never changed.
+      if (isTouchWebShell() && nextWidth === lastResizeWidth) {
+        return;
+      }
+      lastResizeWidth = nextWidth;
+      setResizeState(true);
+      scheduleResizeEnd();
+    }
+
+    const offWindowResizeState = application.desktop.onResizeState?.(
+      ({ resizing: nextResizing }) => {
+        if (nextResizing) {
+          setResizeState(true);
+          scheduleResizeEnd();
+          return;
+        }
+        scheduleResizeEnd(40);
+      },
+    );
+
+    window.addEventListener("resize", handleWindowResize);
+    return () => {
+      offWindowResizeState?.();
+      window.removeEventListener("resize", handleWindowResize);
+      if (resizeEndTimer !== undefined) {
+        window.clearTimeout(resizeEndTimer);
+      }
+      windowResizingRef.current = false;
+      pendingEnvironmentPanelHasRoomRef.current = undefined;
+      setResizeState(false);
+    };
+  }, [application]);
+
+  useEffect(() => {
+    const update = (): void => {
+      const nextHasRoom = environmentPanelFits(
+        window.innerWidth - environmentPanelPaneOffset,
+      );
+      if (
+        windowResizingRef.current ||
+        document.documentElement.classList.contains(WINDOW_RESIZING_CLASS)
+      ) {
+        pendingEnvironmentPanelHasRoomRef.current = nextHasRoom;
+        return;
+      }
+      pendingEnvironmentPanelHasRoomRef.current = undefined;
+      environmentPanelHasRoomRef.current = nextHasRoom;
+      setEnvironmentPanelHasRoom(nextHasRoom);
+    };
+    update();
+    window.addEventListener("resize", update);
+    // The panel widens with the UI text size, so a size change moves the fit.
+    const stopObservingAppearance = observeAppearance(update);
+    return () => {
+      window.removeEventListener("resize", update);
+      stopObservingAppearance();
+    };
+  }, [environmentPanelPaneOffset]);
+
+  useEffect(() => {
+    const markUserInteraction = (): void => {
+      userInteractionVersionRef.current += 1;
+    };
+    document.addEventListener("pointerdown", markUserInteraction, true);
+    document.addEventListener("keydown", markUserInteraction, true);
+    return () => {
+      document.removeEventListener("pointerdown", markUserInteraction, true);
+      document.removeEventListener("keydown", markUserInteraction, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent): void {
+      const target = event.target;
+      if (!(target instanceof Node)) {
+        return;
+      }
+      const environmentPanelClickOutside =
+        !environmentToggleRef.current?.contains(target) &&
+        !isInsideFloatingMenu(target, "conversation-actions") &&
+        !environmentPanelRef.current?.contains(target);
+      if (environmentPanelClickOutside) {
+        if (environmentPanelMenu) {
+          setEnvironmentPanelMenu(null);
+        }
+        if (environmentPanelOpen && !environmentPanelHasRoom) {
+          closeEnvironmentPanel();
+        }
+      }
+    }
+
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    return () => window.removeEventListener("pointerdown", handlePointerDown, true);
+  }, [
+    environmentPanelHasRoom,
+    environmentPanelMenu,
+    environmentPanelOpen,
+  ]);
+
+  useEffect(() => {
+    scheduleGitStatusRefresh(0);
+  }, [
+    application,
+    activeContext?.kind,
+    environmentContext?.cwd,
+    workspaceSnapshot.activeWorkspaceId,
+    activeThreadID,
+  ]);
+
+  useEffect(() => {
+    function handleFocus(): void {
+      scheduleGitStatusRefresh(0);
+    }
+
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [application]);
+  const showingSkillsCatalog = Boolean(
+    initialized &&
+    (nativeSection === "catalog" || currentSessionTab?.kind === "skills"),
+  );
+  const showingManagementCatalog = showingSkillsCatalog;
+  const activeTitle = showingSkillsCatalog
+    ? t("skills.title")
+    : conversationHeadingTitle(
+      activeThread,
+      currentSessionTab?.kind === "draft" ? currentSessionTab.title : undefined,
+      t("tabs.newConversation"),
+    );
+  const popOutWindowTitle =
+    popOutInit?.kind === "thread"
+      ? activeThread?.title?.trim() ||
+        resolveLocalizedText(activeThread?.preview?.trim() ?? "") ||
+        t("tabs.newConversation")
+      : t("tabs.newConversation");
+  const windowTitle = poppedOutMode ? popOutWindowTitle
+    : settingsOpen ? t("settings.navigation")
+    : accountOpen ? "Wuu"
+    : showingWebsite ? activeWebsite?.title || activeWebsite?.url || "Wuu"
+    : activeTitle;
+  useEffect(() => {
+    document.title = windowTitle;
+  }, [windowTitle]);
+  const activePendingThreadCreation = submissionView.pendingCreations.find(
+    (pending) => pending.ownerTabId === tabs.activeTabId
+      && !submissionView.operations.some(operation => operation.operationID === pending.operationID && operation.draftPending),
+  );
+  const activePendingNewThreadTurn = activePendingThreadCreation?.turn;
+  const turns = activeThread?.turns ?? [];
+  const activeContextCompositionEntries = activeThreadID
+    ? contextCompositionEntries.filter((entry) => entry.threadID === activeThreadID)
+    : [];
+  const emptyConversation =
+    !showingManagementCatalog &&
+    !activePendingNewThreadTurn &&
+    turns.length === 0 &&
+    activeContextCompositionEntries.length === 0;
+
+  useArtifactAutoPreview({
+    thread: activeThread,
+    enabled: initialized
+      && !poppedOutMode && !isTouchWebShell() && !activeThread?.read_only
+      && !showingManagementCatalog && !emptyConversation && !browserOverlaySuppressed
+      && !workspaceRightPanelAutoGlobalized
+      && activeBrowserActivity?.state !== "foreground_controlled"
+      && activeBrowserActivity?.state !== "user_controlled",
+    panelOpen: rightPanelOpen,
+    activeTabID: workspaceActiveViewTabID,
+    onOpen: openWorkspaceArtifactTab,
+  });
+  const previewTargetThread = activeThread;
+  const previewTargetContext = workspacePanelContext(activeContext, previewTargetThread);
+  const activePreviewFile = activeWorkspaceViewTab?.kind === "file" &&
+    activeWorkspaceViewTab.id === activeWorkspaceFileTabID &&
+    sameRuntimeContext(activeWorkspaceViewTab.context, previewTargetContext) &&
+    activeWorkspaceViewTab.context.cwd === previewTargetContext?.cwd
+      ? activeWorkspaceViewTab : undefined;
+  const activePreviewArtifact = activeWorkspaceViewTab?.kind === "artifact" &&
+    activeWorkspaceViewTab.artifact.mimeType === "application/pdf" &&
+    activeWorkspaceViewTab.artifact.uri && activeWorkspaceViewTab.artifact.sha256 &&
+    activeWorkspaceViewTab.threadID === previewTargetThread?.id &&
+    activeWorkspaceViewTab.cwd === previewTargetThread.cwd
+      ? activeWorkspaceViewTab : undefined;
+  // A docked preview sits beside the conversation, whose own input is in
+  // reach; the document input appears once the preview takes the window.
+  const documentComposerVisible = Boolean(
+    initialized && workspaceToolsCoverConversation && workspaceConversationOpen &&
+    !splitConversation &&
+    !showingManagementCatalog && !showingPrimaryPluginView &&
+    (activePreviewFile || activePreviewArtifact),
+  );
+  const workspaceControlsVisible = !showingWebsite && !showingManagementCatalog && !showingPrimaryPluginView &&
+    !settingsOpen && !accountOpen;
+  const conversationVisible = !showingWebsite && !showingManagementCatalog && !showingPrimaryPluginView &&
+    !settingsOpen && !accountOpen && !workspaceToolsCoverConversation;
+  const mainConversationDockVisible =
+    initialized &&
+    !showingWebsite &&
+    !splitConversation &&
+    !showingManagementCatalog &&
+    !workspaceToolsCoverConversation &&
+    !settingsOpen &&
+    !showingPrimaryPluginView;
+  // How much canvas-placement skin artwork shows through the main pane. The
+  // conversation keeps the same veil from the empty home onward; the
+  // transparent tier is reserved for plugin views that declare it.
+  // Frame placements collapse the see-through tiers into one material.
+  const paneCanvas: "opaque" | "translucent" | "transparent" = showingPrimaryPluginView
+    ? (primaryPageView.canvas ?? "opaque")
+    : conversationVisible
+      ? "translucent"
+      : "opaque";
+
+  useEffect(() => {
+    // Delivered snapshots may belong to either visible conversation pane.
+    // Closing them on navigation also releases viewer resources.
+    const isStaleTurnTab = (tab: WorkspaceViewTab): boolean => {
+      if (tab.kind === "artifact") {
+        return emptyConversation
+          || ![primaryThread, secondaryThread].some((thread) =>
+            thread?.id === tab.threadID && thread.cwd === tab.cwd);
+      }
+      return tab.kind === "diff" &&
+        (!activeThreadID || tab.threadID !== activeThreadID || emptyConversation);
+    };
+    if (!workspaceViewTabs.some(isStaleTurnTab)) {
+      return;
+    }
+    const activeTab = workspaceViewTabs.find((tab) => tab.id === workspaceActiveViewTabID);
+    const closingActiveTurnTab = Boolean(activeTab && isStaleTurnTab(activeTab));
+    closeWorkspaceViewTabsWhere(isStaleTurnTab);
+    if (closingActiveTurnTab) {
+      setRightPanelOpenWithMotion(false);
+    }
+  }, [
+    activeThreadID,
+    closeWorkspaceViewTabsWhere,
+    emptyConversation,
+    workspaceActiveViewTabID,
+    workspaceViewTabs,
+    primaryThread,
+    secondaryThread,
+  ]);
+
+  const conversationRestoring = pendingViewSwitch?.restoreRequestID !== undefined;
+  const {
+    conversationScrollRef,
+    scrollContentRef,
+    splitPaneRefs,
+    conversationPaneRef,
+    dockComposerRef,
+    dockComposerNode,
+    statusClusterRef,
+    scheduleStreamScroll,
+    handleConversationScroll,
+    jumpToLatest: jumpConversationToLatest,
+    jumpToConversationMessage,
+    captureConversationScrollIntent,
+    settleConversationLayout,
+    requestSubmittedQueryScroll,
+    discardSubmittedMessage,
+  } = useConversationScrollState({
+    activeThreadID,
+    primaryThreadID: primaryThread?.id,
+    secondaryThreadID: secondaryThread?.id,
+    activePane: conversationWorkspace.activePane,
+    splitConversation,
+    primaryTurns: primaryThread?.turns,
+    secondaryTurns: secondaryThread?.turns,
+    emptyConversation,
+    initialized,
+    nativeScrollBounce: application.desktop.platform === "darwin" && application.desktop.hostKind !== "web",
+    running: isThreadRunning(activeThread),
+  });
+  const initialSubmissionIds = useRef(new Set(submissionView.operations.map(operation => operation.operationID)));
+  const placedSubmissions = useRef(new Map<string, string>());
+  useLayoutEffect(() => {
+    const activeOperations = new Set(submissionView.operations.map(operation => operation.operationID));
+    for (const id of placedSubmissions.current.keys()) if (!activeOperations.has(id)) placedSubmissions.current.delete(id);
+    for (const operation of submissionView.operations) {
+      if (initialSubmissionIds.current.has(operation.operationID)) continue;
+      const placed = placedSubmissions.current.get(operation.operationID);
+      // Queue/steer delivery belongs to the existing reading flow, including
+      // a direct send rerouted to the queue after concurrent admission.
+      if (operation.phase === "failed" || operation.phase === "cancelled" || operation.mode === "queue" || operation.mode === "steer") {
+        if (placed) discardSubmittedMessage(placed);
+        initialSubmissionIds.current.add(operation.operationID);
+        placedSubmissions.current.delete(operation.operationID);
+        continue;
+      }
+      if (placed || operation.draftPending || operation.mode !== "send") continue;
+      if (operation.ownerTabId !== tabs.activeTabId && operation.threadId !== activeThreadID) {
+        initialSubmissionIds.current.add(operation.operationID);
+        continue;
+      }
+      const pending = submissionView.pendingCreations.find(creation => creation.operationID === operation.operationID);
+      const thread = conversationWorkspace.threads.find(thread => thread.id === operation.threadId);
+      const item = (pending ? [pending.turn] : thread?.turns ?? []).flatMap(turn => turn.items)
+        .find(item => item.type === "user_message" && item.source_id === operation.messageID);
+      if (!item) continue;
+      placedSubmissions.current.set(operation.operationID, item.id);
+      requestSubmittedQueryScroll(item.id, operation.messageID);
+    }
+  }, [submissionView, conversationWorkspace, tabs.activeTabId, activeThreadID, requestSubmittedQueryScroll, discardSubmittedMessage]);
+  const getMessagePresentationRegions = useCallback((): ConversationPresentationRegion[] => {
+    if (!conversationVisible) return [];
+    const excludeRight = Array.from(appShellRef.current?.querySelectorAll<HTMLElement>('[data-wuu-component="workspace-tool-rail"]') ?? []);
+    if (splitConversation) return Object.values(splitPaneRefs.current).filter((element): element is HTMLElement => Boolean(element))
+      .map(element => ({ element, excludeRight }));
+    const element = conversationScrollRef.current;
+    if (!element) return [];
+    // Empty pages extend underneath the floating dock; populated histories may
+    // also share its status row. Neither belongs to the message transition.
+    const excludeBelow = [dockComposerNode, conversationPaneRef.current?.querySelector<HTMLElement>(".conversation-status-cluster")]
+      .filter((node): node is HTMLElement => Boolean(node));
+    return [{ element, excludeBelow, excludeRight }];
+  }, [conversationVisible, splitConversation, splitPaneRefs, conversationScrollRef, dockComposerNode, conversationPaneRef, appShellRef]);
+  const surfacesPending = useContext(UICompositionPendingContext);
+  useConversationPresentationTransition({
+    scopeRef: appShellRef, pending: tabs.pending, getRegions: getMessagePresentationRegions,
+    ready: !surfacesPending,
+    // A browser/settings route can still initiate a workspace handoff. Capture
+    // its static chrome without displaying a message overlay on that route.
+    enabled: initialized && application.getSnapshot().phase !== "error",
+  });
+  const activeThreadHasMedia = useMemo(
+    () => pendingViewSwitch?.kind === "thread" && pendingViewSwitch.targetID === activeThreadID
+      ? threadHasConversationMedia(activeThread)
+      : false,
+    [activeThread, activeThreadID, pendingViewSwitch?.kind, pendingViewSwitch?.targetID],
+  );
+  useConversationSwitchReady({
+    visible: conversationVisible,
+    mediaExpected: activeThreadHasMedia,
+    pendingViewSwitch,
+    activeThreadID,
+    viewportRef: conversationScrollRef,
+    settleLayout: settleConversationLayout,
+    finishViewSwitch,
+  });
+  const focusMainComposer = useCallback(
+    (
+      origin: Element | null,
+      interactionVersion: number,
+    ): boolean => {
+      // Touch/mobile must never autofocus the composer from a render effect: the
+      // focus is outside the user gesture and would leave a caret without a
+      // software keyboard. Actual taps focus natively, so only desktop keeps the
+      // programmatic restore path.
+      if (isTouchWebShell() || !conversationVisible) {
+        return false;
+      }
+      const pane = application.getSnapshot().conversationWorkspace.activePane;
+      const focusTarget = liveSurfaceFocusTargets.current[pane];
+      if (!focusTarget) return false;
+
+      const activeElement = document.activeElement;
+      if (
+        userInteractionVersionRef.current === interactionVersion &&
+        (activeElement === document.body || activeElement === origin)
+      ) {
+        return focusTarget.focus();
+      }
+      return true;
+    },
+    [application, surfaceFocusTargets, conversationVisible],
+  );
+  const requestMainComposerFocus = useCallback(
+    (
+      origin: Element | null = document.activeElement,
+      interactionVersion: number = userInteractionVersionRef.current,
+      matchesDestination?: (snapshot: ApplicationSnapshotV1) => boolean,
+    ): MainComposerFocusRequest => {
+      const request = {
+        origin,
+        interactionVersion,
+        matchesDestination,
+      };
+      setMainComposerFocusRequest(request);
+      return request;
+    },
+    [],
+  );
+  const publicComposerFocusRequest = useSyncExternalStore(application.subscribe,
+    () => application.getSnapshot().navigationWorkspace.composerFocusRequest);
+  const handledPublicComposerFocus = useRef(publicComposerFocusRequest?.id);
+  useLayoutEffect(() => {
+    const request = publicComposerFocusRequest;
+    if (!request || handledPublicComposerFocus.current === request.id) return;
+    handledPublicComposerFocus.current = request.id;
+    const snapshot = application.getSnapshot();
+    if (snapshot.tabs.activeTabId !== request.tabId) return;
+    if (rightPanelGlobalized) focusWorkspaceConversation();
+    else setRightPanelOpenWithMotion(false);
+    if (isTouchWebShell()) return;
+    const interactionVersion = userInteractionVersionRef.current;
+    requestMainComposerFocus(document.activeElement, interactionVersion,
+      current => current.tabs.activeTabId === request.tabId);
+  }, [application, publicComposerFocusRequest, requestMainComposerFocus, rightPanelGlobalized, focusWorkspaceConversation, setRightPanelOpenWithMotion]);
+
+  useLayoutEffect(() => {
+    if (!mainComposerFocusRequest) {
+      return;
+    }
+    if (
+      mainComposerFocusRequest.matchesDestination &&
+      !mainComposerFocusRequest.matchesDestination(application.getSnapshot())
+    ) {
+      return;
+    }
+    if (
+      !focusMainComposer(
+        mainComposerFocusRequest.origin,
+        mainComposerFocusRequest.interactionVersion,
+      )
+    ) {
+      return;
+    }
+    setMainComposerFocusRequest((current) =>
+      current === mainComposerFocusRequest ? null : current,
+    );
+  }, [
+    emptyConversation,
+    focusMainComposer,
+    mainComposerFocusRequest,
+    mainConversationDockVisible,
+    tabs, conversationWorkspace,
+  ]);
+  const handleTurnCollapseComplete = useCallback(() => {
+    scheduleStreamScroll();
+  }, [scheduleStreamScroll]);
+
+  // Captures the user's scroll position when they open the inline edit on a
+  // historical message so cancel can put them back exactly where they were
+  // instead of dropping them at the latest content via the resize observer.
+  // Details actions on subagent completion messages split the conversation
+  // and open the child session in the secondary pane. The App owns thread
+  // state, so it registers the bridge handler once; message buttons call it.
+  const handleOpenThreadInSplit = useStableCallback((threadId: string) => {
+    void application.invoke("conversation.open-split", { threadId }).catch(showErrorToast);
+  });
+  useEffect(() => {
+    setOpenThreadInSplitHandler(handleOpenThreadInSplit);
+    return () => setOpenThreadInSplitHandler(undefined);
+  }, [handleOpenThreadInSplit]);
+  const openWorkspaceBrowser = useStableCallback((target: WorkspaceBrowserOpenTarget): void => {
+    requestWorkspaceBrowserNavigation(target);
+    const focus = workspaceBrowserFocusDecision({
+      rightPanelOpen,
+      activeTabID: workspaceActiveViewTabID,
+      browserForegroundOccupied: isForegroundControlled(activeBrowserActivity),
+    });
+    if (!focus.stealFocus) {
+      ensureWorkspaceToolTab("browser");
+      return;
+    }
+    openWorkspaceTool("browser");
+  });
+  const openWorkspaceBrowserURL = useStableCallback((
+    url: string,
+    modifiers?: { metaKey?: boolean; ctrlKey?: boolean; altKey?: boolean; button?: number },
+  ): void => {
+    openWorkspaceBrowserOrExternal(url, modifiers, openWorkspaceBrowser);
+  });
+  const rememberWorkspaceDirtyFiles = useStableCallback((dirty: boolean): void => {
+    workspaceHasDirtyFilesRef.current = dirty;
+  });
+  const sidebarThreads = navigationWorkspace.threads;
+  // The Environment panel's git actions (branch switch / commit / PR) mutate the
+  // active session's working tree, so they are gated on that tree being busy —
+  // not on any thread anywhere running. A worktree-fork thread running in its
+  // own cwd, or a thread in another project, no longer blocks them.
+  const environmentGitBusy = environmentSnapshot.actionBusy || viewContextSwitchPending;
+  useEffect(() => {
+    if (!configuration?.extension_inventory || sideConversationAvailable) return;
+    pendingSideSelectionRef.current = null;
+    if (sideThread.entry?.open) sideThread.close();
+    if (workspaceViewTabs.some((tab) => tab.id === "side-thread")) closeWorkspaceViewTab("side-thread");
+  }, [sideConversationAvailable, activeThreadID, workspaceViewTabs, configuration?.extension_inventory]);
+  const sideThreadPanelVisible = Boolean(sideConversationAvailable && activeThreadID && rightPanelOpen &&
+    !workspaceConversationActive && workspaceActiveViewTabID === "side-thread");
+  useEffect(() => {
+    if (sideThreadPanelVisible && !sideThread.entry?.open) sideThread.open();
+  }, [sideThreadPanelVisible, sideThread.entry?.open, sideThread.open]);
+  // The environment panel floats inside the conversation pane, so it can
+  // coexist with the docked workspace right panel. Only the globalized
+  // (full-window sheet) right panel blocks it, because that mode makes the
+  // entire conversation pane inert.
+  const environmentPanelCanShow = Boolean(
+    ENABLE_ENVIRONMENT_PANEL &&
+    initialized &&
+    !poppedOutMode &&
+    !workspaceToolsCoverConversation &&
+    // The card describes the conversation's workspace; pages that replace the
+    // conversation have nothing for it to describe.
+    !showingManagementCatalog &&
+    !showingPrimaryPluginView,
+  );
+  const environmentPanelTargetVisible =
+    environmentPanelCanShow &&
+    (environmentPanelOpen ||
+      (environmentPanelHasRoom &&
+        !environmentPanelDismissed &&
+        !emptyConversation &&
+        // Wait for repository detection so non-Git folders do not briefly
+        // open and close the panel while their status is still unknown.
+        gitStatus?.is_repo === true));
+  const environmentPanelVisible = environmentPanelTargetVisible;
+  const environmentPanelMotionState: EnvironmentPanelMotionState =
+    environmentPanelVisible ? "open" : "closing";
+  // The sidebar is the single conversation switcher. Session state remains
+  // available for recovery and drafts, but the titlebar no longer renders a
+  // growing tab strip.
+  const sidebarVisible = !poppedOutMode;
+  const sidebarToggleVisible = sidebarVisible;
+
+  const shellClassName = `app-shell navigation-ribbon-layout${ribbonCollapsed ? " ribbon-collapsed" : ""}${poppedOutMode ? " popped-out-shell" : ""}${sidebarDrawerMode ? " sidebar-collapsed" : ""}${
+    sidebarDrawerMode && sidebarDrawerVisible ? " sidebar-drawer-open" : ""
+  }${
+    sidebarDrawerMode &&
+    !(!sidebarCollapsed && rightPanelGlobalized) &&
+    sidebarDrawerPhase === "closing"
+      ? " sidebar-drawer-closing"
+      : ""
+  }${
+    !sidebarDrawerMode && sidebarDrawerPhase === "docking"
+      ? " sidebar-drawer-docking"
+      : ""
+  }${
+    sidebarAnimating ? " sidebar-animating" : ""
+  }${rightPanelAnimating ? " right-panel-animating" : ""}${resizingSidebar ? " resizing-sidebar" : ""}${
+    resizingRightPanel ? " resizing-right-panel" : ""
+  }${rightPanelOpen ? " right-panel-open" : ""}${rightPanelGlobalized && rightPanelOpen ? " right-panel-globalized" : ""}${workspaceConversationActive ? " workspace-conversation-active" : ""}${resizingSplit ? " resizing-split" : ""}`;
+  const shellStyle = {
+    "--sidebar-width": `${effectiveSidebarWidth}px`,
+    "--sidebar-ribbon-width": ribbonCollapsed ? "var(--conversation-pane-inset)" : `${ribbonWidth}px`,
+    "--sidebar-ribbon-extra": `calc(var(--sidebar-ribbon-width) - ${SIDEBAR_RIBBON_WIDTH}px)`,
+    "--sidebar-ribbon-compact-width": `${SIDEBAR_RIBBON_WIDTH}px`,
+    "--sidebar-open-width": `${sidebarWidth}px`,
+    "--workspace-sheet-left": `${effectiveSidebarWidth}px`,
+    "--workspace-right-panel-width": `${clampedWorkspaceRightPanelWidth}px`,
+    "--conversation-split-left": `${splitLeftPercent}%`,
+  } as CSSProperties;
+  const pullRequestDisabledReason = pullRequestUnavailableReason(
+    gitStatus,
+  );
+  useLayoutEffect(() => {
+    if (environmentPanelVisible) {
+      setEnvironmentPanelMounted(true);
+      setEnvironmentPanelClosing(false);
+      setEnvironmentPanelReserved(environmentPanelHasRoom);
+      scheduleGitStatusRefresh(0);
+      return;
+    }
+    if (!environmentPanelMounted) {
+      setEnvironmentPanelReserved(false);
+      return;
+    }
+
+    setEnvironmentPanelClosing(true);
+    const timer = window.setTimeout(() => {
+      setEnvironmentPanelMounted(false);
+      setEnvironmentPanelClosing(false);
+      setEnvironmentPanelReserved(false);
+    }, motionDurationMs("--environment-panel-exit-duration", 220));
+    return () => window.clearTimeout(timer);
+  }, [
+    application,
+    environmentPanelHasRoom,
+    environmentPanelMounted,
+    environmentPanelVisible,
+  ]);
+
+  useEffect(() => {
+    if (!environmentPanelVisible && environmentPanelMenu) {
+      setEnvironmentPanelMenu(null);
+    }
+  }, [environmentPanelMenu, environmentPanelVisible]);
+
+  const handleCloseFilePreview = useCallback((): void => {
+    setRightPanelFilePath(undefined);
+    setEnvironmentPanelMenu(null);
+  }, []);
+
+  // Read state follows visible completed content, not unrelated snapshot publications.
+  const viewedThread = navigationWorkspace.threads.find(thread => thread.id === activeThreadID);
+  const viewedTurnId = viewedThread?.latest_completed_turn_id;
+  const viewedThreadStatus = viewedThread?.status;
+  useEffect(() => {
+    if (!conversationVisible || !activeThreadID || !viewedTurnId || viewedThreadStatus === "in_progress") return;
+    void application.invoke("navigation.mark-viewed", { threadIds: [activeThreadID] }).catch(showErrorToast);
+  }, [application, conversationVisible, activeThreadID, viewedTurnId, viewedThreadStatus]);
+
+  function openSideThreadPanel(prompt?: string, commandID = sideCommandID): void {
+    const parentThreadId = application.getSnapshot().sideConversation.parentThreadId;
+    if (!parentThreadId) return;
+    void application.invoke("side.open", { parentThreadId, commandId: commandID, prompt }).catch(showErrorToast);
+  }
+
+  function openSideThreadWithSelection(selection: SideThreadSelection): void {
+    if (!activeThreadID || !sideConversationAvailable) return;
+    openSideThreadPanel();
+    sideThread.setDraftSelection(selection);
+  }
+
+  // Blocking questions stay in the conversation stream. Offers float above the composer.
+
+  function closeWorkspaceMenus(): void {
+    setEnvironmentPanelMenu(null);
+    setSettingsOpen(false);
+  }
+
+  const scheduleGitStatusRefresh = (delayMs: number): void => {
+    try { application.environment.scheduleStatusRefresh(delayMs); }
+    catch (cause) {
+      // Focus may arrive during the writer gap. Do not route that old callback
+      // to a successor; the new scope's effect schedules its own refresh.
+      if (!isPluginLifecycleCancellation(cause)) throw cause;
+    }
+  };
+  const {
+    toggleEnvironmentPanel,
+    closeEnvironmentPanel,
+  } = createEnvironmentPanelActions({
+    setEnvironmentPanelOpen,
+    setEnvironmentPanelDismissed,
+    setEnvironmentPanelMenu,
+    // Runtime menus are owned by the selected composer.
+    closeRuntimeMenus: () => {},
+    getEnvironmentPanelVisible: () => environmentPanelVisible,
+    environmentPanelContainsActiveElement: () => {
+      const activeElement = document.activeElement;
+      return (
+        activeElement instanceof HTMLElement &&
+        environmentPanelRef.current?.contains(activeElement) === true
+      );
+    },
+    focusEnvironmentToggle: () =>
+      environmentToggleRef.current?.focus({ preventScroll: true }),
+  });
+  // Slot contexts and direct-child props keep stable identities across
+  // stream-frame publications so memoized surfaces can bail on render.
+  const conversationScrollHandler = useStableCallback(handleConversationScroll);
+  const splitResizeStart = useStableCallback(startSplitResize);
+  const splitSeparatorKey = useStableCallback(handleSplitSeparatorKey);
+  const splitPercentReset = useStableCallback(resetSplitPercent);
+  const sidebarToggle = useStableCallback(toggleSidebar);
+  const sidebarResizeStart = useStableCallback(startSidebarResize);
+  const sidebarResizerPointer = useStableCallback(trackSidebarResizerPointer);
+  const sidebarSeparatorKey = useStableCallback(handleSidebarSeparatorKey);
+  const sidebarDrawerClose = useStableCallback((event: React.PointerEvent<HTMLElement>) =>
+    scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent));
+  const environmentPanelMenuSet = useStableCallback((menu: EnvironmentPanelMenu) => {
+    if (menu === "branch") scheduleGitStatusRefresh(0);
+    setEnvironmentPanelMenu(menu);
+  });
+  const environmentPanelClose = useStableCallback(() => closeEnvironmentPanel({ dismissed: true }));
+  const reviewOpen = useStableCallback(() => {
+    openWorkspaceTool("review");
+    closeEnvironmentPanel({ dismissed: true });
+  });
+  const commitDialogOpen = useStableCallback(() => openEnvironmentDialog("commit"));
+  const pullRequestDialogOpen = useStableCallback(() => openEnvironmentDialog("pull-request"));
+
+  const navigationSlotContext = useMemo(() => ({
+    workspaceSelectionEnabled,
+    sidebarCollapsed,
+    sidebarVisible: !sidebarDrawerMode || sidebarDrawerVisible,
+    onPointerEnter: openSidebarDrawer,
+    onPointerLeave: sidebarDrawerClose,
+    onRibbonPresenceChange: setNativeRibbonPresent,
+  }), [workspaceSelectionEnabled, sidebarCollapsed, sidebarDrawerMode, sidebarDrawerVisible, openSidebarDrawer, sidebarDrawerClose]);
+  const conversationSlotContext = useMemo(() => ({
+    scrollRef: conversationScrollRef,
+    contentRef: scrollContentRef,
+    splitPaneRefs,
+    composerFocusTargets,
+    visible: conversationVisible,
+    restoring: conversationRestoring,
+    onScroll: conversationScrollHandler,
+    onStreamFrame: scheduleStreamScroll,
+    onCollapseComplete: handleTurnCollapseComplete,
+    splitLeftPercent,
+    onSplitResizeStart: splitResizeStart,
+    onSplitSeparatorKey: splitSeparatorKey,
+    onSplitSeparatorDoubleClick: splitPercentReset,
+  }), [conversationScrollRef, scrollContentRef, splitPaneRefs, composerFocusTargets, conversationVisible, conversationRestoring, conversationScrollHandler, scheduleStreamScroll, handleTurnCollapseComplete, splitLeftPercent, splitResizeStart, splitSeparatorKey, splitPercentReset]);
+  const composerDockSlotContext = useMemo(() => ({
+    variant: "dock", pane: "primary",
+    registerFocusTarget: composerFocusTargets.primary,
+    visible: !settingsOpen,
+    containerRef: dockComposerRef,
+    runtimeControlsTarget,
+  }), [composerFocusTargets, settingsOpen, dockComposerRef, runtimeControlsTarget]);
+  const previewSlotContext = useMemo(() => ({ layout: {
+    registerFocusTarget: registerPreviewFocusTarget,
+    covered: settingsOpen || showingWebsite || userSpaceViewActive,
+    toolsVisible: workspaceControlsVisible,
+    runtimeControlsRef: setRuntimeControlsTarget,
+    open: rightPanelOpen,
+    present: rightPanelOpen || rightPanelAnimating,
+    prewarm: initialized,
+    onDirtyFileTabsChange: rememberWorkspaceDirtyFiles,
+    globalized: rightPanelGlobalized,
+    conversationTabVisible: rightPanelGlobalized,
+    sheetPhase: workspaceSheetPhase,
+    onToggleGlobalize: toggleWorkspacePanelGlobalized,
+    canExitGlobalized: !rightPanelAutoGlobalized || workspaceRightPanelDockableWithoutSidebar,
+    browserOverlaySuppressed,
+    documentComposer: documentComposerVisible,
+    pane: conversationWorkspace.activePane,
+  } }), [registerPreviewFocusTarget, settingsOpen, showingWebsite, userSpaceViewActive, workspaceControlsVisible, rightPanelOpen, rightPanelAnimating, initialized, rememberWorkspaceDirtyFiles, rightPanelGlobalized, workspaceSheetPhase, toggleWorkspacePanelGlobalized, rightPanelAutoGlobalized, workspaceRightPanelDockableWithoutSidebar, browserOverlaySuppressed, documentComposerVisible, conversationWorkspace.activePane]);
+  const settingsSlotContext = useMemo(() => ({ layout: {
+    browserSettingsAllowed: !poppedOutMode,
+    embedded: embeddedSettings,
+    embeddedDrawerPhase: sidebarDrawerPhase,
+    onSidebarPointerEnter: openSidebarDrawer,
+    onSidebarPointerLeave: sidebarDrawerClose,
+    sidebarWidth,
+    resizingSidebar,
+    shellRef: settingsShellRef,
+    sidebarCollapsed,
+    sidebarAnimating,
+    onToggleSidebar: sidebarToggle,
+    onSidebarResizeStart: sidebarResizeStart,
+    onSidebarResizerPointer: sidebarResizerPointer,
+    onSidebarSeparatorKey: sidebarSeparatorKey,
+  } satisfies ApplicationSettingsLayoutV1 }), [poppedOutMode, embeddedSettings, sidebarDrawerPhase, openSidebarDrawer, sidebarDrawerClose, sidebarWidth, resizingSidebar, settingsShellRef, sidebarCollapsed, sidebarAnimating, sidebarToggle, sidebarResizeStart, sidebarResizerPointer, sidebarSeparatorKey]);
+  const layersSlotContext = useMemo(() => ({ settingsOnly: settingsOpen }), [settingsOpen]);
+
+  const activateThread = useCallback((threadId: string): Promise<void> => presentNavigation(() => application.invoke("thread.activate", { threadId })).catch(reportPresentedNavigationError), [application, presentNavigation]);
+
+  useConversationSearchNavigation({
+    application,
+    thread: activeThread,
+    switching: viewSwitchPending,
+    captureConversationScrollIntent,
+    jumpToConversationMessage,
+  });
+
+  useEffect(() => {
+    const ask = (event: Event) => {
+      const selection = (event as CustomEvent<ResponseSelection>).detail;
+      if (!sideConversationAvailable || !selection?.source?.thread_id) return;
+      const reference: SideThreadSelection = { type: "response", response: selection };
+      if (selection.source.thread_id === activeThreadID) {
+        openSideThreadWithSelection(reference);
+      } else {
+        pendingSideSelectionRef.current = { threadID: selection.source.thread_id, selection: reference };
+        void activateThread(selection.source.thread_id).catch(() => { pendingSideSelectionRef.current = null; });
+      }
+    };
+    window.addEventListener("wuu:ask-side-selection", ask);
+    return () => window.removeEventListener("wuu:ask-side-selection", ask);
+  }, [activeThreadID, activateThread, sideThread.open, sideThread.setDraftSelection, sideConversationAvailable]);
+
+  useEffect(() => {
+    const pending = pendingSideSelectionRef.current;
+    if (!pending || pending.threadID !== activeThreadID) return;
+    pendingSideSelectionRef.current = null;
+    openSideThreadWithSelection(pending.selection);
+  }, [activeThreadID]);
+
+  useEffect(() => {
+    const api = application.webWorkspace;
+    if (!api.capabilities.available) return;
+    return api.onReveal((id) => {
+      if (id === WEB_WORKSPACE_RIBBON_ID) { revealWebsite(); return; }
+      // The native page belongs to this retained instance. Never open a new
+      // plugin view to approximate its URL or lose its live document state.
+      const panel = [...document.querySelectorAll<HTMLElement>(".web-workspace-panel")]
+        .find((element) => element.dataset.websiteId === id);
+      const instanceID = panel?.closest<HTMLElement>("[data-workbench-view-id]")?.dataset.workbenchViewId;
+      const destination = application.getSnapshot().navigationWorkspace.destinations.find(view => view.instanceId === instanceID);
+      if (!destination?.instanceId) return;
+      setActiveWebsiteID(undefined);
+      setAccountOpen(false);
+      void application.invoke("navigation.open-plugin", { pluginId: destination.pluginId, viewTypeId: destination.view, instanceId: destination.instanceId }).catch(showErrorToast);
+    });
+  }, [application, revealWebsite]);
+
+
+  function closePrimaryPluginView(): void {
+    setActiveWebsiteID(undefined);
+    void application.invoke("navigation.show-native", {}).catch(showErrorToast);
+    setSettingsOpen(false);
+    setNativeSection("conversations");
+  }
+
+  function revealWebsite(): void {
+    closeWorkspaceMenus();
+    closeConversationSearch({ immediate: true });
+    setEnvironmentDialog(null);
+    cancelPendingFork();
+    setSettingsOpen(false);
+    setAccountOpen(false);
+    closeSidebarDrawer();
+    setActiveWebsiteID(WEB_WORKSPACE_RIBBON_ID);
+  }
+
+  async function createWebsiteTab(reopen = false): Promise<void> {
+    await application.invoke(reopen ? "navigation.reopen-browser-tab" : "navigation.create-browser-tab", {});
+    revealWebsite();
+  }
+
+  useEffect(() => {
+    if (!ribbonBrowser.state) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      const modifier = application.desktop.platform === "darwin" ? event.metaKey : event.ctrlKey;
+      if (!modifier || event.altKey || event.defaultPrevented || event.key.toLowerCase() !== "t") return;
+      // Retained extension WebPages keep their own browser shortcut contract.
+      if ((event.target as Element | null)?.closest?.(".web-workspace-panel")) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if ((ribbonBrowser.state?.tabs?.length ?? 0) >= WEB_WORKSPACE_TAB_LIMIT || (event.shiftKey && !ribbonBrowser.state?.canReopenTab)) return;
+      void createWebsiteTab(event.shiftKey);
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [ribbonBrowser.state, createWebsiteTab]);
+
+  function openSkillsTab(): void {
+    if (!application.getSnapshot().workspaces.activeRoot) return;
+    setActiveWebsiteID(undefined);
+    void application.invoke("navigation.show-native", {}).catch(showErrorToast);
+    setSettingsOpen(false);
+    setCatalogVisited(true);
+    setNativeSection("catalog");
+    if (rightPanelGlobalized) setRightPanelOpenWithMotion(false);
+  }
+
+  useEffect(() => { scheduleStreamScroll(); }, [conversationDetails, scheduleStreamScroll]);
+
+  async function submitContextChat(text: string, page: PageContextSnapshot, context: RuntimeContext, sessionId?: string): Promise<{ sessionId: string; sent: boolean }> {
+    if (context.kind === "user") throw new Error("Workspace context chat is unavailable in a user-space view");
+    return application.invoke("context-chat.submit", { text, page, context, sessionId });
+  }
+
+  useEffect(() => {
+    const back = (event: Event): void => {
+      if (accountOpen) { event.preventDefault(); setAccountOpen(false); }
+      else if (settingsOpen) { event.preventDefault(); setSettingsOpen(false); }
+      else if (showingWebsite) { event.preventDefault(); setActiveWebsiteID(undefined); }
+      else if (sidebarDrawerVisible) { event.preventDefault(); closeSidebarDrawer(); }
+      else if (rightPanelOpen) { event.preventDefault(); setRightPanelOpenWithMotion(false); }
+      else if (nativeSection === "catalog" && !showingPrimaryPluginView) { event.preventDefault(); setNativeSection("conversations"); }
+    };
+    window.addEventListener("wuu:workbench-back", back);
+    return () => window.removeEventListener("wuu:workbench-back", back);
+  }, [accountOpen, settingsOpen, showingWebsite, sidebarDrawerVisible, closeSidebarDrawer, rightPanelOpen, setRightPanelOpenWithMotion, nativeSection, showingPrimaryPluginView]);
+
+  const contextCapsule = !poppedOutMode && onboardingComplete && initialized && activeContext
+    ? (
+    // Restore visibility when the workbench experiment re-enables the floating context chat.
+    <ContextChatCapsule context={activeContext} visible={false}
+      source={showingWebsite && activeWebsite && !settingsOpen && !accountOpen
+        ? { kind: "website", id: WEB_WORKSPACE_RIBBON_ID, tabId: activeWebsite.id, title: activeWebsite.title || activeWebsite.url }
+        : { kind: "app", id: `wuu:${accountOpen ? "account" : settingsOpen ? "settings" : showingPrimaryPluginView ? "plugin" : nativeSection}`,
+            title: `Wuu · ${accountOpen ? "Account" : settingsOpen ? "Settings" : showingPrimaryPluginView ? "Plugin" : nativeSection}` }}
+      onSubmit={submitContextChat}
+      onOpen={sessionId => { setAccountOpen(false); revealConversationFromFocusedWorkspace(); void activateThread(sessionId); }} />
+  ) : null;
+
+  if (ENABLE_ACCOUNT && accountOpen && application.desktop.account) {
+    return <><AccountScreen driver={application.desktop.account} openExternal={application.settingsControls.openExternal} onBack={() => setAccountOpen(false)} />{contextCapsule}</>;
+  }
+
+  if (!onboardingComplete) {
+    return (
+      <WuuMascotRuntimeProvider>
+        <ApplicationFirstRunOnboarding application={application} />
+      </WuuMascotRuntimeProvider>
+    );
+  }
+
+  return (
+    <WuuMascotRuntimeProvider
+      provider={activeThread?.model_provider || mascotRuntime.provider || configuration?.provider}
+      providers={mascotProviderNames}
+      model={activeThread?.model ?? mascotRuntime.model ?? configuration?.model}
+    >
+      <SideConversationAvailableContext.Provider value={sideConversationAvailable}>
+      <FileSelectionProvider application={application} source={{ ownerTabId: application.getSnapshot().drafts.split
+        ? application.getSnapshot().drafts[conversationWorkspace.activePane].ownerTabId ?? tabs.activeTabId
+        : application.getSnapshot().drafts.activeTabId }}>
+      <ImagePreviewProvider>
+      <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
+      <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openArtifactPreview}>
+      <ArtifactInteractionProvider application={application}>
+        <div
+          ref={appShellRef}
+          tabIndex={-1}
+          className={shellClassName}
+          style={shellStyle}
+          data-wuu-component="app-shell"
+          data-active-session-tab-id={tabs.activeTabId}
+          data-user-space-view={userSpaceViewActive && !settingsOpen ? "" : undefined}
+          data-settings-open={settingsOpen ? "" : undefined}
+          data-web-workspace-open={showingWebPage && !settingsOpen ? "" : undefined}
+          data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
+        >
+          <BrowserPiPHostReporter />
+          <div className="workbench-window-chrome" aria-hidden="true" />
+          {!poppedOutMode ? (
+            <>
+          <div
+            ref={sidebarHoverZoneRef}
+            className="sidebar-hover-zone"
+            aria-hidden="true"
+            onPointerEnter={scheduleSidebarDrawerOpen}
+            onPointerLeave={cancelSidebarDrawerOpen}
+          />
+          {rightPanelGlobalized && sidebarDrawerMode && sidebarToggleVisible ? (
+            <div className="globalized-sidebar-toggle-region">
+              <button
+                className="icon-button side-panel-toggle-button sidebar-toggle-button globalized-sidebar-toggle"
+                data-wuu-component="sidebar-toggle"
+                type="button"
+                aria-label={t(
+                  sidebarDrawerVisible
+                    ? "app.collapseLeftSidebar"
+                    : "app.expandLeftSidebar",
+                )}
+                aria-pressed={sidebarDrawerVisible}
+                onClick={sidebarDrawerVisible ? closeSidebarDrawer : openSidebarDrawerNow}
+                onPointerEnter={scheduleSidebarDrawerOpen}
+                onPointerLeave={(event) =>
+                  scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
+                }
+              >
+                <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
+              </button>
+            </div>
+          ) : null}
+          <HoverRevealScopeContext.Provider value={sidebarHoverScope}>
+            <slots.Slot name={`${shellPluginId}/application.navigation`} context={navigationSlotContext} />
+          </HoverRevealScopeContext.Provider>
+
+          {/* Hidden rather than unmounted: inserting or removing a shell child
+              ahead of the conversation makes sibling selectors restyle every
+              rendered turn when the sidebar collapses or expands. */}
+          <div
+            className="sidebar-resizer"
+            hidden={sidebarDrawerMode}
+            inert={rightPanelOpen && rightPanelGlobalized && !settingsOpen}
+            role="separator"
+            aria-label={t("app.resizeSidebar")}
+            aria-orientation="vertical"
+            aria-valuemin={SIDEBAR_MIN_WIDTH}
+            aria-valuemax={SIDEBAR_MAX_WIDTH}
+            aria-valuenow={sidebarWidth}
+            tabIndex={0}
+            onPointerDown={startSidebarResize}
+            onPointerEnter={trackSidebarResizerPointer}
+            onPointerMove={trackSidebarResizerPointer}
+            onDoubleClick={toggleSidebar}
+            onKeyDown={handleSidebarSeparatorKey}
+          />
+      <ConversationSearchOverlay
+        state={conversationSearch}
+        results={conversationSearchResults}
+        threads={navigationWorkspace.threads.filter(thread => !thread.parent_id && !thread.ephemeral)}
+        projects={navigationWorkspace.workspaces}
+        activeThreadID={activeThreadID}
+        pendingThreadID={visiblePendingThreadID}
+        dialogRef={conversationSearchRef}
+        inputRef={conversationSearchInputRef}
+        onClose={closeConversationSearch}
+        onQueryChange={setConversationSearchQuery}
+        onClearQuery={clearConversationSearchQuery}
+        onKeyDown={handleConversationSearchKeyDown}
+        onSelectIndex={setConversationSearchSelectedIndex}
+        onSelectResult={selectConversationSearchResult}
+      />
+            </>
+          ) : null}
+
+      <main
+        inert={workspaceToolsCoverConversation || settingsOpen || showingWebsite}
+        data-wuu-component="conversation-pane"
+        data-primary-plugin-view={showingPrimaryPluginView ? "" : undefined}
+        data-workbench-layout={userSpaceViewActive ? "user-space" : undefined}
+        data-primary-plugin-web-page={showingPluginWebPage ? "" : undefined}
+        data-native-section={showingManagementCatalog ? "catalog" : "conversations"}
+        data-canvas={paneCanvas}
+        className={`conversation-pane${environmentPanelVisible ? " environment-panel-visible" : ""}${
+          environmentPanelReserved ? " environment-panel-reserved" : ""
+        }`}
+        ref={conversationPaneRef}
+      >
+        <ShellCanvasArtwork />
+        <header hidden={userSpaceViewActive} className="titlebar" data-wuu-component="conversation-titlebar">
+          <div className="title-block">
+            {/* The ribbon owns a shell-level toggle. A hidden legacy toggle
+                would still activate the hover drawer's layout placeholder. */}
+            {sidebarToggleVisible && sidebarDrawerMode && !rightPanelGlobalized && !nativeRibbonPresent ? (
+              <button
+                className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle"
+                data-wuu-component="sidebar-toggle"
+                type="button"
+                aria-label={t(
+                  sidebarDrawerVisible
+                    ? "app.collapseLeftSidebar"
+                    : "app.expandLeftSidebar",
+                )}
+                aria-pressed={sidebarDrawerVisible}
+                onClick={toggleSidebar}
+                onPointerEnter={scheduleSidebarDrawerOpen}
+                onPointerLeave={(event) =>
+                  scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)
+                }
+              >
+                <SidePanelToggleIcon side="left" open={sidebarDrawerVisible} />
+              </button>
+            ) : null}
+            {!showingManagementCatalog || showingPrimaryPluginView ? (
+              <ConversationTitleContent headingRef={conversationHeadingRef} application={application} slots={slots} slotOwner={shellPluginId} />
+            ) : null}
+          </div>
+          <ConversationTitleActions
+            thread={activeThread}
+            pluginPageVisible={showingPrimaryPluginView || showingManagementCatalog}
+            environmentToggleRef={environmentToggleRef}
+            environmentPanelVisible={environmentPanelVisible}
+            onToggleEnvironmentPanel={toggleEnvironmentPanel}
+            rightPanelOpen={rightPanelOpen}
+            onToggleRightPanel={toggleRightPanel}
+            showRightPanelToggle={false}
+          />
+        </header>
+        <ConversationSidePanels
+          application={application}
+          slots={slots}
+          slotOwner={shellPluginId}
+          environment={application.environment}
+          environmentPanelVisible={environmentPanelVisible}
+          environmentPanelMounted={environmentPanelMounted}
+          environmentPanelRef={environmentPanelRef}
+          environmentPanelClosing={environmentPanelClosing}
+          environmentPanelMotionState={environmentPanelMotionState}
+          activeTodoUpdate={activeTodoUpdate}
+          environmentPanelMenu={environmentPanelMenu}
+          environmentGitBusy={environmentGitBusy}
+          pullRequestDisabledReason={pullRequestDisabledReason}
+          onSetEnvironmentPanelMenu={environmentPanelMenuSet}
+          onCloseEnvironmentPanel={environmentPanelClose}
+          onOpenReview={reviewOpen}
+          onOpenCommit={commitDialogOpen}
+          onOpenPullRequest={pullRequestDialogOpen}
+          rightPanelFilePath={rightPanelFilePath}
+          onCloseFilePreview={handleCloseFilePreview}
+        />
+        <ConversationPresentationLoading scopeRef={conversationPaneRef} getRegions={getMessagePresentationRegions}
+          visible={pendingViewSwitch?.visible === true} />
+
+        {initialized && (catalogVisited || showingSkillsCatalog) ? (
+          <div
+            className="catalog-section-pane skills-scroll-region"
+            hidden={!showingManagementCatalog || showingPrimaryPluginView}
+            inert={!showingManagementCatalog || showingPrimaryPluginView}
+          >
+            <SettingsControlsProvider controls={application.settingsControls}>
+            <SkillsCatalog
+              active={!settingsOpen && showingManagementCatalog && !showingPrimaryPluginView}
+              section={catalogSection}
+              onSectionChange={setCatalogSection}
+              selectedPluginID={catalogPluginID}
+              onSelectPlugin={setCatalogPluginID}
+              application={application}
+            />
+            </SettingsControlsProvider>
+          </div>
+        ) : null}
+        <slots.Slot name={`${shellPluginId}/application.conversation`} context={conversationSlotContext} />
+
+        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={composerDockSlotContext} /> : null}
+
+        <ConversationStatusCluster
+          application={application}
+          visible={mainConversationDockVisible}
+          clusterRef={statusClusterRef}
+          navigation={!emptyConversation ? (
+            <JumpToLatestPill
+              containerRef={conversationScrollRef}
+              bottomAnchor={dockComposerNode}
+              scopeKey={activeThreadID}
+              suspended={viewSwitchPending}
+              onJump={jumpConversationToLatest}
+              inline
+            />
+          ) : null}
+          threadId={activeThreadID}
+        />
+      </main>
+
+      <>
+      {!poppedOutMode && (rightPanelOpen || rightPanelAnimating) ? (
+        <div
+          className="workspace-right-panel-resizer"
+          inert={rightPanelGlobalized || settingsOpen}
+          role="separator"
+          aria-label={t("app.resizeRightSidebar")}
+          aria-orientation="vertical"
+          aria-valuemin={WORKSPACE_RIGHT_PANEL_MIN_WIDTH}
+          aria-valuemax={WORKSPACE_RIGHT_PANEL_MAX_WIDTH}
+          aria-valuenow={clampedWorkspaceRightPanelWidth}
+          tabIndex={0}
+          onPointerDown={startRightPanelResize}
+          onDoubleClick={resetWorkspaceRightPanelWidth}
+          onKeyDown={handleRightPanelSeparatorKey}
+        />
+      ) : null}
+      {poppedOutMode ? null : (
+        <slots.Slot name={`${shellPluginId}/application.preview`} context={previewSlotContext} />
+      )}
+      </>
+
+      {!poppedOutMode && initialized && onboardingComplete && <RestartRecovery application={application} />}
+      {!settingsOpen && environmentDialog === "commit" ? (
+        <CommitChangesDialog
+          gitStatus={gitStatus}
+          branch={gitStatus?.branch}
+          onCancel={() => setEnvironmentDialog(null)}
+          onCommit={input => application.environment.commit(input)}
+          onGenerateMessage={input => application.environment.generateCommitMessage(input)}
+        />
+      ) : null}
+      {!settingsOpen && environmentDialog === "pull-request" ? (
+        <PullRequestDialog
+          gitStatus={gitStatus}
+          disabledReason={pullRequestDisabledReason}
+          onCancel={() => setEnvironmentDialog(null)}
+          onCreate={input => application.environment.createPullRequest(input)}
+        />
+      ) : null}
+      <slots.Slot name={`${shellPluginId}/application.settings`} context={settingsSlotContext} />
+      {!poppedOutMode ? (
+        <section className="web-workspace-stage" hidden={!showingWebsite || settingsOpen} aria-label={activeWebsite?.title}>
+          <WebWorkspacePanel site={ribbonBrowser.state ? { id: WEB_WORKSPACE_RIBBON_ID, url: "about:blank", title: activeWebsite?.title } : undefined} active={showingWebsite && !settingsOpen && !accountOpen} tabs resizeWithWindow />
+        </section>
+      ) : null}
+      <slots.Slot name={`${shellPluginId}/workbench.layers`} context={layersSlotContext} />
+      {contextCapsule}
+      {/* macOS applies app regions in DOM order, so a later drag titlebar would
+        * cover this no-drag control. Keep it as the shell's last child. */}
+      {!poppedOutMode ? (
+        <button
+          className="icon-button side-panel-toggle-button sidebar-toggle-button sidebar-collapse-toggle section-sidebar-toggle"
+          data-wuu-component="sidebar-toggle"
+          type="button"
+          aria-label={t(!sidebarCollapsed || sidebarDrawerVisible ? "app.collapseLeftSidebar" : "app.expandLeftSidebar")}
+          aria-expanded={!sidebarCollapsed || sidebarDrawerVisible}
+          aria-pressed={!sidebarCollapsed || sidebarDrawerVisible}
+          onClick={() => { closeSidebarDrawer(); toggleSidebar(); }}
+          onPointerLeave={(event) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent)}
+        >
+          <SidePanelToggleIcon side="left" open={!sidebarCollapsed || sidebarDrawerVisible} />
+        </button>
+      ) : null}
+      {!poppedOutMode && ribbonCollapsed ? <RibbonVisibilityToggle collapsed nativeTooltip={showingWebPage && !settingsOpen && !accountOpen} /> : null}
+      {!poppedOutMode && workspaceControlsVisible ? (
+        <button
+          className="icon-button side-panel-toggle-button shell-right-sidebar-toggle"
+          data-wuu-component="right-sidebar-toggle"
+          type="button"
+          aria-label={t(rightPanelOpen ? "shell.closeRightSidebar" : "shell.openRightSidebar")}
+          aria-expanded={rightPanelOpen}
+          aria-pressed={rightPanelOpen}
+          onClick={toggleRightPanel}
+        >
+          <SidePanelToggleIcon side="right" open={rightPanelOpen} />
+        </button>
+      ) : null}
+      </div>
+    </ArtifactInteractionProvider>
+    </ArtifactPreviewContext.Provider>
+    </WorkspaceBrowserOpenContext.Provider>
+    </ImagePreviewProvider>
+    </FileSelectionProvider>
+    </SideConversationAvailableContext.Provider>
+    </WuuMascotRuntimeProvider>
+  );
+}

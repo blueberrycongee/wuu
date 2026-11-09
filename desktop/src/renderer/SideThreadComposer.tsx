@@ -1,0 +1,168 @@
+import type { ApplicationSideConversationActionMapV1, ApplicationSideConversationViewV1 } from "../../../packages/plugin-sdk/src/ui-side-conversation";
+import { showActionErrorToast } from "./Toast";
+import { useMemo, useRef } from "react";
+import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
+import { ComposerFileSelectionCard } from "./ComposerFileSelectionCard";
+import { buildSideThreadSlashCommands } from "./ComposerSlashCommands";
+import {
+  Composer,
+  type CodexModelLoadState,
+  type ComposerVariant,
+} from "./ComposerView";
+import { useI18n } from "./i18n";
+import type { SideThreadSelection } from "../shared/protocol";
+
+const EMPTY_MODEL_STATE: CodexModelLoadState = {
+  loading: false,
+  error: "",
+  models: [],
+};
+
+const noop = () => {};
+
+export type SideThreadComposerProps = {
+  variant?: ComposerVariant;
+  placeholder?: string;
+  draft: string;
+  selection?: SideThreadSelection;
+  onRemoveSelection?: () => void;
+  onOpenFile?: (path: string) => void;
+  running: boolean;
+  disabledReason?: string;
+  mainThreadId?: string;
+  sideThreadId?: string;
+  queryHistorySessionID: string;
+  queryHistory: string[];
+  onChangeDraft: (draft: string) => void;
+  onSend: (prompt: string) => void;
+  onInterrupt: () => void;
+  onReset?: () => void;
+};
+
+// Side chat is another conversation surface, not another editor. Keep the
+// small amount of transport-specific glue here and render the same Composer
+// used by the main conversation.
+export function SideThreadComposer({
+  variant = "dock",
+  placeholder,
+  draft,
+  selection,
+  onRemoveSelection,
+  onOpenFile,
+  running,
+  disabledReason,
+  mainThreadId,
+  sideThreadId,
+  queryHistorySessionID,
+  queryHistory,
+  onChangeDraft,
+  onSend,
+  onInterrupt,
+  onReset,
+}: SideThreadComposerProps): JSX.Element {
+  const { locale, t } = useI18n();
+  const runtimeRef = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const accessMenuRef = useRef<HTMLDivElement>(null);
+  const slashCommands = useMemo(() => buildSideThreadSlashCommands(), [locale]);
+  const readOnly = Boolean(disabledReason);
+  // Keep the draft editable while a side turn runs so the composer remains
+  // focusable. Sending stays disabled until the current side turn settles.
+  const visibleDraft = draft;
+
+  return <Composer
+      variant={variant}
+      hideRuntimeControls
+      textOnly
+      inlineSelection={selection?.type === "file"
+        ? <ComposerFileSelectionCard source={selection.file} onRemove={onRemoveSelection} onOpenFile={onOpenFile} />
+        : selection ? <ComposerResponseSelectionCard selection={selection.response} onRemove={onRemoveSelection} /> : undefined}
+      placeholder={placeholder ?? t("composer.sideThreadPlaceholder")}
+      prompt={visibleDraft}
+      setPrompt={onChangeDraft}
+      files={[]}
+      images={[]}
+      queuedMessages={[]}
+      guideMessages={[]}
+      running={running}
+      sendDisabled={running}
+      forceStopWhileRunning
+      runtimeControlsDisabled
+      status={disabledReason ?? ""}
+      disabledReason={disabledReason}
+      readOnly={readOnly}
+      projects={[]}
+      codexModels={EMPTY_MODEL_STATE}
+      codexRuntimeMenu={null}
+      codexRuntimeRef={runtimeRef}
+      menuOpen={false}
+      accessMenuOpen={false}
+      branchMenuOpen={false}
+      menuRef={menuRef}
+      accessMenuRef={accessMenuRef}
+      workspaceFilter=""
+      setWorkspaceFilter={noop}
+      onToggleMenu={noop}
+      onToggleAccessMenu={noop}
+      onToggleBranchMenu={noop}
+      onToggleCodexRuntimeMenu={noop}
+      onSelectRuntimeModel={noop}
+      onSelectRuntimeEffort={noop}
+      onSelectPermissionMode={noop}
+      onOpenSettings={noop}
+      onOpenSkillsCatalog={noop}
+      onSelectWorkspace={noop}
+      onSelectGitBranch={noop}
+      onCreateWorkspace={noop}
+      onOpenWorkspace={noop}
+      onStartNewThread={noop}
+      onOpenWorkspaceTool={noop}
+      onOpenInstructions={noop}
+      onPasteAttachmentFiles={noop}
+      onRemoveFile={noop}
+      onRemoveImage={noop}
+      onRemoveQueuedMessage={noop}
+      onRemoveGuideMessage={noop}
+      onGuideQueuedMessage={noop}
+      onEditQueuedMessage={noop}
+      onEditGuideMessage={noop}
+      onSend={(promptOverride) => {
+        const prompt = (promptOverride ?? draft).trim();
+        if (!readOnly && !running && prompt) {
+          onSend(prompt);
+        }
+      }}
+      onInterrupt={onInterrupt}
+      slashCommandsOverride={onReset ? slashCommands : undefined}
+      onResetSideThread={onReset}
+      inlineCompletionKind="side"
+      threadId={mainThreadId}
+      sideThreadId={sideThreadId}
+      queryHistorySessionID={queryHistorySessionID}
+      queryHistory={queryHistory}
+    />;
+}
+
+
+export type ApplicationSideThreadComposerProps = Pick<SideThreadComposerProps, "variant" | "placeholder" | "onOpenFile"> & {
+  snapshot: ApplicationSideConversationViewV1;
+  invoke: <A extends keyof ApplicationSideConversationActionMapV1>(action: A, input: ApplicationSideConversationActionMapV1[A]["input"]) => Promise<ApplicationSideConversationActionMapV1[A]["result"]>;
+};
+
+export function ApplicationSideThreadComposer({ snapshot, invoke, ...presentation }: ApplicationSideThreadComposerProps): JSX.Element | null {
+  const { parentThreadId, entry } = snapshot;
+  const selection = useMemo(() => structuredClone(entry?.draftSelection) as SideThreadSelection | undefined, [entry?.draftSelection]);
+  if (!parentThreadId || !entry) return null;
+  const report = (error: unknown) => showActionErrorToast(error instanceof Error ? error.message : String(error));
+  return <SideThreadComposer {...presentation}
+    draft={entry.draft} selection={selection} running={entry.streaming} disabledReason={snapshot.disabledReason}
+    mainThreadId={parentThreadId} sideThreadId={entry.summary?.side_thread_id}
+    queryHistorySessionID={entry.summary?.side_thread_id ?? `side:${parentThreadId}`}
+    queryHistory={entry.messages.filter(message => message.role === "user").map(message => message.text)}
+    onChangeDraft={text => { void invoke("side.set-draft", { parentThreadId, text }).catch(report); }}
+    onRemoveSelection={() => { void invoke("side.set-selection", { parentThreadId }).catch(report); }}
+    onSend={text => { void invoke("side.send", { parentThreadId, text }).catch(report); }}
+    onInterrupt={() => { void invoke("side.interrupt", { parentThreadId }).catch(report); }}
+    onReset={() => { void invoke("side.reset", { parentThreadId }).catch(report); }}
+  />;
+}

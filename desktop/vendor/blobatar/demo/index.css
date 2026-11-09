@@ -1,0 +1,294 @@
+:root {
+  --bg: #f4f5f8;
+  --fg: #14161c;
+  --muted: #6b7182;
+  --line: #dcdfe8;
+  color-scheme: light;
+}
+
+.playground-shell { display: grid; grid-template-columns: 390px minmax(0, 1fr); min-height: 100vh; }
+.playground-panel { height: 100vh; overflow: auto; position: sticky; top: 0; padding: 18px; border-right: 1px solid var(--line); background: #fff; }
+.playground-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.playground-title div, .focus-preview span { display: flex; flex-direction: column; }
+.playground-title-actions { flex-direction: row !important; }
+.playground-title strong { font-size: 17px; }
+.playground-title small, .focus-preview small { color: var(--muted); }
+.playground-panel details { border-top: 1px solid var(--line); padding: 10px 0; }
+.playground-panel summary { cursor: pointer; font-weight: 650; margin-bottom: 8px; }
+.control-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.control-grid label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 11px; }
+.control-grid input, .control-grid select { width: 100%; }
+.tune-row { display: grid; grid-template-columns: 116px minmax(70px, 1fr) 66px; align-items: center; gap: 7px; min-height: 30px; }
+.tune-row.is-off { opacity: .48; }
+.tune-label { display: flex; align-items: center; gap: 5px; overflow: hidden; }
+.tune-label code { overflow: hidden; text-overflow: ellipsis; }
+.tune-row input[type="range"] { min-width: 0; padding: 0; }
+.tune-number { width: 66px; padding: 4px; }
+.inline-check { display: flex; align-items: center; gap: 6px; margin: 8px 0; color: var(--muted); }
+.color-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.color-row label { display: grid; grid-template-columns: 1fr auto; align-items: center; font-size: 11px; color: var(--muted); }
+.color-row input[type="color"] { grid-column: 1; width: 100%; height: 30px; padding: 2px; }
+.playground-stage { max-width: none; padding: 24px 28px 60px; }
+.stage-header { position: sticky; top: 0; z-index: 5; display: flex; justify-content: space-between; align-items: center; gap: 24px; margin: -24px -28px 20px; padding: 18px 28px; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(14px); border-bottom: 1px solid var(--line); }
+.stage-header h1 { margin: 0; font-size: 20px; }
+.stage-header p { margin: 3px 0 0; color: var(--muted); }
+.focus-preview { display: flex; align-items: center; gap: 16px; min-width: 760px; }
+.perspective-compare { display: flex; gap: 8px; }
+.perspective-compare figure { position: relative; margin: 0; padding: 6px 6px 22px; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.perspective-compare svg { display: block; width: 120px; height: 120px; }
+.perspective-compare figcaption { position: absolute; inset: auto 0 4px; color: #667085; font-size: 11px; text-align: center; }
+.focus-preview span { flex: 1; }
+.playground-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(max(88px, calc(var(--preview-size) + 34px)), 1fr)); gap: 10px; }
+.playground-grid > button { min-height: max(92px, calc(var(--preview-size) + 58px)); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 7px; overflow: hidden; }
+.playground-grid > button.is-selected { outline: 2px solid #ea7449; border-color: #ea7449; }
+.playground-grid > button svg { width: var(--preview-size); height: var(--preview-size); overflow: visible; }
+.playground-grid > button span { display: flex; flex-direction: column; max-width: 100%; font-size: 11px; line-height: 1.25; overflow: hidden; text-overflow: ellipsis; }
+.playground-grid > button small { color: var(--muted); }
+
+.product-mascot-workbench { display: grid; grid-template-columns: 360px minmax(0, 1fr); min-height: 100vh; }
+.product-mascot-panel { position: sticky; top: 0; height: 100vh; overflow: auto; padding: 18px; border-right: 1px solid var(--line); background: #fff; }
+.product-mascot-panel details { border-top: 1px solid var(--line); padding: 12px 0; }
+.product-mascot-panel summary { cursor: pointer; margin-bottom: 8px; font-weight: 650; }
+.product-view-tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-bottom: 16px; padding: 4px; border-radius: 10px; background: var(--bg); }
+.product-view-tabs button { border-color: transparent; background: transparent; }
+.product-view-tabs button.is-active { border-color: var(--line); background: #fff; box-shadow: 0 1px 3px #14161c12; }
+.product-focus-preview { display: grid; place-items: center; min-height: 240px; margin-bottom: 14px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg); }
+.product-focus-preview svg { width: 180px; height: 180px; overflow: visible; }
+.product-focus-preview > div { display: flex; align-items: baseline; gap: 8px; margin-top: -26px; }
+.product-focus-preview code, .mascot-state-grid code { color: var(--muted); }
+.mascot-parameter-list { display: grid; gap: 0; margin: 0; font: 11px/1.4 ui-monospace, monospace; }
+.mascot-parameter-list div { display: grid; grid-template-columns: 105px minmax(0, 1fr); gap: 8px; padding: 4px 0; border-bottom: 1px solid #eef0f4; }
+.mascot-parameter-list dt { color: var(--muted); }
+.mascot-parameter-list dd { margin: 0; overflow-wrap: anywhere; }
+.product-mascot-stage { padding: 28px; }
+.product-mascot-stage > header { display: flex; justify-content: space-between; align-items: end; margin-bottom: 22px; }
+.product-mascot-stage h1 { margin: 0; font-size: 24px; }
+.product-mascot-stage header p { margin: 4px 0 0; color: var(--muted); }
+.mascot-state-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; }
+.mascot-state-grid > button { display: flex; min-height: 210px; flex-direction: column; align-items: center; justify-content: center; gap: 5px; padding: 20px 12px 14px; overflow: visible; border-radius: 14px; }
+.mascot-state-grid > button.is-selected { outline: 2px solid #ea7449; border-color: #ea7449; }
+.mascot-state-grid svg { width: var(--mascot-preview-size); height: var(--mascot-preview-size); margin-bottom: 10px; overflow: visible; }
+.mascot-state-grid small { color: var(--muted); font-size: 10px; }
+.mascot-size-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.mascot-size-grid figure { display: grid; min-height: 260px; margin: 0; place-items: center; border: 1px solid var(--line); border-radius: 14px; background: #fff; }
+.mascot-size-grid figure > div { display: grid; min-height: 150px; place-items: center; }
+.mascot-size-grid svg { overflow: visible; }
+.mascot-size-grid figcaption { display: flex; flex-direction: column; align-items: center; }
+.mascot-size-grid figcaption small { color: var(--muted); }
+
+@media (max-width: 900px) {
+  .playground-shell { grid-template-columns: 1fr; }
+  .playground-panel { height: auto; position: static; border-right: 0; border-bottom: 1px solid var(--line); }
+  .stage-header { position: static; margin-top: -24px; flex-direction: column; align-items: flex-start; }
+  .focus-preview { min-width: 0; width: 100%; }
+  .product-mascot-workbench { grid-template-columns: 1fr; }
+  .product-mascot-panel { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    14px/1.5 ui-sans-serif,
+    system-ui,
+    sans-serif;
+}
+
+main {
+  padding: 24px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 18px;
+  margin: 0 0 16px;
+  letter-spacing: -0.01em;
+}
+
+.controls {
+  display: flex;
+  gap: 16px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.controls label.check {
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+}
+
+.spacer {
+  flex: 1;
+}
+
+input,
+select,
+button,
+textarea {
+  background: #fff;
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+code {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.stats {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 12px 0 16px;
+}
+
+.grid {
+  display: grid;
+  gap: 6px;
+}
+
+.cell {
+  padding: 0;
+  border: 0;
+  background: none;
+  aspect-ratio: 1;
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.08s;
+}
+
+.cell:hover {
+  transform: scale(1.12);
+}
+
+.cell svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/**
+ * Paired mode — the same seed under two expressions, touching.
+ *
+ * This is the instrument for the one question the roster hangs on: whether `sad`
+ * and `mad` are actually distinguishable on a variant with no brows. Judging it
+ * needs the pair adjacent on the same seed, because confusability is a property
+ * of the difference, not of either pose — flipping between two pages and holding
+ * one in memory answers a much easier question than the one that matters.
+ *
+ * Aspect ratio doubles so each half stays square. The hairline is what stops the
+ * pair reading as one wide creature.
+ */
+.big.pair {
+  display: flex;
+  gap: 8px;
+}
+
+.big.pair > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.cell.pair {
+  aspect-ratio: 2;
+  display: flex;
+  gap: 1px;
+  background: #ffffff14;
+}
+
+.cell.pair > * {
+  flex: 1;
+  min-width: 0;
+  aspect-ratio: 1;
+}
+
+.sheet {
+  position: fixed;
+  inset: 0;
+  background: #0006;
+  display: grid;
+  place-items: center;
+  backdrop-filter: blur(4px);
+}
+
+.card {
+  display: flex;
+  gap: 20px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  max-width: 620px;
+}
+
+.big svg {
+  width: 220px;
+  height: 220px;
+  border-radius: 16px;
+  display: block;
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.meta span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.swatches {
+  display: flex;
+  gap: 6px;
+}
+
+.swatches span {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  border: 1px solid #fff2;
+}
+
+textarea {
+  width: 320px;
+  height: 120px;
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  resize: vertical;
+}
+
+/* The library brings its own hover reaction when animating; two stacked scales
+   on two different clocks is not a thing worth looking at. */
+.grid[data-animate] .cell:hover {
+  transform: none;
+}

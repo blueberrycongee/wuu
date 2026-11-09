@@ -1,0 +1,1283 @@
+import { useConversationRenderActive } from "./ConversationRenderActivity";
+import { showActionErrorToast } from "./Toast";
+import { PENDING_STREAM_LINK } from "./StreamingMarkdownMend";
+import { useOptionalPreviewContent } from "./PreviewContentContext";
+import { useBrowserControls } from "./BrowserControlsContext";
+import { imageTarget, resolvePreviewResourceURL } from "./PreviewResourceURL";
+import { Children, createContext, useContext, cloneElement, isValidElement, memo, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Github, Globe2, Mail } from "./WuuIcons";
+import ReactMarkdown, { defaultUrlTransform, type Components, type UrlTransform } from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
+import "katex/dist/katex.min.css";
+import remarkMathDelimiters from "./remarkMathDelimiters";
+import remarkCurrencyMath from "./remarkCurrencyMath";
+import { unified } from "unified";
+import { toMarkdown } from "mdast-util-to-markdown";
+import type { Definition, Root as MarkdownRoot } from "mdast";
+import remarkCjkAutolinkBoundary from "./remarkCjkAutolinkBoundary";
+import remarkCjkStrongBoundary from "./remarkCjkStrongBoundary";
+import { useImagePreview } from "./ImagePreview";
+import { useImagePreviewRegistration } from "./ImagePreviewGallery";
+import {
+  formatWorkspaceFileTarget,
+  parseLinkTarget,
+  resolveWorkspaceFileTarget,
+  type WorkspaceFileLinkTarget,
+} from "./LinkTargets";
+import { MessageCopyButton } from "./MessageActions";
+import { RichTable } from "./RichTable";
+import { copyToClipboard, ThreadContextMenu } from "./ThreadContextMenu";
+import { useI18n } from "./i18n";
+import { Tooltip } from "./Tooltip";
+import {
+  workspaceBrowserClickModifiers,
+} from "./WorkspaceBrowserOpen";
+import { observeAppearance } from "./AppearancePreferences";
+import { useOptionalApplicationWorkbench } from "./plugins/ApplicationWorkbenchContext";
+import { WorkbenchContentRenderer } from "./plugins/Workbench";
+import { rehypeFileSelectionMapping, rehypePreserveMathSourcePositions, type SelectionASTNode } from "./FileSelectionMapping";
+import {
+  CODE_HIGHLIGHT_CHAR_LIMIT,
+  CODE_HIGHLIGHT_HARD_LIMIT,
+  highlightCode,
+  shouldHighlightCode,
+} from "./WorkspaceCodeHighlight";
+
+const markdownRemarkPlugins = [remarkGfm, remarkMath, remarkCurrencyMath, remarkMathDelimiters, remarkCjkAutolinkBoundary, remarkCjkStrongBoundary];
+
+type RichContentProps = {
+  linkPolicy?: "external-only";
+  text?: string;
+  cwd?: string;
+  /** Workspace-relative path of the source document, used to resolve file links. */
+  documentPath?: string;
+  /** Legacy caller signature; public link actions are supplied by the service providers. */
+  onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
+  /**
+   * When true, inline HTML inside the markdown source is rendered as HTML
+   * instead of being escaped. Use only for trusted sources the user opened
+   * themselves (e.g. workspace file previews). Chat messages stay off by
+   * default so LLM output cannot inject arbitrary HTML.
+   */
+  allowRawHtml?: boolean;
+  sourceMapping?: boolean;
+};
+
+export type RichTextRenderContext = {
+  startOffset: number;
+  endOffset: number;
+  totalLength: number;
+  hasCursor: boolean;
+};
+
+export type RichTextRenderer = (
+  text: string,
+  keyPrefix: string,
+  context?: RichTextRenderContext,
+) => Array<JSX.Element | string>;
+
+type RichTextRenderOptions = {
+  renderText?: RichTextRenderer;
+};
+
+const MarkdownSourceContext = createContext("");
+const MermaidStreamingContext = createContext(false);
+// The code block whose source reaches `end` hosts the streaming cursor. The
+// cursor travels through context so the Markdown components keep a stable
+// identity while the source grows.
+const CodeCursorContext = createContext<{ end: number; cursor: ReactNode } | undefined>(undefined);
+
+type MermaidState =
+  | { status: "rendering" }
+  | { status: "rendered"; svg: string }
+  | { status: "error"; message: string };
+
+// The streaming cursor sentinel (CURSOR_SENTINEL in StreamingMarkdown) is a
+// private-use character appended to live text. It must never reach the
+// Mermaid parser, so any occurrence is stripped from extracted diagram code.
+const STREAM_CURSOR_SENTINEL_PATTERN = /\uE000/g;
+// While the diagram source is still streaming, render attempts are paced: a
+// debounce rides out chunk bursts, and a minimum interval between renders
+// keeps a fast stream from replacing the whole SVG on every chunk (each
+// replacement re-runs the layout, which reads as flicker).
+const STREAM_MERMAID_RENDER_DEBOUNCE_MS = 300;
+const STREAM_MERMAID_RENDER_INTERVAL_MS = 500;
+// Rendered SVGs are cached by (typography, code) so a diagram that moves from the
+// streaming tail into a stable block (fence closed + blank line) remounts
+// with its picture already committed instead of flashing the placeholder.
+// Only streaming renders populate the cache; settled messages always render.
+const mermaidSvgCache = new Map<string, string>();
+const MERMAID_SVG_CACHE_LIMIT = 64;
+
+function cacheMermaidSvg(key: string, svg: string): void {
+  mermaidSvgCache.delete(key);
+  mermaidSvgCache.set(key, svg);
+  if (mermaidSvgCache.size > MERMAID_SVG_CACHE_LIMIT) {
+    const oldest = mermaidSvgCache.keys().next().value;
+    if (oldest !== undefined) {
+      mermaidSvgCache.delete(oldest);
+    }
+  }
+}
+
+/**
+ * The code actually fed to the renderer. While the fence is still open the
+ * source may end with a partial line that keeps growing; feeding it to the
+ * parser would fail on every chunk. When the last line is not
+ * newline-terminated it is unfinished, so only the completed lines are
+ * rendered and the diagram grows line by line. A trailing newline (kept by
+ * the caller while streaming) means the last line is complete and must be
+ * included.
+ */
+function mermaidCodeToRender(code: string, streaming: boolean): string {
+  let codeToRender = code;
+  if (streaming && !code.endsWith("\n")) {
+    const lastLineBreak = code.lastIndexOf("\n");
+    codeToRender = lastLineBreak < 0 ? "" : code.slice(0, lastLineBreak + 1);
+  }
+  if (codeToRender.endsWith("\n")) {
+    codeToRender = codeToRender.slice(0, -1);
+  }
+  return codeToRender;
+}
+
+function diagramTypography(): { fontFamily: string; fontSize: number } {
+  const style = getComputedStyle(document.body);
+  return {
+    fontFamily: style.getPropertyValue("--appearance-content-font").trim() || style.fontFamily,
+    fontSize: Number.parseFloat(style.fontSize),
+  };
+}
+
+function mermaidRenderKey(typography: ReturnType<typeof diagramTypography>, codeToRender: string): string {
+  return JSON.stringify([typography.fontFamily, typography.fontSize, codeToRender]);
+}
+
+
+export const RichContent = memo(function RichContent(props: RichContentProps): JSX.Element {
+  const preview = useOptionalPreviewContent();
+  if (preview) return <div className="rich-content"><MarkdownContent {...props} text={props.text ?? ""} /></div>;
+  return <LegacyRichContent {...props} />;
+});
+
+function LegacyRichContent({
+  linkPolicy,
+  text = "",
+  cwd,
+  documentPath,
+  onOpenFile,
+  onOpenURL,
+  allowRawHtml = false,
+  sourceMapping = false,
+}: RichContentProps): JSX.Element {
+  const workbench = useOptionalApplicationWorkbench();
+  const fallback = (
+    <div className="rich-content">
+      <MarkdownContent
+        linkPolicy={linkPolicy}
+        text={text}
+        cwd={cwd}
+        documentPath={documentPath}
+        onOpenFile={onOpenFile}
+        onOpenURL={onOpenURL}
+        allowRawHtml={allowRawHtml}
+        sourceMapping={sourceMapping}
+      />
+    </div>
+  );
+  return <>{workbench && linkPolicy !== "external-only" ? workbench.renderContent({ category: "message", contentType: "text/markdown", content: text,
+    metadata: { cwd, allowRawHtml }, fallback }) : fallback}</>;
+}
+
+function MarkdownContentView({
+  text,
+  cwd,
+  documentPath,
+  renderText,
+  renderMermaid = true,
+  mermaidStreaming = false,
+  allowRawHtml = false,
+  sourceMapping = false,
+  documentContext,
+  codeCursor,
+  linkPolicy,
+}: {
+  text: string;
+  cwd?: string;
+  documentPath?: string;
+  renderText?: RichTextRenderer;
+  onOpenFile?: (path: string) => void;
+  onOpenURL?: (url: string, event?: ReactMouseEvent<HTMLElement>) => void;
+  renderMermaid?: boolean;
+  /** The diagram source is still streaming: render offscreen and commit only
+   * successful results (see MermaidDiagram). */
+  mermaidStreaming?: boolean;
+  allowRawHtml?: boolean;
+  sourceMapping?: boolean;
+  documentContext?: MarkdownFragmentContext;
+  /** Rendered after the last code line when a code block ends the source. */
+  codeCursor?: ReactNode;
+  /** External-only plugin messages cannot address Coding workspace files or embed unverified resources. */
+  linkPolicy?: "external-only";
+}): JSX.Element {
+  const publicFiles = Boolean(useOptionalPreviewContent());
+  const components = useMemo(
+    () => markdownComponents(cwd, renderText, linkPolicy === "external-only" ? false : renderMermaid, sourceMapping, publicFiles, documentPath, linkPolicy),
+    [cwd, renderText, renderMermaid, sourceMapping, publicFiles, documentPath, linkPolicy]
+  );
+  const source = documentContext?.referenceDefinitions ? `${documentContext.referenceDefinitions}\n${text}` : text;
+  const sourceEnd = source.trimEnd().length;
+  const codeCursorTarget = useMemo(
+    () => codeCursor ? { end: sourceEnd, cursor: codeCursor } : undefined,
+    [codeCursor, sourceEnd]
+  );
+  return (
+    <MermaidStreamingContext.Provider value={mermaidStreaming}>
+      <CodeCursorContext.Provider value={codeCursorTarget}>
+        <MarkdownSourceContext.Provider value={source}>
+          <ReactMarkdown
+            components={components}
+            // CommonMark links and GFM autolinks are the only text-to-link rules.
+            // File mentions stay literal; file navigation uses explicit link targets.
+            remarkPlugins={markdownRemarkPlugins}
+            rehypePlugins={[
+              ...(allowRawHtml ? [rehypeRaw] : []),
+              ...(sourceMapping ? [rehypePreserveMathSourcePositions] : []),
+              [rehypeKatex, { trust: false, maxSize: 20, maxExpand: 1000 }],
+              [rehypeHeadingIDs, documentContext?.headingIDs],
+              ...(sourceMapping ? [rehypeFileSelectionMapping] : []),
+            ]}
+            urlTransform={richMarkdownUrlTransform}
+          >
+            {source}
+          </ReactMarkdown>
+        </MarkdownSourceContext.Provider>
+      </CodeCursorContext.Provider>
+    </MermaidStreamingContext.Provider>
+  );
+}
+
+export const MarkdownContent = memo(MarkdownContentView);
+
+type CodeElementProps = {
+  className?: string;
+  children?: ReactNode;
+};
+
+function markdownComponents(
+  cwd: string | undefined,
+  renderText: RichTextRenderer | undefined,
+  renderMermaid: boolean,
+  sourceMapping: boolean,
+  publicFiles: boolean,
+  documentPath?: string,
+  linkPolicy?: "external-only",
+): Components {
+  const richTextOptions: RichTextRenderOptions = {
+    renderText,
+  };
+  const components: Components = {
+    p({ children }) {
+      return (
+        <p className="rich-paragraph">{renderMarkdownText(children, richTextOptions, "p")}</p>
+      );
+    },
+    // Heading levels share the same flat `rich-heading` shape so streamed
+    // chat output stays scannable, but they also expose a level modifier so
+    // the workspace file preview can render a proper document outline
+    // (h1 → big title with underline; h2 → section heading; h3 → sub-head).
+    h1({ children, id }) {
+      return (
+        <p className="rich-heading rich-heading--h1" id={id}>
+          {renderMarkdownText(children, richTextOptions, "h1")}
+        </p>
+      );
+    },
+    h2({ children, id }) {
+      return (
+        <p className="rich-heading rich-heading--h2" id={id}>
+          {renderMarkdownText(children, richTextOptions, "h2")}
+        </p>
+      );
+    },
+    h3({ children, id }) {
+      return (
+        <p className="rich-heading rich-heading--h3" id={id}>
+          {renderMarkdownText(children, richTextOptions, "h3")}
+        </p>
+      );
+    },
+    h4({ children, id }) {
+      return (
+        <p className="rich-heading rich-heading--h4" id={id}>
+          {renderMarkdownText(children, richTextOptions, "h4")}
+        </p>
+      );
+    },
+    h5({ children, id }) {
+      return (
+        <p className="rich-heading rich-heading--h5" id={id}>
+          {renderMarkdownText(children, richTextOptions, "h5")}
+        </p>
+      );
+    },
+    h6({ children, id }) {
+      return (
+        <p className="rich-heading rich-heading--h6" id={id}>
+          {renderMarkdownText(children, richTextOptions, "h6")}
+        </p>
+      );
+    },
+    a({ href, title, children }) {
+      const inner = renderMarkdownText(children, richTextOptions, "a");
+      if (href === PENDING_STREAM_LINK) return <span>{inner}</span>;
+      if (linkPolicy === "external-only" && !/^(https?:\/\/|mailto:)/i.test(href || "")) return <span>{inner}</span>;
+      const target = parseLinkTarget(href);
+      if (target.kind === "workspace-file") {
+        if (!publicFiles) {
+          return <span>{inner}</span>;
+        }
+        return (
+          <RichFileLink
+            key={`a-${formatWorkspaceFileTarget(target)}`}
+            display={inner}
+            cwd={cwd}
+            target={documentPath ? resolveWorkspaceFileTarget(documentPath, target) : target}
+          />
+        );
+      }
+      if (target.kind === "external") {
+        return <RichWebLink href={target.url} title={title} externalOnly={linkPolicy === "external-only"}>{inner}</RichWebLink>;
+      }
+      if (target.kind === "anchor") {
+        return <RichAnchorLink id={target.id} title={title}>{inner}</RichAnchorLink>;
+      }
+      return <span>{inner}</span>;
+    },
+    img({ src, alt }) {
+      if (linkPolicy === "external-only") return <span>{alt}</span>;
+      if (src === PENDING_STREAM_LINK) return <span>{alt}</span>;
+      if (!src) {
+        return null;
+      }
+      return <RichImage source={src} alt={alt ?? ""} cwd={cwd} inline />;
+    },
+    pre({ children, node }) {
+      const codeCursorTarget = useContext(CodeCursorContext);
+      const child = Children.toArray(children)[0];
+      if (isValidElement<CodeElementProps>(child)) {
+        const language = languageFromClassName(child.props.className);
+        if (language === "mermaid" && renderMermaid) {
+          const diagramCode = reactNodeText(child.props.children).replace(
+            STREAM_CURSOR_SENTINEL_PATTERN,
+            "",
+          );
+          return <MermaidDiagram code={diagramCode} />;
+        }
+        const displayedCode = reactNodeText(child.props.children);
+        const code = displayedCode.replace(/\n$/, "");
+        // An unclosed fence ends at the source end; a closed one ends at its
+        // closing marker, which is the end of the whitespace-trimmed source.
+        const endsSource = codeCursorTarget !== undefined &&
+          (node?.position?.end.offset ?? -1) >= codeCursorTarget.end;
+        return (
+          <RichCodeBlock
+            code={code}
+            displayedCode={displayedCode}
+            language={language}
+            cursor={endsSource ? codeCursorTarget.cursor : undefined}
+          />
+        );
+      }
+      return <pre className="rich-code">{children}</pre>;
+    },
+    code({ className, children }) {
+      return <code className={className}>{renderMarkdownText(children, richTextOptions, "code")}</code>;
+    },
+    li({ children }) {
+      return (
+        <li>
+          {renderMarkdownText(children, richTextOptions, "li")}
+        </li>
+      );
+    },
+    table({ children, node }) {
+      const source = useContext(MarkdownSourceContext);
+      return <RichTable source={source.slice(node?.position?.start.offset, node?.position?.end.offset)}>{children}</RichTable>;
+    },
+    th({ children, style }) {
+      return <th style={style}>{renderMarkdownText(children, richTextOptions, "th")}</th>;
+    },
+    td({ children, style }) {
+      return <td style={style}>{renderMarkdownText(children, richTextOptions, "td")}</td>;
+    },
+    blockquote({ children }) {
+      return <blockquote className="rich-blockquote">{renderMarkdownText(children, richTextOptions, "blockquote")}</blockquote>;
+    },
+    hr() {
+      return <hr className="rich-rule" />;
+    }
+  };
+  if (!sourceMapping) return components;
+  // Custom renderers replace the AST element, so carry its source boundaries
+  // onto their actual root (including highlighted code and rendered diagrams).
+  return Object.fromEntries(Object.entries(components).map(([tag, component]) => [tag,
+    (props: { node?: SelectionASTNode }) => {
+      const rendered = (component as (props: { node?: SelectionASTNode }) => JSX.Element | null)(props);
+      if (!rendered) return rendered;
+      const attributes = props.node?.properties;
+      const sourceProps = {
+        "data-file-source-start": attributes?.["data-file-source-start"],
+        "data-file-source-end": attributes?.["data-file-source-end"],
+      };
+      // Composite renderers need a DOM boundary because they do not forward
+      // arbitrary attributes. Inline links keep their mapped text children.
+      if (tag === "pre") return <div {...sourceProps}>{rendered}</div>;
+      return typeof rendered.type === "string" ? cloneElement(rendered, sourceProps) : rendered;
+    },
+  ])) as Components;
+}
+
+export function RichCodeBlock({
+  code,
+  displayedCode,
+  language,
+  cursor,
+}: {
+  code: string;
+  displayedCode: string;
+  language: string;
+  /** Painted after the last code character, outside the copied <code>. */
+  cursor?: ReactNode;
+}): JSX.Element {
+  const { t } = useI18n();
+  // Reveal is pinned to one snapshot. A growing stream must not re-run
+  // highlight.js on every token after the reader opts in.
+  const [revealedText, setRevealedText] = useState<string | null>(null);
+  const highlight = shouldHighlightCode(displayedCode, revealedText);
+  // The parser ends code with a newline that <pre> does not paint. An inline
+  // cursor after it would start an extra line, so move that newline after the
+  // cursor: the bar follows the last character and the block keeps its height.
+  const codeBody = cursor ? displayedCode.replace(/\n$/, "") : displayedCode;
+  const highlighted = useMemo(
+    () => highlight ? highlightCode(language, codeBody) : null,
+    [codeBody, highlight, language]
+  );
+  const highlightedCode = (
+    <>
+      {highlighted ? (
+        <code
+          className={`hljs language-${highlighted.language}`}
+          dangerouslySetInnerHTML={{ __html: highlighted.html }}
+        />
+      ) : (
+        <code className="hljs">{codeBody}</code>
+      )}
+      {cursor}
+      {cursor && codeBody !== displayedCode ? "\n" : null}
+    </>
+  );
+  const oversized = displayedCode.length > CODE_HIGHLIGHT_CHAR_LIMIT;
+  const canReveal = oversized && displayedCode.length <= CODE_HIGHLIGHT_HARD_LIMIT && !highlight;
+  const highlightControl = canReveal ? (
+    <button
+      type="button"
+      className="rich-code-highlight"
+      onClick={() => setRevealedText(displayedCode)}
+    >
+      {t("rich.highlightCode")}
+    </button>
+  ) : oversized && !highlight ? (
+    <span className="rich-code-plain-note">{t("rich.codePlainOnly")}</span>
+  ) : null;
+  // Two layouts:
+  //   - With a language tag, the header row carries the language label
+  //     and the copy button on the same baseline. Keeps the chrome
+  //     out of the code surface so long blocks don't paint the header
+  //     into a scrollable overflow box.
+  //   - Without a language tag (anonymous fenced block like ```` ``` ````),
+  //     there is no header row at all. The copy button floats over the
+  //     top-right of the <pre> instead — same `RichCodeBlock` styling,
+  //     same always-visible opacity behaviour, just anchored to the code
+  //     surface instead of a sibling row. The <pre> gets extra right
+  //     padding (see CSS) so short lines don't slide under the button.
+  if (language) {
+    return (
+      <div className="rich-code-block">
+        <div className="rich-code-header">
+          <span className="rich-code-language">{language}</span>
+          {highlightControl}
+          <MessageCopyButton
+            getText={() => code}
+            className="rich-code-copy"
+            iconSize={13}
+            idleLabel={t("rich.copyCode")}
+            copiedLabel={t("rich.codeCopied")}
+            failedLabel={t("rich.copyFailed")}
+          />
+        </div>
+        <pre className="rich-code">
+          {highlightedCode}
+        </pre>
+      </div>
+    );
+  }
+  return (
+    <div className={`rich-code-block${highlightControl ? "" : " rich-code-block--no-header"}`}>
+      {highlightControl ? (
+        <div className="rich-code-header">
+          {highlightControl}
+          <MessageCopyButton
+            getText={() => code}
+            className="rich-code-copy"
+            iconSize={13}
+            idleLabel={t("rich.copyCode")}
+            copiedLabel={t("rich.codeCopied")}
+            failedLabel={t("rich.copyFailed")}
+          />
+        </div>
+      ) : null}
+      <pre className="rich-code">
+        {highlightedCode}
+      </pre>
+      {highlightControl ? null : (
+        <MessageCopyButton
+          getText={() => code}
+          className="rich-code-copy"
+          iconSize={13}
+          idleLabel={t("rich.copyCode")}
+          copiedLabel={t("rich.codeCopied")}
+          failedLabel={t("rich.copyFailed")}
+        />
+      )}
+    </div>
+  );
+}
+
+function renderMarkdownText(
+  children: ReactNode,
+  options: RichTextRenderOptions,
+  keyPrefix: string
+): ReactNode {
+  const flattenedText = markdownNodeText(children);
+  return renderMarkdownTextWithContext(children, options, keyPrefix, {
+    offset: 0,
+    totalLength: flattenedText.length,
+    hasCursor: flattenedText.includes("\uE000"),
+  });
+}
+
+type MarkdownTextTraversal = {
+  offset: number;
+  totalLength: number;
+  hasCursor: boolean;
+};
+
+function renderMarkdownTextWithContext(
+  children: ReactNode,
+  options: RichTextRenderOptions,
+  keyPrefix: string,
+  traversal: MarkdownTextTraversal,
+): ReactNode {
+  const renderText = options.renderText;
+  if (!renderText) {
+    return children;
+  }
+  return Children.toArray(children).flatMap((child, index): ReactNode[] => {
+    const childKey = `${keyPrefix}-${index}`;
+    if (typeof child === "string" || typeof child === "number") {
+      const text = String(child);
+      const startOffset = traversal.offset;
+      traversal.offset += text.length;
+      return renderText(text, childKey, {
+        startOffset,
+        endOffset: traversal.offset,
+        totalLength: traversal.totalLength,
+        hasCursor: traversal.hasCursor,
+      });
+    }
+    if (!isValidElement<{ children?: ReactNode }>(child) || child.props.children === undefined) {
+      return [child];
+    }
+    return [
+      cloneElement(child, {
+        children: renderMarkdownTextWithContext(
+          child.props.children,
+          options,
+          childKey,
+          traversal,
+        )
+      })
+    ];
+  });
+}
+
+function markdownNodeText(node: ReactNode): string {
+  return Children.toArray(node).map((child) => {
+    if (typeof child === "string" || typeof child === "number") {
+      return String(child);
+    }
+    if (isValidElement<{ children?: ReactNode }>(child)) {
+      return markdownNodeText(child.props.children);
+    }
+    return "";
+  }).join("");
+}
+
+function RichFileLink({
+  display,
+  cwd,
+  target
+}: {
+  display: ReactNode;
+  cwd?: string;
+  target: WorkspaceFileLinkTarget;
+}): JSX.Element {
+  const { t } = useI18n();
+  const preview = useOptionalPreviewContent();
+  const reference = formatWorkspaceFileTarget(target);
+  const active = useConversationRenderActive();
+  const lifetime = useRef(0);
+  useEffect(() => {
+    lifetime.current++;
+    return () => { lifetime.current++; };
+  }, [preview, cwd, reference, active]);
+  const openFile = (): void => {
+    if (!preview || !cwd) { showActionErrorToast(t("workspace.files.openFailed")); return; }
+    const owner = lifetime.current;
+    void preview.service.openFile({ root: cwd, path: reference }).catch(cause => {
+      if (owner === lifetime.current) showActionErrorToast(cause, t("workspace.files.openFailed"));
+    });
+  };
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const path = target.path;
+  const normalizedPath = path.replace(/\\/g, "/");
+  const absolutePath = isAbsolutePath(normalizedPath)
+    ? path
+    : cwd
+      ? `${cwd.replace(/[\\/]+$/, "")}/${path.replace(/^[/\\]+/, "")}`
+      : path;
+  const fileName = normalizedPath.split("/").filter(Boolean).at(-1) ?? path;
+  const closeContextMenu = (): void => setContextMenu(null);
+  return (
+    <>
+      <Tooltip content={t("rich.openFile", { reference })}>
+        <button
+          type="button"
+          className="rich-link rich-file-link"
+          onClick={openFile}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setContextMenu({ x: event.clientX, y: event.clientY });
+          }}
+        >
+          <span className="rich-link-label">{display}</span>
+        </button>
+      </Tooltip>
+      {contextMenu ? (
+        <ThreadContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={closeContextMenu}
+          items={[
+            { label: t("workspace.files.openFile"), onSelect: openFile },
+            { separator: true },
+            { label: t("workspace.files.copyPath"), onSelect: () => copyToClipboard(absolutePath) },
+            { label: t("workspace.files.copyRelativePath"), onSelect: () => copyToClipboard(path) },
+            { label: t("workspace.files.copyFileName"), onSelect: () => copyToClipboard(fileName) },
+            ...(preview?.service.capabilities.revealItem
+              ? [{ separator: true } as const, {
+                  label: t("workspace.files.revealInFileManager"),
+                  onSelect: () => preview.service.revealItem({ root: cwd ?? "", path: absolutePath }),
+                }]
+              : []),
+          ]}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function isAbsolutePath(path: string): boolean {
+  return path.startsWith("/") || path.startsWith("//") || /^[a-z]:\//i.test(path);
+}
+
+function RichAnchorLink({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title?: string;
+  children: ReactNode;
+}): JSX.Element {
+  return (
+    <Tooltip content={title}>
+      <a
+        className="rich-link rich-anchor-link"
+        href={`#${encodeURIComponent(id)}`}
+        onClick={(event) => {
+          event.preventDefault();
+          const root = event.currentTarget.closest(".rich-content");
+          const target = Array.from(root?.querySelectorAll<HTMLElement>("[id]") ?? [])
+            .find((element) => element.id === id);
+          target?.scrollIntoView({ block: "start" });
+        }}
+      >
+        <span className="rich-link-label">{children}</span>
+      </a>
+    </Tooltip>
+  );
+}
+
+function RichWebLink({
+  externalOnly = false,
+  href,
+  title,
+  children,
+}: {
+  href: string;
+  externalOnly?: boolean;
+  title?: string;
+  children: ReactNode;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+  const browser = useBrowserControls();
+  const active = useConversationRenderActive();
+  const lifetime = useRef(0);
+  useEffect(() => {
+    lifetime.current++;
+    return () => { lifetime.current++; };
+  }, [browser, href, active]);
+  const open = (external: boolean, modifiers?: ReturnType<typeof workspaceBrowserClickModifiers>): void => {
+    if (!browser) { showActionErrorToast(t("workspace.browser.previewUnavailable")); return; }
+    const owner = lifetime.current;
+    void (external ? browser.openExternal(href) : browser.openURL({ url: href, modifiers }))
+      .catch(cause => {
+        if (owner === lifetime.current) showActionErrorToast(cause, t("environment.openFailed"));
+      });
+  };
+  const openLink = (event: ReactMouseEvent<HTMLAnchorElement>): void => {
+    if (event.button > 1) return;
+    event.preventDefault();
+    open(externalOnly, workspaceBrowserClickModifiers(event));
+  };
+  const closeContextMenu = (): void => setContextMenu(null);
+  return (
+    <>
+      <Tooltip content={title ?? t("rich.openLink", { url: href })}>
+        <a
+          className="rich-link rich-web-link"
+          href={href}
+          rel="noopener noreferrer"
+          onAuxClick={openLink}
+          onClick={openLink}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setContextMenu({ x: event.clientX, y: event.clientY });
+          }}
+        >
+          <span className="rich-link-content">
+            {externalOnly ? <Globe2 className="icon-xs" /> : <RichWebLinkIcon href={href} />}
+            <span className="rich-link-label">{children}</span>
+          </span>
+        </a>
+      </Tooltip>
+      {contextMenu ? (
+        <ThreadContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={closeContextMenu}
+          items={[
+            ...(!externalOnly ? [{ label: t("rich.openLinkInWorkspace"), onSelect: () => open(false) }] : []),
+            { label: t("rich.openLinkExternal"), onSelect: () => open(true) },
+          ]}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function RichWebLinkIcon({ href }: { href: string }): JSX.Element {
+  if (/^mailto:/i.test(href)) {
+    return (
+      <span className="rich-link-icon" aria-hidden="true">
+        <Mail className="icon-xs" />
+      </span>
+    );
+  }
+
+  const host = linkHost(href);
+  if (host && /(^|\.)github\.com$/i.test(host)) {
+    return (
+      <span className="rich-link-icon" aria-hidden="true">
+        <Github className="icon-xs" />
+      </span>
+    );
+  }
+
+  const favicon = faviconSource(href);
+  return (
+    <span className="rich-link-icon rich-link-favicon-frame" aria-hidden="true">
+      <Globe2 className="icon-xs rich-link-fallback-icon" />
+      {favicon ? (
+        <img
+          className="rich-link-favicon"
+          src={favicon}
+          alt=""
+          loading="lazy"
+          onError={(event) => {
+            event.currentTarget.style.display = "none";
+          }}
+        />
+      ) : null}
+    </span>
+  );
+}
+
+function faviconSource(href: string): string | undefined {
+  try {
+    const url = new URL(href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      return undefined;
+    }
+    return `${url.origin}/favicon.ico`;
+  } catch {
+    return undefined;
+  }
+}
+
+function linkHost(href: string): string | undefined {
+  try {
+    return new URL(href).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+function languageFromClassName(className: string | undefined): string {
+  const match = className?.match(/(?:^|\s)language-([^\s]+)/);
+  return match?.[1]?.toLowerCase() ?? "";
+}
+
+function reactNodeText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") {
+    return String(node);
+  }
+  if (Array.isArray(node)) {
+    return node.map(reactNodeText).join("");
+  }
+  return "";
+}
+
+const richMarkdownUrlTransform: UrlTransform = (url, key) => {
+  if (url === PENDING_STREAM_LINK) return url;
+  if (key === "href") {
+    return parseLinkTarget(url).kind === "invalid" ? "" : url;
+  }
+  return defaultUrlTransform(url);
+};
+
+type MarkdownASTNode = {
+  type?: string;
+  tagName?: string;
+  value?: string;
+  properties?: Record<string, unknown>;
+  children?: MarkdownASTNode[];
+};
+
+function rehypeHeadingIDs(headingIDs?: readonly string[]) {
+  return (tree: MarkdownASTNode): void => {
+    const usedIDs = new Set<string>();
+    let headingIndex = 0;
+    visitMarkdownAST(tree, (node) => {
+      if (!/^h[1-6]$/.test(node.tagName ?? "")) {
+        return;
+      }
+      const baseSlug = markdownHeadingSlug(markdownASTText(node));
+      if (!baseSlug) {
+        return;
+      }
+      const id = headingIDs?.[headingIndex++] ?? uniqueHeadingID(baseSlug, usedIDs);
+      node.properties = {
+        ...node.properties,
+        id,
+      };
+    });
+  };
+}
+
+function uniqueHeadingID(base: string, used: Set<string>): string {
+  let id = base;
+  let suffix = 0;
+  while (used.has(id)) id = `${base}-${++suffix}`;
+  used.add(id);
+  return id;
+}
+
+// Use the same CommonMark/GFM parser and text repairs as the render path.
+// Metadata is cached per frozen fragment; ordinary deltas only parse the tail.
+const markdownMetadataParser = unified()
+  .use(remarkParse)
+  .use(markdownRemarkPlugins);
+
+type MarkdownFragmentMetadata = {
+  definitionSource: string;
+  headingSlugs: string[];
+  hasMermaid: boolean;
+  endsInMath: boolean;
+  hasContent: boolean;
+};
+
+export type MarkdownFragmentContext = {
+  referenceDefinitions: string;
+  headingIDs: readonly string[];
+  hasMermaid: boolean;
+  endsInMath: boolean;
+  hasContent: boolean;
+};
+
+type MarkdownDocumentFragment = {
+  text: string;
+  parsed: MarkdownFragmentMetadata;
+  resolved: MarkdownFragmentMetadata;
+  context: MarkdownFragmentContext;
+};
+
+export type MarkdownDocument = {
+  fragments: MarkdownDocumentFragment[];
+};
+
+export function inspectMarkdownFragment(text: string): MarkdownFragmentMetadata {
+  const tree = markdownMetadataParser.runSync(markdownMetadataParser.parse(text), text) as MarkdownRoot;
+  const definitions: Definition[] = [];
+  const headingSlugs: string[] = [];
+  let hasMermaid = false;
+  visitMarkdownAST(tree, (node) => {
+    if (node.type === "definition") definitions.push(node as Definition);
+    if (node.type === "heading") {
+      const slug = markdownHeadingSlug(markdownSourceText(node));
+      if (slug) headingSlugs.push(slug);
+    }
+    if (node.type === "code" && "lang" in node && typeof node.lang === "string") {
+      hasMermaid ||= node.lang.toLowerCase() === "mermaid";
+    }
+  });
+  let lastNode = tree.children.at(-1) as MarkdownASTNode | undefined;
+  while (lastNode?.children?.length) lastNode = lastNode.children.at(-1);
+  return {
+    definitionSource: definitions.length ? toMarkdown({ type: "root", children: definitions }) : "",
+    headingSlugs,
+    hasMermaid,
+    endsInMath: lastNode?.type === "math",
+    hasContent: tree.children.some(node => node.type !== "definition"),
+  };
+}
+
+function markdownSourceText(node: MarkdownASTNode): string {
+  if (node.type === "text" || node.type === "inlineCode" || node.type === "inlineMath") return node.value ?? "";
+  return node.children?.map(markdownSourceText).join("") ?? "";
+}
+
+/** Share reference definitions and heading IDs without replacing stable DOM. */
+export function createMarkdownDocument(texts: readonly string[], previous?: MarkdownDocument): MarkdownDocument {
+  const parsed = texts.map((text, index) => {
+    const old = previous?.fragments[index];
+    return old?.text === text ? old.parsed : inspectMarkdownFragment(text);
+  });
+  // Prefix definitions so an earlier definition wins even when a later block
+  // repeats its identifier. Serialization preserves escaped labels and titles,
+  // including definitions nested in lists or block quotes.
+  const referenceDefinitions = parsed.map(fragment => fragment.definitionSource).filter(Boolean).join("\n");
+  const usedIDs = new Set<string>();
+  const fragments = texts.map((text, index): MarkdownDocumentFragment => {
+    const old = previous?.fragments[index];
+    const sameDefinitions = old?.context.referenceDefinitions === referenceDefinitions;
+    const resolved = old?.parsed === parsed[index] && sameDefinitions
+      ? old.resolved
+      : referenceDefinitions ? inspectMarkdownFragment(`${referenceDefinitions}\n${text}`) : parsed[index];
+    const headingIDs = resolved.headingSlugs.map(slug => uniqueHeadingID(slug, usedIDs));
+    const context = sameDefinitions
+      && old.context.hasMermaid === resolved.hasMermaid
+      && old.context.endsInMath === resolved.endsInMath
+      && old.context.hasContent === resolved.hasContent
+      && old.context.headingIDs.length === headingIDs.length
+      && old.context.headingIDs.every((id, position) => id === headingIDs[position])
+      ? old.context
+      : { referenceDefinitions, headingIDs, hasMermaid: resolved.hasMermaid, endsInMath: resolved.endsInMath, hasContent: resolved.hasContent };
+    return { text, parsed: parsed[index], resolved, context };
+  });
+  return { fragments };
+}
+
+function visitMarkdownAST(node: MarkdownASTNode, visitor: (node: MarkdownASTNode) => void): void {
+  visitor(node);
+  node.children?.forEach((child) => visitMarkdownAST(child, visitor));
+}
+
+function markdownASTText(node: MarkdownASTNode): string {
+  if (node.type === "text") {
+    return node.value ?? "";
+  }
+  return node.children?.map(markdownASTText).join("") ?? "";
+}
+
+function markdownHeadingSlug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^\p{L}\p{M}\p{N}\s_-]/gu, "")
+    .replace(/\s+/g, "-");
+}
+
+function RichImage({
+  source,
+  alt,
+  cwd,
+  inline = false,
+}: {
+  source: string;
+  alt: string;
+  cwd: string | undefined;
+  inline?: boolean;
+}): JSX.Element {
+  const { t } = useI18n();
+  const preview = useOptionalPreviewContent();
+  const resolvedSource = preview ? preview.service.resolveResourceURL({ source, cwd }) : resolvePreviewResourceURL(source, cwd);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const [loadedSource, setLoadedSource] = useState<string | null>(null);
+  const { openPreview } = useImagePreview();
+  const titleText = imageTarget(source);
+  const register = useImagePreviewRegistration(!resolvedSource || failedSource === resolvedSource ? null : { src: resolvedSource, alt, title: titleText });
+  const handleActivate = (origin: HTMLElement): void => {
+    if (!resolvedSource) return;
+    openPreview({ src: resolvedSource, alt, title: titleText }, origin);
+  };
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLImageElement>): void => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      handleActivate(event.currentTarget);
+    }
+  };
+  const unavailable = !resolvedSource || failedSource === resolvedSource;
+  const pending = !unavailable && loadedSource !== resolvedSource;
+  const image = <>
+    {unavailable || pending ? <span className="rich-image rich-image-unavailable"
+      role={unavailable ? "img" : undefined} aria-label={unavailable ? t("imagePreview.loadFailed") : undefined}
+      aria-hidden={pending || undefined} /> : null}
+    {!unavailable ? <img
+      className="rich-image"
+      ref={register}
+      src={resolvedSource}
+      alt={alt}
+      loading="lazy"
+      role="button"
+      tabIndex={0}
+      aria-label={
+        alt ? t("rich.enlargeNamed", { alt }) : t("rich.enlargeImage")
+      }
+      onClick={event => handleActivate(event.currentTarget)}
+      onKeyDown={handleKeyDown}
+      onLoad={() => setLoadedSource(resolvedSource)}
+      onError={() => setFailedSource(resolvedSource)}
+    /> : null}
+  </>;
+  if (inline) {
+    return <span className="rich-image-block inline">{image}</span>;
+  }
+  return (
+    <figure className="rich-image-block">
+      {image}
+    </figure>
+  );
+}
+
+function MermaidDiagram({ code: source }: { code: string }): JSX.Element {
+  // Context keeps the Markdown component types stable as the live tail settles.
+  // Recreating the custom `pre` component would remount an already drawn diagram.
+  const streaming = useContext(MermaidStreamingContext);
+  const code = streaming ? source : source.replace(/\n$/, "");
+  const { locale, t } = useI18n();
+  const { openPreview } = useImagePreview();
+  const reactID = useId();
+  const diagramID = useMemo(() => `wuu-mermaid-${reactID.replace(/[^a-zA-Z0-9_-]/g, "")}-${hashString(code)}`, [code, reactID]);
+  const [typography, setTypography] = useState(diagramTypography);
+  // Mount-time snapshot only: if the same (typography, code) diagram was already
+  // rendered while streaming, start with that picture committed instead of
+  // the placeholder. Refs below mirror the snapshot so the first effect run
+  // skips the identical render instead of flashing.
+  const mountKey = mermaidRenderKey(
+    typography,
+    mermaidCodeToRender(code, streaming),
+  );
+  const [state, setState] = useState<MermaidState>(() => {
+    const svg = mermaidSvgCache.get(mountKey);
+    return svg ? { status: "rendered", svg } : { status: "rendering" };
+  });
+  const renderAttemptRef = useRef(0);
+  const hasRenderedRef = useRef(mermaidSvgCache.has(mountKey));
+  const lastRenderedKeyRef = useRef(
+    mermaidSvgCache.has(mountKey) ? mountKey : "",
+  );
+  const lastRenderStartedAtRef = useRef(0);
+
+  useEffect(() => {
+    const update = (): void => {
+      lastRenderedKeyRef.current = "";
+      mermaidSvgCache.clear();
+      setTypography(diagramTypography());
+    };
+    const stopObserving = observeAppearance(update);
+    document.fonts?.addEventListener("loadingdone", update);
+    return () => {
+      stopObserving();
+      document.fonts?.removeEventListener("loadingdone", update);
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const codeToRender = mermaidCodeToRender(code, streaming);
+    const renderKey = mermaidRenderKey(typography, codeToRender);
+    if (renderKey === lastRenderedKeyRef.current) {
+      // An identical diagram is already committed (e.g. chunks that only
+      // changed the partial line, or a settle with the same source).
+      return;
+    }
+    if (!codeToRender) {
+      // Nothing renderable yet; keep the placeholder until lines complete.
+      return;
+    }
+
+    const renderDiagram = async (): Promise<void> => {
+      lastRenderStartedAtRef.current = performance.now();
+      const attempt = renderAttemptRef.current + 1;
+      renderAttemptRef.current = attempt;
+      try {
+        const { render } = await import("./MermaidRuntime");
+        if (cancelled) return;
+        const result = await render(codeToRender, {
+          ...typography,
+          idPrefix: `${diagramID}-${attempt}`,
+          // Chat diagrams are inert. Source directives cannot enable navigation
+          // or remote images, and explicit graph directions retain their meaning.
+          links: false,
+          images: false,
+          autoDirection: false,
+          maxEdges: 500,
+        });
+        if (cancelled || attempt !== renderAttemptRef.current) {
+          return;
+        }
+        hasRenderedRef.current = true;
+        lastRenderedKeyRef.current = renderKey;
+        if (streaming) {
+          // Only streaming renders populate the cache: a later remount of
+          // the same diagram (tail → stable block promotion) can reuse the
+          // picture. Settled messages always render fresh.
+          cacheMermaidSvg(renderKey, result.svg);
+        }
+        setState({ status: "rendered", svg: result.svg });
+      } catch (error) {
+        if (cancelled || attempt !== renderAttemptRef.current) {
+          return;
+        }
+        if (streaming) {
+          // Partial/invalid source: keep the last committed diagram (or the
+          // placeholder if nothing has rendered yet). Never record the key,
+          // so the settle-time render still re-attempts this source.
+          return;
+        }
+        setState({
+          status: "error",
+          message:
+            error instanceof Error ? error.message : t("rich.mermaidFailed"),
+        });
+      }
+    };
+
+    if (streaming) {
+      // Offscreen partial render while the source keeps growing. The debounce
+      // rides out chunk bursts; the minimum interval guarantees at most one
+      // whole-SVG replacement per interval so fast streams stay calm.
+      const elapsed = performance.now() - lastRenderStartedAtRef.current;
+      const delay = Math.max(
+        STREAM_MERMAID_RENDER_DEBOUNCE_MS,
+        STREAM_MERMAID_RENDER_INTERVAL_MS - elapsed,
+      );
+      timer = setTimeout(() => {
+        void renderDiagram();
+      }, delay);
+    } else {
+      // Keep the last committed diagram visible while the final render is in
+      // flight so settling never flashes the placeholder.
+      if (!hasRenderedRef.current) {
+        setState({ status: "rendering" });
+      }
+      void renderDiagram();
+    }
+
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
+    };
+  }, [code, diagramID, locale, streaming, typography]);
+
+  return (
+    <div className="rich-mermaid" data-mermaid-state={state.status} aria-busy={state.status === "rendering"}>
+      {state.status === "rendered" ? (
+        <button
+          type="button"
+          className="rich-mermaid-diagram"
+          aria-label={t("rich.enlargeDiagram")}
+          onClick={(event) => {
+            const svg = event.currentTarget.querySelector("svg")!;
+            const snapshot = svg.cloneNode(true) as SVGSVGElement;
+            const style = getComputedStyle(svg);
+            // The preview can be saved as a standalone SVG. Resolve inherited
+            // theme variables before taking it out of the conversation surface.
+            for (const property of Array.from(style)) {
+              if (property.startsWith("--pele-")) {
+                snapshot.style.setProperty(property, style.getPropertyValue(property));
+              }
+            }
+            snapshot.style.backgroundColor = style.getPropertyValue("--pele-bg");
+            openPreview({
+              svg: new XMLSerializer().serializeToString(snapshot),
+              alt: t("rich.mermaidDiagram"),
+              title: t("rich.mermaidDiagram"),
+            });
+          }}
+          dangerouslySetInnerHTML={{ __html: state.svg }}
+        />
+      ) : state.status === "error" ? (
+        <div className="rich-mermaid-error">
+          <span>{state.message}</span>
+          <pre><code>{code}</code></pre>
+        </div>
+      ) : (
+        <div className="rich-mermaid-loading" role="status">{t("rich.renderingDiagram")}</div>
+      )}
+    </div>
+  );
+}
+
+function hashString(value: string): string {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash.toString(36);
+}

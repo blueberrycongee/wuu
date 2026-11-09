@@ -1,0 +1,372 @@
+package ai.wuu.nativeapp
+
+import android.content.Intent
+import android.net.Uri
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.viewModels
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.launch
+
+class MainActivity : ComponentActivity() {
+    private val model: AppModel by viewModels()
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState); enableEdgeToEdge()
+        consumeNotification(intent)
+        setContent {
+            WuuTheme {
+                Surface(Modifier.fillMaxSize()) { WuuRoot(model) }
+            }
+        }
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent); setIntent(intent); consumeNotification(intent)
+    }
+    private fun consumeNotification(intent: Intent) {
+        if (intent.action == Intent.ACTION_SEND || intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            // Consume once; delivery still requires the owner pressing Send.
+            val shared = Intent(intent)
+            intent.action = null; intent.removeExtra(Intent.EXTRA_TEXT); intent.removeExtra(Intent.EXTRA_STREAM)
+            model.perform {
+                check(model.personal.canSend && !model.personal.hasPending) { "请先连接 Personal 主聊天，再从原应用重新分享。" }
+                val stamp = model.personal.contextID
+                val (prompt, files) = readSharedMaterial(this@MainActivity, shared)
+                check(model.personal.contextID == stamp) { "连接已变更，请重新分享。" }
+                model.personal.stageSharedMaterial(prompt, files)
+                model.selectArea(true)
+            }
+            return
+        }
+        val url = intent.data
+        if (url?.host == "personal") {
+            intent.data = null
+            PersonalLocation.fromURL(url.toString())?.let(model::openPersonal)
+            return
+        }
+        val extras = intent.extras ?: return
+        val payload = extras.keySet().mapNotNull { key -> extras.getString(key)?.let { key to it } }.toMap()
+        payload.keys.forEach { intent.removeExtra(it) }
+        model.openNotification(payload)
+    }
+}
+
+@Composable private fun WuuRoot(model: AppModel) {
+    val owner = LocalLifecycleOwner.current
+    val context = LocalContext.current
+    DisposableEffect(owner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) model.foreground()
+            if (event == Lifecycle.Event.ON_STOP) model.background()
+        }
+        owner.lifecycle.addObserver(observer)
+        if (owner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) model.foreground()
+        onDispose { owner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(model.browserURL) {
+        model.browserURL?.let {
+            try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(it))) }
+            catch (e: Exception) { model.error = e.message }
+            model.browserURL = null
+        }
+    }
+    when {
+        model.account == null -> LoginScreen(model)
+        model.host == null -> DevicesScreen(model)
+        else -> {
+            LaunchedEffect(model.activeID, model.workspace) { model.rememberLocation() }
+            Column(Modifier.fillMaxSize().navigationBarsPadding().imePadding()) {
+                Box(Modifier.weight(1f)) {
+                    if (model.personalSelected) PersonalScreen(model)
+                    else if (model.isPersonalHost) Column(Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+                        Text("此宿主用于 Personal。返回电脑列表以访问 Projects。")
+                        TextButton(onClick = { model.perform { model.leaveHost(); model.foreground() } }) { Text("电脑列表") }
+                    } else ConversationScreen(model)
+                }
+                NavigationBar {
+                    NavigationBarItem(selected = !model.personalSelected, onClick = { model.selectArea(false) }, icon = { Icon(Icons.Default.Folder, null) }, label = { Text("Projects") })
+                    NavigationBarItem(selected = model.personalSelected, onClick = { model.selectArea(true) }, icon = { Icon(Icons.Default.Person, null) }, label = { Text("Personal") })
+                }
+            }
+        }
+    }
+    model.recovery?.let { secret ->
+        AlertDialog(onDismissRequest = {}, title = { Text("保存账号恢复密钥") },
+            text = { androidx.compose.foundation.text.selection.SelectionContainer {
+                Text((if (model.resetRecovery != null) "密码已更新，所有设备已退出。旧恢复密钥已失效，请保存新密钥后重新登录。\n\n" else "") + "请将下面的密钥保存到密码管理器。它可用于重置密码，切勿分享。确认后此页面不再展示。\n\n$secret")
+            } },
+            confirmButton = { TextButton(onClick = model::acknowledgeRecovery) { Text("我已安全保存") } })
+    }
+    model.error?.let { message ->
+        AlertDialog(onDismissRequest = { model.error = null }, title = { Text("提示") }, text = { Text(message) },
+            confirmButton = { TextButton(onClick = { model.error = null }) { Text("知道了") } })
+    }
+    model.approval?.let { request ->
+        AlertDialog(onDismissRequest = {}, title = { Text("需要在电脑上处理") },
+            text = { Text("电脑请求 ${request.optString("method")}。此请求尚不能在手机上处理，可以拒绝后在电脑上继续。") },
+            confirmButton = { TextButton(onClick = { model.perform { model.rejectApproval() } }) { Text("拒绝请求") } })
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable private fun DevicesScreen(model: AppModel) {
+    var accountPanel by remember { mutableStateOf(false) }
+    Scaffold(topBar = {
+        TopAppBar(title = { Text("你的电脑", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) }, actions = {
+            IconButton(onClick = { model.perform { model.loadDevices() } }) { Icon(Icons.Default.Refresh, "刷新") }
+            IconButton(onClick = { accountPanel = true }) { Icon(Icons.Default.AccountCircle, "账号") }
+        })
+    }) { padding ->
+        LazyColumn(Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            val hosts = model.devices.filter { it.optString("role") == "host" }
+            if (hosts.isEmpty()) item { Text("在电脑上登录同一账号后，它会出现在这里。") }
+            listOf(true, false).forEach { online ->
+                val group = hosts.filter { it.optBoolean("online") == online }
+                items(group, key = { it.getString("pub") }) { device ->
+                    ListItem(headlineContent = { Text(device.optString("name", "电脑")) },
+                        supportingContent = { Text(if (online) "在线" else "离线", style = MaterialTheme.typography.bodySmall) },
+                        leadingContent = { Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = MaterialTheme.shapes.small) {
+                            Icon(Icons.Default.Computer, null, Modifier.padding(12.dp).size(22.dp))
+                        } }, trailingContent = { Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null) },
+                        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                        modifier = Modifier.clip(MaterialTheme.shapes.medium).clickable { model.selectHost(device) })
+                }
+            }
+        }
+    }
+    if (accountPanel) AccountSettingsSheet(model) { accountPanel = false }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable private fun ConversationScreen(model: AppModel) {
+    val scope = rememberCoroutineScope()
+    val drawer = rememberDrawerState(DrawerValue.Closed)
+    val context = LocalContext.current
+    var menu by remember { mutableStateOf(false) }
+    var accountPanel by remember { mutableStateOf(false) }
+    var renameID by remember { mutableStateOf<String?>(null) }
+    var renameTitle by remember { mutableStateOf("") }
+    var settings by remember { mutableStateOf<Pair<String, ThreadSettings>?>(null) }
+    LaunchedEffect(model.search, model.archivedList) {
+        kotlinx.coroutines.delay(250)
+        model.perform { model.loadThreads() }
+    }
+    var archive by remember { mutableStateOf<ThreadRow?>(null) }
+    var workspaceMenu by remember { mutableStateOf(false) }
+    val drafts = model.conversationDrafts
+    val attachmentDrafts = model.conversationAttachments
+    val draftKey = model.activeID ?: "new"
+    val draft = drafts[draftKey] ?: ""
+    val attachments = attachmentDrafts[draftKey] ?: emptyList()
+    // When the IME is open, let the system hide it first. Handling Back here would
+    // leave the host and wipe conversationDrafts.
+    BackHandler(enabled = !WindowInsets.isImeVisible) {
+        if (drawer.isOpen) scope.launch { drawer.close() } else model.perform { model.leaveHost(); model.foreground() }
+    }
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = true, drawerContent = {
+        ModalDrawerSheet(Modifier.fillMaxWidth(0.88f).widthIn(max = 360.dp), drawerContainerColor = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { model.perform { model.leaveHost(); model.foreground() } },
+                    modifier = Modifier.weight(1f), contentPadding = PaddingValues(12.dp)) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(24.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text(model.host?.optString("name") ?: "电脑列表", modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodyMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                IconButton(onClick = { accountPanel = true }) { Icon(Icons.Default.AccountCircle, "账号") }
+                IconButton(onClick = { scope.launch { drawer.close() } }) { Icon(Icons.Default.Close, "关闭会话列表") }
+                IconButton(onClick = { scope.launch { drawer.close(); model.perform { model.newThread() } } }, enabled = model.connected) { Icon(Icons.Default.Add, "新会话") }
+            }
+            BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                TextButton(onClick = { workspaceMenu = true }, enabled = model.connected,
+                    modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(12.dp)) {
+                    Icon(Icons.Default.FolderOpen, null, Modifier.size(24.dp))
+                    Spacer(Modifier.width(16.dp))
+                    Text(if (model.workspace.isBlank()) "所有工作区" else
+                        model.workspaces.firstOrNull { it.optString("path") == model.workspace }?.optString("name")?.takeIf { it.isNotBlank() }
+                            ?: java.io.File(model.workspace).name.ifBlank { model.workspace },
+                        modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodyMedium)
+                    Icon(Icons.Default.ExpandMore, "选择工作区", Modifier.size(24.dp))
+                }
+                DropdownMenu(expanded = workspaceMenu, onDismissRequest = { workspaceMenu = false },
+                    modifier = Modifier.width(maxWidth).heightIn(max = 360.dp)) {
+                    DropdownMenuItem(text = { Text("所有工作区") }, onClick = { workspaceMenu = false; model.workspace = ""; model.perform { model.loadThreads() } })
+                    model.workspaces.forEach { ws ->
+                        DropdownMenuItem(text = { Text(ws.optString("name").ifBlank { ws.optString("path") }, maxLines = 2, overflow = TextOverflow.Ellipsis) }, onClick = {
+                            workspaceMenu = false; model.workspace = ws.optString("path"); model.perform { model.loadThreads() }
+                        })
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            TextField(model.search, { model.search = it }, singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(20.dp)) },
+                placeholder = { Text("搜索会话", style = MaterialTheme.typography.bodyMedium) },
+                shape = MaterialTheme.shapes.medium, colors = wuuFieldColors(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp))
+            LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                items(model.rows, key = { it.id }) { row ->
+                    ConversationRow(row, model.activeID == row.id, model.connected && !row.saved,
+                        open = { scope.launch { drawer.close(); model.perform { model.open(row.id) } } },
+                        pin = { model.perform { model.pin(row) } }, archive = { archive = row })
+                }
+            }
+
+        }
+    }) {
+        Scaffold(topBar = {
+            TopAppBar(title = { Text(model.title, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold) },
+                navigationIcon = { IconButton(onClick = { scope.launch { drawer.open() } }) { Icon(Icons.Default.Menu, "会话列表") } },
+                actions = {
+                    IconButton(onClick = { model.perform { model.newThread() } }, enabled = model.connected) { Icon(Icons.Default.Add, "新会话") }
+                    IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "会话操作") }
+                    DropdownMenu(menu, { menu = false }) {
+                        DropdownMenuItem(text = { Text("会话设置") }, enabled = model.connected && model.threadSettings != null && model.activeID != null,
+                            onClick = { menu = false; settings = model.activeID!! to model.threadSettings!! })
+                        DropdownMenuItem(text = { Text("重命名") }, enabled = model.connected && model.activeID != null,
+                            onClick = { menu = false; renameID = model.activeID; renameTitle = model.title })
+                        DropdownMenuItem(text = { Text(if (model.hasOlder || model.messages.any { it.contentRef.isNotEmpty() }) "导出已加载文本" else "导出对话文本") }, onClick = {
+                            menu = false
+                            model.perform { model.export(context) }
+                        })
+                    }
+                })
+        }, bottomBar = {
+            Column(Modifier.navigationBarsPadding().imePadding().padding(12.dp)) {
+                model.questions.firstOrNull { it.optString("thread_id") == model.activeID }?.let { QuestionView(model, it) }
+                if (model.running) Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("电脑正在工作", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium)
+                    TextButton(onClick = { model.perform { model.stop() } }, enabled = model.connected) { Text("停止") }
+                }
+                ComposerRow(
+                    value = draft,
+                    onChange = { drafts[draftKey] = it },
+                    onSend = {
+                        val text = draft; val key = draftKey; val files = attachments
+                        model.perform {
+                            if (model.send(text, files)) {
+                                if (drafts[key] == text) drafts[key] = ""
+                                attachmentDrafts[key] = (attachmentDrafts[key] ?: emptyList()).filterNot { file -> files.any { it.id == file.id } }
+                            }
+                        }
+                    },
+                    enabled = model.connected && !model.readOnly,
+                    sending = model.sending,
+                    attachments = attachments,
+                    onAttachments = { attachmentDrafts[draftKey] = it },
+                    model = model,
+                    draftKey = draftKey,
+                    placeholder = if (model.running) "添加后续消息" else "发送消息",
+                    showAttach = model.connected && model.activeID != null && !model.readOnly && !model.sending,
+                )
+            }
+        }) { padding ->
+            val timeline = remember(model.messages) { conversationTimeline(model.messages) }
+            val list = key(model.activeID) { rememberLazyListState() }
+            var following by remember(model.activeID) { mutableStateOf(true) }
+            val dragging by list.interactionSource.collectIsDraggedAsState()
+            LaunchedEffect(list, model.activeID) {
+                snapshotFlow { dragging to !list.canScrollForward }.collect { (userDrag, atBottom) ->
+                    if (userDrag || atBottom) following = atBottom
+                }
+            }
+            // Keep the user's follow choice across insertion and keyboard resize;
+            // measuring canScrollForward after insertion loses that choice.
+            val viewportSize by remember(list) { derivedStateOf { list.layoutInfo.viewportSize } }
+            LaunchedEffect(model.messages.lastOrNull(), model.pending.lastOrNull()?.id, viewportSize) {
+                if (!following || model.messages.isEmpty()) return@LaunchedEffect
+                // Defer past the measure/layout pass that updated viewportSize.
+                withFrameNanos { }
+                val total = list.layoutInfo.totalItemsCount
+                if (total <= 0) return@LaunchedEffect
+                val target = (timeline.size + model.pending.size + 1).coerceIn(0, total - 1)
+                list.requestScrollToItem(target)
+            }
+            LazyColumn(state = list, modifier = Modifier.fillMaxSize().padding(padding), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+                item(key = "history") {
+                    if (model.hasOlder) TextButton(onClick = { model.perform { model.loadOlder() } }, enabled = model.connected && !model.loadingHistory) {
+                        Text(if (model.loadingHistory) "正在读取…" else "加载更早的消息")
+                    }
+                }
+                items(timeline, key = { it.key }) { entry ->
+                    if (entry is ConversationEntry.Tools) {
+                        ToolProcessView(model, entry)
+                    } else {
+                        val message = (entry as ConversationEntry.Message).message
+                        var expanded by remember(message.id, message.text) { mutableStateOf(false) }
+                        val collapsible = message.sourceSessionId.isNotEmpty() && (message.text.length > 400 || message.text.count { it == '\n' } > 6)
+                        Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.role == "user") Alignment.End else Alignment.Start) {
+                            if (message.sourceSessionId.isNotEmpty()) TextButton(onClick = { model.perform { model.open(message.sourceSessionId) } }, enabled = model.connected) {
+                                Text("由 Wuu 从「${message.sourceSessionName.ifEmpty { message.sourceSessionId }}」发送", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (message.role == "pending" || message.role == "error") Text(if (message.role == "pending") "等待处理" else "错误",
+                                modifier = Modifier.padding(bottom = 8.dp), style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.SemiBold, color = if (message.role == "error") MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                            SelectionContainer {
+                                Surface(color = if (message.role == "user") MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surface,
+                                    shape = MaterialTheme.shapes.medium) {
+                                    Column(if (message.role == "user") Modifier.padding(12.dp) else Modifier.fillMaxWidth()) {
+                                        if (collapsible) {
+                                            Text(message.text, maxLines = if (expanded) Int.MAX_VALUE else 4, overflow = TextOverflow.Ellipsis)
+                                            TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "收起" else "显示更多") }
+                                        } else MessageText(message.text, message.role == "assistant", Modifier,
+                                            isLive = message.role == "assistant" && model.running && message.id == model.messages.lastOrNull()?.id)
+                                    }
+                                }
+                            }
+                            if (message.contentRef.isNotEmpty()) TextButton(onClick = { model.perform { model.expand(message) } }, enabled = model.connected && message.id !in model.loadingContent) {
+                                Text(if (message.id in model.loadingContent) "正在读取…" else "加载完整消息")
+                            }
+                            MessageAttachments(model, message)
+                        }
+                    }
+                }
+                items(model.pending, key = { "pending:${it.id}" }) { PendingMessageView(model, it) }
+                item(key = "bottom") { Spacer(Modifier.height(1.dp)) }
+            }
+        }
+    }
+    model.attachmentPreview?.let { AttachmentPreview(model, it) }
+    settings?.let { (id, initial) -> ThreadSettingsSheet(model, id, initial) { settings = null } }
+    if (accountPanel) AccountSettingsSheet(model) { accountPanel = false }
+    renameID?.let { id -> AlertDialog(onDismissRequest = { renameID = null }, title = { Text("重命名会话") },
+        text = { OutlinedTextField(renameTitle, { renameTitle = it }, label = { Text("标题") }) },
+        confirmButton = { TextButton(onClick = { val title = renameTitle; renameID = null; model.perform { model.rename(id, title) } }) { Text("保存") } },
+        dismissButton = { TextButton(onClick = { renameID = null }) { Text("取消") } }) }
+    archive?.let { row -> AlertDialog(onDismissRequest = { archive = null }, title = { Text(if (row.archived) "恢复会话？" else "归档会话？") }, text = { Text(row.title) },
+        confirmButton = { TextButton(onClick = { archive = null; model.perform { model.archive(row) } }) { Text(if (row.archived) "恢复" else "归档") } },
+        dismissButton = { TextButton(onClick = { archive = null }) { Text("取消") } }) }
+
+}

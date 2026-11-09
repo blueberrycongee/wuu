@@ -1,0 +1,720 @@
+import type { SetStateAction } from "react";
+import type {
+  RuntimeAdvancedSettingsUpdate,
+  RuntimeConnectionUpdate,
+  RuntimeGeneralSettingsUpdate,
+  Thread,
+} from "../shared/protocol";
+import {
+  activeThreadForState,
+  sameRuntimeContext,
+  threadForPane,
+  updateThreadByID,
+  type AppState,
+  type ConversationPaneID,
+} from "./AppState";
+import type {
+  CodexModelLoadState,
+  CodexRuntimeMenu,
+  PermissionMode,
+} from "./ComposerTypes";
+import { lastEffortForRuntimeModel, writeDraftApproveForMeMemory, writeDraftPermissionMemory, writeDraftRuntimeMemory } from "./DraftRuntimeMemory";
+import { isCodexProvider, normalizedVariantForProviderModel, providerIsCodex } from "./RuntimeHelpers";
+import { runtimeViewForSession } from "./SessionRuntimeState";
+import { showErrorToast } from "./Toast";
+import { translateCurrent } from "./i18n";
+
+type SetAppState = (update: SetStateAction<AppState>) => void;
+
+export type RuntimeSettingsActionsDeps = {
+  getAppState: () => AppState;
+  setAppState: SetAppState;
+  getViewContextSwitchPending: () => boolean;
+  getCodexModels: () => CodexModelLoadState;
+  setCodexModels: (update: SetStateAction<CodexModelLoadState>) => void;
+  setRuntimeMenuOpen: (open: boolean) => void;
+  setAccessMenuOpen: (open: boolean) => void;
+  setBranchMenuOpen: (open: boolean) => void;
+  setCodexRuntimeMenu: (update: SetStateAction<CodexRuntimeMenu>) => void;
+  clearThreadPendingComposerMessages: (threadID: string) => void;
+  requestThreadStop?: (thread: Thread) => Promise<void>;
+  variantByModel: Map<string, string>;
+  pendingRuntimeSelections: Map<string, Promise<void>>;
+};
+
+export type RuntimeSettingsActions = {
+  updateRuntimeSettings: (
+    provider: string,
+    model: string,
+    effort?: string,
+    connection?: RuntimeConnectionUpdate,
+    variant?: string,
+    permissionMode?: string,
+  ) => Promise<void>;
+  updateProviderSettings: RuntimeSettingsActions["updateRuntimeSettings"];
+  updateAdvancedSettings: (
+    settings: RuntimeAdvancedSettingsUpdate,
+  ) => Promise<void>;
+  updateGeneralSettings: (
+    settings: RuntimeGeneralSettingsUpdate,
+  ) => Promise<void>;
+  removeProvider: (
+    provider: string,
+    options?: { fallbackProvider?: string; fallbackModel?: string },
+  ) => Promise<void>;
+  toggleCodexRuntimeMenu: (menu: Exclude<CodexRuntimeMenu, null>) => void;
+  loadCodexModelsForProvider: (provider: string, refresh?: boolean) => Promise<void>;
+  selectRuntimeModel: (
+    provider: string,
+    model: string,
+    variant?: string,
+  ) => Promise<boolean>;
+  selectRuntimeEffort: (nextVariant: string) => Promise<boolean>;
+  selectRuntimeSpeed: (speed: string) => Promise<boolean>;
+  selectEngineRuntime: (update: { model?: string; effort?: string; model_options?: Record<string, string>; reset_model?: boolean }) => Promise<boolean>;
+  selectPermissionMode: (mode: PermissionMode, approveForMe?: boolean) => Promise<void>;
+  setApproveForMe: (enabled: boolean) => Promise<void>;
+  interrupt: () => Promise<void>;
+  interruptPane: (pane: ConversationPaneID) => Promise<void>;
+};
+
+type RuntimeSelectionUpdate = {
+  model_options?: Record<string, string>;
+  reset_model?: boolean;
+  speed?: string;
+  provider?: string;
+  model?: string;
+  effort?: string;
+  connection?: RuntimeConnectionUpdate;
+  variant?: string;
+  permissionMode?: string;
+  approveForMe?: boolean;
+};
+
+export function createRuntimeSettingsActions(
+  deps: RuntimeSettingsActionsDeps,
+): RuntimeSettingsActions {
+  function modelSelectionKey(
+    scope: string,
+    provider: string,
+    model: string,
+  ): string {
+    return JSON.stringify([scope, provider.trim(), model.trim()]);
+  }
+
+  function selectionViewIsCurrent(source: AppState): boolean {
+    const current = deps.getAppState();
+    return activeThreadForState(source)?.id === activeThreadForState(current)?.id
+      && ((!source.activeContext && !current.activeContext)
+        || (sameRuntimeContext(source.activeContext, current.activeContext)
+          && source.activeContext?.cwd === current.activeContext?.cwd));
+  }
+
+  // Settings save workspace defaults; composer changes only the target
+  // conversation (or a local selection before its first send).
+  async function sendRuntimeSelection(
+    update: RuntimeSelectionUpdate,
+    scope: "session" | "workspace" = "session",
+  ): Promise<void> {
+    const state = deps.getAppState();
+    if (!state.initialized) {
+      return;
+    }
+    const targetThread = scope === "session" ? activeThreadForState(state) : undefined;
+    const targetContext = state.activeContext ? { ...state.activeContext } : undefined;
+    if (scope === "session" && !targetThread && !update.connection) {
+      // Before thread/start this is a window-local draft selection, not a
+      // provider default. The first send passes it explicitly to thread/start.
+      const nextProvider = update.provider ?? state.initialized.provider;
+      const nextModel = update.model ?? state.initialized.model;
+      const nextEffort = update.variant ?? update.effort
+        ?? state.initialized.variant
+        ?? state.initialized.effort
+        ?? "";
+      const nextSpeed = update.speed ?? ((nextProvider !== state.initialized.provider || nextModel !== state.initialized.model) ? "" : state.initialized.speed);
+      rememberDraftRuntime(nextProvider, nextModel, nextEffort, nextSpeed);
+      deps.setAppState((current) => ({
+        ...current,
+        initialized: current.initialized ? {
+          ...current.initialized,
+          provider: nextProvider,
+          model: nextModel,
+          speed: nextSpeed,
+          variant: nextEffort,
+          effort: nextEffort,
+          permissions: {
+            ...current.initialized.permissions,
+            ...(update.permissionMode === undefined ? {} : { mode: update.permissionMode as PermissionMode }),
+            ...(update.approveForMe === undefined ? {} : { approve_for_me: update.approveForMe }),
+          },
+        } : current.initialized,
+      }));
+      return;
+    }
+    let nextProvider = update.provider?.trim() || undefined;
+    let nextModel = update.model?.trim() || undefined;
+    const nextEffort =
+      update.effort === undefined ? undefined : update.effort.trim();
+    // An explicit empty variant resets the stored reasoning effort to the
+    // model default (the server clears the selection), so '' must survive;
+    // only undefined means "not part of this update".
+    const nextVariant =
+      update.variant === undefined ? undefined : update.variant.trim();
+    const nextPermissionMode =
+      update.permissionMode === undefined
+        ? undefined
+        : update.permissionMode.trim();
+    if (!targetThread) {
+      // Workspace-scoped update: the server requires an explicit model when
+      // no thread is targeted.
+      nextProvider = nextProvider ?? state.initialized.provider;
+      nextModel = nextModel ?? state.initialized.model;
+    }
+    const connection = update.connection;
+    const nextConnection =
+      connection === undefined
+        ? undefined
+        : {
+            ...(connection.base_url === undefined
+              ? {}
+              : { base_url: connection.base_url.trim() }),
+            ...(connection.api_key === undefined
+              ? {}
+              : { api_key: connection.api_key.trim() }),
+            ...(connection.auth_token === undefined
+              ? {}
+              : { auth_token: connection.auth_token.trim() }),
+            ...(connection.type !== undefined && connection.type !== ""
+              ? { type: connection.type }
+              : {}),
+            ...(connection.create_provider ? { create_provider: true } : {}),
+            ...(connection.remove_model ? { remove_model: connection.remove_model } : {}),
+            ...(connection.add_model ? { add_model: connection.add_model } : {}),
+            ...(connection.keep_selection ? { keep_selection: true } : {}),
+            ...(connection.reuse_codex_credentials === undefined
+              ? {}
+              : { reuse_codex_credentials: connection.reuse_codex_credentials }),
+          };
+    const currentProvider = state.initialized.providers?.find(
+      (item) => item.name === nextProvider,
+    );
+    const connectionChanged =
+      Boolean(nextConnection?.remove_model) ||
+      Boolean(nextConnection?.add_model) ||
+      Boolean(nextConnection?.create_provider) ||
+      Boolean(nextConnection?.api_key) ||
+      Boolean(nextConnection?.auth_token) ||
+      (nextConnection?.base_url !== undefined &&
+        nextConnection.base_url !== (currentProvider?.base_url ?? "")) ||
+      (nextConnection?.reuse_codex_credentials !== undefined &&
+        nextConnection.reuse_codex_credentials !==
+          (currentProvider?.reuse_codex_credentials === true));
+    const providerChanged =
+      nextProvider !== undefined &&
+      nextProvider !==
+        (targetThread?.model_provider ?? state.initialized.provider);
+    const modelChanged =
+      nextModel !== undefined &&
+      nextModel !== (targetThread?.model ?? state.initialized.model);
+    const effortChanged =
+      nextEffort !== undefined &&
+      nextEffort !==
+        (targetThread?.model_effort ?? state.initialized.effort ?? "");
+    const variantChanged =
+      nextVariant !== undefined &&
+      nextVariant !==
+        (targetThread?.model_variant ?? state.initialized.variant ?? "");
+    const permissionModeChanged =
+      nextPermissionMode !== undefined &&
+      nextPermissionMode !==
+        (targetThread?.permission_mode ||
+          state.initialized.permissions?.mode ||
+          "");
+    const approveForMeChanged =
+      update.approveForMe !== undefined &&
+      update.approveForMe !==
+        (targetThread?.approve_for_me ?? state.initialized.permissions?.approve_for_me ?? false);
+    const previousSelection = targetThread
+      ? deps.pendingRuntimeSelections.get(targetThread.id)
+      : undefined;
+    if (
+      !previousSelection &&
+      !providerChanged &&
+      !modelChanged &&
+      !effortChanged &&
+      !variantChanged &&
+      !connectionChanged &&
+      !permissionModeChanged &&
+      !approveForMeChanged && update.speed === undefined && update.model_options === undefined && !update.reset_model
+    ) {
+      return;
+    }
+    // An equal-to-persisted pick can reverse an older pending change. Keep
+    // thread writes ordered, with this queue surviving action-factory rerenders.
+    let releaseSelection: (() => void) | undefined;
+    const selectionCompletion = targetThread
+      ? new Promise<void>((resolve) => { releaseSelection = resolve; })
+      : undefined;
+    if (targetThread && selectionCompletion) {
+      deps.pendingRuntimeSelections.set(targetThread.id, selectionCompletion);
+    }
+    try {
+      if (previousSelection) await previousSelection;
+      const connectionPayload = {
+        ...nextConnection,
+        ...(update.approveForMe === undefined ? {} : { approve_for_me: update.approveForMe }),
+      };
+      const requestArgs: Parameters<typeof window.wuu.updateRuntimeSettings> = [
+        nextProvider,
+        nextModel,
+        nextEffort,
+        Object.keys(connectionPayload).length > 0 ? connectionPayload : undefined,
+        nextVariant,
+        nextPermissionMode,
+        targetThread?.id,
+        update.speed,
+      ];
+      if (update.model_options !== undefined || update.reset_model) {
+        requestArgs.push(targetContext, { model_options: update.model_options, reset_model: update.reset_model });
+      } else if (targetContext) requestArgs.push(targetContext);
+      const updated = await window.wuu.updateRuntimeSettings(...requestArgs);
+      // Saving another service leaves the default, and the draft memory that
+      // mirrors it, where they were.
+      if (scope === "workspace" && !nextConnection?.keep_selection && selectionViewIsCurrent(state)) {
+        // Settings writes the workspace default, which is the same "last pick"
+        // the composer memory tracks. Recording it keeps the next new
+        // conversation on the model just chosen in Settings instead of an older
+        // composer pick for that provider. The server's effective variant belongs
+        // to this provider/model pair because the workspace holds one selection.
+        rememberDraftRuntime(
+          updated.provider,
+          updated.model,
+          updated.variant ?? updated.effort ?? "",
+        );
+      }
+      deps.setAppState((current) => {
+        // Workspace defaults from an older thread request must not replace
+        // a newer conversation or draft's visible runtime selection.
+        const sameContext = !targetContext || (
+          sameRuntimeContext(current.activeContext, targetContext)
+          && current.activeContext?.cwd === targetContext.cwd
+        );
+        const ownsCurrentView = scope === "workspace"
+          || activeThreadForState(current)?.id === targetThread?.id;
+        const initialized = current.initialized && sameContext && ownsCurrentView
+          ? {
+              ...current.initialized,
+              provider: updated.provider,
+              model: updated.model,
+              effort: updated.effort ?? "",
+              variant: updated.variant ?? "",
+              permissions:
+                updated.permissions ?? current.initialized.permissions,
+              extension_trust:
+                updated.extension_trust ?? current.initialized.extension_trust,
+              providers: updated.providers ?? current.initialized.providers,
+              model_roles: updated.model_roles ?? current.initialized.model_roles,
+              model_aliases: updated.model_aliases ?? current.initialized.model_aliases,
+              advanced_settings:
+                updated.advanced_settings ??
+                current.initialized.advanced_settings,
+            }
+          : current.initialized;
+        // The response describes workspace defaults, not the target thread.
+        // Only the requested values may be used for a local thread patch;
+        // thread/updated carries the server's resolved selection.
+        const threadPatch: Partial<Thread> = {
+          ...(update.reset_model ? { model: "", model_effort: "", model_variant: "", speed: "", model_options: {} } : {}),
+          ...(update.model_options === undefined ? {} : { model_options: update.model_options }),
+          ...(update.speed === undefined ? {} : { speed: update.speed }),
+          ...(nextProvider === undefined
+            ? {}
+            : { model_provider: nextProvider }),
+          ...(nextModel === undefined ? {} : { model: nextModel }),
+          ...(nextVariant === undefined && nextEffort === undefined
+            ? {}
+            : {
+                model_variant: nextVariant ?? nextEffort ?? "",
+                model_effort: nextEffort ?? "",
+              }),
+          ...(nextPermissionMode === undefined
+            ? {}
+            : { permission_mode: nextPermissionMode }),
+          ...(update.approveForMe === undefined
+            ? {}
+            : { approve_for_me: update.approveForMe }),
+        };
+        return updateThreadByID(
+          { ...current, initialized },
+          targetThread?.id,
+          (thread) => ({ ...thread, ...threadPatch }),
+        );
+      });
+    } catch (error) {
+      if (scope === "session") {
+        showErrorToast(error, translateCurrent("runtime.settingsUpdateFailed"));
+      }
+      throw error;
+    } finally {
+      releaseSelection?.();
+      if (targetThread && deps.pendingRuntimeSelections.get(targetThread.id) === selectionCompletion) {
+        deps.pendingRuntimeSelections.delete(targetThread.id);
+      }
+    }
+  }
+
+  async function updateRuntimeSettings(
+    provider: string,
+    model: string,
+    effort?: string,
+    connection?: RuntimeConnectionUpdate,
+    variant?: string,
+    permissionMode?: string,
+  ): Promise<void> {
+    const nextProvider = provider.trim();
+    const nextModel = model.trim();
+    if (!nextProvider || !nextModel) {
+      return;
+    }
+    await sendRuntimeSelection({
+      provider: nextProvider,
+      model: nextModel,
+      effort,
+      connection,
+      variant,
+      permissionMode,
+    });
+  }
+
+  // Settings edit workspace defaults and connection configuration. Never send
+  // the active conversation ID or patch its pinned runtime selection.
+  async function updateProviderSettings(
+    provider: string,
+    model: string,
+    effort?: string,
+    connection?: RuntimeConnectionUpdate,
+    variant?: string,
+    permissionMode?: string,
+  ): Promise<void> {
+    if (!provider.trim() || !model.trim()) return;
+    await sendRuntimeSelection({ provider, model, effort, connection, variant, permissionMode }, "workspace");
+  }
+
+  async function updateAdvancedSettings(
+    settings: RuntimeAdvancedSettingsUpdate,
+  ): Promise<void> {
+    if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
+      return;
+    }
+    // Settings owns save feedback; neither success nor failure changes the
+    // conversation status consumed by the composer.
+    const updated = await window.wuu.updateAdvancedSettings(settings);
+    deps.setAppState((current) => ({
+      ...current,
+      initialized: current.initialized
+        ? {
+            ...current.initialized,
+            advanced_settings: updated.advanced_settings,
+            model_aliases:
+              updated.model_aliases ??
+              settings.model_aliases ??
+              current.initialized.model_aliases,
+            model_roles: updated.model_roles ?? current.initialized.model_roles,
+            providers: updated.providers ?? current.initialized.providers,
+          }
+        : current.initialized,
+    }));
+  }
+
+  async function updateGeneralSettings(
+    settings: RuntimeGeneralSettingsUpdate,
+  ): Promise<void> {
+    if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) {
+      return;
+    }
+    const updated = await window.wuu.updateGeneralSettings(settings);
+    deps.setAppState((current) => ({
+      ...current,
+      initialized: current.initialized
+        ? {
+            ...current.initialized,
+            general_settings: updated.general_settings,
+          }
+        : current.initialized,
+    }));
+  }
+
+  async function removeProvider(
+    provider: string,
+    options?: { fallbackProvider?: string; fallbackModel?: string },
+  ): Promise<void> {
+    const state = deps.getAppState();
+    if (!state.initialized || deps.getViewContextSwitchPending()) {
+      return;
+    }
+    const target = provider.trim();
+    if (!target) {
+      return;
+    }
+    const updated = await window.wuu.removeProvider(target, options);
+    const replacedDefault = target === state.initialized.provider;
+    if (replacedDefault && selectionViewIsCurrent(state)) {
+      rememberDraftRuntime(updated.provider, updated.model, updated.variant ?? updated.effort ?? "");
+    }
+    deps.setAppState((current) => ({
+      ...current,
+      initialized: current.initialized
+        ? {
+            ...current.initialized,
+            provider: updated.provider ?? current.initialized.provider,
+            model: updated.model ?? current.initialized.model,
+            effort: updated.effort ?? (replacedDefault ? "" : current.initialized.effort),
+            variant: updated.variant ?? (replacedDefault ? "" : current.initialized.variant),
+            model_roles: updated.model_roles ?? current.initialized.model_roles,
+            model_aliases: updated.model_aliases ?? current.initialized.model_aliases,
+            permissions:
+              updated.permissions ?? current.initialized.permissions,
+            extension_trust:
+              updated.extension_trust ?? current.initialized.extension_trust,
+            providers: updated.providers ?? current.initialized.providers,
+            advanced_settings:
+              updated.advanced_settings ??
+              current.initialized.advanced_settings,
+          }
+        : current.initialized,
+    }));
+    // Only a Codex subscription has a live model list to load.
+    const providers = updated.providers ?? state.initialized.providers;
+    if (providerIsCodex({ ...state.initialized, providers }, updated.provider)) {
+      void loadCodexModelsForProvider(updated.provider);
+    }
+  }
+
+  function toggleCodexRuntimeMenu(
+    menu: Exclude<CodexRuntimeMenu, null>,
+  ): void {
+    const state = deps.getAppState();
+    if (!state.initialized || deps.getViewContextSwitchPending()) {
+      return;
+    }
+    deps.setRuntimeMenuOpen(false);
+    deps.setAccessMenuOpen(false);
+    deps.setBranchMenuOpen(false);
+    deps.setCodexRuntimeMenu((current) => (current === menu ? null : menu));
+    const runtime = runtimeViewForSession(
+      state.initialized,
+      activeThreadForState(state),
+    );
+    if (runtime && isCodexProvider(runtime)) {
+      void loadCodexModelsForProvider(runtime.provider);
+    }
+  }
+
+  async function loadCodexModelsForProvider(provider: string, refresh = false): Promise<void> {
+    if (!provider) {
+      return;
+    }
+    const codexModels = deps.getCodexModels();
+    if (
+      codexModels.provider === provider &&
+      (codexModels.loading || (!refresh && codexModels.models.length > 0))
+    ) {
+      return;
+    }
+    deps.setCodexModels({ provider, loading: true, error: "", models: [] });
+    const workspace = deps.getAppState().initialized?.workspace_root;
+    try {
+      const result = await window.wuu.loadCodexModels(provider);
+      if (deps.getAppState().initialized?.workspace_root !== workspace) return;
+      deps.setAppState((current) => ({
+        ...current,
+        initialized: current.initialized && result.providers
+          ? { ...current.initialized, providers: result.providers }
+          : current.initialized,
+      }));
+      deps.setCodexModels({
+        provider: result.provider,
+        loading: false,
+        error: "",
+        models: result.models,
+      });
+    } catch (error) {
+      deps.setCodexModels({
+        provider,
+        loading: false,
+        error: error instanceof Error ? error.message : translateCurrent("runtime.modelsLoadFailed"),
+        models: [],
+      });
+    }
+  }
+
+  async function selectRuntimeModel(
+    provider: string,
+    model: string,
+    variant?: string,
+  ): Promise<boolean> {
+    const state = deps.getAppState();
+    if (!state.initialized || deps.getViewContextSwitchPending()) {
+      return false;
+    }
+    const targetThread = activeThreadForState(state);
+    const currentProvider =
+      targetThread?.model_provider ?? state.initialized.provider;
+    const currentModel = targetThread?.model ?? state.initialized.model;
+    const currentVariant =
+      targetThread?.model_variant ??
+      targetThread?.model_effort ??
+      state.initialized.variant ??
+      state.initialized.effort ??
+      "";
+    const selectionScope = targetThread?.id ?? "workspace";
+    deps.variantByModel.set(
+      modelSelectionKey(selectionScope, currentProvider, currentModel),
+      currentVariant,
+    );
+    const targetKey = modelSelectionKey(selectionScope, provider, model);
+    const rememberedVariant = deps.variantByModel.has(targetKey)
+      ? deps.variantByModel.get(targetKey)
+      : (variant !== undefined ? variant : lastEffortForRuntimeModel(provider, model));
+    const nextVariant = normalizedVariantForProviderModel(
+      rememberedVariant ?? "",
+      state.initialized.providers?.find((item) => item.name === provider),
+      model,
+    );
+    // The model panel stays open after a selection: the row highlight and the
+    // effort pills update optimistically inside the panel, so the user can
+    // chain "switch model → tune effort" in one visit instead of reopening the
+    // picker for every change. A rejection (for example a background agent
+    // still running on the thread) surfaces as a toast — the status line
+    // alone was too easy to miss against the optimistic highlight.
+    try {
+      await sendRuntimeSelection({ provider, model, variant: nextVariant });
+      if (selectionViewIsCurrent(state)) rememberDraftRuntime(provider, model, nextVariant);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async function selectRuntimeEffort(nextVariant: string): Promise<boolean> {
+    const state = deps.getAppState();
+    if (!state.initialized || deps.getViewContextSwitchPending()) {
+      return false;
+    }
+    try {
+      await sendRuntimeSelection({ variant: nextVariant });
+      const targetThread = activeThreadForState(state);
+      if (selectionViewIsCurrent(state)) {
+        rememberDraftRuntime(
+          targetThread?.model_provider ?? state.initialized.provider,
+          targetThread?.model ?? state.initialized.model,
+          nextVariant,
+        );
+      }
+      return true;
+    } catch {
+      return false;
+    }
+    // Keep the panel open — see selectRuntimeModel.
+  }
+
+  async function selectEngineRuntime(update: Parameters<RuntimeSettingsActions["selectEngineRuntime"]>[0]): Promise<boolean> {
+    const state = deps.getAppState();
+    const thread = activeThreadForState(state);
+    if (!thread || !thread.engine_id || deps.getViewContextSwitchPending()) return false;
+    try {
+      await sendRuntimeSelection(update);
+      return true;
+    } catch { return false; }
+  }
+
+  async function selectRuntimeSpeed(speed: string): Promise<boolean> {
+    if (!deps.getAppState().initialized || deps.getViewContextSwitchPending()) return false;
+    try {
+      await sendRuntimeSelection({ speed });
+      return true;
+    } catch { return false; }
+  }
+
+  async function selectPermissionMode(mode: PermissionMode, approveForMe?: boolean): Promise<void> {
+    const state = deps.getAppState();
+    if (!state.initialized || deps.getViewContextSwitchPending()) {
+      return;
+    }
+    try {
+      await sendRuntimeSelection({
+        permissionMode: mode,
+        ...(approveForMe === undefined ? {} : { approveForMe }),
+      });
+      // Remember the choice so the next new conversation (another tab or a
+      // relaunch) starts with it instead of the workspace default.
+      if (selectionViewIsCurrent(state)) {
+        writeDraftPermissionMemory(mode);
+        if (approveForMe !== undefined) writeDraftApproveForMeMemory(approveForMe);
+      }
+    } catch {
+      // sendRuntimeSelection reports the failure through the shared toast.
+    }
+    if (selectionViewIsCurrent(state)) deps.setAccessMenuOpen(false);
+  }
+
+  async function setApproveForMe(enabled: boolean): Promise<void> {
+    const state = deps.getAppState();
+    if (!state.initialized || deps.getViewContextSwitchPending()) {
+      return;
+    }
+    try {
+      await sendRuntimeSelection({ approveForMe: enabled });
+      if (selectionViewIsCurrent(state)) writeDraftApproveForMeMemory(enabled);
+    } catch {
+      // sendRuntimeSelection reports the failure through the shared toast.
+    }
+  }
+
+  async function interrupt(): Promise<void> {
+    const thread = activeThreadForState(deps.getAppState());
+    if (!thread) {
+      return;
+    }
+    if (deps.requestThreadStop) await deps.requestThreadStop(thread);
+    else await window.wuu.interruptTurn(thread.id);
+  }
+
+  async function interruptPane(pane: ConversationPaneID): Promise<void> {
+    const thread = threadForPane(deps.getAppState(), pane);
+    if (!thread) {
+      return;
+    }
+    if (deps.requestThreadStop) await deps.requestThreadStop(thread);
+    else await window.wuu.interruptTurn(thread.id);
+  }
+
+  function rememberDraftRuntime(provider: string, model: string, effort: string, speed?: string): void {
+    const state = deps.getAppState();
+    const active = activeThreadForState(state);
+    const currentProvider = active?.model_provider ?? state.initialized?.provider;
+    const currentModel = active?.model ?? state.initialized?.model;
+    const rememberedSpeed = speed ?? (provider === currentProvider && model === currentModel ? active?.speed ?? state.initialized?.speed : undefined);
+    writeDraftRuntimeMemory({ provider, model, effort, ...(rememberedSpeed === undefined ? {} : { speed: rememberedSpeed }) });
+    const scope = activeThreadForState(state)?.id ?? "workspace";
+    deps.variantByModel.set(modelSelectionKey(scope, provider, model), effort);
+  }
+
+  return {
+    updateRuntimeSettings,
+    updateProviderSettings,
+    updateAdvancedSettings,
+    updateGeneralSettings,
+    removeProvider,
+    toggleCodexRuntimeMenu,
+    loadCodexModelsForProvider,
+    selectRuntimeModel,
+    selectRuntimeEffort,
+    selectRuntimeSpeed,
+    selectEngineRuntime,
+    selectPermissionMode,
+    setApproveForMe,
+    interrupt,
+    interruptPane,
+  };
+}

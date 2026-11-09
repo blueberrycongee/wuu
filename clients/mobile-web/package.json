@@ -1,0 +1,44 @@
+{
+  "name": "@wuu/mobile-web",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Wuu Web shell: the shared desktop renderer over the encrypted remote app-server bridge.",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "vite build",
+    "preview": "vite preview --host",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "node test/workbench.e2e.mjs",
+    "test:headless": "node test/headless-workspace.e2e.mjs",
+    "test:history": "node test/conversation-cache.e2e.mjs",
+    "test:phone": "node test/phone-interactions.e2e.mjs"
+  },
+  "dependencies": {
+    "@capacitor/app": "^8.1.1",
+    "@capacitor/browser": "^8.0.4",
+    "@capacitor/core": "^8.5.1",
+    "@capacitor/filesystem": "^8.1.3",
+    "@capacitor/keyboard": "^8.0.5",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/push-notifications": "^8.1.2",
+    "@capacitor/share": "^8.0.1",
+    "@wuu/protocol": "file:../../packages/protocol",
+    "@wuu/remote-core": "file:../core",
+    "lucide-react": "^0.562.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.0.0",
+    "jsdom": "^29.1.1",
+    "pele": "^1.6.0",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vite": "^7.0.0",
+    "vitest": "^4.0.17"
+  }
+}

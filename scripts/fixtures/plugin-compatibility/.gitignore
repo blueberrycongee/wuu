@@ -1,0 +1,3 @@
+# Retained historical npm package bytes, not current build output.
+!*/sdk/dist/
+!*/sdk/dist/**

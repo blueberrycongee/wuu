@@ -1,0 +1,72 @@
+import { useSettingsControls } from "../SettingsControlsContext";
+import { useEffect, useMemo, useState } from "react";
+import { useI18n } from "../i18n";
+import { SettingsRow } from "../SettingsRow";
+import { useBackground } from "./useBackground";
+import { dismissToast, showActionErrorToast } from "../Toast";
+
+/** canvasSkin names the selected canvas skin that paints the picture; otherwise it decorates the frame. */
+export function BackgroundSettings({ canvasSkin }: { canvasSkin?: string } = {}): JSX.Element {
+  const controls = useSettingsControls();
+  const { t } = useI18n();
+  const { preferences, error: readError, loading } = useBackground(controls);
+  const [busy, setBusy] = useState(false);
+  const operations = useMemo(() => ({ active: true, importer: null as AbortController | null, toastID: undefined as number | undefined }), [controls]);
+  useEffect(() => {
+    operations.active = true;
+    setBusy(false);
+    return () => {
+      operations.active = false;
+      operations.importer?.abort();
+    };
+  }, [operations]);
+  function dismissErrorNotice() {
+    if (operations.toastID === undefined) return;
+    dismissToast(operations.toastID);
+    operations.toastID = undefined;
+  }
+  async function save(action: () => Promise<void>) {
+    if (!operations.active) return;
+    setBusy(true); dismissErrorNotice();
+    try { await action(); } catch (reason) {
+      if (operations.active) operations.toastID = showActionErrorToast(reason, t("settings.saveFailed"));
+    } finally { if (operations.active) setBusy(false); }
+  }
+  async function importImage(file: File) {
+    if (!operations.active) return;
+    operations.importer?.abort();
+    const controller = new AbortController();
+    operations.importer = controller;
+    const { signal } = controller;
+    setBusy(true); dismissErrorNotice();
+    let stage: "image" | "save" = "image";
+    try {
+      const image = await controls.processBackground(file, "import", signal);
+      if (signal.aborted) return;
+      stage = "save";
+      await controls.updateBackground(current => {
+        // Opening IndexedDB can outlive this page; recheck before changing storage.
+        if (signal.aborted) return current;
+        return { image, imageID: crypto.randomUUID(), name: file.name };
+      });
+    } catch (reason) {
+      if (!signal.aborted && operations.active) operations.toastID = showActionErrorToast(reason, t(stage === "image" ? "settings.backgroundInvalid" : "settings.saveFailed"));
+    } finally {
+      if (operations.importer === controller) {
+        operations.importer = null;
+        if (!signal.aborted) setBusy(false);
+      }
+    }
+  }
+  return <>
+    <SettingsRow title={t("settings.backgroundImage")} description={canvasSkin ? t("settings.backgroundCanvas", { skin: canvasSkin }) : t("settings.backgroundFrame")}>
+      <label className={`settings-button background-file-picker${busy || loading ? " disabled" : ""}`}>
+        {t(busy ? "settings.backgroundLoading" : "settings.backgroundChoose")}
+        <input type="file" accept="image/png,image/jpeg,image/webp" aria-label={t("settings.backgroundChoose")} disabled={busy || loading}
+          onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) void importImage(file); }} />
+      </label>
+      {preferences && <button type="button" className="settings-button" disabled={busy} onClick={() => void save(() => controls.updateBackground(() => null))}>{t("settings.backgroundRemove")}</button>}
+    </SettingsRow>
+    {readError && <p role="alert">{t("settings.saveFailed")}</p>}
+  </>;
+}

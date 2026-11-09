@@ -1,0 +1,320 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>motion probe</title>
+<link rel="stylesheet" href="../src/motion.css">
+
+<!--
+  Mechanical checks on the idle layers — the things that are tedious to catch by
+  eye and easy to regress silently. It does NOT tell you whether the motion
+  reads well; only watching the demo at 5× does that.
+
+  Real markup from `_parts("alain", { animate: "always" })`, real motion.css:
+
+    1  closes    eye height drops below 20% of rest
+    2  centered  each eye's center stays put while it closes  <- the critical one
+    3  reopens   height returns to rest
+    4  amp gate  at --mo-amp: 0 the eyes never move at all
+    5  idle live breathe and bob actually move the body at full amplitude
+    6  idle gate  at --mo-amp: 0 the body is perfectly still, animations running
+    7  saccades   the eyes travel, and hold at fixations rather than drift
+    8  look gate  at --mo-amp: 0 the eyes do not wander
+    9  wrap       the eyes foreshorten as they glance, rather than holding shape
+   10  wrap gate  at --mo-amp: 0 the eyes hold one width
+   11  wrap tilt  the two eyes tilt in OPPOSITE directions  <- the sphere cue
+
+  Leg 6 is the one that protects the design: the loop never stops, so every
+  keyframe has to fold --mo-amp in. A keyframe that forgets looks fine on a
+  hovered blobatar and leaves 399 others twitching.
+
+  Open in each target browser.
+-->
+
+<style>
+  body { font: 14px/1.6 ui-monospace, monospace; margin: 2rem; max-width: 44rem; }
+  svg { width: 220px; height: 220px; }
+  .rig { display: flex; gap: 2rem; align-items: center; }
+  li { margin: .4rem 0; }
+  .pass { color: #0a7d33; }
+  .fail { color: #c02020; }
+  pre { background: #f4f4f4; padding: .75rem; overflow-x: auto; }
+  /* Fast cycles so the probe finishes quickly; ratios are what matter.
+     Breathe and bob have literal durations, so they are sped up through the
+     same --mo-rate multiplier the demo's slow-motion toggle uses. */
+  .quick { --mo-blink: 900ms; --mo-blink-phase: 0ms; }
+  .fast { --mo-rate: 0.1; }
+  /* Has to target `.mo-root` itself, not the svg above it. `--mo-amp` is
+     declared *on* `.mo-root`, and an element's own declaration beats a value
+     inherited from an ancestor no matter how important the ancestor's is —
+     importance only competes within one element. Set on the svg, this silently
+     did nothing against `mo-always` markup, and every gate leg below "failed"
+     while measuring a fully animating blobatar. */
+  .frozen .mo-root { --mo-amp: 0 !important; }
+</style>
+
+<h1>motion probe</h1>
+
+<div class="rig">
+  <svg id="live" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" class="quick"></svg>
+  <div>
+    <div>left <code id="l">—</code></div>
+    <div>right <code id="r">—</code></div>
+    <div><label><input type="checkbox" id="slow"> 5× slower</label></div>
+  </div>
+</div>
+
+<ul id="out"></ul>
+<pre id="detail"></pre>
+
+<script>
+// The root `<g>` is written out here because `_parts` no longer emits it — its
+// class varies with the expression, so the adapter owns it (see `makeParts`).
+// Everything inside it is `_parts("alain", { animate: "always" }).inner`
+// verbatim.
+const MARKUP = `<g class="mo-root mo-always"><g class="mo-breathe"><g class="mo-bob"><g fill="#d0d897"><path d="M88.1 50.49C88.1 73.31 73.75 87.6 50.83 87.6C27.91 87.6 13.56 73.31 13.56 50.49C13.56 27.67 27.91 13.39 50.83 13.39C73.75 13.39 88.1 27.67 88.1 50.49Z"/></g><g fill="#0f1006" class="mo-eyes"><path class="mo-eye" style="--mo-wrap:-1;--mo-lean:11.48" d="M41.86 50.24C39.96 59.57 39.93 59.62 36.16 58.86C32.39 58.09 32.38 58.03 34.28 48.7C36.17 39.36 36.21 39.31 39.97 40.08C43.74 40.84 43.75 40.9 41.86 50.24Z"/><path class="mo-eye" style="--mo-wrap:1;--mo-lean:11.17" d="M64.59 48.75C62.81 57.79 62.78 57.85 59.55 57.21C56.33 56.57 56.32 56.51 58.1 47.47C59.89 38.42 59.92 38.37 63.14 39.01C66.37 39.64 66.38 39.7 64.59 48.75Z"/></g></g></g></g>`;
+
+const out = document.getElementById("out");
+const log = [];
+function report(name, ok, msg) {
+  const li = document.createElement("li");
+  li.className = ok ? "pass" : "fail";
+  li.textContent = `${ok ? "PASS" : "FAIL"}  ${name} — ${msg}`;
+  out.appendChild(li);
+  log.push(`${ok ? "pass" : "fail"}\t${name}\t${msg}`);
+}
+
+const live = document.getElementById("live");
+live.innerHTML = MARKUP;
+document.getElementById("slow").onchange = e =>
+  live.classList.toggle("mo-slow", e.target.checked);
+
+const frame = () => new Promise(requestAnimationFrame);
+
+// Off-screen rig so the visible one keeps animating for the human.
+function rig(frozen, fast) {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", "0 0 100 100");
+  svg.classList.add("quick");
+  if (frozen) svg.classList.add("frozen");
+  if (fast) svg.classList.add("fast");
+  svg.style.cssText = "position:absolute;left:-9999px;width:200px;height:200px";
+  svg.innerHTML = MARKUP;
+  document.body.appendChild(svg);
+  return {
+    svg,
+    eyes: [...svg.querySelectorAll(".mo-eye")],
+    body: svg.querySelector(".mo-bob"),
+    done: () => svg.remove(),
+  };
+}
+
+(async function run() {
+  // Sample a bit over one 900ms cycle.
+  const sample = async (eyes, ms) => {
+    const frames = [];
+    const t0 = performance.now();
+    while (performance.now() - t0 < ms) {
+      await frame();
+      frames.push(eyes.map(e => e.getBoundingClientRect()));
+    }
+    return frames;
+  };
+
+  {
+    const { eyes, done } = rig(false);
+    await frame();
+    const f = await sample(eyes, 1100);
+
+    for (const [i, side] of ["left", "right"].entries()) {
+      const hs = f.map(r => r[i].height);
+      const rest = Math.max(...hs);
+      const shut = Math.min(...hs);
+
+      report(`1 closes (${side})`, shut < rest * 0.2,
+        `height ${rest.toFixed(1)} → ${shut.toFixed(1)} (${((shut / rest) * 100).toFixed(0)}% of rest)`);
+
+      // The failure mode: a shared transform-origin makes the eye travel while
+      // it shrinks. Its own center should not move at all.
+      const cys = f.map(r => r[i].top + r[i].height / 2);
+      const cxs = f.map(r => r[i].left + r[i].width / 2);
+      const dy = Math.max(...cys) - Math.min(...cys);
+      const dx = Math.max(...cxs) - Math.min(...cxs);
+
+      report(`2 centered (${side})`, dy < 1 && dx < 1,
+        dy < 1 && dx < 1
+          ? `center held within ${Math.max(dx, dy).toFixed(2)}px through the blink`
+          : `center drifted ${dx.toFixed(2)}px x / ${dy.toFixed(2)}px y — transform-box: fill-box is not applying`);
+
+      report(`3 reopens (${side})`, hs[hs.length - 1] > rest * 0.9,
+        `settled at ${((hs[hs.length - 1] / rest) * 100).toFixed(0)}% of rest`);
+    }
+    done();
+  }
+
+  {
+    // Amplitude gate: at --mo-amp: 0 the keyframes must flatten to "hold still",
+    // even though the animation is still running.
+    const { eyes, done } = rig(true);
+    await frame();
+    const f = await sample(eyes, 1100);
+    const hs = f.map(r => r[0].height);
+    const spread = Math.max(...hs) - Math.min(...hs);
+    report("4 amp gate", spread < 0.5,
+      `height varied ${spread.toFixed(2)}px across a full cycle at --mo-amp: 0`);
+    done();
+  }
+
+  // 5/6 — the continuous layers. At --mo-rate: 0.1 a breathe cycle is 280ms and
+  //       a bob cycle 340ms, so 800ms covers both comfortably.
+  const spans = async (frozen) => {
+    const { body, done } = rig(frozen, true);
+    await frame();
+    const r = [];
+    const t0 = performance.now();
+    while (performance.now() - t0 < 800) { await frame(); r.push(body.getBoundingClientRect()); }
+    done();
+    const range = (f) => Math.max(...r.map(f)) - Math.min(...r.map(f));
+    return { w: range(x => x.width), h: range(x => x.height), y: range(x => x.top) };
+  };
+
+  {
+    const moving = await spans(false);
+    report("5 idle live", moving.w > 1 && moving.y > 0.5,
+      `over 200px: width swings ${moving.w.toFixed(2)}px (breathe), top ${moving.y.toFixed(2)}px (bob)`);
+
+    const still = await spans(true);
+    report("6 idle gate", still.w < 0.25 && still.h < 0.25 && still.y < 0.25,
+      still.w < 0.25 && still.h < 0.25 && still.y < 0.25
+        ? `body held within ${Math.max(still.w, still.h, still.y).toFixed(2)}px across full cycles`
+        : `body moved ${still.w.toFixed(2)}px w / ${still.y.toFixed(2)}px y at --mo-amp: 0 — a keyframe is not folding in the amplitude`);
+  }
+
+  // 7/8 — saccades. Horizontal only: blink changes the eye group's height
+  //       every cycle, so `left` is the axis that isolates the glance.
+  const glance = async (frozen) => {
+    const { svg, done } = rig(frozen, true);
+    await frame();
+    const xs = [];
+    const t0 = performance.now();
+    const eyes = svg.querySelector(".mo-eyes");
+    while (performance.now() - t0 < 700) { await frame(); xs.push(eyes.getBoundingClientRect().left); }
+    done();
+    return xs;
+  };
+
+  {
+    const xs = await glance(false);
+    const travel = Math.max(...xs) - Math.min(...xs);
+
+    // Fixations, not drift: most frames should sit at one of a few held
+    // positions rather than spreading evenly across the range.
+    const rounded = xs.map(x => Math.round(x * 2) / 2);
+    const counts = {};
+    for (const x of rounded) counts[x] = (counts[x] ?? 0) + 1;
+    const held = Object.values(counts).sort((a, b) => b - a).slice(0, 6)
+      .reduce((a, b) => a + b, 0) / rounded.length;
+
+    report("7 saccades", travel > 1 && held > 0.7,
+      travel > 1 && held > 0.7
+        ? `eyes travel ${travel.toFixed(2)}px over 200px, ${(held * 100).toFixed(0)}% of frames held at six fixations`
+        : `travel ${travel.toFixed(2)}px, only ${(held * 100).toFixed(0)}% of frames held — ${held <= 0.7 ? "this is drifting, not glancing" : "no movement"}`);
+
+    const still = await glance(true);
+    const wander = Math.max(...still) - Math.min(...still);
+    report("8 look gate", wander < 0.25,
+      `eyes held within ${wander.toFixed(2)}px at --mo-amp: 0`);
+  }
+
+  // 9/10/11 — wrap. Width rather than left: foreshortening is a shape change,
+  //           and it is the half of the effect that does the real work.
+  const shape = async (frozen) => {
+    const { svg, done } = rig(frozen, true);
+    await frame();
+    const eyes = [...svg.querySelectorAll(".mo-eye")];
+    const f = [];
+    const t0 = performance.now();
+    while (performance.now() - t0 < 700) {
+      await frame();
+      f.push(eyes.map(e => e.getBoundingClientRect()));
+    }
+    done();
+    return f;
+  };
+
+  {
+    const f = await shape(false);
+    // Widest frame is the eye at rest; the glance can only compress it.
+    const ws = [0, 1].map(i => f.map(r => r[i].width));
+    const squash = ws.map(w => 1 - Math.min(...w) / Math.max(...w));
+
+    report("9 wrap", squash.every(s => s > 0.01 && s < 0.12),
+      squash.every(s => s > 0.01 && s < 0.12)
+        ? `eyes foreshorten ${(squash[0] * 100).toFixed(1)}% / ${(squash[1] * 100).toFixed(1)}% at the extremes`
+        : `foreshortening ${(squash[0] * 100).toFixed(1)}% / ${(squash[1] * 100).toFixed(1)}% — ${Math.max(...squash) >= 0.12 ? "too strong, this will read as a wobble" : "not running"}`);
+
+    // The differential guarantee: neither eye may ever scale past 1. Read off
+    // the computed `scale` rather than the bounding box — a tilted capsule has a
+    // wider box than an upright one, so bbox width conflates the rotation with
+    // the foreshortening and cannot answer this at all.
+    const { svg: s2, done: d2 } = rig(false, true);
+    await frame();
+    const es = [...s2.querySelectorAll(".mo-eye")];
+    let peak = 0;
+    const t1 = performance.now();
+    while (performance.now() - t1 < 700) {
+      await frame();
+      for (const e of es) {
+        for (const v of getComputedStyle(e).scale.split(" ")) peak = Math.max(peak, parseFloat(v));
+      }
+    }
+    d2();
+
+    report("9b no growth", peak <= 1.0001,
+      peak <= 1.0001
+        ? `peak computed scale ${peak.toFixed(4)} — neither eye ever grows`
+        : `peak computed scale ${peak.toFixed(4)} — the signed term overtook the shared one`);
+
+    const still = await shape(true);
+    const wander = [0, 1].map(i => {
+      const w = still.map(r => r[i].width);
+      return Math.max(...w) - Math.min(...w);
+    });
+    report("10 wrap gate", Math.max(...wander) < 0.25,
+      `widths held within ${Math.max(...wander).toFixed(2)}px at --mo-amp: 0`);
+  }
+
+  {
+    // Tilt is opposite per eye, so the bounding boxes cannot both grow or both
+    // shrink on the diagonal fixations. Compare each eye's aspect ratio against
+    // the other's across the run: a shared roll moves them together.
+    const { svg, done } = rig(false, true);
+    await frame();
+    const eyes = [...svg.querySelectorAll(".mo-eye")];
+    const d = [];
+    const t0 = performance.now();
+    while (performance.now() - t0 < 700) {
+      await frame();
+      const [a, b] = eyes.map(e => e.getBoundingClientRect());
+      d.push(a.width / a.height - b.width / b.height);
+    }
+    done();
+
+    // A shared roll holds this difference constant; opposite tilts swing it.
+    const swing = Math.max(...d) - Math.min(...d);
+    report("11 wrap tilt", swing > 0.002,
+      swing > 0.002
+        ? `the two eyes' aspects diverge by ${swing.toFixed(4)} across the glance — they are tilting apart, not together`
+        : `aspects moved together (${swing.toFixed(4)}) — the tilt is shared, which reads as a head turning rather than a sphere`);
+  }
+
+  document.getElementById("detail").textContent = log.join("\n") + "\n\n" + navigator.userAgent;
+})();
+
+// Live readout, so the numbers are watchable rather than just asserted.
+const [le, re] = live.querySelectorAll(".mo-eye");
+const el = { l: document.getElementById("l"), r: document.getElementById("r") };
+(function tick() {
+  el.l.textContent = le.getBoundingClientRect().height.toFixed(1) + "px";
+  el.r.textContent = re.getBoundingClientRect().height.toFixed(1) + "px";
+  requestAnimationFrame(tick);
+})();
+</script>

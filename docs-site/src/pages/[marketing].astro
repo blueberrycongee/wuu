@@ -1,0 +1,15 @@
+---
+import { marketingHtml } from "../marketing"
+
+export function getStaticPaths() {
+  const sources = import.meta.glob<string>("../../../landing/*.html", {
+    query: "?raw", import: "default", eager: true,
+  })
+  return Object.entries(sources).flatMap(([path, source]) => {
+    const page = path.split("/").pop()!.replace(/\.html$/, "")
+    return page === "index" ? [] : [{ params: { marketing: page }, props: { source } }]
+  })
+}
+const html = marketingHtml(Astro.props.source, import.meta.env.BASE_URL)
+---
+<Fragment set:html={html} />

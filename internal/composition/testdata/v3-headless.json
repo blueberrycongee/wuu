@@ -1,0 +1,31 @@
+{
+  "version": 3,
+  "modules": [
+    "kernel",
+    "wuu.default-loop",
+    "wuu.session-execution",
+    "wuu.tool-execution",
+    "wuu.session.default",
+    "wuu.title.default",
+    "wuu.tools.default",
+    "wuu.prompt.default",
+    "wuu.compaction.default",
+    "wuu.session-state",
+    "wuu.state.sqlite",
+    "wuu.state-consumer",
+    "wuu.credentials.os",
+    "wuu.settings.local",
+    "wuu.config.local",
+    "wuu.permissions.default",
+    "wuu.artifacts.local",
+    "wuu.index.trace",
+    "wuu.tools.v1-batch",
+    "wuu.agent.policy.default",
+    "wuu.model.native",
+    "wuu.model-execution",
+    "wuu.model.capacity.default",
+    "wuu.model.capacity.resources",
+    "wuu.engines.native",
+    "wuu.engine-execution"
+  ]
+}

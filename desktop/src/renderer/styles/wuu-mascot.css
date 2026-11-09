@@ -1,0 +1,354 @@
+[data-wuu-mascot-presence="enter"] {
+  animation: wuu-mascot-enter var(--motion-slow) var(--ease-out) both;
+}
+
+[data-wuu-mascot-presence="exit"] {
+  animation: wuu-mascot-exit var(--wuu-mascot-exit) var(--ease-in) both;
+}
+
+@keyframes wuu-mascot-enter {
+  from {
+    /* Keep the layout slot. Sliding with margin shoved process-row text and
+       jumped the conversation after a session switch catch-up. */
+    opacity: 0;
+    transform: translateX(calc(-1 * var(--wuu-mascot-slide-shift, 0px))) translateY(2px) scale(0.8);
+  }
+}
+
+@keyframes wuu-mascot-exit {
+  to {
+    opacity: 0;
+    transform: translateX(calc(-1 * var(--wuu-mascot-slide-shift, 0px))) translateY(-2px) scale(0.8);
+  }
+}
+
+@container style(--motion-reduced: 1) {
+  [data-wuu-mascot-presence] { animation: none; }
+  [data-wuu-mascot-presence="exit"] { opacity: 0; }
+}
+
+.wuu-mascot-accessory {
+  --wuu-mascot-mix-white: white;
+  pointer-events: none;
+  transform-box: view-box;
+  transform-origin: center;
+  animation: wuu-mascot-accessory-arrive var(--motion-slow) var(--ease-out) both;
+}
+
+.wuu-accessory-line {
+  fill: none;
+  stroke: var(--mo-eye);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.wuu-accessory-fill,
+.wuu-accessory-trim {
+  fill: var(--wuu-accessory-color);
+  stroke: var(--mo-eye);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.wuu-accessory-trim {
+  fill: color-mix(in oklab, var(--wuu-accessory-color) 76%, var(--wuu-mascot-mix-white));
+}
+
+/* The earpiece cushion is a second tone inside the shell, without a second
+ * outline that would make the cup read as a separate device. */
+.wuu-accessory-inset {
+  fill: color-mix(in oklab, var(--wuu-accessory-color) 62%, var(--wuu-mascot-mix-white));
+}
+
+/* The boom shares the accessory colour so it stays legible when it leaves the
+ * light body and sits against a dark page. */
+.wuu-accessory-cable {
+  fill: none;
+  stroke: var(--wuu-accessory-color);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.2;
+}
+
+.wuu-accessory-motion {
+  /* Small-angle fit: keep the opening on the rim while the face turns.
+   * Inherited camera values share the face's interpolation; no extra clock. */
+  transform: translateY(calc((var(--mo-pitch, 0) + var(--mo-pointer-pitch, 0)) * -.25px))
+    rotate(calc((var(--mo-yaw, 0) + var(--mo-pointer-yaw, 0)) * -.12deg));
+  transform-origin: 0 0;
+}
+
+@container style(--motion-reduced: 1) {
+  .wuu-accessory-motion { transform: none; }
+}
+
+.wuu-mascot-accessory,
+.wuu-mascot-accessory * {
+  transition:
+    fill var(--mo-morph, 400ms) var(--mo-morph-ease, ease-in-out),
+    stroke var(--mo-morph, 400ms) var(--mo-morph-ease, ease-in-out);
+}
+
+/* Pointer attention is an angular input to the shared face surface. */
+[data-wuu-mascot-follows-pointer] {
+  transition:
+    --mo-pointer-yaw var(--motion-fast) var(--ease-out),
+    --mo-pointer-pitch var(--motion-fast) var(--ease-out);
+}
+
+/* Activity changes tune the shared Blobatar clock rather than starting a
+ * second animation on the outer SVG. Body breathing, bobbing, eye morphs, and
+ * portaled accessories therefore stay phase-linked through stage changes. */
+[data-wuu-mascot-activity="thinking"] {
+  --mo-rate: 1.12;
+}
+
+[data-wuu-mascot-activity="compact"] {
+  --mo-rate: 0.82;
+  --wuu-mascot-mix-white: white;
+}
+
+[data-wuu-mascot-activity="search"] {
+  --mo-rate: 0.86;
+}
+
+[data-wuu-mascot-activity="edit"] {
+  --mo-rate: 0.72;
+}
+
+[data-wuu-mascot-activity="command"] {
+  --mo-rate: 0.66;
+}
+
+[data-wuu-mascot-activity="tool"] {
+  --mo-rate: 0.76;
+}
+
+/* Accessories such as tall hats, ears, and neckties intentionally extend past
+ * the 0–100 artwork canvas. Keep their SVG viewport open so the parts outside
+ * the avatar's circular box are not clipped. */
+[data-wuu-mascot-accessory]:not([data-wuu-mascot-accessory="none"]) {
+  overflow: visible;
+}
+
+/* Activity props can reach the same canvas edge. The process summary text
+ * wrapper still owns ellipsis; the summary row itself stays overflow-visible
+ * so these parts are not clipped by the 28px layout box. */
+[data-wuu-mascot-activity]:not(
+    [data-wuu-mascot-activity="idle"]
+  ) {
+  overflow: visible;
+}
+
+/* The compaction row keeps its activity cue to a few gentle mascot squeezes. */
+.context-compaction-notice.in_progress {
+  --wuu-compact-cycle: 5.4s;
+}
+
+.context-compaction-mascot {
+  position: relative;
+  display: inline-flex;
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  overflow: visible;
+}
+
+.process-surface-summary-line .context-compaction-mascot .process-surface-blobatar {
+  margin-right: 0;
+}
+
+/* One transform keeps the body, eyes and both accessory planes in phase. */
+[data-wuu-mascot-activity="compact"] .mo-bob {
+  transform-box: view-box;
+  transform-origin: center;
+  animation: wuu-mascot-compact var(--wuu-compact-cycle, 5.4s) ease-in-out infinite;
+  animation-play-state: running !important;
+}
+
+/* Cached conversations stay mounted, and the Desktop window can be hidden.
+ * Freeze compaction's decorative loops when neither surface is paintable. */
+:root[data-renderer-hidden] .context-compaction-notice.in_progress *,
+.cached-conversation-pane[data-active="false"] .context-compaction-notice.in_progress * {
+  animation-play-state: paused !important;
+}
+
+/* Blobatar's hover mode intentionally keeps its registered-property loops
+ * running at zero amplitude so hover-out remains smooth. Cached panes can hold
+ * several avatars and never receive pointer input, so that tradeoff only burns
+ * renderer time there. Pause every mascot effect while its pane or window is
+ * not paintable; the active pane resumes at the retained animation phase. */
+:root[data-renderer-hidden] .mo-root,
+:root[data-renderer-hidden] .mo-root *,
+.cached-conversation-pane[data-active="false"] .mo-root,
+.cached-conversation-pane[data-active="false"] .mo-root * {
+  animation-play-state: paused !important;
+}
+
+/* Blobatar's ambient layers continuously recalculate registered SVG properties,
+ * including while their visible amplitude is zero. Wuu already communicates
+ * work through separate activity-prop animations and expression transitions,
+ * so keep the decorative idle loops parked without freezing those signals. */
+.mo-root,
+.mo-breathe,
+.mo-bob,
+.mo-eyes,
+.mo-eye > * {
+  animation-play-state: paused !important;
+}
+
+.wuu-mascot-activity-prop {
+  pointer-events: none;
+  transform-box: view-box;
+  transform-origin: center;
+  animation: wuu-mascot-activity-arrive var(--motion-slow) var(--ease-out) both;
+}
+
+.wuu-mascot-activity-motion {
+  transform-box: view-box;
+  transform-origin: 82px 61px;
+}
+
+.wuu-mascot-activity-line {
+  fill: none;
+  stroke: var(--mo-eye);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 4.2;
+}
+
+.wuu-mascot-activity-fill {
+  fill: color-mix(in oklab, var(--mo-head) 28%, var(--wuu-mascot-mix-white));
+  stroke: var(--mo-eye);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3.5;
+}
+
+.wuu-mascot-activity-solid {
+  fill: var(--mo-eye);
+}
+
+.wuu-mascot-thinking-bubble {
+  fill: color-mix(in oklab, var(--mo-head) 16%, var(--wuu-mascot-mix-white));
+  stroke: var(--mo-eye);
+  stroke-width: 2.8;
+}
+
+.wuu-mascot-activity-prop-thinking .wuu-mascot-activity-motion {
+  transform-origin: 87px 13px;
+  animation: wuu-mascot-thinking-prop 1.35s ease-in-out infinite alternate;
+}
+
+.wuu-mascot-activity-prop-search .wuu-mascot-activity-motion {
+  transform-origin: 86px 57px;
+  animation: wuu-mascot-search-prop 900ms ease-in-out infinite alternate;
+}
+
+.wuu-mascot-activity-prop-edit .wuu-mascot-activity-motion {
+  transform-origin: 85px 69px;
+  animation: wuu-mascot-edit-prop 520ms ease-in-out infinite alternate;
+}
+
+.wuu-mascot-activity-prop-command .wuu-mascot-activity-motion {
+  transform-origin: 86px 66px;
+  animation: wuu-mascot-command-prop 760ms ease-in-out infinite alternate;
+}
+
+.wuu-mascot-activity-prop-read .wuu-mascot-activity-motion {
+  transform-origin: 87px 74px;
+}
+
+.wuu-mascot-activity-prop-tool .wuu-mascot-activity-motion {
+  transform-origin: 88px 63.5px;
+}
+
+@keyframes wuu-mascot-activity-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.72);
+  }
+}
+
+@keyframes wuu-mascot-thinking-prop {
+  to {
+    transform: translateY(-1.5px) rotate(2deg);
+  }
+}
+
+@keyframes wuu-mascot-search-prop {
+  to {
+    transform: rotate(-8deg) translateX(-1px);
+  }
+}
+
+@keyframes wuu-mascot-edit-prop {
+  to {
+    transform: translate(-1.5px, 1.5px) rotate(-2deg);
+  }
+}
+
+@keyframes wuu-mascot-command-prop {
+  to {
+    transform: translateY(-1px) scale(1.04);
+  }
+}
+
+@keyframes wuu-mascot-compact {
+  0%,
+  100% {
+    scale: 1 1;
+  }
+  12% {
+    scale: 0.78 1.07;
+  }
+  22% {
+    scale: 1.04 0.96;
+  }
+  35% {
+    scale: 0.72 1.1;
+  }
+  45% {
+    scale: 1.05 0.95;
+  }
+  58% {
+    scale: 0.68 1.12;
+  }
+  68% {
+    scale: 1.06 0.94;
+  }
+  80% {
+    scale: 0.8 1.05;
+  }
+}
+
+@keyframes wuu-mascot-accessory-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.86);
+  }
+}
+
+@container style(--motion-reduced: 1) {
+  [data-wuu-mascot-activity] {
+    transition: none;
+  }
+
+  [data-wuu-mascot-follows-pointer] {
+    transition: none;
+  }
+
+  .wuu-mascot-accessory,
+  .wuu-mascot-activity-prop,
+  .wuu-mascot-activity-motion,
+  [data-wuu-mascot-activity="compact"] .mo-bob {
+    animation: none;
+  }
+}
+
+[data-wuu-mascot-morph] .mo-bob { animation: none !important; }

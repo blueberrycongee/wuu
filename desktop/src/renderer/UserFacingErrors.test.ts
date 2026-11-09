@@ -1,0 +1,586 @@
+import { afterEach, describe, expect, it } from "vitest";
+import type { ThreadItem, Turn, TurnError } from "../shared/protocol";
+import { turnEventForItem, turnEventForTurn } from "./TurnEvents";
+import { userFacingErrorForMessage } from "./UserFacingErrors";
+import { setActiveLocale, translateCurrent as t } from "./i18n";
+
+afterEach(() => setActiveLocale("zh-CN"));
+
+describe("userFacingErrorForMessage", () => {
+  it("preserves local stream-size failures and their recovery facts after resume", () => {
+    const error: TurnError = {
+      message: "stream request failed: read stream: SSE response event exceeds local receive limit of 16777216 bytes",
+      code: "response_too_large", category: "local",
+      recovery: { attempt_count: 1, retry_count: 0, max_attempts: 11, submission_count: 1, stop_reason: "non_retryable", failure_category: "response_too_large" },
+    };
+    const live = userFacingErrorForMessage(error, "turn");
+    expect(live.category).toBe("local");
+    expect(live.diagnostic).toBe(error.message);
+    expect(userFacingErrorForMessage(JSON.parse(JSON.stringify(error)), "turn")).toEqual(live);
+    const restoredWithoutFacts = userFacingErrorForMessage(error.message, "turn");
+    expect(restoredWithoutFacts.category).toBe(live.category);
+    expect(restoredWithoutFacts.title).toBe(live.title);
+    expect(restoredWithoutFacts.detail).not.toBe(live.detail);
+    const legacy = userFacingErrorForMessage({ message: "stream request failed: read stream: bufio.Scanner: token too long", category: "internal" }, "turn");
+    expect(legacy.category).toBe("local");
+    expect(legacy.title).toBe(live.title);
+  });
+
+  it("does not infer a network failure from a generic request wrapper", () => {
+    const display = userFacingErrorForMessage("stream request failed: response stream error", "turn");
+    expect(display.category).not.toBe("network");
+  });
+
+  it("keeps structured recovery diagnostics across a wire round trip", () => {
+    const error: TurnError = {
+      message: "stream request failed: stream error (server_error): Fixture failure",
+      code: "server_error", category: "provider",
+      recovery: { attempt_count: 3, retry_count: 2, max_attempts: 3, submission_count: 3, stop_reason: "retry_limit", failure_category: "server" },
+    };
+    const live = userFacingErrorForMessage(error, "turn");
+    expect(userFacingErrorForMessage(JSON.parse(JSON.stringify(error)), "turn")).toEqual(live);
+    expect(live.category).toBe("provider");
+    expect(live.detail).not.toBe(userFacingErrorForMessage({ ...error, recovery: undefined }, "turn").detail);
+    expect(live.diagnostic).toBe(error.message);
+    expect(userFacingErrorForMessage({ ...error, recovery: { ...error.recovery!, retry_count: 0, stop_reason: "replay_unsafe" } }, "turn").detail).not.toBe(live.detail);
+  });
+
+  it.each(["zh-CN", "en-US"] as const)("classifies a Grok ACP prompt stall as an unresponsive engine in %s", (locale) => {
+    setActiveLocale(locale);
+    const message = "Grok did not respond to the prompt at all (no wire activity for 30s). the agent process is likely wedged by a stale shared leader or a hung startup check";
+    const live = userFacingErrorForMessage({ message, category: "provider" }, "turn");
+    const restored = userFacingErrorForMessage(message, "turn");
+    expect(live).toEqual(restored);
+    expect(live.category).toBe("provider");
+    expect(live.title).toBe(t("error.engineUnresponsive"));
+    expect(live.title).not.toBe(t("error.internalTitle"));
+    expect(live.diagnostic).toBe(message);
+  });
+
+  it.each(["zh-CN", "en-US"] as const)("consolidates external CLI engine errors into unified categories and preserves diagnostics in %s", (locale) => {
+    setActiveLocale(locale);
+    const cases = [
+      {
+        message: 'request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": EOF',
+        category: "network",
+        title: t("error.connectionInterrupted"),
+      },
+      {
+        message: "Antigravity exited: exit status 1: Error: 401 Unauthorized",
+        category: "auth",
+        title: `401 ${t("error.http401")}`,
+      },
+      {
+        message: "Not logged in · Please run /login",
+        category: "auth",
+        title: t("error.authTitle"),
+      },
+      {
+        message: "Credit balance is too low",
+        category: "provider",
+        title: t("error.providerTitle"),
+      },
+      {
+        message: "OpenCode server exited: exit status 1: rate limit exceeded",
+        category: "provider",
+        title: t("error.rateLimited"),
+      },
+      {
+        message: "engine stopped: max_tokens",
+        category: "provider",
+        title: t("error.tokenLimitExceeded"),
+      },
+      {
+        message: "engine stopped: refusal",
+        category: "provider",
+        title: t("error.contentPolicy"),
+      },
+      {
+        message: "agent execution terminated due to error",
+        category: "provider",
+        title: t("error.responseFailed"),
+      },
+      {
+        message: "claude exited: exit status 1: unknown option '--foo'",
+        category: "provider",
+        title: t("error.responseFailed"),
+      },
+    ] as const;
+
+    for (const tc of cases) {
+      const live = userFacingErrorForMessage({ message: tc.message, category: tc.category }, "turn");
+      const resumed = userFacingErrorForMessage(tc.message, "turn");
+      expect(live.category, tc.message).toBe(tc.category);
+      expect(resumed.category, tc.message).toBe(tc.category);
+      expect(live.title, tc.message).toBe(tc.title);
+      expect(resumed.title, tc.message).toBe(tc.title);
+      expect(live.title, tc.message).not.toBe(t("error.internalTitle"));
+      expect(live.diagnostic, tc.message).toBe(tc.message);
+    }
+  });
+
+  it.each(["zh-CN", "en-US"] as const)("distinguishes empty replies from generic provider errors in %s", (locale) => {
+    setActiveLocale(locale);
+    const message = "model returned empty answer (stop_reason=completed)";
+    const live = userFacingErrorForMessage({ message, category: "provider" }, "turn");
+    const restored = userFacingErrorForMessage(message, "turn");
+    expect(live).toEqual(restored);
+    expect(live.title).toBe(t("error.modelEmpty"));
+    expect(live.detail).toBe(t("error.modelEmptyDetail"));
+    expect(live.title).not.toBe(t("error.modelError"));
+    expect(live.detail).not.toBe(t("error.providerDetail"));
+    expect(live.diagnostic).toBe(message);
+  });
+  it("classifies wrapped context overflow as a provider error", () => {
+    const display = userFacingErrorForMessage(
+      "stream request failed: stream error (context_length_exceeded): Your input exceeds the context window",
+      "turn"
+    );
+
+    expect(display.category).toBe("provider");
+    // Known diagnostic identifiers are translated into one user-facing label.
+    expect(display.title).toBe("上下文超出窗口");
+  });
+
+  it("shows the HTTP status code with a Chinese phrase as the title for network errors", () => {
+    const display = userFacingErrorForMessage(
+      "upstream returned 503 service unavailable",
+      "turn",
+    );
+    expect(display.category).toBe("network");
+    expect(display.title).toBe("503 服务不可用");
+  });
+
+  it("shows the HTTP status code with a Chinese phrase as the title for auth errors", () => {
+    const display = userFacingErrorForMessage("401 unauthorized", "turn");
+    expect(display.category).toBe("auth");
+    expect(display.title).toBe("401 未授权");
+    expect(display.detail).toBe(t("error.authDetail"));
+  });
+
+  it("uses a keyword-based title when no HTTP code is present in the error", () => {
+    const display = userFacingErrorForMessage("connection reset by peer", "turn");
+    expect(display.category).toBe("network");
+    expect(display.title).toBe("连接被重置");
+  });
+
+  it("shows partial Responses stream closes as a specific provider-stream state", () => {
+    const display = userFacingErrorForMessage(
+      "stream request failed: websocket stream closed after provider event: websocket stream closed before response.completed",
+      "turn",
+    );
+
+    expect(display.category).toBe("provider");
+    expect(display.title).toBe("回答未完整返回");
+    expect(display.detail).toBe(t("error.responseIncompleteDetail"));
+  });
+
+  it("falls back to the category title when the message has no specific identifier", () => {
+    const display = userFacingErrorForMessage("login required", "turn");
+    expect(display.category).toBe("auth");
+    // "login required" matches the auth classifier but no HTTP code or
+    // keyword matcher fires, so we fall back to the category name.
+    expect(display.title).toBe("认证失败");
+  });
+
+  it("uses the internal category title for unrecognized errors", () => {
+    const display = userFacingErrorForMessage("panic: nil pointer", "turn");
+    expect(display.category).toBe("internal");
+    expect(display.title).toBe("wuu 内部错误");
+  });
+
+  it("localizes generated labels while leaving provider input available for classification", () => {
+    setActiveLocale("en-US");
+
+    const display = userFacingErrorForMessage("connection reset by peer", "turn");
+
+    expect(display.category).toBe("network");
+    expect(display.title).toBe("Connection reset");
+    expect(display.detail).toContain("Try again later");
+  });
+
+  describe("structured TurnError input from the Go core", () => {
+    it("models a 404 as one read-only user-facing message", () => {
+      const display = userFacingErrorForMessage(
+        {
+          message: 'HTTP 404: {"error":{"code":"internal_error","message":"resource not found"}}',
+          code: "internal_error",
+          category: "internal",
+          provider: "compatible",
+          status_code: 404,
+        },
+        "turn",
+      );
+
+      expect(display.title).toBe("请求失败 · HTTP 404");
+      expect(display).not.toHaveProperty("code");
+      expect(display).not.toHaveProperty("recommendedActions");
+    });
+
+    it("keeps a provider code visible when the stream failed after HTTP 200", () => {
+      const display = userFacingErrorForMessage(
+        {
+          message: "some raw provider body",
+          code: "insufficient_quota",
+          category: "provider",
+        },
+        "turn",
+      );
+      expect(display.title).toBe("请求失败 · insufficient_quota");
+      expect(display).not.toHaveProperty("code");
+      expect(display.category).toBe("provider");
+    });
+
+    it("uses structured status_code as a provider chip fallback when code is missing", () => {
+      const display = userFacingErrorForMessage(
+        {
+          message: "gateway returned a provider error without a parseable code",
+          category: "provider",
+          status_code: 429,
+        },
+        "turn",
+      );
+
+      expect(display.category).toBe("provider");
+      expect(display.title).toBe("请求失败 · HTTP 429");
+    });
+
+    it("prefers the exact HTTP status over an inferred quota classification", () => {
+      const display = userFacingErrorForMessage(
+        {
+          message: "usage limit reached",
+          code: "usage_limit_reached",
+          category: "auth",
+          provider: "anthropic",
+          status_code: 403,
+        },
+        "turn",
+      );
+
+      expect(display.title).toBe("请求失败 · HTTP 403");
+      expect(display.category).toBe("auth");
+    });
+
+    it("shows the provider code for a post-200 stream failure", () => {
+      const display = userFacingErrorForMessage(
+        {
+          message: "usage limit reached",
+          code: "usage_limit_reached",
+          category: "provider",
+          provider: "anthropic",
+        },
+        "turn",
+      );
+
+      expect(display.title).toBe("请求失败 · usage_limit_reached");
+    });
+
+    it("uses structured partial-stream facts without exposing the code", () => {
+      const display = userFacingErrorForMessage(
+        {
+          message:
+            "stream request failed: websocket stream closed after provider event: websocket stream closed before response.completed",
+          code: "stream_closed_before_response.completed",
+          category: "provider",
+          provider: "openai-codex",
+        },
+        "turn",
+      );
+
+      expect(display.title).toBe("回答未完整返回");
+      expect(display).not.toHaveProperty("code");
+      expect(display.category).toBe("provider");
+      expect(display.detail).toContain("这次回答可能不完整");
+    });
+
+    it("renders an HTTP-sourced invalid_request with the status phrase and error tone", () => {
+      const display = userFacingErrorForMessage(
+        {
+          message: 'HTTP 400: {"error":{"type":"invalid_request_error","message":"max_tokens must be positive"}}',
+          code: "invalid_request_error",
+          category: "invalid_request",
+          provider: "compatible",
+          status_code: 400,
+        },
+        "turn",
+      );
+
+      expect(display.category).toBe("invalid_request");
+      expect(display.tone).toBe("error");
+      // The message-embedded status wins over the structured status_code
+      // fact so the wording survives a history rebuild (tab switch).
+      expect(display.title).toBe("400 请求无效");
+      expect(display.detail).toBe(t("error.invalidRequestDetail"));
+    });
+
+    it("falls back to the localized invalid-request title for stream-sourced 400s", () => {
+      const display = userFacingErrorForMessage(
+        {
+          message: "stream request failed: stream error (invalid_request_error)",
+          code: "invalid_request_error",
+          category: "invalid_request",
+        },
+        "turn",
+      );
+
+      expect(display.category).toBe("invalid_request");
+      expect(display.tone).toBe("error");
+      expect(display.title).toBe("请求参数无效");
+      expect(display.detail).toBe(t("error.invalidRequestDetail"));
+    });
+
+    it("degrades an unknown wire category to the internal-error rendering", () => {
+      // A newer Go core may emit a category this renderer has not
+      // learned yet; it must never produce a blank, tone-less display.
+      const display = userFacingErrorForMessage(
+        {
+          message: "some future failure mode",
+          category: "quota_exhausted" as unknown as TurnError["category"],
+        },
+        "turn",
+      );
+
+      expect(display.category).toBe("internal");
+      expect(display.tone).toBe("error");
+      expect(display.title).toBe("wuu 内部错误");
+      expect(display.detail).toBe("没有完成这次请求。调试信息可用于排查。");
+    });
+
+    it("falls back to the string classifier when the structured input omits `category`", () => {
+      // An older Go core may not yet send the `category` field; the
+      // front-end must still produce a sensible display from the
+      // message alone. "context_length_exceeded" maps to provider.
+      const display = userFacingErrorForMessage(
+        {
+          message: "stream request failed: stream error (context_length_exceeded)",
+          code: "context_length_exceeded",
+        },
+        "turn",
+      );
+      expect(display.category).toBe("provider");
+      expect(display.title).toBe("上下文超出窗口");
+      expect(display).not.toHaveProperty("code");
+    });
+
+    it("renders message-size-limit overflow identically in live and rebuilt paths", () => {
+      // Kimi-for-coding rejects oversized prompts with a 400 whose body
+      // names no context keyword; both the wire-category path and the
+      // message-only fallback must converge on the context-overflow display.
+      const raw =
+        'stream request failed: HTTP 400: 400 Bad Request: {"error":{"type":"invalid_request_error","message":"total message size 2306631 exceeds limit 2097152"},"type":"error"}';
+      const live = userFacingErrorForMessage(
+        {
+          message: raw,
+          code: "invalid_request_error",
+          category: "provider",
+          provider: "kimi-code",
+          status_code: 400,
+        },
+        "turn",
+      );
+      const rebuilt = userFacingErrorForMessage(raw, "turn");
+
+      for (const display of [live, rebuilt]) {
+        expect(display.category).toBe("provider");
+        expect(display.title).toBe("上下文超出窗口");
+      }
+    });
+
+    it("keeps every core overflow phrasing identical in live and rebuilt paths", () => {
+      const phrasings = [
+        "context length exceeded",
+        "Your input exceeds the context window of this model",
+        "context window exceeds limit",
+        "maximum context length",
+        "model_context_window_exceeded",
+        "prompt is too long",
+        "request_too_large",
+        "input is too long",
+        "input token count (120000) exceeds the maximum number of tokens allowed",
+        "maximum prompt length is 131072",
+        "reduce the length of the messages",
+        "exceeds the maximum allowed input length",
+        "is longer than the model's context length",
+        "prompt token count of 240000 exceeds the limit of 200000",
+        "exceeds the available context size",
+        "greater than the context length",
+        "exceeded model token limit",
+        "message size 2,306,631 exceeds limit",
+        "prompt too long; exceeded max context length",
+      ];
+
+      for (const phrasing of phrasings) {
+        const message = `stream request failed: HTTP 400: ${phrasing}`;
+        const live = userFacingErrorForMessage(
+          {
+            message,
+            category: "provider",
+            status_code: 400,
+          },
+          "turn",
+        );
+        const rebuilt = userFacingErrorForMessage(message, "turn");
+
+        expect(live.category, phrasing).toBe("provider");
+        expect(rebuilt.category, phrasing).toBe("provider");
+        expect(live.title, phrasing).toBe("上下文超出窗口");
+        expect(rebuilt.title, phrasing).toBe(live.title);
+      }
+    });
+  });
+
+  describe("resume stability (tab switch rebuilds the turn from the persisted message only)", () => {
+    // After a thread resume the app-server rebuilds turn.error from the
+    // terminal history record: only `message` survives — status_code,
+    // code and category are lost. The renderer must derive the same
+    // category and title from the message alone as it did from the
+    // structured TurnError, or the user watches an error rename itself
+    // across a tab switch.
+    function expectResumeStable(input: TurnError, expectedCategory: string) {
+      const live = userFacingErrorForMessage(input, "turn");
+      const resumed = userFacingErrorForMessage(input.message, "turn");
+      expect(resumed.category).toBe(expectedCategory);
+      expect(resumed.title).toBe(live.title);
+      expect(resumed.tone).toBe(live.tone);
+    }
+
+    it("keeps a 429 rate-limit failure identical across a resume", () => {
+      expectResumeStable(
+        {
+          message: 'HTTP 429: {"error":{"type":"rate_limit_error","message":"slow down"}}',
+          code: "rate_limit_error",
+          category: "provider",
+          status_code: 429,
+        },
+        "provider",
+      );
+    });
+
+    it("keeps a 429 whose body carries no provider keywords identical across a resume", () => {
+      expectResumeStable(
+        {
+          message: "HTTP 429: Too Many Requests",
+          category: "provider",
+          status_code: 429,
+        },
+        "provider",
+      );
+    });
+
+    it("keeps a 401 auth failure identical across a resume", () => {
+      expectResumeStable(
+        {
+          message: 'HTTP 401: {"error":{"message":"invalid api key"}}',
+          category: "auth",
+          status_code: 401,
+        },
+        "auth",
+      );
+    });
+
+    it("keeps a 400 invalid_request failure identical across a resume", () => {
+      expectResumeStable(
+        {
+          message: 'HTTP 400: {"error":{"type":"invalid_request_error","message":"max_tokens must be positive"}}',
+          code: "invalid_request_error",
+          category: "invalid_request",
+          status_code: 400,
+        },
+        "invalid_request",
+      );
+    });
+
+    it("keeps a post-200 rate-limit stream error identical across a resume", () => {
+      expectResumeStable(
+        {
+          message: "stream request failed: stream error (rate_limit_error)",
+          code: "rate_limit_error",
+          category: "provider",
+        },
+        "provider",
+      );
+    });
+
+    it("keeps a 503 upstream failure identical across a resume", () => {
+      expectResumeStable(
+        {
+          message: "HTTP 503: service unavailable",
+          category: "network",
+          status_code: 503,
+        },
+        "network",
+      );
+    });
+  });
+});
+
+describe("TurnEvents", () => {
+  it("does not render an event for a manual interruption", () => {
+    const turn: Turn = {
+      id: "turn-1",
+      items: [],
+      items_view: "full",
+      status: "interrupted",
+    };
+
+    const event = turnEventForTurn(turn);
+
+    expect(event).toBeUndefined();
+  });
+
+  it("preserves a real failure attached to an interrupted turn", () => {
+    const turn: Turn = {
+      id: "turn-1",
+      items: [],
+      items_view: "full",
+      status: "interrupted",
+      error: {
+        message: "connection reset by peer",
+        category: "network",
+      },
+    };
+
+    const event = turnEventForTurn(turn);
+
+    expect(event?.kind).toBe("network_lost");
+    expect(event?.source).toBe("turn");
+  });
+
+  it("surfaces partial Responses stream failures as a notice", () => {
+    const turn: Turn = {
+      id: "turn-1",
+      items: [],
+      items_view: "full",
+      status: "failed",
+      error: {
+        message:
+          "stream request failed: websocket stream closed after provider event: websocket stream closed before response.completed",
+        code: "stream_closed_before_response.completed",
+        category: "provider",
+      },
+    };
+
+    const event = turnEventForTurn(turn);
+
+    expect(event?.presentation).toBe("notice");
+    if (event?.presentation !== "notice") {
+      throw new Error("expected notice event");
+    }
+    expect(event.notice.title).toBe("回答未完整返回");
+    expect(event.notice.detail).toContain("这次回答可能不完整");
+  });
+
+  it("maps in-progress compaction to a compaction event instead of an error notice", () => {
+    const item: ThreadItem = {
+      id: "compact-1",
+      type: "context_compaction",
+      status: "in_progress",
+    };
+
+    const event = turnEventForItem(item);
+
+    expect(event?.kind).toBe("context_compacting");
+    expect(event?.presentation).toBe("context_compaction");
+  });
+
+});

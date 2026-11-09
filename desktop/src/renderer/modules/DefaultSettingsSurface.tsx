@@ -1,0 +1,99 @@
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { ApplicationPresentationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { ApplicationSettingsLayoutV1 } from "../../../../packages/plugin-sdk/src/application-settings";
+import type { EngineListResult, InitializeResult } from "../../shared/protocol";
+import { SettingsShellRenderer } from "../ConversationShellRenderers";
+import { useArchiveDeletion } from "../useArchiveDeletion";
+import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
+import { useSettingsRuntimeState } from "../SettingsRuntimeState";
+import type { SettingsPage } from "../SettingsView";
+import { ScopedToast, showErrorToast } from "../Toast";
+import { useI18n } from "../i18n";
+
+export function DefaultSettingsSurface({ application, ...layout }: ApplicationSettingsLayoutV1 & {
+  application: ApplicationServiceV1;
+}): JSX.Element | null {
+  const settings = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings);
+  const archiveSource = useMemo(() => ({
+    list: (signal?: AbortSignal) => application.invoke("settings.list-archived", {}, { signal }),
+    remove: (threadId: string) => application.invoke("settings.delete-archived", { threadId }),
+  }), [application]);
+  const archiveDeletion = useArchiveDeletion(archiveSource);
+  const runtime = useSettingsRuntimeState({ settingsOpen: settings.open, application });
+  // Existing controls edit local drafts; copy the public immutable view at this boundary.
+  const initialized = useMemo(() => structuredClone(settings.configuration) as InitializeResult | undefined, [settings.configuration]);
+  const engines = useMemo(() => structuredClone(settings.engineInventory) as EngineListResult | undefined, [settings.engineInventory]);
+  const { t } = useI18n();
+  const [catalogNotice, setCatalogNotice] = useState<{ id: number; message: string; isError: boolean }>();
+  const catalogRequest = useRef(0);
+  const lifetime = useMemo(() => ({ active: true }), [application, settings.open]);
+  useEffect(() => {
+    lifetime.active = true;
+    setCatalogNotice(undefined);
+    return () => { lifetime.active = false; };
+  }, [lifetime]);
+  useEffect(() => {
+    if (!settings.open) return;
+    const lifetime = new AbortController();
+    void application.invoke("settings.refresh-engines", {}, { signal: lifetime.signal }).catch(() => { /* The service publishes discovery errors beside the engine controls. */ });
+    return () => lifetime.abort();
+  }, [application, settings.open, initialized?.workspace_root, settings.engineInventoryRevision]);
+  function closeSettings(): void {
+    void application.invoke("settings.close", {}).catch(showErrorToast);
+  }
+
+  async function refreshModelCatalog(): Promise<void> {
+    if (!lifetime.active) return;
+    setCatalogNotice(undefined);
+    const id = ++catalogRequest.current;
+    try {
+      const result = await application.invoke("settings.refresh-model-catalog", {});
+      if (lifetime.active && id === catalogRequest.current) setCatalogNotice({ id, message: t("settings.modelCatalogUpdated", { count: result.modelCount }), isError: false });
+    } catch (error) {
+      if (lifetime.active && id === catalogRequest.current && !isPluginLifecycleCancellation(error)) setCatalogNotice({ id, message: t("settings.modelCatalogUpdateFailed"), isError: true });
+    }
+  }
+  return <>
+    {settings.open && catalogNotice && <ScopedToast key={catalogNotice.id} message={catalogNotice.message} tone={catalogNotice.isError ? "error" : "info"} />}
+    {settings.open && <div
+      className={`app-modal-backdrop settings-overlay-layer${layout.embedded ? " settings-workbench-layer" : " settings-standalone-layer"}`}
+      data-wuu-component="settings-overlay"
+      onPointerDown={event => { if (event.target === event.currentTarget) closeSettings(); }}
+    >
+      <SettingsShellRenderer {...layout} floating application={application} initialized={initialized} running={settings.runtimeSwitchPending}
+        runningProviderNames={settings.runningProviderNames} engineInventory={engines} engineInventoryError={settings.engineInventoryError}
+        page={settings.activePageId as SettingsPage | undefined}
+        onPageChange={pageId => { void application.invoke("settings.open", { pageId }).catch(showErrorToast); }}
+        onBack={closeSettings}
+        onSave={(provider, model, effort, connection, variant, permissionMode) => application.invoke("settings.save-provider", { provider, model, effort, connection, variant, permissionMode })}
+        onRemoveProvider={(provider, options) => application.invoke("settings.remove-provider", { provider, ...options })}
+        onRefreshModelCatalog={refreshModelCatalog}
+        onProvidersChanged={providers => { void application.invoke("settings.reconcile-connections", { providers }).catch(showErrorToast); }}
+        onProviderModelsChanged={(provider, accountId, models) => { void application.invoke("settings.reconcile-account-models", { provider, accountId, models }).catch(showErrorToast); }}
+        onRefreshEngineInventory={async () => structuredClone(await application.invoke("settings.refresh-engines", {})) as EngineListResult | undefined}
+        onUpdateEngineInventory={async input => structuredClone(await application.invoke("settings.update-engine", input)) as EngineListResult}
+        onAdvancedSave={input => application.invoke("settings.update-advanced", input)}
+        onGeneralSave={input => application.invoke("settings.update-general", input)}
+        archivedThreads={settings.archivedThreads}
+        onUnarchiveThread={thread => { void application.invoke("settings.unarchive", { threadId: thread.id }).catch(showErrorToast); }}
+        archiveDeletion={archiveDeletion}
+        onDeleteAllArchivedThreads={() => { void archiveDeletion.removeAll(); }}
+        onRetryArchiveDeletion={() => { void archiveDeletion.retry(); }}
+        usage={runtime.settingsUsage} usageLoading={runtime.settingsUsageLoading} usageError={runtime.settingsUsageError}
+        codexPets={runtime.codexPets} codexPetsLoading={runtime.codexPetsLoading} codexPetsError={runtime.codexPetsError}
+        onCodexPetsRefresh={runtime.refreshCodexPets} onCodexPetsUpdate={runtime.updateCodexPets}
+      />
+    </div>}
+  </>;
+}
+
+/** Settings owns its domain reads and mutations; the slot supplies only presentation geometry. */
+export function activatePresentation(api: ApplicationPresentationAPI): void {
+  function SettingsContribution({ application, context }: UISlotRenderProps): JSX.Element {
+    return <DefaultSettingsSurface {...context.layout as ApplicationSettingsLayoutV1} application={application} />;
+  }
+  api.registerUIContribution({ id: "ui.settings", target: "wuu.default-shell/application.settings", render: SettingsContribution });
+}
+
+// The legacy entry remains available to standalone authoring hosts.
+export const activate = activatePresentation;

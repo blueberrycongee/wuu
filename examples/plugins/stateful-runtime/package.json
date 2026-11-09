@@ -1,0 +1,16 @@
+{
+  "name": "stateful-runtime-example",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && esbuild src/runtime.ts --bundle --platform=node --format=esm --outfile=dist/runtime.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@wuu/plugin-sdk": "^0.1.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.9.0"
+  }
+}

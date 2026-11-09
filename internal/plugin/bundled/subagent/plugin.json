@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "subagent",
+  "name": "Subagent",
+  "description": "Delegated child tasks and multi-agent coordination.",
+  "icon": { "path": "icon.webp" },
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "0.1.0",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
+  "desktop": { "entry": "desktop.js" },
+  "contributes": {
+    "settingsPages": [
+      { "id": "subagent", "title": "Subagent", "description": "Configure model aliases used by delegated tasks", "view": "subagent.settings", "icon": { "path": "icon.webp" }, "order": 30 }
+    ]
+  },
+  "interface": { "displayName": "Subagent", "shortDescription": "Delegate bounded work to child tasks.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
+}

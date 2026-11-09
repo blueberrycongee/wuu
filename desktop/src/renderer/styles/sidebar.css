@@ -1,0 +1,2934 @@
+/* Component color tokens for sidebar.css.
+   Light-theme values; the dark theme overrides these in base.css theme blocks. */
+:root {
+  /* A quiet opaque rail separates navigation without outweighing the canvas. */
+  --sidebar-material-fill: #f7f7f7;
+  /* Rail/content boundary: a crisp dark hairline instead of the old white
+   * edge + white inset pair, which were invisible against the white content
+   * column and left the boundary to be read from the gray brightness step.
+   * The dark theme keeps its own light-on-dark edge overrides in theme.css. */
+  --sidebar-material-edge: rgba(19, 19, 20, 0.07);
+  --sidebar-material-inner-edge: transparent;
+  --sidebar-hover-card-rim: rgba(255, 255, 255, 0.72);
+  --sidebar-drawer-bg: var(--sidebar-material-fill);
+  --sidebar-brand-wordmark-color: var(--ink-strong);
+  /* Share the navigation artwork's optical inset with shell controls. Folder
+   * artwork starts at x=3.8 on the 24-unit grid; allow for font sidebearing. */
+  --sidebar-leading-icon-inset: calc(var(--icon-size) * (3.8 - var(--icon-stroke) / 2) / 24 - var(--font-ui) * 0.05);
+  --sidebar-resizer-hover-bg: var(--ink-overlay-18);
+  --sidebar-resizer-hover-ring: rgba(255, 255, 255, 0.4);
+  /* Hover is a tone step; a light inner ring would outline the darker fill
+   * on the opaque rail. */
+  --sidebar-nav-item-hover-ring: var(--wuu-nav-item-hover-ring, transparent);
+  --sidebar-nav-item-focus-shadow: var(--focus-ring);
+  /* A neutral filled row carries location; regular-weight labels stay stable. */
+  --sidebar-row-selected-bg: var(
+    --wuu-nav-item-active-background,
+    var(--selection-surface)
+  );
+  --sidebar-row-selected-shadow: var(--shadow-soft);
+  --sidebar-project-row-pending-bg: var(--ink-overlay-4);
+  --sidebar-row-icon-hover-bg-default: var(--ink-overlay-6);
+  --sidebar-row-action-archive-confirm-bg: rgba(184, 79, 53, 0.1);
+  --sidebar-thread-list-button-hover-bg: var(--ink-overlay-4);
+  --sidebar-settings-button-hover-ring: transparent;
+  /* Collapsed-drawer chrome. */
+  --sidebar-drawer-edge: rgba(19, 19, 20, 0.09);
+  --sidebar-drawer-inner-edge: transparent;
+  /* Must stay a valid <shadow> (not `none`): it is one item in a comma-
+   * separated box-shadow list. */
+  --sidebar-edge-shadow: 0 0 0 0 transparent;
+}
+
+.app-shell {
+  --shell-right-control-inset: calc(var(--conversation-pane-inset) + max(var(--control-toolbar-inset), var(--window-controls-inset-right)));
+  display: grid;
+  position: relative;
+  isolation: isolate;
+  grid-template-columns: var(--sidebar-width, 296px) minmax(0, 1fr) 0;
+  grid-template-rows: minmax(0, 1fr) 0;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  /* Keep the fixed-width closing panel out of the outer canvas gutter. */
+  overflow: clip;
+  overflow-clip-margin: content-box;
+  background: var(--sidebar-material-fill);
+  padding-right: var(--conversation-pane-inset);
+}
+
+.app-shell.sidebar-animating {
+  transition: grid-template-columns var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+}
+
+.app-shell.right-panel-animating {
+  transition: grid-template-columns var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
+}
+
+.app-shell.right-panel-open {
+  /* Environment panels measure against the conversation column. Subtract the
+   * docked workspace track from their viewport-based inset calculation. */
+  --workspace-right-panel-reserved-width: var(--workspace-right-panel-width, 360px);
+  grid-template-columns: var(--sidebar-width, 296px) minmax(0, 1fr) var(--workspace-right-panel-width, 360px);
+}
+
+/* This control belongs to the window chrome, not either moving track. It
+ * remains reachable when the workspace owns focus and the conversation is inert. */
+.shell-right-sidebar-toggle {
+  position: absolute;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  right: var(--shell-right-control-inset);
+  z-index: 151;
+  -webkit-app-region: no-drag;
+}
+
+.shell-left-sidebar-toggle {
+  position: fixed;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  left: var(--window-titlebar-leading-inset);
+  z-index: 151;
+  -webkit-app-region: no-drag;
+}
+
+.shell-left-sidebar-toggle * {
+  -webkit-app-region: no-drag;
+}
+
+.shell-right-sidebar-toggle * {
+  -webkit-app-region: no-drag;
+}
+
+.app-shell.popped-out-shell,
+.app-shell.popped-out-shell.right-panel-open {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.app-shell.popped-out-shell .conversation-pane {
+  grid-column: 1;
+  /* Pop-outs use the same window chrome axis as the main window. */
+  grid-template-rows: var(--window-titlebar-height) minmax(0, 1fr);
+}
+
+.app-shell.popped-out-shell .titlebar {
+  padding-left: var(--window-titlebar-leading-inset);
+}
+
+/* Right-panel "globalized" focus mode: the panel takes over the main stage
+ * without covering a docked navigation sidebar. The panel is promoted to
+ * position:fixed and laid out at its final full width from the first frame —
+ * nothing reflows mid-flight (the old grid interpolation rewrapped the
+ * conversation text and relaid the panel content on every frame). It emerges
+ * leftward from its dock slot on enter and parks back into it on exit, same
+ * directional language as the environment panel. The grid keeps the docked
+ * template, so the under-stage layout stays put and is simply revealed again
+ * when the sheet leaves. Phases come from App's sheet phase machine
+ * (data-sheet="parked" -> arming/exiting rest point, "open" -> covering).
+ * The transition declared on each state rule is the one used to REACH that
+ * state: enter timing lives on [data-sheet="open"], exit timing on "parked". */
+.app-shell .workspace-right-panel[data-sheet="arming"],
+.app-shell .workspace-right-panel[data-sheet="open"],
+.app-shell .workspace-right-panel[data-sheet="parked"] {
+  position: fixed;
+  inset: 0 var(--conversation-pane-inset) 0 calc(var(--workspace-sheet-left, 0px) + var(--conversation-pane-inset));
+  clip-path: inset(var(--conversation-pane-inset) 0 0 round var(--conversation-canvas-radius));
+  /* Above the conversation, below an open sidebar drawer. A docked sidebar
+   * remains outside the sheet's left edge and stays interactive. */
+  z-index: 130;
+  grid-column: auto;
+  grid-row: auto;
+  border-left: none;
+  /* Elevation: the sheet is a layer over the workspace, not a column of it. */
+  box-shadow: var(--shadow-drawer-left);
+}
+
+/* arming/docking are one-frame teleport states: they place the sheet without
+ * animating, so the enter transition has a start value and the demote back to
+ * the grid does not replay the panel's base transform transition. */
+.app-shell .workspace-right-panel[data-sheet="arming"],
+.app-shell .workspace-right-panel[data-sheet="docking"] {
+  transition: none;
+}
+
+.app-shell .workspace-right-panel[data-sheet="arming"],
+.app-shell .workspace-right-panel[data-sheet="parked"] {
+  transform: translate3d(
+    calc(100% - var(--workspace-right-panel-width, 360px)),
+    0,
+    0
+  ) scale(1);
+}
+
+.app-shell .workspace-right-panel[data-sheet="open"] {
+  transform: translate3d(0, 0, 0) scale(1);
+  transition: transform var(--sheet-enter-duration) var(--sheet-enter-easing);
+}
+
+.app-shell .workspace-right-panel[data-sheet="parked"] {
+  transition: transform var(--sheet-exit-duration) var(--sheet-exit-easing);
+}
+
+.app-shell.right-panel-globalized .conversation-pane {
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.app-shell.right-panel-globalized .conversation-pane .titlebar {
+  visibility: hidden;
+}
+
+/* Keep the conversation mounted under the shared header so switching tabs
+ * preserves its history, selection and scroll position. Tool content retains
+ * its layout while hidden, including editors and the terminal. */
+.app-shell.workspace-conversation-active .conversation-pane {
+  grid-column: 2 / -1;
+  pointer-events: auto;
+}
+
+.app-shell.workspace-conversation-active .workspace-right-panel {
+  background: transparent;
+  box-shadow: none;
+  pointer-events: none;
+}
+
+.app-shell.workspace-conversation-active .workspace-panel-tabbar {
+  pointer-events: auto;
+}
+
+.app-shell.workspace-conversation-active .workspace-panel-body {
+  visibility: hidden;
+  /* Monaco sets visibility on descendants, so suppress the whole painted layer. */
+  opacity: 0;
+}
+
+.globalized-sidebar-toggle-region {
+  position: fixed;
+  /* Match the shared toolbar center, including when zoomed controls require
+   * a taller row than the native traffic lights. */
+  top: calc(env(safe-area-inset-top, 0px) + (var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  /* The OS inset is a hard exclusion zone. Wuu owns an additional fixed
+   * gutter so decorated theme controls never visually merge with it. */
+  left: var(--window-titlebar-leading-inset);
+  z-index: 150;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+  -webkit-app-region: drag;
+}
+
+.globalized-sidebar-toggle-region .globalized-sidebar-toggle {
+  -webkit-app-region: no-drag;
+}
+
+.globalized-sidebar-toggle * {
+  -webkit-app-region: no-drag;
+}
+
+/* When the navigation sidebar is collapsed, the right panel starts at x=0;
+ * reserve room on the left of its tabbar so the macOS traffic lights
+ * (trafficLightPosition 18, 21) don't sit on top of the tabs. Mirrors the
+ * popped-out titlebar reservation. The main titlebar (which normally
+ * provides the window drag region) lives inside the now-hidden
+ * conversation-pane, so the tabbar itself takes over as the drag handle.
+ * Tabs + the tab strip stay part of the drag region (matching the docked
+ * mode behavior) so opening a tab does not shrink the drag strip; only
+ * the tabbar's buttons opt out via the `.workspace-panel-tabbar button`
+ * rule in workspace.css. */
+.app-shell.right-panel-globalized.sidebar-collapsed .workspace-panel-tabbar {
+  padding-left: calc(var(--window-titlebar-leading-inset) - var(--conversation-pane-inset));
+  -webkit-app-region: drag;
+}
+
+.workspace-panel-sidebar-hit-hole {
+  width: var(--control-size-toolbar);
+  height: 100%;
+  flex: 0 0 var(--control-size-toolbar);
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
+/* The panel already starts after the docked navigation sidebar when that
+ * sidebar is visible. The hit-hole is only needed when the globalized panel
+ * reaches the window's left edge and has to avoid the traffic lights. */
+.app-shell.right-panel-globalized:not(.sidebar-collapsed)
+  .workspace-panel-sidebar-hit-hole {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed.right-panel-open:not(.right-panel-globalized) .workspace-panel-tabbar {
+  /* Expand only when the right panel's left edge enters the traffic-light zone. */
+  padding-left: clamp(
+    10px,
+    calc(
+      var(--window-controls-inset-left) -
+        (100vw - var(--conversation-pane-inset) - var(--workspace-right-panel-width, 360px))
+    ),
+    max(10px, var(--window-controls-inset-left))
+  );
+}
+
+/* Rail surface — shared between the main sidebar (`<aside class="sidebar">`)
+ * and the settings rail (`<aside class="settings-sidebar">`). Single source of
+ * truth so future tweaks to the rail (fill, edge, ambient shadow) update both
+ * shells at once. Each shell keeps its own layout-specific declarations in
+ * the rules below — main owns z-index / overflow / transitions / motion
+ * tokens, settings owns padding / gap. */
+.sidebar,
+.settings-sidebar {
+  display: flex;
+  position: relative;
+  isolation: isolate;
+  min-width: 0;
+  flex-direction: column;
+  border-right: var(--wuu-border-subtle, 1px solid var(--sidebar-material-edge));
+  background: var(--sidebar-material-fill);
+  background: var(--theme-override-color-surface, var(--sidebar-material-fill));
+  box-shadow:
+    inset -1px 0 0 var(--sidebar-material-inner-edge),
+    var(--sidebar-edge-shadow);
+}
+
+.sidebar,
+.settings-sidebar {
+  /* The rounded conversation canvas supplies the docked boundary. Drawers
+     retain their own edge and elevation when they overlap the canvas. */
+  --sidebar-material-edge: transparent;
+  --sidebar-material-inner-edge: transparent;
+  --sidebar-edge-shadow: 0 0 0 0 transparent;
+  border-right-color: var(--sidebar-material-edge);
+}
+
+.sidebar {
+  /* Section expand/collapse motion tokens, shared by the collapse body,
+   * the header chevron, and the header icon cross-fade so all three land
+   * together. */
+  --section-fold-ms: var(--motion-slow);
+  --section-fold-ease: var(--ease-out);
+  --section-fold-fade-ms: var(--motion-base);
+  grid-row: 1 / 3;
+  z-index: 120;
+  overflow: visible;
+  min-height: 0;
+  transition:
+    border-color var(--sidebar-motion-duration) var(--sidebar-motion-ease),
+    background-color var(--sidebar-motion-duration) var(--sidebar-motion-ease),
+    box-shadow var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+}
+
+/* While the rail column animates (or sits collapsed) the fixed-width
+ * `.sidebar-content` inside must be clipped, not squished — both shells. */
+.sidebar-animating :is(.sidebar, .settings-sidebar),
+.resizing-sidebar :is(.sidebar, .settings-sidebar),
+.sidebar-collapsed :is(.sidebar, .settings-sidebar) {
+  overflow: hidden;
+}
+
+.sidebar-collapsed :is(.sidebar, .settings-sidebar) {
+  border-right-color: transparent;
+  pointer-events: none;
+}
+
+/* Parked transform: the collapsed rail carries the hover drawer's off-canvas
+ * start value, so opening the drawer is a plain transform transition with no
+ * arming frame. Invisible while collapsed — the grid column is 0-width and
+ * overflow-clipped, and -100% of a 0-width box is a 0px shift. Excluded
+ * while .sidebar-animating runs the dock<->collapse grid animation so the
+ * rail keeps its squish-fade instead of flinging off-screen. Specificity
+ * ties the drawer overlay rules below; it sits earlier in source order so
+ * every open/closing/focus-within state wins over it. */
+.sidebar-collapsed:not(.sidebar-animating) :is(.sidebar, .settings-sidebar) {
+  transform: translate3d(-100%, 0, 0);
+}
+
+.sidebar-content {
+  /* The rail sits against the window edge, where square CJK glyphs have
+   * little sidebearing. Give its first ink one extra module beyond the shared
+   * pane inset; the split between list and row padding keeps the fill and the
+   * glyphs on separate edges while preserving their inner gap. */
+  --sidebar-content-pad-x: var(--space-4);
+  --sidebar-row-pad-x: calc(
+    var(--pane-inset) + var(--space-1) - var(--sidebar-content-pad-x)
+  );
+  --sidebar-row-radius: calc(var(--radius-xs) + 4px);
+  --sidebar-label-weight: 400;
+  --sidebar-label-size: var(--font-ui);
+  --sidebar-heading-size: var(--sidebar-label-size);
+  /* Comfortable rows remain distinct from the larger gaps between groups. */
+  --sidebar-row-height: max(28px, round(up, calc(var(--sidebar-label-size) * 1.8), 4px));
+  /* Labels keep readable ink; the filled row identifies the current location.
+   * Group headings use their separate tertiary-text role. */
+  --sidebar-label-ink: var(--ink);
+  --sidebar-row-hover-bg: var(--wuu-nav-item-hover-background, color-mix(in srgb, var(--ink) 6%, transparent));
+  /* Group labels and heading actions: quieter than labels, still 4.5:1. */
+  --sidebar-heading-ink: var(--ink-tertiary);
+  /* Keep navigation, workspace labels, and nested conversations on one text
+   * axis. The gap follows the UI em and snaps to whole pixels. */
+  --sidebar-nav-column-gap: round(nearest, calc(var(--font-ui) * 2 / 3), 1px);
+  --sidebar-tree-toggle-col: 14px;
+  --sidebar-tree-column-gap: var(--space-1);
+  --sidebar-accessory-gap: var(--space-2);
+  --sidebar-fork-icon-size: var(--sidebar-primary-icon-size);
+  --sidebar-fork-slot-inset: calc((var(--sidebar-row-action-size) - var(--sidebar-fork-icon-size)) / 2);
+  /* Match the bell/search center spacing: pin is on the bell axis while
+   * archive stays on the search axis, even as UI font sizes change. */
+  --sidebar-action-gap: calc(var(--control-size-toolbar) + var(--control-toolbar-gap) - var(--sidebar-row-action-size));
+  --sidebar-thread-actions-width: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap));
+  --sidebar-row-control-pad-x: var(--space-2);
+  --sidebar-project-unread-size: var(--sidebar-session-status-dot-size);
+  /* Rows, heading-to-content and group breaks step through the same module.
+   * Include each row's own leading when judging the visible whitespace. */
+  --sidebar-functional-row-gap: var(--sidebar-row-gap);
+  --sidebar-functional-heading-gap: var(--space-2);
+  --sidebar-functional-group-gap: var(--space-6);
+  /* Parent and child rows belong to one tree: use the same separation as
+   * sibling rows. The collapse body owns this gap; lists add no outer inset. */
+  --sidebar-section-body-gap: var(--sidebar-row-gap);
+  --sidebar-row-gap: var(--space-1);
+  --sidebar-session-status-dot-size: 5px;
+  --sidebar-session-status-bg: transparent;
+  --sidebar-session-status-scale: 0.75;
+  --sidebar-session-status-unread-bg: var(--info);
+  --sidebar-session-status-unread-scale: 1;
+  --sidebar-activity-size: 12px;
+  display: flex;
+  width: var(--sidebar-open-width, 296px);
+  min-width: var(--sidebar-open-width, 296px);
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  padding: 0 var(--sidebar-content-pad-x) var(--space-2);
+  transform: translate3d(0, 0, 0) scale(1);
+  transform-origin: left center;
+  opacity: 1;
+  transition:
+    opacity var(--sidebar-motion-duration) var(--sidebar-motion-ease),
+    transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+  will-change: opacity, transform;
+}
+
+.sidebar-collapsed .sidebar-content {
+  opacity: 0;
+  transform: translate3d(-18px, 0, 0) scale(0.988);
+}
+
+/* Dock/undock clips a stable content width. Drawer motion still belongs to
+ * its outer rail; navigation labels never scale or rewrap during a toggle. */
+.sidebar-animating:not(.sidebar-drawer-closing) .sidebar-content {
+  opacity: 1;
+  transform: none;
+  transition: none;
+}
+
+.sidebar-hover-zone {
+  display: none;
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 130;
+  width: 14px;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-collapsed .sidebar-hover-zone {
+  display: block;
+}
+
+/* Keep the control that summoned the hover drawer above the drawer itself.
+   The drawer slides underneath this stationary control island instead of
+   replacing its hit target, so the pointer can remain on the toggle and click
+   it to pin the sidebar open after the preview has appeared. This applies to
+   both the conversation and settings titlebars.
+   Titlebars live under conversation/settings overflow and a z-index:2
+   stacking context, so a relative 150 cannot escape those ancestors. While
+   the drawer is showing, pin the toggle to the window like the globalized
+   sidebar control so it stays above the 140 drawer without lifting the
+   whole titlebar over the rail. */
+.sidebar-collapsed :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
+  position: relative;
+  z-index: 150;
+  transition:
+    background-color var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing),
+    box-shadow var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing),
+    color var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing);
+}
+
+.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
+  :is(.titlebar, .settings-titlebar)
+  .sidebar-toggle-button,
+.sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
+  position: fixed;
+  top: calc((var(--window-titlebar-height) - var(--control-size-toolbar)) / 2);
+  left: var(--window-titlebar-leading-inset);
+  z-index: 150;
+}
+
+/* Reserve the lifted toggle's space only while that slot still contains
+ * the control. */
+:is(.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing), .sidebar-drawer-docking)
+  :is(.title-block, .settings-titlebar):has(> .sidebar-toggle-button)::before {
+  content: "";
+  flex: 0 0 var(--control-size-toolbar);
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+}
+
+.sidebar-collapsed:is(.sidebar-drawer-open, .sidebar-drawer-closing)
+  :is(.titlebar, .settings-titlebar)
+  .sidebar-toggle-button {
+  background-color: var(--surface-3);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+}
+
+.sidebar-drawer-docking :is(.titlebar, .settings-titlebar) .sidebar-toggle-button {
+  background-color: var(--surface-3);
+  box-shadow: var(--shadow-card);
+  color: var(--ink);
+}
+
+/* While a sidebar drag is in flight the pointer can sit exactly where the
+   collapsed-hover zone appears; hide the zone so it cannot steal the pointer
+   or trigger the drawer mid-drag. */
+.resizing-sidebar .sidebar-hover-zone {
+  display: none;
+}
+
+/* :focus-within is excluded while resizing: a drag that collapses the sidebar
+   would otherwise pin it open as an overlay because the last-clicked sidebar
+   control still holds focus. Shared between the main sidebar (`<aside
+   class="sidebar">`) and the settings rail (`<aside class="settings-sidebar">`)
+   via `:is()` so a single edit covers both shells. The transform/opacity reset
+   is needed for the settings rail (whose collapse transform lives on the rail
+   itself); for the main rail it is a no-op because the aside has no explicit
+   transform or opacity in its base state and the inner `.sidebar-content`
+   layer has its own reset rule below. */
+.sidebar-collapsed.sidebar-drawer-open :is(.sidebar, .settings-sidebar),
+.sidebar-collapsed.sidebar-drawer-closing :is(.sidebar, .settings-sidebar),
+.sidebar-drawer-docking :is(.sidebar, .settings-sidebar),
+.sidebar-collapsed:not(.resizing-sidebar) :is(.sidebar, .settings-sidebar):focus-within {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 140;
+  width: var(--sidebar-open-width, 296px);
+  min-width: var(--sidebar-open-width, 296px);
+  border-right-color: var(--sidebar-drawer-edge);
+  background: var(--sidebar-drawer-bg);
+  box-shadow: inset -1px 0 0 var(--sidebar-drawer-inner-edge), var(--shadow-drawer-right);
+  overflow: visible;
+  pointer-events: auto;
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+  /* The drawer slides in from the parked off-canvas transform on the
+   * collapsed rail (see above). The transition declared here is the one used
+   * to REACH the open/pinned state; the closing rule below declares the
+   * faster exit. Chrome (background/border/shadow) intentionally does NOT
+   * fade in separately — it rides the panel's transform, so the whole drawer
+   * moves as one piece instead of a white slab popping in ahead of the
+   * content. */
+  transition: transform var(--sidebar-drawer-enter-duration)
+    var(--sidebar-drawer-enter-easing);
+  will-change: transform;
+}
+
+.sidebar-collapsed.sidebar-drawer-open :is(.sidebar, .settings-sidebar) .sidebar-content,
+.sidebar-drawer-docking :is(.sidebar, .settings-sidebar) .sidebar-content,
+.sidebar-collapsed:not(.resizing-sidebar) :is(.sidebar, .settings-sidebar):focus-within .sidebar-content {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+/* Pinning keeps the floating rail in place while its preview material
+ * dissolves into the docked sidebar surface. Every
+ * target value matches the base rail above, so removing the docking class at
+ * the end of the grid motion cannot produce a final color or shadow snap. */
+.sidebar-drawer-docking :is(.sidebar, .settings-sidebar) {
+  border-right-color: var(--sidebar-material-edge);
+  background: var(--sidebar-material-fill);
+  background: var(--theme-override-color-surface, var(--sidebar-material-fill));
+  box-shadow:
+    inset -1px 0 0 var(--sidebar-material-inner-edge),
+    var(--sidebar-edge-shadow);
+  transition:
+    transform var(--sidebar-drawer-enter-duration) var(--sidebar-drawer-enter-easing),
+    border-color var(--sidebar-motion-duration) var(--sidebar-motion-ease),
+    background-color var(--sidebar-motion-duration) var(--sidebar-motion-ease),
+    box-shadow var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+}
+
+/* Shared rule aliases — `.sidebar-collapsed.sidebar-drawer-*` rules below
+ * are intentionally mirrored on `.sidebar` only so the legacy sidebar-side
+ * declarations remain in one place even though the workhorse rule now lives
+ * on `:is(.sidebar, .settings-sidebar)` above (single source of truth for
+ * visual tuning). Properties match the shared rule verbatim; they exist for
+ * textual-side assertions and to make future `git blame` targeted at the
+ * main sidebar still land on its own rule. */
+.sidebar-collapsed.sidebar-drawer-open .sidebar,
+.sidebar-collapsed.sidebar-drawer-closing .sidebar,
+.sidebar-collapsed:not(.resizing-sidebar) .sidebar:focus-within {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 140;
+  width: var(--sidebar-open-width, 296px);
+  min-width: var(--sidebar-open-width, 296px);
+  border-right-color: var(--sidebar-drawer-edge);
+  background: var(--sidebar-drawer-bg);
+  box-shadow: inset -1px 0 0 var(--sidebar-drawer-inner-edge), var(--shadow-drawer-right);
+  overflow: visible;
+  pointer-events: auto;
+  transform: translate3d(0, 0, 0);
+  opacity: 1;
+  transition: transform var(--sidebar-drawer-enter-duration)
+    var(--sidebar-drawer-enter-easing);
+  will-change: transform;
+}
+
+.sidebar-collapsed.sidebar-drawer-open .sidebar .sidebar-content,
+.sidebar-collapsed:not(.resizing-sidebar) .sidebar:focus-within .sidebar-content {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+/* Closing keeps the drawer mounted as an overlay (position/width above) so
+   there is room for the exit motion, and slides the whole panel back
+   off-screen left — the reverse of the enter slide, in the sheet's
+   enter-heavy/exit-light timing (shorter, accelerating away). The panel
+   chrome stays opaque the whole way; only the inner content falls back to
+   the collapsed fade/slide values. When the closing phase ends the overlay
+   rules drop onto the collapsed parked transform — the same -100% value — so
+   nothing jumps. Shared with the settings rail via `:is()`. */
+.sidebar-collapsed.sidebar-drawer-closing .sidebar,
+.sidebar-collapsed.sidebar-drawer-closing .settings-sidebar {
+  transform: translate3d(-100%, 0, 0);
+  transition: transform var(--sidebar-drawer-exit-duration)
+    var(--sidebar-drawer-exit-easing);
+}
+
+/* The content layer follows the panel's exit timing instead of the slower
+   enter curve, so the fade finishes as the panel leaves the stage. */
+.sidebar-collapsed.sidebar-drawer-closing :is(.sidebar, .settings-sidebar) .sidebar-content {
+  transition:
+    opacity var(--sidebar-drawer-exit-duration) var(--sidebar-drawer-exit-easing),
+    transform var(--sidebar-drawer-exit-duration) var(--sidebar-drawer-exit-easing);
+}
+
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: col-resize;
+  outline: 0;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-resizer {
+  left: calc(var(--sidebar-width, 296px) - 5px);
+  /* The centered hit strip overlaps the sidebar's edge, including fractional
+     animated widths. Keep both halves above the sidebar surface (120). */
+  z-index: 121;
+}
+
+:is(.app-shell, .settings-shell) > .sidebar-resizer {
+  /* Absolute grid placement follows the animated first track, rather than
+     jumping its hit target to the destination width before the pane arrives. */
+  grid-column: 1 / 2;
+  left: auto;
+  right: calc(-5px - var(--conversation-pane-inset));
+  /* Container height lets the light clamp its transform to this rail without
+   * measuring layout on pointermove or changing its top every frame. */
+  container-type: size;
+}
+
+.sidebar-resizer::before {
+  /* Shells align the feedback with the rounded reading canvas below. */
+  position: absolute;
+  inset: 0;
+  left: 50%;
+  width: 1px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  content: "";
+  transform: translateX(-50%);
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.sidebar-resizer:hover::before,
+.sidebar-resizer:focus-visible::before,
+.resizing-sidebar .sidebar-resizer::before {
+  background: var(--sidebar-resizer-hover-bg);
+  box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
+}
+
+/* Keep pointer feedback local to the grab point. Pressing gathers the hover
+ * light into a soft bead; releasing lets it stretch back along the edge. */
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::before {
+  --sidebar-resizer-light-height: 96px;
+  --sidebar-resizer-light-inset: calc(
+    var(--conversation-pane-inset) + var(--conversation-canvas-radius) +
+    var(--sidebar-resizer-light-height) / 2 + 4px
+  );
+  position: absolute;
+  left: 50%;
+  content: "";
+  top: 0;
+  translate: 0 clamp(
+    var(--sidebar-resizer-light-inset),
+    var(--sidebar-resizer-pointer-y, 50cqh),
+    calc(100cqh - var(--sidebar-resizer-light-inset))
+  );
+  right: auto;
+  bottom: auto;
+  width: 2px;
+  height: var(--sidebar-resizer-light-height);
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--sidebar-resizer-hover-bg);
+  box-shadow: 0 0 12px 3px var(--sidebar-resizer-hover-bg);
+  opacity: 0;
+  pointer-events: none;
+  /* Long, soft tails keep the feedback visible above and below the cursor. */
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    rgb(0 0 0 / 0.16) 12.5%,
+    rgb(0 0 0 / 0.5) 25%,
+    rgb(0 0 0 / 0.84) 37.5%,
+    #000 50%,
+    rgb(0 0 0 / 0.84) 62.5%,
+    rgb(0 0 0 / 0.5) 75%,
+    rgb(0 0 0 / 0.16) 87.5%,
+    transparent
+  );
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    background var(--motion-fast) var(--ease-out),
+    transform var(--motion-slow) cubic-bezier(0.22, 1.35, 0.36, 1);
+}
+
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer):hover::before {
+  opacity: 1;
+}
+
+/* Keyboard focus identifies the entire adjustable boundary. */
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer)::after {
+  position: absolute;
+  top: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
+  bottom: calc(var(--conversation-pane-inset) + var(--conversation-canvas-radius));
+  left: 50%;
+  width: 1px;
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-resizer-hover-bg);
+  box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
+  content: "";
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer):focus-visible::before {
+  opacity: 0;
+}
+
+:is(:is(.app-shell, .settings-shell) > .sidebar-resizer, .ribbon-resizer):focus-visible::after {
+  opacity: 1;
+}
+
+:is(:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer, .ribbon-resizer[data-resizing])::before {
+  opacity: 1;
+  background: color-mix(in srgb, var(--ink) 40%, transparent);
+  transform: translate(calc(-50% + var(--sidebar-resizer-grab-x, 0px)), -50%) scale(2.5, 0.72);
+}
+
+:is(:is(.app-shell, .settings-shell).resizing-sidebar > .sidebar-resizer, .ribbon-resizer[data-resizing])::after {
+  opacity: 0;
+}
+
+.resizing-sidebar,
+.resizing-sidebar * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+.resizing-sidebar,
+.resizing-right-panel {
+  transition: none;
+}
+
+.resizing-sidebar :is(.sidebar, .settings-sidebar),
+.resizing-sidebar .sidebar-content {
+  transition: none;
+}
+
+.resizing-sidebar :is(.sidebar, .settings-sidebar) {
+  box-shadow: none;
+}
+
+.app-shell.resizing-sidebar.right-panel-open:not(.right-panel-globalized) .workspace-right-panel {
+  position: absolute;
+  top: 0;
+  right: var(--conversation-pane-inset);
+  bottom: 0;
+  width: var(--workspace-right-panel-width, 360px);
+  transition: none;
+}
+
+.workspace-right-panel-resizer {
+  position: absolute;
+  top: 0;
+  right: calc(var(--conversation-pane-inset) + var(--workspace-right-panel-width, 360px) - 5px);
+  bottom: 0;
+  z-index: 18;
+  width: 10px;
+  cursor: col-resize;
+  outline: 0;
+  opacity: 0;
+  transform: translate3d(12px, 0, 0);
+  transition:
+    opacity var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease),
+    transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
+  pointer-events: none;
+  -webkit-app-region: no-drag;
+}
+
+.right-panel-open .workspace-right-panel-resizer {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+  pointer-events: auto;
+}
+
+.app-shell.right-panel-globalized .workspace-right-panel-resizer {
+  display: none;
+  pointer-events: none;
+}
+
+.right-panel-animating .workspace-right-panel-resizer {
+  pointer-events: none;
+}
+
+.workspace-right-panel-resizer::before {
+  /* Follow the complete dock edge so hover and drag feedback do not leave
+   * light segments above and below the darkened line. */
+  position: absolute;
+  inset: 0;
+  left: 50%;
+  width: 1px;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  content: "";
+  transform: translateX(-50%);
+  transition:
+    background var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.workspace-right-panel-resizer:hover::before,
+.workspace-right-panel-resizer:focus-visible::before,
+.resizing-right-panel .workspace-right-panel-resizer::before {
+  background: var(--sidebar-resizer-hover-bg);
+  box-shadow: 0 0 0 1px var(--sidebar-resizer-hover-ring);
+}
+
+.resizing-right-panel .workspace-right-panel {
+  transition: none;
+}
+
+.resizing-right-panel .workspace-right-panel-resizer {
+  transition: none;
+}
+
+.sidebar-collapsed .titlebar {
+  /* Keep a product-owned visual gutter after the macOS traffic-light
+   * exclusion zone. Themes may decorate the first control, but they cannot
+   * shrink this window-chrome boundary. */
+  padding-left: var(--window-titlebar-leading-inset);
+}
+
+.traffic-spacer {
+  /* Match the conversation/settings row, including its zoom-aware minimum
+   * height, so sidebar controls never outgrow their reserved chrome. It
+   * keeps that height while empty: a drawer slides under the titlebar's
+   * lifted toggle, which would otherwise cover the wordmark. */
+  position: relative;
+  display: flex;
+  height: var(--window-titlebar-height);
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: flex-end;
+  /* Preserve the sidebar accessory center while using the top-row hit size. */
+  padding-right: calc(var(--sidebar-row-pad-x) + (var(--sidebar-row-action-size) - var(--control-size-toolbar)) / 2);
+  -webkit-app-region: drag;
+}
+
+.traffic-spacer .sidebar-collapse-toggle {
+  position: relative;
+  z-index: 1;
+  -webkit-app-region: no-drag;
+}
+
+.sidebar-brand {
+  /* Reserve the attention control even in read-only brand previews. */
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: minmax(0, 1fr) var(--control-size-toolbar);
+  align-items: center;
+  column-gap: var(--control-toolbar-gap);
+  min-height: max(36px, var(--control-size-toolbar));
+  margin-top: 0;
+  padding: 0 var(--sidebar-row-pad-x) var(--space-1);
+  color: var(--sidebar-brand-wordmark-color);
+}
+
+.sidebar-brand:has(.conversation-search-trigger) {
+  grid-template-columns: minmax(0, 1fr) repeat(2, var(--control-size-toolbar));
+}
+
+.sidebar-brand .conversation-search-trigger {
+  grid-column: 3;
+  justify-self: end;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+  margin-right: calc((var(--sidebar-row-action-size) - var(--control-size-toolbar)) / 2);
+}
+
+.sidebar-brand-wordmark {
+  grid-column: 1;
+  display: block;
+  width: auto;
+  height: 0.675em;
+  max-width: 100%;
+  font-size: 20px;
+}
+
+.sidebar-notifications-button {
+  display: grid;
+  width: var(--control-size-toolbar);
+  height: var(--control-size-toolbar);
+  position: relative;
+  grid-column: 2;
+  justify-self: end;
+  place-items: center;
+  /* Share the trailing-action axis with the toggle and sidebar rows. */
+  margin-right: calc((var(--sidebar-row-action-size) - var(--control-size-toolbar)) / 2);
+  border-radius: var(--radius-sm);
+  padding: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  line-height: 0;
+  -webkit-app-region: no-drag;
+  transform: none;
+  /* keep in sync with CLEAR_UNREAD_HOLD_MS in SidebarBrand.tsx */
+  --hold-duration: 600ms;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.sidebar-notifications-button::before {
+  position: absolute;
+  z-index: 0;
+  inset: 2px;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  content: "";
+  pointer-events: none;
+}
+
+.sidebar-notifications-button::after {
+  position: absolute;
+  inset: -2px;
+  border-radius: calc(var(--radius-sm) + 2px);
+  border: 1.5px solid color-mix(in srgb, var(--wuu-accent) 55%, transparent);
+  content: "";
+  opacity: 0;
+  pointer-events: none;
+  transform: scale(0.78);
+}
+
+.sidebar-notifications-button svg {
+  position: relative;
+  z-index: 1;
+  transform-origin: 50% 15%;
+}
+
+.sidebar-notifications-button:hover {
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
+  color: var(--ink-strong);
+}
+
+.sidebar-notifications-button[aria-pressed="true"] {
+  background: var(--wuu-nav-item-active-background, var(--sidebar-row-hover-bg));
+  color: var(--ink-strong);
+}
+
+.sidebar-notifications-button[data-holding="true"] {
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
+  color: var(--wuu-accent);
+  transform: scale(0.94);
+}
+
+.sidebar-notifications-button[data-holding="true"]::before {
+  animation: sidebar-notifications-hold var(--hold-duration) linear forwards;
+}
+
+.sidebar-notifications-button[data-holding="true"]::after {
+  animation: sidebar-notifications-hold-ring var(--hold-duration) var(--ease-out) forwards;
+}
+
+.sidebar-notifications-button[data-holding="true"] svg {
+  animation: sidebar-notifications-hold-swing var(--hold-duration) var(--ease-out) forwards;
+}
+
+.sidebar-notifications-dot {
+  display: none;
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  right: 6px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--sidebar-material-fill);
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-session-status-unread-bg);
+  pointer-events: none;
+}
+
+.sidebar-notifications-button[data-has-unread="true"] .sidebar-notifications-dot {
+  display: block;
+}
+
+.sidebar-notifications-button:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.sidebar-notifications-button:active {
+  transform: scale(0.96);
+}
+
+@keyframes sidebar-notifications-hold {
+  from {
+    background: transparent;
+    box-shadow: inset 0 0 0 1px transparent;
+  }
+
+  to {
+    background: color-mix(in srgb, var(--wuu-accent) 16%, transparent);
+    box-shadow: inset 0 0 0 1px var(--wuu-accent);
+  }
+}
+
+@keyframes sidebar-notifications-hold-ring {
+  from {
+    opacity: 0.9;
+    transform: scale(0.78);
+  }
+
+  to {
+    opacity: 0;
+    transform: scale(1.3);
+  }
+}
+
+@keyframes sidebar-notifications-hold-swing {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  25% {
+    transform: rotate(-11deg);
+  }
+
+  55% {
+    transform: rotate(8deg);
+  }
+
+  80% {
+    transform: rotate(-4deg);
+  }
+
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+/* Scrollports reach the pane edge; content keeps the shared row inset. */
+.sidebar-content :is(.sidebar-main, .sidebar-unread-view, .sidebar-section-scroll, .settings-nav) {
+  margin-inline: calc(-1 * var(--sidebar-content-pad-x));
+  padding-inline: var(--sidebar-content-pad-x);
+}
+
+.sidebar-main {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  padding-top: var(--sidebar-functional-group-gap);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Drag-only destinations must not move the source or neighboring rows. */
+.sidebar-drag-targets {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  height: 0;
+  flex: 0 0 0;
+}
+
+.sidebar-drag-targets-content {
+  position: absolute;
+  inset-inline: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sidebar-functional-row-gap);
+  border-radius: var(--sidebar-row-radius);
+  background: var(--surface-raised);
+  box-shadow: var(--menu-shadow);
+}
+
+.sidebar-drag-targets-content > .sidebar-functional-group {
+  margin-top: 0;
+}
+
+.sidebar-drag-target {
+  background: var(--surface-raised);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 24%, transparent);
+  color: var(--ink);
+}
+
+.sidebar-unread-view {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 0;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* Attention sections are sidebar groups: their headings take the functional
+ * heading's metrics (see .sidebar-functional-heading) and count in plain
+ * tabular text rather than a capsule. */
+.sidebar-unread-heading {
+  justify-content: space-between;
+}
+
+/* The action's last glyph, not its padding, ends on the pane inset. */
+.sidebar-unread-heading > .sidebar-heading-text-action {
+  margin-inline-end: calc(-1 * var(--sidebar-row-control-pad-x));
+}
+
+.sidebar-unread-heading-label {
+  margin: 0;
+}
+
+.sidebar-unread-count {
+  margin-inline-start: 0.5em;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-unread-list {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--sidebar-functional-row-gap);
+  margin-top: var(--sidebar-functional-heading-gap);
+}
+
+/* Bell view rows have no leading icon. Pin the title to the same inset as
+ * the wuu wordmark instead of inheriting session-tree indent. */
+.sidebar-unread-row.thread-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  column-gap: 0;
+  padding-left: var(--sidebar-row-pad-x);
+  padding-right: var(--sidebar-row-pad-x);
+}
+
+.sidebar-unread-row .thread-row-main {
+  grid-column: 1 / -1;
+  padding-left: 0;
+  margin-left: 0;
+}
+
+.sidebar-attention-section + .sidebar-attention-section {
+  margin-top: var(--sidebar-functional-group-gap);
+}
+
+.sidebar-unread-empty {
+  margin: 0;
+  padding: var(--space-1) var(--sidebar-row-pad-x);
+  color: var(--sidebar-heading-ink);
+}
+
+.primary-nav,
+.sidebar-app-navigation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sidebar-functional-row-gap);
+}
+
+/* Keep installed app destinations reachable without displacing the session
+ * list. A large extension collection scrolls within its own footer region. */
+.sidebar-app-navigation {
+  max-height: 25vh;
+  overflow-y: auto;
+  flex-shrink: 1;
+}
+
+.sidebar-app-navigation > .nav-item {
+  flex-shrink: 0;
+}
+
+.primary-nav {
+  flex: 0 0 auto;
+}
+
+/* Shared navigation and thread row spec. */
+.nav-item,
+.project-row,
+.thread-row {
+  display: grid;
+  position: relative;
+  width: 100%;
+  height: 32px;
+  align-items: center;
+  column-gap: var(--sidebar-tree-column-gap);
+  grid-template-columns:
+    var(--sidebar-tree-toggle-col)
+    var(--sidebar-tree-icon-col)
+    minmax(0, 1fr)
+    auto;
+  border-radius: var(--sidebar-row-radius, var(--radius-xs));
+  background: transparent;
+  /* Idle chrome sits on --ink-soft so 16px Lucide outlines stay readable
+   * without matching the conversation's --ink-strong. Hover/selected still
+   * step up to --ink. --ink-tertiary is reserved for badges, status, and
+   * other decorative marks. */
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: var(--sidebar-label-size, var(--font-ui));
+  font-weight: var(--sidebar-label-weight, 500);
+  /* Rows start at 32px and grow with the text size, leaving real
+   * leading. line-height: 1 clipped descenders (g / y / p) inside the
+   * ellipsized label spans, which need overflow: hidden. */
+  line-height: 1.45;
+  padding: 0 var(--sidebar-row-pad-x);
+  text-align: left;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.nav-item {
+  column-gap: var(--sidebar-nav-column-gap);
+  grid-template-columns: var(--sidebar-nav-icon-col) minmax(0, 1fr);
+}
+
+.nav-item > :is(svg, .plugin-icon-themed, .plugin-icon-asset, .plugin-ui-avatar) {
+  grid-column: 1;
+  justify-self: center;
+  width: var(--sidebar-primary-icon-size);
+  height: var(--sidebar-primary-icon-size);
+  flex-shrink: 0;
+}
+
+.nav-item > span:not(.plugin-ui-avatar) {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Give sidebar labels the primary text contrast while keeping icons and
+ * secondary headings quieter. Group labels (Pinned / Folders / Workspaces)
+ * and list-footer actions sit one step below icon chrome so they read as
+ * structure, not as peers of the conversation names. Semantic ink also
+ * follows the dark theme. */
+.sidebar-content :is(
+  .nav-item > span,
+  .project-row-name,
+  .thread-row-title,
+  .sidebar-settings-button > span,
+  .settings-nav-item > span
+) {
+  color: var(--sidebar-label-ink);
+}
+
+.sidebar-content :is(
+  .thread-row.active .thread-row-title,
+  .nav-item[aria-current="page"] > span,
+  .settings-nav-item.active > span
+) {
+  color: var(--ink);
+}
+
+.sidebar-content :is(
+  .sidebar-functional-heading-label,
+  .sidebar-unread-heading-label
+) {
+  color: var(--sidebar-heading-ink);
+}
+
+.nav-item:hover,
+.project-row:hover,
+.thread-row:hover {
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--wuu-nav-item-hover-ring, var(--sidebar-nav-item-hover-ring));
+  /* Keep the hitbox and its contents on the same x-axis. A 1 CSS px hover
+   * nudge becomes a visible 2 physical px jump on Retina displays. */
+  transform: none;
+}
+
+.nav-item[aria-current="page"] {
+  box-shadow: var(--sidebar-row-selected-shadow);
+  background: var(--sidebar-row-selected-bg);
+  color: var(--ink);
+}
+
+.nav-item:active,
+.project-row:active {
+  transform: scale(0.992);
+}
+
+.thread-row.active {
+  background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
+  color: var(--ink-strong);
+  transform: none;
+}
+
+.thread-row.active:hover {
+  background: var(--sidebar-row-selected-bg);
+  box-shadow: var(--sidebar-row-selected-shadow);
+  transform: none;
+}
+
+/* Keep row focus inside scrollable rails so the full rounded ring stays visible. */
+html[data-focus-modality="keyboard"] :is(
+  .nav-item,
+  .project-row,
+  .thread-row,
+  .settings-back-button,
+  .settings-nav-item,
+  .sidebar-account-trigger
+):focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
+}
+
+/* Sidebar section containers share the same flex-column rhythm so the panel
+ * reads as one continuous tree. No gap here: the header → body offset
+ * comes solely from `.thread-list-collapse`'s margin-top so all
+ * sections measure identically (project bodies sit one `.project-group`
+ * wrapper deeper, and a container gap would double-count for the
+ * sections whose body is a direct child). */
+.project-section {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  margin-top: 0;
+}
+
+.sidebar-functional-group {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+}
+
+.sidebar-functional-group-collapse:not(.thread-list-collapse),
+.sidebar-functional-group-collapse.thread-list-collapse[data-state="open"] {
+  margin-top: var(--sidebar-functional-heading-gap);
+}
+
+.sidebar-functional-group + .sidebar-functional-group,
+.sidebar-functional-group + .sidebar-conversation-activity {
+  margin-top: var(--sidebar-functional-group-gap);
+  transition: margin-top var(--section-fold-ms) var(--section-fold-ease);
+}
+
+.sidebar-functional-group-body {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--sidebar-functional-row-gap);
+}
+
+.sidebar-functional-heading,
+.sidebar-unread-heading {
+  display: flex;
+  column-gap: var(--sidebar-action-gap);
+  min-width: 0;
+  /* Reserve the heading accessory's footprint whether or not the section has
+   * one, so group spacing does not depend on which headings offer "+". */
+  min-height: var(--sidebar-row-action-size);
+  align-items: center;
+  padding: 0 var(--sidebar-row-pad-x);
+}
+
+/* Recent uses the shared section fold control; keep its compose action on the
+ * same trailing axis as the other group actions. */
+.sidebar-recents-heading {
+  justify-content: space-between;
+}
+
+/* Match the half-em label/count spacing in attention headings and let it
+ * follow the heading size when the user enlarges UI text. */
+.sidebar-recents-heading .sidebar-functional-heading-toggle {
+  gap: 0.5em;
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+}
+
+.sidebar-recents-count {
+  flex: none;
+  color: var(--sidebar-heading-ink);
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+  font-variant-numeric: tabular-nums;
+  line-height: var(--line-ui);
+}
+
+/* Match the new-conversation button inside a workspace row: a row-sized hit
+ * target, the shared action icon size, and no hover box. */
+.sidebar-recents-heading .sidebar-recents-new-thread {
+  --sidebar-row-icon-hover-bg: transparent;
+  --sidebar-row-icon-focus-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+@media (hover: hover) {
+  .sidebar-recents-heading:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-recents-new-thread {
+    opacity: 0;
+  }
+}
+
+.sidebar-functional-heading-label,
+.sidebar-unread-heading-label {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+  /* Ink distinguishes group headings from rows at the same UI size. */
+  font-weight: var(--weight-regular);
+  line-height: var(--line-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-functional-heading-toggle {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 24px;
+  flex: 1;
+  align-items: center;
+  gap: var(--sidebar-tree-column-gap);
+  border: 0;
+  border-radius: var(--radius-xs);
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sidebar-functional-heading-toggle:focus-visible {
+  outline: 0;
+  box-shadow: var(--sidebar-row-icon-focus-shadow);
+}
+
+.sidebar-functional-heading-toggle:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.sidebar-content .sidebar-functional-heading-toggle > .sidebar-functional-heading-chevron {
+  box-sizing: border-box;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  margin: 0;
+  flex: 0 0 auto;
+  color: var(--sidebar-heading-ink);
+  transition:
+    transform var(--section-fold-ms) var(--section-fold-ease),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.sidebar-functional-heading-chevron[data-expanded="true"] {
+  transform: rotate(90deg);
+}
+
+/* An open group shows its contents; the chevron only returns as the toggle
+ * affordance under the pointer or keyboard focus. A collapsed group keeps it
+ * as the cue that content is hidden. Section actions keep their footprint
+ * and appear the same way, so at rest the label stands alone; an open menu
+ * keeps its button. Empty groups retain their action as the entry point.
+ * Touch keeps both visible: no hover. */
+@media (hover: hover) {
+  .sidebar-functional-heading:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-functional-heading-chevron[data-expanded="true"],
+  .sidebar-functional-heading:not(:hover, [data-empty="true"]):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-functional-action:not([aria-expanded="true"]) {
+    opacity: 0;
+  }
+}
+
+.sidebar-functional-heading-action {
+  display: contents;
+}
+
+.sidebar-functional-group-sortable[data-dragging="true"] {
+  opacity: 0.32;
+}
+
+.sidebar-functional-group-sortable > .sidebar-functional-heading,
+.sidebar-functional-group-sortable > .sidebar-functional-heading .sidebar-functional-heading-toggle {
+  cursor: grab;
+}
+
+.sidebar-functional-group-sortable[data-dragging="true"] > .sidebar-functional-heading,
+.sidebar-functional-group-sortable[data-dragging="true"] > .sidebar-functional-heading .sidebar-functional-heading-toggle {
+  cursor: grabbing;
+}
+
+.sidebar-functional-group-sortable[data-drag-disabled="true"] > .sidebar-functional-heading,
+.sidebar-functional-group-sortable[data-drag-disabled="true"] > .sidebar-functional-heading .sidebar-functional-heading-toggle {
+  cursor: default;
+}
+
+.sidebar-functional-group-drag-overlay {
+  display: flex;
+  min-height: 32px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 var(--sidebar-row-pad-x);
+  border: 1px solid color-mix(in srgb, var(--sidebar-accent) 24%, transparent);
+  border-radius: var(--sidebar-row-radius);
+  background: var(--sidebar-bg);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-semibold);
+}
+
+.sidebar-functional-group-drag-overlay > span {
+  flex: 1;
+}
+
+.sidebar-functional-heading {
+  border-radius: var(--sidebar-row-radius);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.sidebar-folder-heading.remove-drop-available {
+  background: color-mix(in srgb, var(--sidebar-accent) 5%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 20%, transparent);
+}
+
+.sidebar-folder-heading.remove-drop-available.drop-active {
+  background: color-mix(in srgb, var(--sidebar-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 48%, transparent);
+}
+
+.sidebar-functional-heading.drop-active {
+  background: color-mix(in srgb, var(--sidebar-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 48%, transparent);
+}
+
+.sidebar-functional-group[data-item-drop-indicator] > .sidebar-functional-heading {
+  position: relative;
+}
+
+.sidebar-functional-group[data-item-drop-indicator] > .sidebar-functional-heading::after {
+  position: absolute;
+  right: 8px;
+  bottom: -2px;
+  left: 8px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-accent);
+  content: "";
+  pointer-events: none;
+}
+
+.sidebar-functional-group[data-functional-group-id="pinned"][data-drop-over="true"] > .sidebar-functional-heading,
+.sidebar-functional-group[data-functional-group-id="pinned"] > .sidebar-functional-heading.drop-active {
+  position: relative;
+  background: transparent;
+  box-shadow: none;
+}
+
+.sidebar-functional-group[data-functional-group-id="pinned"][data-drop-over="true"] > .sidebar-functional-heading::after,
+.sidebar-functional-group[data-functional-group-id="pinned"] > .sidebar-functional-heading.drop-active::after {
+  position: absolute;
+  right: 8px;
+  bottom: -2px;
+  left: 8px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-accent);
+  content: "";
+  pointer-events: none;
+}
+
+.pinned-sortable-thread {
+  position: relative;
+  border-radius: var(--sidebar-row-radius);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+/* A standalone pinned session is a peer of a pinned folder: its text starts
+ * on the folder glyph's left edge, not on the folder's child-session axis. */
+.pinned-sortable-thread {
+  --sidebar-session-indent: calc((var(--sidebar-nav-icon-col) - var(--sidebar-primary-icon-size)) / 2);
+}
+
+.pinned-sortable-thread .thread-row-main {
+  padding-left: var(--sidebar-session-indent);
+}
+
+.pinned-sortable-thread .thread-row-main,
+.sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.can-reorder {
+  cursor: grab;
+}
+
+.pinned-sortable-thread[data-dragging="true"] .thread-row-main,
+.sidebar-functional-group[data-functional-group-id="pinned"] .sidebar-section-row.dragging {
+  cursor: grabbing;
+}
+
+.pinned-sortable-thread[data-dragging="true"] {
+  z-index: 2;
+  opacity: 0.72;
+}
+
+.sidebar-functional-group .project-section {
+  position: relative;
+}
+
+.pinned-sortable-thread[data-sort-indicator]::after,
+.sidebar-functional-group .project-section[data-sort-indicator]::after {
+  position: absolute;
+  z-index: 4;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 24%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.pinned-sortable-thread[data-sort-indicator="before"]::after,
+.sidebar-functional-group .project-section[data-sort-indicator="before"]::after {
+  top: -2px;
+}
+
+.pinned-sortable-thread[data-sort-indicator="after"]::after,
+.sidebar-functional-group .project-section[data-sort-indicator="after"]::after {
+  bottom: -2px;
+}
+
+.pinned-append-drop-zone {
+  position: relative;
+  height: var(--sidebar-functional-group-gap);
+  flex: 0 0 var(--sidebar-functional-group-gap);
+}
+
+/* The drop surface is the group break, not another list row. */
+.pinned-append-drop-zone:not(:first-child) {
+  margin-top: calc(-1 * var(--sidebar-functional-row-gap));
+}
+
+.sidebar-functional-group-collapse:has(.pinned-append-drop-zone:only-child),
+.sidebar-functional-group-collapse:has(> .thread-list-collapse-inner > .sidebar-functional-group-body:empty) {
+  margin-top: 0;
+}
+
+/* The open append target owns the group break. Restore the following margin
+ * during the fold, not when retained rows (and the target) are unmounted. */
+.sidebar-functional-group:has(> .sidebar-functional-group-collapse[data-state="open"] .pinned-append-drop-zone) + :is(.sidebar-functional-group, .sidebar-conversation-activity) {
+  margin-top: 0;
+}
+
+.pinned-append-drop-zone[data-drop-over="true"]::after {
+  position: absolute;
+  top: -2px;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-accent);
+  content: "";
+  pointer-events: none;
+}
+
+.sidebar-folder-heading-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sidebar-folder-heading-label > svg {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+}
+
+.sidebar-functional-action {
+  display: grid;
+  width: var(--sidebar-row-action-size);
+  height: var(--sidebar-row-action-size);
+  flex: 0 0 auto;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  line-height: 0;
+  padding: 0;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.sidebar-functional-action:hover,
+.sidebar-functional-action:focus-visible,
+.sidebar-functional-action[aria-expanded="true"] {
+  outline: 0;
+  background: var(--sidebar-row-icon-hover-bg-default);
+  color: var(--ink);
+}
+
+.sidebar-functional-action:active {
+  transform: scale(0.96);
+}
+
+.sidebar-functional-action > svg {
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+}
+
+.session-folder-list .project-section + .project-section {
+  margin-top: 4px;
+}
+
+.session-folder-drop-target {
+  border-radius: var(--sidebar-row-radius);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out);
+}
+
+.session-folder-list[data-folder-dragging="true"] .session-folder-drop-target {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 20%, transparent);
+}
+
+.session-folder-drop-target.drop-active,
+.session-folder-list[data-folder-dragging="true"] .session-folder-drop-target.drop-active {
+  background: color-mix(in srgb, var(--sidebar-accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 42%, transparent);
+}
+
+.project-add-menu {
+  display: grid;
+  width: var(--floating-menu-available-width);
+  max-height: var(--floating-menu-available-height);
+  overflow-y: auto;
+  gap: 1px;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
+  box-shadow: var(--menu-shadow);
+  padding: var(--menu-inset);
+  transform-origin: top left;
+  --menu-enter-x: 0;
+  --menu-enter-y: 0;
+  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
+}
+
+.project-add-menu button {
+  display: flex;
+  height: auto;
+  min-height: var(--control-row-height);
+  align-items: center;
+  gap: var(--menu-item-gap);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  text-align: left;
+}
+
+.project-add-menu button:hover {
+  background: var(--menu-hover);
+}
+
+.project-add-menu svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  color: var(--ink-soft);
+}
+
+.project-add-menu button span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projects,
+.project-group {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 5px;
+}
+
+.project-group {
+  position: relative;
+  gap: 0;
+}
+
+/* A workspace whose directory was moved away or deleted (project.missing).
+   The header is dimmed and its "新建会话" affordance is disabled so no
+   session can be created in a cwd that no longer exists. Opacity is
+   theme-agnostic, so this reads correctly in both light and dark. */
+.project-group-missing > .sidebar-section-header-group .project-row-icon,
+.project-group-missing > .sidebar-section-header-group .project-row-label {
+  opacity: 0.4;
+}
+
+.project-group-missing .project-row-new-thread:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.project-row.pending-switch {
+  background: var(--sidebar-project-row-pending-bg);
+  color: var(--ink);
+}
+
+.project-row {
+  grid-template-columns:
+    var(--sidebar-nav-icon-col)
+    minmax(0, 1fr)
+    var(--sidebar-row-action-size);
+  column-gap: var(--sidebar-nav-column-gap);
+  color: var(--ink-soft);
+  padding-right: var(--sidebar-row-pad-x);
+  font-weight: var(--sidebar-label-weight, 500);
+}
+
+/* The chevron mirrors the section motion tokens so it settles in the same
+ * frame as the collapse body — a mismatched duration reads as a two-stage
+ * animation, most visible on empty sections where the chevron is the only
+ * motion. */
+.project-row-chevron {
+  flex: 0 0 auto;
+  opacity: 0;
+  color: var(--ink-muted);
+  transform: rotate(0deg);
+  transition:
+    color var(--section-fold-ms) var(--section-fold-ease),
+    transform var(--section-fold-ms) var(--section-fold-ease),
+    opacity var(--motion-fast) var(--ease-out);
+}
+
+.project-group:hover > .project-row .project-row-chevron,
+html[data-focus-modality="keyboard"] .project-group:focus-within > .project-row .project-row-chevron {
+  opacity: 1;
+}
+
+.project-row.expanded .project-row-chevron {
+  color: var(--ink-soft);
+  transform: rotate(90deg);
+}
+
+.project-row-icon,
+.project-row > svg:not(.project-row-chevron) {
+  grid-column: 1;
+  justify-self: center;
+  color: var(--ink-soft);
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+/* Translate the slot so folder open/close transforms remain independent. */
+.project-row-icon,
+.project-row > svg:not(.project-row-chevron),
+.nav-item > svg,
+.project-thread-glyph > svg {
+  translate: calc(-1 * var(--sidebar-leading-icon-inset)) 0;
+}
+
+.project-row-icon {
+  display: grid;
+  width: var(--sidebar-nav-icon-col);
+  height: 100%;
+  place-items: center;
+}
+
+.project-row-icon svg,
+.project-row > svg:not(.project-row-chevron) {
+  width: var(--sidebar-primary-icon-size);
+  height: var(--sidebar-primary-icon-size);
+  flex: 0 0 auto;
+  color: currentColor;
+}
+
+.project-row-icon-state {
+  grid-area: 1 / 1;
+  transition:
+    opacity var(--section-fold-fade-ms) var(--ease-out),
+    transform var(--section-fold-ms) var(--section-fold-ease);
+  transform-origin: center;
+}
+
+.project-row-icon-state.collapsed {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.project-row-icon-state.expanded {
+  opacity: 0;
+  transform: translate3d(-1px, 2px, 0) scale(0.88);
+}
+
+.project-row.expanded .project-row-icon-state.collapsed {
+  opacity: 0;
+  transform: translate3d(1px, -2px, 0) scale(0.9);
+}
+
+.project-row.expanded .project-row-icon-state.expanded {
+  opacity: 1;
+  transform: translate3d(0, 0, 0) scale(1);
+}
+
+.project-row:hover .project-row-icon,
+.project-row:hover > svg:not(.project-row-chevron) {
+  color: var(--ink);
+}
+
+.project-row-label {
+  grid-column: 2;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: var(--sidebar-tree-column-gap);
+}
+
+.project-row-name {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.project-row-name[data-truncated="true"],
+.thread-row-main > .thread-row-title[data-truncated="true"] {
+  /* Only mask text whose own box is wider than the available space. */
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent);
+  mask-clip: content-box;
+  mask-origin: content-box;
+  mask-repeat: no-repeat;
+}
+
+.project-row .project-row-loading {
+  grid-column: 3;
+  justify-self: center;
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    scale var(--motion-fast) var(--ease-out);
+}
+
+/* A workspace list or switch usually settles within a few frames. Hold its
+ * indicator back so a quick load shows nothing and a slow one still reports
+ * progress. The delay also applies under reduced motion. */
+.project-row .project-row-loading.deferred {
+  animation: wuu-fade-in var(--motion-fast) var(--ease-out) 240ms backwards;
+}
+
+.project-row-unread {
+  grid-column: 3;
+  width: var(--sidebar-project-unread-size);
+  height: var(--sidebar-project-unread-size);
+  justify-self: center;
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-session-status-unread-bg);
+  pointer-events: none;
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.sidebar-row-icon-button {
+  display: grid;
+  width: var(--sidebar-row-action-size, 24px);
+  height: var(--sidebar-row-action-size, 24px);
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  line-height: 0;
+  padding: 0;
+  --sidebar-row-icon-hover-bg: var(--sidebar-row-icon-hover-bg-default);
+  --sidebar-row-icon-focus-shadow: none;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.sidebar-row-icon-button:hover,
+.sidebar-row-icon-button:focus-visible {
+  outline: 0;
+  background: var(--sidebar-row-icon-hover-bg);
+  color: var(--ink);
+}
+
+.sidebar-row-icon-button:focus-visible {
+  box-shadow: var(--sidebar-row-icon-focus-shadow);
+}
+
+.sidebar-row-icon-button:active {
+  transform: scale(0.96);
+}
+
+.project-row-new-thread {
+  position: absolute;
+  /* Center against the actual row height, including larger touch rows. */
+  top: 0;
+  bottom: 0;
+  margin-block: auto;
+  right: var(--sidebar-row-pad-x, 8px);
+  opacity: 0;
+  pointer-events: none;
+  transform: none;
+  --sidebar-row-icon-hover-bg: transparent;
+  --sidebar-row-icon-focus-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+/* Descendant (not child) combinator: SidebarSection nests the button
+ * inside .sidebar-section-header-group, so `>` from .project-group
+ * stopped matching and the button never appeared (regression fixed per
+ * sidebar-groups-andy-workspaces.md §1.2). */
+.project-group:hover .project-row-new-thread,
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row-new-thread {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate3d(0, 0, 0);
+}
+
+.project-group:hover .project-row .project-row-unread,
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-unread,
+.project-group:hover .project-row .project-row-loading,
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-loading {
+  opacity: 0;
+}
+
+.project-group:hover .project-row .project-row-unread,
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-unread {
+  transform: scale(0.72);
+}
+
+.project-group:hover .project-row .project-row-loading,
+html[data-focus-modality="keyboard"] .project-group:focus-within .project-row .project-row-loading {
+  scale: 0.72;
+}
+
+/* One intrinsic-height transition owns the reveal and its heading gap. Avoid
+ * inherited measured heights and descendant phase rules: a functional group
+ * contains independently expanded project/folder folds. Text stays in place
+ * while the outer clip moves, without a second fade or translate phase. */
+.thread-list-collapse {
+  --reveal-duration: var(--section-fold-ms);
+  --reveal-easing: var(--section-fold-ease);
+  margin-top: 0;
+  contain: layout paint;
+}
+
+.thread-list-collapse[data-state="open"] {
+  margin-top: var(--sidebar-section-body-gap);
+}
+
+.thread-list-collapse-inner {
+  min-height: 0;
+}
+
+/* Lists own only sibling spacing. Their parent owns heading/group spacing,
+ * including when a pinned item wraps a single session in its own list. */
+.thread-list,
+.pinned-thread-list {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  gap: var(--sidebar-row-gap);
+}
+
+.thread-list-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  /* The list gap keeps this action close to its rows. Put the extra breathing
+   * room below it, before the next section, and keep labels on the title axis. */
+  padding-bottom: var(--sidebar-functional-heading-gap);
+  padding-left: calc(
+    var(--sidebar-row-pad-x) + var(--sidebar-nav-icon-col) +
+      var(--sidebar-nav-column-gap) - var(--sidebar-row-control-pad-x)
+  );
+  padding-right: var(--sidebar-row-pad-x);
+}
+
+.thread-list-more,
+.thread-list-collapse-btn,
+.sidebar-heading-text-action {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--sidebar-heading-ink);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--sidebar-heading-size, var(--font-sm));
+  font-weight: var(--sidebar-label-weight, 400);
+  padding: 2px var(--sidebar-row-control-pad-x);
+  text-align: left;
+  white-space: nowrap;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out);
+}
+
+/* History controls reveal optional rows rather than labels in the current
+ * view. Match the conversation title size, rest at the composer-placeholder
+ * gray, then return to full ink on hover and keyboard focus so the action
+ * stays easy to pick up. */
+.thread-list-more,
+.thread-list-collapse-btn {
+  color: var(--ink-quiet);
+  font-size: var(--sidebar-label-size, var(--font-ui));
+}
+
+.thread-list-more:hover,
+.thread-list-collapse-btn:hover,
+.sidebar-heading-text-action:hover {
+  background: var(--sidebar-thread-list-button-hover-bg);
+  color: var(--ink);
+}
+
+.thread-list-more:focus-visible,
+.thread-list-collapse-btn:focus-visible,
+.sidebar-heading-text-action:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
+  background: var(--sidebar-thread-list-button-hover-bg);
+  color: var(--ink);
+}
+
+.sidebar-draft-reveal {
+  --reveal-gap: var(--sidebar-functional-row-gap);
+}
+
+.sidebar-draft-reveal[data-state="closing"] {
+  --reveal-duration: var(--motion-fast);
+  opacity: 0;
+  margin-block-end: calc(-1 * var(--reveal-gap));
+}
+
+.sidebar-session-row {
+  position: relative;
+  height: 30px;
+  min-width: 0;
+  column-gap: var(--sidebar-nav-column-gap);
+  color: var(--ink-soft);
+  font-size: var(--sidebar-label-size, var(--font-ui));
+  font-weight: var(--sidebar-label-weight, 500);
+  padding-left: var(--sidebar-row-pad-x);
+}
+
+.sidebar-session-row[data-draggable="true"],
+.sidebar-session-row[data-draggable="true"] .thread-row-main {
+  cursor: grab;
+}
+
+.sidebar-session-row.dragging,
+.sidebar-session-row.dragging .thread-row-main {
+  cursor: grabbing;
+}
+
+.sidebar-session-row.dragging {
+  opacity: 0.72;
+}
+
+.sidebar-session-row[data-sort-indicator]::after {
+  position: absolute;
+  z-index: 4;
+  right: 8px;
+  left: 8px;
+  height: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--sidebar-accent) 24%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.sidebar-session-row[data-sort-indicator="before"]::after {
+  top: -2px;
+}
+
+.sidebar-session-row[data-sort-indicator="after"]::after {
+  bottom: -2px;
+}
+
+/* Collapse bodies clip their contents. With no list-edge padding, keep the
+ * first/last insertion marker and its shadow inside the boundary row. */
+:is(.thread-list, .pinned-thread-list) > .sidebar-session-row:first-child[data-sort-indicator="before"]::after {
+  top: 1px;
+}
+
+:is(.thread-list, .pinned-thread-list) > .sidebar-session-row:last-child[data-sort-indicator="after"]::after {
+  bottom: 1px;
+}
+
+.thread-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.thread-row::before {
+  position: absolute;
+  top: 50%;
+  right: calc(
+    var(--sidebar-row-pad-x) +
+      (var(--sidebar-row-action-size) - var(--sidebar-session-status-dot-size)) / 2
+  );
+  z-index: 1;
+  width: var(--sidebar-session-status-dot-size);
+  height: var(--sidebar-session-status-dot-size);
+  flex: 0 0 auto;
+  border-radius: var(--radius-pill);
+  background: var(--sidebar-session-status-bg);
+  content: "";
+  pointer-events: none;
+  transform: translateY(-50%) scale(var(--sidebar-session-status-scale));
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    opacity var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.thread-row:hover::before {
+  background: var(--sidebar-session-status-bg);
+  transform: translateY(-50%) scale(var(--sidebar-session-status-scale));
+}
+
+.thread-row.active::before {
+  background: var(--sidebar-session-status-bg);
+  transform: translateY(-50%) scale(var(--sidebar-session-status-scale));
+}
+
+.thread-row.running::before {
+  display: none;
+}
+
+.thread-row-spinner {
+  position: absolute;
+  top: calc(50% - var(--sidebar-activity-size) / 2);
+  right: calc(
+    var(--sidebar-row-pad-x) +
+      (var(--sidebar-row-action-size) - var(--sidebar-activity-size)) / 2
+  );
+  z-index: 1;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+
+.thread-row.has-unread::before {
+  background: var(--sidebar-session-status-unread-bg);
+  transform: translateY(-50%) scale(var(--sidebar-session-status-unread-scale));
+}
+
+/* Hover actions occupy the same right-edge status slot. Fade the passive
+ * indicator while those controls are present rather than letting them overlap. */
+.thread-row:hover::before,
+.thread-row:hover .thread-row-spinner,
+html[data-focus-modality="keyboard"] .thread-row:focus-within::before,
+html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-spinner {
+  opacity: 0;
+}
+
+.thread-row.has-unread .thread-row-title {
+  color: var(--ink);
+  font-weight: var(--weight-semibold);
+}
+
+.thread-row.pending-switch::before {
+  background: var(--sidebar-accent);
+  transform: translateY(-50%) scale(1);
+}
+
+.thread-row-main {
+  display: flex;
+  grid-column: 1;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  align-items: center;
+  border-radius: inherit;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  /* Inherit the row's line-height (`font: inherit` resets it): a local
+   * line-height: 1 would re-clip descenders in the ellipsized title. */
+  padding: 0;
+  text-align: left;
+}
+
+/* The title button owns the whole row surface: the row's block padding would
+ * otherwise leave a band that highlights on hover but ignores the click. Row
+ * actions sit above it (z-index 1), and keyboard focus rings the row the way
+ * it rings a navigation item. */
+.thread-row-main::after {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  content: "";
+}
+
+html[data-focus-modality="keyboard"] .thread-row-main:focus-visible {
+  outline: none;
+}
+
+html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
+}
+
+/* Sessions inside a folder/workspace remain one level below their container.
+ * With status indicators no longer occupying a leading column, this explicit
+ * indent preserves the hierarchy instead of coupling depth to status layout. */
+.project-section .thread-list-collapse {
+  --sidebar-session-indent: calc(var(--sidebar-nav-icon-col) + var(--sidebar-nav-column-gap));
+}
+
+.project-section .thread-list-collapse .thread-row-main {
+  padding-left: var(--sidebar-session-indent);
+}
+
+.thread-row-main > .thread-row-title {
+  min-width: 0;
+  /* Backspacing briefly leaves an empty title; keep its line box in place. */
+  min-height: 1lh;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  transition: padding-right var(--motion-base) var(--ease-out);
+}
+
+/* Reserve the actual accessory footprint plus a reading gap at every size,
+ * including the delayed switching indicator. */
+.thread-row:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
+  padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
+}
+
+.thread-row:is(.running, .has-unread, .pending-switch) .thread-row-main > .thread-row-title {
+  padding-right: calc(var(--sidebar-row-action-size) + var(--sidebar-accessory-gap));
+}
+
+.thread-row:is(.running, .has-unread, .pending-switch):has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
+  padding-right: calc(var(--sidebar-row-action-size) * 2 + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
+}
+
+.thread-row:hover .thread-row-main > .thread-row-title,
+html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-main > .thread-row-title {
+  padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-accessory-gap));
+}
+
+.thread-row:hover:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title,
+html[data-focus-modality="keyboard"] .thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-main > .thread-row-title {
+  padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
+}
+
+/* The fork marker stays between the title and right-edge accessories. */
+.thread-row-fork-icon {
+  width: var(--sidebar-fork-icon-size);
+  height: var(--sidebar-fork-icon-size);
+  position: absolute;
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-fork-slot-inset));
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--ink-muted);
+  pointer-events: none;
+  z-index: 1;
+  /* Do not animate the horizontal position. This decorative icon has no hit
+   * target; sliding it across the pin/archive buttons briefly put the visible
+   * glyph over a different clickable box, which made forked rows feel badly
+   * misaligned. */
+}
+
+/* Keep the persistent fork marker beside, rather than underneath, a right-edge
+ * running/unread/switching indicator. */
+.thread-row:is(.running, .has-unread, .pending-switch):has(.thread-row-fork-icon) .thread-row-fork-icon {
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
+}
+
+.thread-row:hover:has(.thread-row-fork-icon) .thread-row-fork-icon,
+html[data-focus-modality="keyboard"] .thread-row:focus-within:has(.thread-row-fork-icon) .thread-row-fork-icon {
+  right: calc(var(--sidebar-row-pad-x) + var(--sidebar-thread-actions-width) + var(--sidebar-action-gap) + var(--sidebar-fork-slot-inset));
+}
+
+@container style(--motion-reduced: 1) {
+  .sidebar-notifications-button[data-holding="true"]::after,
+  .sidebar-notifications-button[data-holding="true"] svg {
+    animation: none;
+  }
+
+  .sidebar-notifications-button[data-holding="true"]::before {
+    animation: none;
+    background: var(--sidebar-row-hover-bg);
+    box-shadow: inset 0 0 0 1px var(--focus-ring);
+  }
+
+  .project-row-chevron,
+  .project-row-icon-state,
+  .thread-list-collapse {
+    transition: none;
+  }
+}
+
+.thread-row-actions {
+  /* Anchored to --sidebar-row-pad-x so the archive button's right edge
+   * lands on the same vertical axis as the project header's inline +
+   * button (.project-row-new-thread), which is offset from the row edge
+   * by the same token. The previous hardcoded 12px left the two action
+   * surfaces 4px apart. */
+  position: absolute;
+  top: 50%;
+  right: var(--sidebar-row-pad-x, 8px);
+  z-index: 1;
+  display: flex;
+  gap: var(--sidebar-action-gap);
+  opacity: 0;
+  pointer-events: none;
+  visibility: hidden;
+  transform: translateY(-50%);
+  /* Keep the button boxes on their final x-axis while they appear. Moving the
+   * whole clickable overlay during hover made fast clicks land beside the
+   * glyph the user was following. */
+  transition:
+    opacity var(--motion-fast) var(--ease-out),
+    visibility 0s linear 120ms;
+}
+
+/* Pointer clicks retain DOM focus. Only keyboard focus reveals row actions
+ * after the pointer leaves; title spacing and status slots follow that rule. */
+/* When the row is hovered the action icons must read as clearly
+ * clickable, not as faint decoration. Idle --ink-soft still washes out
+ * on the hover background; bumping to --ink makes pin / archive
+ * immediately discoverable the moment the user parks the cursor on the
+ * row. */
+.thread-row:hover .thread-row-action {
+  color: var(--ink);
+}
+
+.thread-row:hover .thread-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  transform: translateY(-50%);
+  transition-delay: 120ms;
+}
+
+html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-actions {
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
+  transform: translateY(-50%);
+  transition-delay: 0s;
+}
+
+@container style(--motion-reduced: 1) {
+  .thread-row-main > .thread-row-title {
+    transition: none;
+  }
+
+  .thread-row-actions {
+    /* Keep the short hit-target guard even when the fade is disabled. */
+    transition: visibility 0s linear 120ms;
+  }
+}
+
+.thread-row-action.active {
+  color: var(--sidebar-accent);
+}
+
+.thread-row-action.archive.confirm {
+  background: var(--sidebar-row-action-archive-confirm-bg);
+  color: var(--danger);
+}
+
+.sidebar-settings {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 16px;
+  padding-bottom: 0;
+  flex-shrink: 0;
+}
+
+.sidebar-add-workspace {
+  position: relative;
+  width: 100%;
+}
+
+.sidebar-functional-heading .sidebar-add-workspace {
+  width: auto;
+  flex: 0 0 auto;
+}
+
+.sidebar-settings-button {
+  display: grid;
+  width: 100%;
+  height: 36px;
+  align-items: center;
+  column-gap: var(--sidebar-nav-column-gap);
+  grid-template-columns: var(--sidebar-nav-icon-col) minmax(0, 1fr);
+  border-radius: var(--sidebar-row-radius);
+  background: transparent;
+  color: var(--ink-soft);
+  font-weight: var(--weight-medium);
+  padding: 0 var(--sidebar-row-pad-x);
+  text-align: left;
+  transition:
+    background-color var(--motion-fast) var(--ease-out),
+    box-shadow var(--motion-fast) var(--ease-out),
+    color var(--motion-fast) var(--ease-out),
+    transform var(--motion-fast) var(--ease-out);
+}
+
+.sidebar-settings-button > svg {
+  grid-column: 1;
+  justify-self: center;
+}
+
+.sidebar-settings-button > span {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-settings-button:hover,
+.sidebar-settings-button[aria-expanded="true"] {
+  background: var(--wuu-nav-item-hover-background, var(--sidebar-row-hover-bg));
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--sidebar-settings-button-hover-ring);
+  transform: none;
+}
+
+/* The menu sizes to its actions, not to the data an action names: a long
+ * label ellipsizes (see the item span) rather than stretching the menu
+ * across the reading column, and a long item list scrolls inside the
+ * viewport margin placeContextMenu keeps. The width cap follows the
+ * menu type size. */
+.thread-row-context-menu {
+  position: fixed;
+  z-index: 2147482000;
+  min-width: 180px;
+  max-width: min(24em, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow-y: auto;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
+  box-shadow: var(--menu-shadow);
+  padding: var(--menu-inset);
+}
+
+/* The menu holds focus only until an arrow key reaches an item; its items,
+ * not the shell, show the keyboard ring. */
+html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
+  outline: none;
+}
+
+/* Enter only after viewport placement. Starting menu-enter while the
+ * first layout is still `visibility: hidden` lets Chromium finish or
+ * skip the animation off-screen, then replay it on the first visible
+ * frame — a full-opacity flash, then a fade. */
+.thread-row-context-menu[data-placed="true"] {
+  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
+}
+
+.thread-row-context-menu[data-origin="top-left"] {
+  transform-origin: top left;
+  --menu-enter-x: -4px;
+  --menu-enter-y: -4px;
+}
+
+.thread-row-context-menu[data-origin="top-right"] {
+  transform-origin: top right;
+  --menu-enter-x: 4px;
+  --menu-enter-y: -4px;
+}
+
+.thread-row-context-menu[data-origin="bottom-left"] {
+  transform-origin: bottom left;
+  --menu-enter-x: -4px;
+  --menu-enter-y: 4px;
+}
+
+.thread-row-context-menu[data-origin="bottom-right"] {
+  transform-origin: bottom right;
+  --menu-enter-x: 4px;
+  --menu-enter-y: 4px;
+}
+
+.thread-row-context-menu-item {
+  display: flex;
+  width: 100%;
+  height: auto;
+  min-height: var(--control-row-height);
+  align-items: center;
+  gap: var(--menu-item-gap);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink);
+  font-size: var(--font-menu);
+  font-weight: var(--weight-medium);
+  line-height: var(--line-ui);
+  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
+  text-align: left;
+  cursor: pointer;
+}
+
+.thread-row-context-menu-item:hover {
+  background: var(--menu-hover);
+}
+
+.thread-row-context-menu-item span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Destructive items also end their menu after a separator and name the
+ * confirmation that follows with an ellipsis; color is the last cue. */
+.thread-row-context-menu-item[data-tone="danger"] {
+  color: var(--danger);
+}
+
+.thread-row-context-menu-item:disabled {
+  color: var(--ink-muted);
+  cursor: default;
+}
+
+.thread-row-context-menu-item:disabled:hover {
+  background: transparent;
+}
+
+.thread-row-context-menu-separator {
+  height: 1px;
+  background: var(--menu-border);
+  margin: 4px 9px;
+  pointer-events: none;
+}
+
+/* Unified sidebar section header:
+ *   Every section renders through the same
+ *   SidebarSection component with `.project-row.sidebar-section-row`
+ *   headers. Section-specific decoration (Pin rotate and the project
+ *   new-thread button) lives below; the
+ *   header-group container is positioned so absolutely-positioned
+ *   sibling overlays keep their existing right-edge anchor. */
+.sidebar-section-header-group {
+  position: relative;
+}
+
+/* Keep any number of actions in the header's flow so they reserve their own
+ * width without wrapping below the toggle or overlapping long labels. */
+.sidebar-section-header-group:has(> .sidebar-section-actions) {
+  display: flex;
+  align-items: center;
+}
+
+.sidebar-section-header-group:has(> .sidebar-section-actions) > .sidebar-section-row {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-section-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 2px;
+  padding-right: var(--sidebar-row-pad-x);
+}
+
+/* Pinned icon: rotate the expanded-state Pin -45deg so it reads as a
+ * "diagonal pin" while keeping a single glyph. */
+.project-row .project-row-icon:has([data-project-icon-kind="pinned"]) {
+  color: var(--ink-soft);
+}
+
+.project-row.expanded .project-row-icon:has([data-project-icon-kind="pinned"]) .project-row-icon-state.expanded {
+  transform: rotate(-45deg) scale(1);
+}
+
+/* Only the overlaid project add button needs a reserved grid slot. Other
+ * actions occupy their own space beside the toggle. */
+/* Idle headers can use the space of their hidden new-thread action. Keep the
+ * trailing track whenever an action or a status indicator is visible. */
+.sidebar-section-header-group:not(:has(.project-row-new-thread)) .sidebar-section-row,
+.project-group:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) > .sidebar-section-header-group >
+  .sidebar-section-row:not(:has(.project-row-loading, .project-row-unread)) {
+  grid-template-columns:
+    var(--sidebar-nav-icon-col)
+    minmax(0, 1fr);
+  column-gap: var(--sidebar-nav-column-gap);
+}
+
+/* Sidebar section drag-to-reorder (T7).
+ *
+ * - `.sidebar-section-row.can-reorder` mirrors SessionTabs: the header
+ *   turns into a grab cursor and disables native text selection while the
+ *   user is starting a mouse drag. Touch is intentionally left alone so a
+ *   swipe over a header still scrolls the sidebar natively instead of
+ *   starting a reorder.
+ * - `.dragging` on the in-list original fades the source to ~22% so
+ *   the user can read the floating DragOverlay cleanly. The overlay
+ *   itself sits at near-full opacity with a soft elevation shadow.
+ * - The DragOverlay wrapper keeps pointer-events off so it doesn't
+ *   intercept the drop target.
+ */
+.sidebar-section-row.can-reorder {
+  cursor: grab;
+  user-select: none;
+}
+
+.sidebar-section-row.can-reorder:active,
+.sidebar-section-row.dragging {
+  cursor: grabbing;
+}
+
+.sidebar-section-row.dragging {
+  opacity: 0.22;
+}
+
+.sidebar-section-drag-overlay {
+  border-radius: var(--sidebar-row-radius);
+  cursor: grabbing;
+  opacity: 0.98;
+  pointer-events: none;
+  transform: scale(1.025);
+  box-shadow: inset 0 0 0 1px var(--sidebar-hover-card-rim), var(--shadow-pop);
+}
+
+/* Sidebar descriptions share placement and chrome; only session cards
+ * accept interaction for inline renaming. */
+.sidebar-hover-card {
+  position: fixed;
+  /* Below context menus, which dismiss it anyway. */
+  z-index: 2147481900;
+  display: flex;
+  width: max-content;
+  /* In em so the card widens with the UI font size instead of wrapping more. */
+  min-width: 14em;
+  max-width: min(22em, calc(100vw - 16px));
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--radius-sm);
+  background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: var(--line-ui);
+  overflow-wrap: anywhere;
+  pointer-events: none;
+  --enter-x: -2px;
+}
+
+/* Starting the entrance while the first layout is still hidden lets
+ * Chromium replay it on the first visible frame: a full-opacity flash,
+ * then a fade. */
+.sidebar-hover-card[data-placed="true"] {
+  animation: wuu-enter var(--motion-fast) var(--ease-out) both;
+}
+
+.sidebar-hover-card[data-interactive="true"] {
+  pointer-events: auto;
+}
+
+.sidebar-hover-card-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-hover-card-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+}
+
+.sidebar-hover-card-title {
+  display: -webkit-box;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  color: var(--ink);
+  font-weight: var(--weight-medium);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.sidebar-hover-card-title-editable,
+.sidebar-hover-card-title-input {
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  font-weight: var(--weight-medium);
+  text-align: left;
+}
+
+.sidebar-hover-card-title-editable {
+  cursor: text;
+}
+
+.sidebar-hover-card-title-editable:hover {
+  background: var(--menu-hover);
+}
+
+.sidebar-hover-card-title-editable:focus-visible,
+.sidebar-hover-card-title-input:focus {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.sidebar-hover-card-title-input {
+  display: block;
+  max-height: calc(3em * var(--line-ui));
+  overflow: auto;
+  resize: none;
+}
+
+.sidebar-hover-card-time {
+  color: var(--ink-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sidebar-hover-card-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.sidebar-hover-card-status[data-tone="unread"]::before {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: var(--radius-circle);
+  background: var(--info);
+  content: "";
+}
+
+.sidebar-hover-card-status[data-tone="failed"] {
+  color: var(--danger);
+}
+
+.sidebar-hover-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sidebar-hover-card-fact {
+  display: grid;
+  grid-template-columns: var(--icon-size-sm) minmax(0, 1fr);
+  align-items: start;
+  gap: var(--space-2);
+}
+
+.sidebar-hover-card-fact-icon {
+  display: grid;
+  /* One text line tall, so the icon centers on the first line of a
+   * wrapped path. */
+  height: calc(1em * var(--line-ui));
+  place-items: center;
+  color: var(--ink-muted);
+}
+
+.sidebar-hover-card-fact-icon > svg {
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+}
+
+.sidebar-hover-card-count {
+  white-space: nowrap;
+}
+
+.sidebar-hover-card-fact[data-tone="warning"],
+.sidebar-hover-card-fact[data-tone="warning"] .sidebar-hover-card-fact-icon {
+  color: var(--warning);
+}

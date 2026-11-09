@@ -1,0 +1,203 @@
+import { SurfaceUnavailable } from "./SurfaceUnavailable";
+import { RuntimeLoading } from "../LoadingViews";
+import { showErrorToast } from "../Toast";
+import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
+import { useI18n, translateCurrent } from "../i18n";
+import { createPluginTranslator } from "./pluginI18n";
+import * as React from "react";
+import type { UICompositionV1, UISlotProps } from "../../../../packages/plugin-sdk/src/ui";
+import type { PluginHost, RegisteredApplicationShell, RegisteredUIContribution } from "./PluginHost";
+
+export interface ApplicationShellBinding {
+  readonly pluginId: string;
+  readonly generation: string;
+  readonly id: string;
+}
+
+const activationKeys = new WeakMap<object, number>();
+let nextActivationKey = 1;
+function activationKey(activation: object): number {
+  let key = activationKeys.get(activation);
+  if (key === undefined) { key = nextActivationKey++; activationKeys.set(activation, key); }
+  return key;
+}
+
+const SurfaceBindings = React.createContext<Readonly<Record<string, ApplicationShellBinding>>>({});
+export const UICompositionPendingContext = React.createContext(false);
+export const UIContributionErrorDisplayContext = React.createContext(true);
+
+const SlotAncestors = React.createContext<readonly string[]>([]);
+
+export function createUIComposition(host: PluginHost): UICompositionV1 {
+  function Slot({ name, context = {}, fallback, layout: Layout }: UISlotProps): React.ReactNode {
+    const registered = React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
+    const ancestors = React.useContext(SlotAncestors);
+    // A new array on every render would make React rescan the slot's whole
+    // subtree for context consumers on each stream frame.
+    const scope = React.useMemo(() => [...ancestors, name], [ancestors, name]);
+    if (ancestors.includes(name)) throw new Error(`UI slot cycle: ${scope.join(" → ")}`);
+    // A contribution cannot recreate a slot after its defining provider unloads.
+    const slot = host.getUISlot(name);
+    const bindings = React.useContext(SurfaceBindings);
+    const pending = React.useContext(UICompositionPendingContext);
+    const showContributionErrors = React.useContext(UIContributionErrorDisplayContext);
+    if (!slot) return null;
+    let contributions = registered.filter(item => {
+      if (typeof item.target === "string") return item.target === name;
+      const binding = bindings[item.target.service];
+      return !slot.service && item.target.slot === slot.id
+        && binding?.pluginId === slot.pluginId && binding.generation === slot.generation
+        && registered.some(surface => surface.pluginId === binding.pluginId
+          && surface.generation === binding.generation && surface.id === binding.id && surface.mode !== "wrap");
+    });
+    if (slot.service) {
+      const binding = bindings[slot.service];
+      // The graph selects a surface independently of the layout that renders it.
+      contributions = binding ? registered.filter(item => item.pluginId === binding.pluginId
+        && item.generation === binding.generation && item.id === binding.id) : [];
+      if (contributions.length !== 1 || contributions[0].mode === "wrap") return pending ? null : <UnavailableSurface host={host} binding={binding} service={slot.service} />;
+    }
+    const contentContributions = contributions.filter(contribution => contribution.mode !== "wrap");
+    if (!slot.service && slot.cardinality === "one" && contentContributions.length > 1) {
+      return <SlotConflict host={host} name={name} contributions={contentContributions} />;
+    }
+    const items = contentContributions.map(contribution => ({
+      key: String(activationKey(contribution)), pluginId: contribution.pluginId, id: contribution.id, title: contribution.title ?? contribution.id,
+      node: <ShellBoundary key={activationKey(contribution)}
+        identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}
+        hideError={!showContributionErrors}>
+        <Contribution host={host} contribution={contribution} slots={composition} context={context} />
+      </ShellBoundary>,
+    }));
+    const content = items.length === 0 ? fallback : Layout && !slot.service ? <Layout items={items} context={context} /> : items.map(item => item.node);
+    let composed = content;
+    for (const contribution of contributions.filter(contribution => contribution.mode === "wrap")) {
+      composed = <ShellBoundary key={activationKey(contribution)} recover fallback={composed}
+        identity={`${contribution.pluginId}/${contribution.id}`} host={host} pluginId={contribution.pluginId} generation={contribution.generation}>
+        <Contribution host={host} contribution={contribution} slots={composition} context={context}>{composed}</Contribution>
+      </ShellBoundary>;
+    }
+    return <SlotAncestors.Provider value={scope}>{composed}</SlotAncestors.Provider>;
+  }
+  const composition: UICompositionV1 = Object.freeze({ Slot: React.memo(Slot) });
+  return composition;
+}
+
+function SlotConflict({ host, name, contributions }: { host: PluginHost; name: string; contributions: readonly RegisteredUIContribution[] }): React.ReactNode {
+  const identities = contributions.map(activationKey).join(":");
+  React.useEffect(() => {
+    const observers = contributions.map(item => host.observeGenerationRender(item.pluginId, item.generation, new Error(`UI slot conflict: ${name}`)));
+    return () => { for (const observer of observers) observer.dispose(); };
+  }, [host, name, identities]);
+  return <SurfaceUnavailable />;
+}
+
+function UnavailableSurface({ host, binding, service }: { host: PluginHost; binding?: ApplicationShellBinding; service: string }): React.ReactNode {
+  React.useEffect(() => {
+    if (!binding || !host.getGenerationActivation(binding.pluginId, binding.generation)) return;
+    const observer = host.observeGenerationRender(binding.pluginId, binding.generation, new Error(`Selected UI surface is unavailable: ${service}`));
+    return () => observer.dispose();
+  }, [host, binding?.pluginId, binding?.generation, service]);
+  return <SurfaceUnavailable />;
+}
+
+const Contribution = React.memo(function Contribution({ host, contribution, slots, context, children }: {
+  host: PluginHost; contribution: RegisteredUIContribution; slots: UICompositionV1; context: Readonly<Record<string, unknown>>; children?: React.ReactNode;
+}): React.ReactNode {
+  React.useEffect(() => host.retainGeneration(contribution.pluginId, contribution.generation), [host, contribution]);
+  const { locale } = useI18n();
+  const translate = React.useMemo(() => createPluginTranslator(host, locale), [host, locale]);
+  React.useSyncExternalStore(host.applicationProviders.subscribe, host.applicationProviders.getPresentationRevision);
+  const application = host.getPresentationApplication(contribution.pluginId, contribution.generation, contribution.application);
+  const View = contribution.render;
+  return <View application={application} slots={slots} context={context} locale={locale} translate={translate}>{children}</View>;
+});
+
+class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string; fullShell?: boolean; recover?: boolean; hideError?: boolean; fallback?: React.ReactNode }, { error?: Error }> {
+  private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
+  private providerSubscription?: () => void;
+  componentDidMount(): void {
+    this.observer = this.props.host.observeGenerationRender(this.props.pluginId, this.props.generation, this.state.error);
+    // Provider handoffs cancel every captured read before the replacement
+    // publishes. Retry when the next provider arrives instead of pinning an
+    // unavailable surface for an error the graph already resolved.
+    this.providerSubscription = this.props.host.applicationProviders.subscribe(() => {
+      if (this.state.error) this.setState({ error: undefined });
+    });
+  }
+  componentDidCatch(error: Error): void {
+    this.observer?.failed(error);
+    if (this.props.recover && !isPluginLifecycleCancellation(error)) showErrorToast(translateCurrent("plugins.surfaceUnavailable"), "", `plugin-surface:${this.props.pluginId}:${this.props.generation}`);
+  }
+  componentWillUnmount(): void { this.providerSubscription?.(); this.observer?.dispose(); }
+  state: { error?: Error } = {};
+  static getDerivedStateFromError(error: Error): { error: Error } { return { error }; }
+  render(): React.ReactNode {
+    if (!this.state.error) return this.props.children;
+    if (this.props.recover) return this.props.fallback;
+    if (this.props.hideError) return null;
+    // A retired scope renders as an absent contribution, like a pending one;
+    // the provider subscription above clears the error on the next binding.
+    if (isPluginLifecycleCancellation(this.state.error) && !this.props.fullShell) return null;
+    return <SurfaceUnavailable fullscreen={this.props.fullShell} onRetry={() => this.setState({ error: undefined })} />;
+  }
+}
+
+const SelectedShell = React.memo(function SelectedShell({ host, shell }: { host: PluginHost; shell: RegisteredApplicationShell }): React.ReactNode {
+  const slots = React.useMemo(() => createUIComposition(host), [host]);
+  React.useEffect(() => host.retainGeneration(shell.pluginId, shell.generation), [host, shell]);
+  React.useSyncExternalStore(host.applicationProviders.subscribe, host.applicationProviders.getPresentationRevision);
+  const application = host.getPresentationApplication(shell.pluginId, shell.generation, shell.application);
+  // The retained facade still paints during a writer gap, but its actions no
+  // longer have authority. Pin the gate to this facade, not whichever provider
+  // happens to be current during a later parent render.
+  const lifetime = React.useMemo(() => host.applicationProviders.current?.lifetime?.signal, [host, application]);
+  const boundary = React.useRef<HTMLDivElement>(null);
+  React.useLayoutEffect(() => {
+    const element = boundary.current!;
+    const retire = () => element.setAttribute("inert", "");
+    if (lifetime?.aborted) retire();
+    else element.removeAttribute("inert");
+    lifetime?.addEventListener("abort", retire, { once: true });
+    // Do not reopen the old DOM during cleanup. Only a committed successor
+    // facade may release this gate; provider publication precedes that commit.
+    return () => lifetime?.removeEventListener("abort", retire);
+  }, [lifetime]);
+  const View = shell.render;
+  return <div ref={boundary} style={{ display: "contents" }}><View application={application} slots={slots} /></div>;
+});
+
+/** Retained pixels and drafts outlive the writer, but their controls must not. */
+function ShellInteractionBoundary({ host, shell, children }: { host: PluginHost; shell: RegisteredApplicationShell; children: React.ReactNode }): React.ReactNode {
+  const root = React.useRef<HTMLDivElement>(null);
+  const blocked = () => host.canRebindPresentation(shell.pluginId, shell.generation)
+    && (!host.applicationProviders.current || Boolean(host.applicationProviders.getRetirement()));
+  const subscribe = React.useCallback((listener: () => void) => host.applicationProviders.subscribe(() => {
+    // Fence native input in the retirement notification itself, before React's
+    // next commit. Re-enable only after children have received the new scope.
+    if (blocked()) root.current?.setAttribute("inert", "");
+    listener();
+  }), [host, shell]);
+  const revision = React.useSyncExternalStore(subscribe, host.applicationProviders.getRevision);
+  React.useLayoutEffect(() => { root.current?.toggleAttribute("inert", blocked()); }, [host, shell, revision]);
+  return <div ref={root} style={{ display: "contents" }} inert={blocked()}>{children}</div>;
+}
+
+/** The selected graph binding is authoritative; absence never chooses a local default. */
+export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pending = false, pendingFallback }: { host: PluginHost; binding: ApplicationShellBinding | null; surfaceBindings?: Readonly<Record<string, ApplicationShellBinding>>; pending?: boolean; pendingFallback?: React.ReactNode }): React.ReactNode {
+  const surfaceKey = JSON.stringify(surfaceBindings);
+  const stableBindings = React.useMemo(() => surfaceBindings, [surfaceKey]);
+  const shells = React.useSyncExternalStore(listener => host.subscribe(listener), host.getApplicationShells, host.getApplicationShells);
+  const selected = binding && shells.find(shell => shell.pluginId === binding.pluginId
+    && shell.generation === binding.generation && shell.id === binding.id);
+  if (!selected && pending && pendingFallback) return pendingFallback;
+  if (!selected) return <RuntimeLoading fullscreen recovering={pending} onRetry={() => window.location.reload()}
+    status={pending ? "connecting" : "failed"} />;
+  // Activation identity changes even when a reload reuses the same code fingerprint.
+  const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
+  return <ShellBoundary fullShell key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>
+    <UICompositionPendingContext.Provider value={pending}>
+      <SurfaceBindings.Provider value={stableBindings}><ShellInteractionBoundary host={host} shell={selected}><SelectedShell host={host} shell={selected} /></ShellInteractionBoundary></SurfaceBindings.Provider>
+    </UICompositionPendingContext.Provider>
+  </ShellBoundary>;
+}

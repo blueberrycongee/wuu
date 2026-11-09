@@ -1,0 +1,532 @@
+import type { SetStateAction } from "react";
+import type { ProjectListResult } from "../shared/protocol";
+import {
+  activeSessionTab,
+  applyLoadedRuntimeWithDraftCarry,
+  cloneSessionTabDraft,
+  composerDraftHasContent,
+  draftSessionTabForContext,
+  ensureSessionTab,
+  persistComposerDrafts,
+  refreshComposerDrafts,
+  sameRuntimeContext,
+  withLoadedRuntimeSessionTab,
+  type AppState,
+  type ComposerDraftState,
+  type ComposerDraftSnapshot,
+  type SessionTab,
+} from "./AppState";
+import { seedDraftRuntimeFromMemory } from "./DraftRuntimeMemory";
+import { loadRuntime as defaultLoadRuntime, selectRuntimeContext } from "./RuntimeLoadState";
+import { confirmAction } from "./ConfirmDialog";
+import { translateCurrent } from "./i18n";
+import { showErrorToast } from "./Toast";
+import type { PendingViewSwitch } from "./ViewSwitchState";
+
+type SetAppState = (update: SetStateAction<AppState>) => void;
+
+export type WorkspaceRuntimeActionsDeps = {
+  onError?: (error: Error) => never;
+  confirmRemoval?: (projectId: string) => Promise<boolean>;
+  getPendingViewSwitch: () => PendingViewSwitch | undefined;
+  getAppState: () => AppState;
+  setAppState: SetAppState;
+  getComposerDraftSnapshot: () => ComposerDraftSnapshot;
+  restorePrimaryComposerDraft: (draft: ComposerDraftState) => void;
+  clearPrimaryComposerDraft: () => void;
+  restoreLoadedRuntimeComposerDraft: (
+    loadedState: Partial<AppState>,
+    carryDraft?: ComposerDraftState,
+  ) => void;
+  nextDraftSessionTab: (context: NonNullable<AppState["activeContext"]>) => SessionTab;
+  isDraftPending?: (tabID: string) => boolean;
+  closeWorkspaceMenus: () => void;
+  
+  beginViewSwitch: (kind: "thread" | "workspace" | "runtime", targetID: string) => number;
+  finishViewSwitch: (requestID: number, loadedState?: Partial<AppState>) => boolean;
+  isCurrentViewSwitchRequest: (requestID: number) => boolean;
+  cancelViewSwitch: () => void;
+  loadRuntime?: typeof defaultLoadRuntime;
+};
+
+export type WorkspaceRuntimeActions = {
+  selectWorkspaceForNewThread: (projectId: string) => Promise<void>;
+  openWorktreeForNewThread: (path: string) => Promise<void>;
+  startNewThreadInWorkspace: (projectId: string) => Promise<boolean>;
+  createBlankProject: () => Promise<void>;
+  chooseProjectFolder: () => Promise<void>;
+  removeProject: (projectId: string) => Promise<void>;
+  relocateProject: (projectId: string) => Promise<void>;
+};
+
+export function createWorkspaceRuntimeActions(
+  deps: WorkspaceRuntimeActionsDeps,
+): WorkspaceRuntimeActions {
+  const loadRuntime = deps.loadRuntime ?? defaultLoadRuntime;
+
+  function setStatus(status: string): void {
+    if (deps.onError) deps.onError(new Error(status));
+    showErrorToast(status);
+  }
+
+  async function rejectUnavailableWorkspace(
+    workspace: ProjectListResult,
+    source: AppState["activeContext"],
+    requestID: number,
+  ): Promise<void> {
+    const issue = workspace.runtime_issue;
+    if (!issue) return;
+    if (source && deps.isCurrentViewSwitchRequest(requestID)) {
+      let restored: ProjectListResult;
+      try {
+        restored = await selectRuntimeContext(source);
+      } catch (error) {
+        if (deps.isCurrentViewSwitchRequest(requestID)) deps.setAppState(current => ({
+          ...current, initialized: undefined, activeContext: undefined, activeProjectId: undefined,
+          gitStatus: undefined, status: String(error),
+        }));
+        throw error;
+      }
+      if (deps.isCurrentViewSwitchRequest(requestID) && restored.runtime_issue) {
+        const sourceIssue = restored.runtime_issue;
+        deps.setAppState(current => ({ ...current, initialized: undefined, projects: restored.projects,
+          gitStatus: undefined, status: sourceIssue.message }));
+        throw new Error(sourceIssue.message);
+      }
+    }
+    throw new Error(issue.message);
+  }
+
+  function withoutWorkspaceSessionTabs(state: AppState, projectId: string): AppState {
+    return {
+      ...state,
+      sessionTabs: state.sessionTabs.filter(
+        (tab) =>
+          tab.context.kind !== "project" ||
+          tab.context.project_id !== projectId,
+      ),
+    };
+  }
+
+  function activateWorkspaceDraft(
+    context: NonNullable<AppState["activeContext"]>,
+  ): void {
+    const draft = deps.getComposerDraftSnapshot();
+    const currentState = deps.getAppState();
+    const existingDraft = draftSessionTabForContext(
+      currentState.sessionTabs,
+      context,
+    );
+    if (existingDraft && !deps.isDraftPending?.(existingDraft.id)) {
+      if (existingDraft.id === currentState.activeSessionTabID) {
+        return;
+      }
+      deps.restorePrimaryComposerDraft(cloneSessionTabDraft(existingDraft));
+      deps.setAppState((current) => ({
+        ...persistComposerDrafts(current, draft),
+        thread: undefined,
+        secondaryThread: undefined,
+        activePane: "primary",
+        activeSessionTabID: existingDraft.id,
+        allowThreadAutoActivation: false,
+        running: false,
+        status: "ready",
+      }));
+      return;
+    }
+    const nextTab = deps.nextDraftSessionTab(context);
+    deps.clearPrimaryComposerDraft();
+    deps.setAppState((current) => {
+      const withDraft = persistComposerDrafts(current, draft);
+      return seedDraftRuntimeFromMemory({
+        ...withDraft,
+        thread: undefined,
+        secondaryThread: undefined,
+        activePane: "primary",
+        sessionTabs: ensureSessionTab(withDraft.sessionTabs, nextTab),
+        activeSessionTabID: nextTab.id,
+        allowThreadAutoActivation: false,
+        running: false,
+        status: "ready",
+      });
+    });
+  }
+
+  /**
+   * The composer's workspace picker has one mental model regardless of the
+   * destination: "retarget the conversation I'm drafting at that context".
+   *
+   *   - re-selecting the current context returns to its draft page when
+   *     a conversation is on screen (and is otherwise a no-op);
+   *   - the switch lands on the destination context's draft tab — it
+   *     never resumes an existing conversation, because the user is
+   *     holding a draft, not asking to reopen history;
+   *   - an in-progress draft travels with the user (see
+   *     applyLoadedRuntimeWithDraftCarry).
+   */
+  async function retargetDraftToContext({
+    switchTarget,
+    isCurrentContext,
+    selectContext,
+    failureStatus,
+  }: {
+    switchTarget: string;
+    isCurrentContext: (state: AppState) => boolean;
+    selectContext: () => Promise<ProjectListResult>;
+    failureStatus: string;
+  }): Promise<boolean> {
+    const currentState = deps.getAppState();
+    if (isCurrentContext(currentState) && !deps.getPendingViewSwitch()?.contextSwitching) {
+      deps.closeWorkspaceMenus();
+      const context = currentState.activeContext;
+      if (context && (currentState.thread || currentState.secondaryThread)) {
+        activateWorkspaceDraft(context);
+      }
+      return true;
+    }
+    // Project navigation is independent from task execution. The main process
+    // pools app-server clients by workdir and keeps busy clients alive, so a
+    // running thread in the source context must not lock this draft in place.
+    const requestID = deps.beginViewSwitch("workspace", switchTarget);
+    deps.closeWorkspaceMenus();
+
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    try {
+      const workspaceState = await selectContext();
+      if (!deps.isCurrentViewSwitchRequest(requestID)) return false;
+      if (workspaceState.runtime_issue) await rejectUnavailableWorkspace(workspaceState, currentState.activeContext, requestID);
+      const loadedState = await loadRuntime(workspaceState, {
+        resumeLatestThread: false,
+      });
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
+        return false;
+      }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      const carryDraft = activeSessionTab(currentState)?.kind === "draft" && composerDraftHasContent(outgoingDraft.activeDraft)
+        ? outgoingDraft.activeDraft : undefined;
+      deps.restoreLoadedRuntimeComposerDraft(loadedState, carryDraft);
+      deps.setAppState((current) => {
+        const next = applyLoadedRuntimeWithDraftCarry(
+          current,
+          loadedState,
+          outgoingDraft,
+        );
+        return {
+          ...next,
+          thread: undefined,
+          secondaryThread: undefined,
+          activePane: "primary",
+          allowThreadAutoActivation: false,
+          running: false,
+          status: "ready",
+        };
+      });
+      return true;
+    } catch (error) {
+      if (!deps.finishViewSwitch(requestID)) {
+        return false;
+      }
+      setStatus(error instanceof Error ? error.message : failureStatus);
+      return false;
+    }
+  }
+
+  async function selectWorkspaceForNewThread(projectId: string): Promise<void> {
+    await retargetDraftToContext({
+      switchTarget: projectId,
+      isCurrentContext: (state) =>
+        projectId === state.activeProjectId &&
+        state.activeContext?.kind === "project",
+      selectContext: () => window.wuu.selectProject(projectId),
+      failureStatus: translateCurrent("workspace.openFailed"),
+    });
+  }
+
+  async function openWorktreeForNewThread(path: string): Promise<void> {
+    await retargetDraftToContext({
+      switchTarget: path,
+      isCurrentContext: (state) => state.activeContext?.cwd === path,
+      selectContext: async () => {
+        let project = deps.getAppState().projects.find((candidate) => candidate.path === path || candidate.canonical_path === path);
+        if (!project && window.wuu.importWorkspaces) {
+          const imported = await window.wuu.importWorkspaces([path]);
+          project = imported.projects.find((candidate) => candidate.path === path || candidate.canonical_path === path);
+        }
+        if (!project) throw new Error(translateCurrent("workspace.openFailed"));
+        return window.wuu.selectProject(project.id);
+      },
+      failureStatus: translateCurrent("workspace.openFailed"),
+    });
+  }
+
+  async function startNewThreadInWorkspace(projectId: string): Promise<boolean> {
+    const contextSwitching = deps.getPendingViewSwitch()?.contextSwitching;
+    deps.cancelViewSwitch();
+    deps.closeWorkspaceMenus();
+    
+    const currentState = deps.getAppState();
+    if (
+      projectId === currentState.activeProjectId &&
+      currentState.activeContext?.kind === "project" && !contextSwitching
+    ) {
+      activateWorkspaceDraft(currentState.activeContext);
+      return true;
+    }
+    const requestID = deps.beginViewSwitch("workspace", projectId);
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    try {
+      const workspaceState = await window.wuu.selectProject(projectId);
+      if (!deps.isCurrentViewSwitchRequest(requestID)) return false;
+      if (workspaceState.runtime_issue) await rejectUnavailableWorkspace(workspaceState, currentState.activeContext, requestID);
+      const loadedState = await loadRuntime(workspaceState, {
+        resumeLatestThread: false,
+      });
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
+        return false;
+      }
+      if (!loadedState.activeContext) {
+        return false;
+      }
+      const existingDraft = draftSessionTabForContext(
+        currentState.sessionTabs,
+        loadedState.activeContext,
+      );
+      if (existingDraft && !deps.isDraftPending?.(existingDraft.id)) {
+        outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+        deps.restoreLoadedRuntimeComposerDraft(loadedState);
+        deps.setAppState((current) => {
+          const next = withLoadedRuntimeSessionTab(
+            persistComposerDrafts(current, outgoingDraft),
+            loadedState,
+          );
+          return {
+            ...next,
+            thread: undefined,
+            secondaryThread: undefined,
+            activePane: "primary",
+            allowThreadAutoActivation: false,
+            running: false,
+            status: "ready",
+          };
+        });
+        return true;
+      }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      deps.clearPrimaryComposerDraft();
+      const nextTab = deps.nextDraftSessionTab(loadedState.activeContext);
+      deps.setAppState((current) => {
+        const withDraft = persistComposerDrafts(current, outgoingDraft);
+        return {
+          ...withDraft,
+          ...loadedState,
+          thread: undefined,
+          secondaryThread: undefined,
+          activePane: "primary",
+          sessionTabs: ensureSessionTab(withDraft.sessionTabs, nextTab),
+          activeSessionTabID: nextTab.id,
+          allowThreadAutoActivation: false,
+          running: false,
+          status: "ready",
+        };
+      });
+      return true;
+    } catch (error) {
+      if (!deps.finishViewSwitch(requestID)) {
+        return false;
+      }
+      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.openFailed"));
+      return false;
+    }
+  }
+
+  async function createBlankProject(): Promise<void> {
+    const currentState = deps.getAppState();
+    const requestID = deps.beginViewSwitch("runtime", "create-project");
+    deps.closeWorkspaceMenus();
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    try {
+      const workspaceState = await window.wuu.createBlankProject();
+      if (sameRuntimeContext(workspaceState.active_context, currentState.activeContext)) {
+        if (!deps.finishViewSwitch(requestID)) {
+          return;
+        }
+        deps.setAppState((current) => ({
+          ...current,
+          projects: workspaceState.projects,
+        }));
+        return;
+      }
+      const loadedState = await loadRuntime(workspaceState);
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
+        return;
+      }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      deps.restoreLoadedRuntimeComposerDraft(loadedState);
+      deps.setAppState((current) =>
+        withLoadedRuntimeSessionTab(
+          persistComposerDrafts(current, outgoingDraft),
+          loadedState,
+        ),
+      );
+    } catch (error) {
+      if (!deps.finishViewSwitch(requestID)) {
+        return;
+      }
+      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.createFailed"));
+    }
+  }
+
+  async function chooseProjectFolder(): Promise<void> {
+    const currentState = deps.getAppState();
+    const requestID = deps.beginViewSwitch("runtime", "choose-project");
+    deps.closeWorkspaceMenus();
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    try {
+      const workspaceState = await window.wuu.chooseProjectFolder();
+      if (sameRuntimeContext(workspaceState.active_context, currentState.activeContext)) {
+        if (!deps.finishViewSwitch(requestID)) {
+          return;
+        }
+        deps.setAppState((current) => ({
+          ...current,
+          projects: workspaceState.projects,
+        }));
+        return;
+      }
+      const loadedState = await loadRuntime(workspaceState, {
+        resumeLatestThread: false,
+      });
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
+        return;
+      }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      deps.clearPrimaryComposerDraft();
+      deps.setAppState((current) => {
+        const persisted = persistComposerDrafts(current, outgoingDraft);
+        const destinationWorkspaceID =
+          loadedState.activeContext?.kind === "project"
+            ? loadedState.activeContext.project_id
+            : undefined;
+        return withLoadedRuntimeSessionTab(
+          destinationWorkspaceID
+            ? withoutWorkspaceSessionTabs(persisted, destinationWorkspaceID)
+            : persisted,
+          loadedState,
+        );
+      });
+    } catch (error) {
+      if (!deps.finishViewSwitch(requestID)) {
+        return;
+      }
+      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.folderOpenFailed"));
+    }
+  }
+
+  async function removeProject(projectId: string): Promise<void> {
+    const removedWorkspace = deps.getAppState().projects.find(
+      (project) => project.id === projectId,
+    );
+    if (
+      !removedWorkspace ||
+      !(await (deps.confirmRemoval ? deps.confirmRemoval(projectId) : confirmAction({
+        title: translateCurrent("workspace.removeTitle", { name: removedWorkspace.name }),
+        message: translateCurrent("workspace.removeConfirm"),
+        confirmLabel: translateCurrent("common.remove"),
+      })))
+    ) {
+      return;
+    }
+    // Read the state the removal applies to after the answer, not before it.
+    const currentState = deps.getAppState();
+    const requestID = deps.beginViewSwitch("runtime", "remove-project");
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    try {
+      const workspaceState = await window.wuu.removeProject(projectId);
+      if (sameRuntimeContext(workspaceState.active_context, currentState.activeContext)) {
+        if (!deps.finishViewSwitch(requestID)) {
+          return;
+        }
+        deps.setAppState((current) => ({
+          ...withoutWorkspaceSessionTabs(current, projectId),
+          projects: workspaceState.projects,
+        }));
+        return;
+      }
+      const loadedState = await loadRuntime(workspaceState, {
+        resumeLatestThread: false,
+      });
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
+        return;
+      }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      deps.restoreLoadedRuntimeComposerDraft(loadedState);
+      deps.setAppState((current) =>
+        withLoadedRuntimeSessionTab(
+          withoutWorkspaceSessionTabs(
+            persistComposerDrafts(current, outgoingDraft),
+            projectId,
+          ),
+          loadedState,
+        ),
+      );
+    } catch (error) {
+      if (!deps.finishViewSwitch(requestID)) {
+        return;
+      }
+      setStatus(error instanceof Error ? error.message : translateCurrent("workspace.removeFailed"));
+    }
+  }
+
+  async function relocateProject(projectId: string): Promise<void> {
+    const currentState = deps.getAppState();
+    const requestID = deps.beginViewSwitch("runtime", "relocate-project");
+    let outgoingDraft = deps.getComposerDraftSnapshot();
+    const previousCwd = currentState.activeContext?.cwd;
+    const wasActive = currentState.activeProjectId === projectId;
+    try {
+      const workspaceState = await window.wuu.relocateProject(projectId);
+      const newCwd = workspaceState.active_context?.cwd;
+      if (!wasActive || newCwd === previousCwd) {
+        if (!deps.finishViewSwitch(requestID)) {
+          return;
+        }
+        deps.setAppState((current) => ({
+          ...current,
+          projects: workspaceState.projects,
+        }));
+        return;
+      }
+      const loadedState = await loadRuntime(workspaceState);
+      if (!deps.finishViewSwitch(requestID, loadedState)) {
+        return;
+      }
+      outgoingDraft = refreshComposerDrafts(outgoingDraft, deps.getComposerDraftSnapshot());
+      deps.restoreLoadedRuntimeComposerDraft(loadedState);
+      deps.setAppState((current) =>
+        withLoadedRuntimeSessionTab(
+          persistComposerDrafts(current, outgoingDraft),
+          loadedState,
+        ),
+      );
+    } catch (error) {
+      if (!deps.finishViewSwitch(requestID)) {
+        return;
+      }
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : translateCurrent("workspace.relocateFailed"),
+      );
+    }
+  }
+
+  return {
+    selectWorkspaceForNewThread,
+    openWorktreeForNewThread,
+    startNewThreadInWorkspace,
+    createBlankProject,
+    chooseProjectFolder,
+    removeProject,
+    relocateProject,
+  };
+}

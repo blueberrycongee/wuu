@@ -1,0 +1,189 @@
+import { ArrowUpRight, Check, FileDiff, GitBranch, Plus, Search } from "./WuuIcons";
+import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, useRef, useState } from "react";
+import type { GitStatusResult } from "../shared/protocol";
+import { FloatingMenuPortal, composerMenuWidth, handleFloatingMenuKeyDown, menuOpeningKey, useFloatingMenuFocus } from "./ComposerFloatingMenu";
+import { COMPOSER_PROJECT_MENU_WIDTH } from "./ComposerTypes";
+import { hostSupports } from "./HostCapabilities";
+import { useI18n } from "./i18n";
+import { showErrorToast } from "./Toast";
+import { Tooltip } from "./Tooltip";
+
+export function ComposerBranchPicker({
+  gitStatus, disabled, pending = false, open, onToggle, onSelect, onCreate, onOpenWorktree, worktreeStart, inToolRail = false,
+}: {
+  gitStatus?: GitStatusResult;
+  /** Keep a neutral footprint while the current worktree read is unknown. */
+  pending?: boolean;
+  inToolRail?: boolean;
+  disabled: boolean;
+  open: boolean;
+  onToggle: () => void;
+  onSelect: (branch: string) => void | Promise<void>;
+  onCreate?: (branch: string) => Promise<void>;
+  onOpenWorktree?: (path: string) => Promise<void>;
+  /** Set while the draft starts in its own worktree: choosing a branch then
+   * only moves the start point, and nothing is checked out in the project. */
+  worktreeStart?: { branch: string };
+}): JSX.Element {
+  const { t } = useI18n();
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const branch = pending && !gitStatus ? t("git.branch") : worktreeStart?.branch || gitStatus?.branch || "HEAD";
+  return (
+    <div className="composer-branch-control" ref={anchorRef}>
+      <Tooltip content={branch} disabled={!inToolRail}>
+        <button ref={triggerRef} type="button" className={inToolRail ? "icon-button" : "hero-project-pill"} aria-haspopup="menu"
+          aria-expanded={open && !disabled && !pending}
+          aria-busy={pending || undefined}
+          aria-label={pending && !gitStatus ? t("git.branch") : t(worktreeStart ? "composer.worktreeStartBranchLabel" : "composer.switchBranch", { branch })}
+          disabled={disabled} onClick={() => { if (!pending) onToggle(); }}
+          onKeyDown={(event) => {
+            if (!pending && (open ? event.key === "Escape" : menuOpeningKey(event))) onToggle();
+          }}>
+          <GitBranch className="hero-project-pill-icon" />
+          {inToolRail ? null : <span className="hero-project-pill-text">{branch}</span>}
+        </button>
+      </Tooltip>
+      {open && !disabled && !pending && gitStatus ? (
+        <FloatingMenuPortal anchorRef={anchorRef} owner="composer-runtime"
+          placement={inToolRail ? "middle" : "above"} align={inToolRail ? "right" : "left"}
+          crossAxisOffset={inToolRail ? -(anchorRef.current?.offsetWidth ?? 0) - 8 : 0}
+          flip width={composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}
+          onDismiss={onToggle}
+          mobileSheet={{ label: t(worktreeStart ? "composer.worktreeStartBranch" : "git.branch"), onClose: onToggle }}>
+          <ComposerBranchMenu gitStatus={gitStatus} selectedBranch={worktreeStart ? branch : gitStatus.branch}
+            checkout={!worktreeStart} onSelect={onSelect} onCreate={onCreate} onOpenWorktree={onOpenWorktree}
+            onKeyDown={(event) => handleFloatingMenuKeyDown(event, onToggle, triggerRef.current)} />
+        </FloatingMenuPortal>
+      ) : null}
+    </div>
+  );
+}
+
+function ComposerBranchMenu({ gitStatus, selectedBranch, checkout, onSelect, onCreate, onOpenWorktree, onKeyDown }: {
+  gitStatus: GitStatusResult;
+  selectedBranch?: string;
+  /** Choosing a branch checks it out in the project, rather than only
+   * naming a worktree's start point. */
+  checkout: boolean;
+  onSelect: (branch: string) => void | Promise<void>;
+  onCreate?: (branch: string) => Promise<void>;
+  onOpenWorktree?: (path: string) => Promise<void>;
+  onKeyDown: (event: ReactKeyboardEvent<HTMLElement>) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  const menuRef = useRef<HTMLDivElement>(null);
+  useFloatingMenuFocus(menuRef);
+  const [query, setQuery] = useState("");
+  const [pending, setPending] = useState(false);
+  const inFlight = useRef(false);
+  const name = query.trim();
+  // The core lists branches most recently committed first. The checked-out
+  // branch (a commit when detached) and the local default branch lead
+  // because they are the usual targets.
+  const local = gitStatus.branches ?? [];
+  const defaultBranch = gitStatus.default_branch && local.includes(gitStatus.default_branch) ? gitStatus.default_branch : "";
+  const ordered = [...new Set([gitStatus.branch ?? "", defaultBranch, ...local])].filter(Boolean);
+  const branches = ordered.filter((branch) => branch.toLocaleLowerCase().includes(name.toLocaleLowerCase()));
+  const canCreate = Boolean(onCreate) && hostSupports("createCheckoutGitBranch");
+  const offerCreate = canCreate && name !== "" && !ordered.includes(name);
+
+  async function run(action: () => void | Promise<void>): Promise<void> {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setPending(true);
+    try {
+      await action();
+    } catch (error) {
+      showErrorToast(error, t("git.checkoutFailed"));
+    } finally {
+      inFlight.current = false;
+      setPending(false);
+    }
+  }
+
+  function occupiedPath(branch: string): string | undefined {
+    return checkout && branch !== gitStatus.branch
+      ? gitStatus.branch_worktrees?.find((worktree) => worktree.branch === branch)?.path
+      : undefined;
+  }
+
+  function selectable(branch: string): boolean {
+    return branch !== selectedBranch && !pending && (occupiedPath(branch)
+      ? Boolean(onOpenWorktree)
+      : !checkout || hostSupports("checkoutGitBranch"));
+  }
+
+  function select(branch: string): void | Promise<void> {
+    const path = occupiedPath(branch);
+    return path ? onOpenWorktree?.(path) : onSelect(branch);
+  }
+
+  // Enter acts only on an unambiguous target: the exact branch name, or a new
+  // name nothing matches. A partial match never becomes a new branch.
+  function submit(): void {
+    if (ordered.includes(name)) {
+      if (selectable(name)) void run(() => select(name));
+    } else if (offerCreate && branches.length === 0) {
+      void run(() => onCreate!(name));
+    }
+  }
+
+  const searchLabel = t("environment.searchBranches");
+  return (
+    <div ref={menuRef} className="composer-project-menu composer-branch-menu" role="menu" onKeyDown={onKeyDown}
+      aria-label={t(checkout ? "git.branch" : "composer.worktreeStartBranch")} aria-busy={pending}
+      style={{ "--composer-project-menu-width": `${composerMenuWidth(COMPOSER_PROJECT_MENU_WIDTH)}px` } as CSSProperties}>
+      <label className="menu-search">
+        <Search className="icon-sm" aria-hidden="true" />
+        <input value={query} aria-label={searchLabel} placeholder={searchLabel}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+            event.preventDefault();
+            submit();
+          }} />
+      </label>
+      {!checkout ? <div className="project-picker-heading">{t("composer.worktreeStartBranch")}</div> : null}
+      {branches.length > 0 || !offerCreate ? <div className="project-picker-list">
+        {branches.length === 0 ? <div className="project-picker-empty">{t("environment.noMatchingBranches")}</div> : null}
+        {branches.map((branch) => {
+          const selected = branch === selectedBranch;
+          const worktreePath = occupiedPath(branch);
+          const separator = branch.lastIndexOf("/") + 1;
+          const dirty = branch === gitStatus.branch && gitStatus.dirty_count > 0
+            ? t("composer.branchDirtyFiles", { count: gitStatus.dirty_count })
+            : "";
+          return (
+            <button key={branch} aria-label={worktreePath ? `${branch}, ${t("git.openExistingWorktree")}: ${worktreePath}` : branch} type="button" role={worktreePath ? "menuitem" : "menuitemradio"} aria-checked={worktreePath ? undefined : selected}
+              disabled={!selectable(branch)}
+              onClick={() => void run(() => select(branch))}>
+              <GitBranch />
+              <span>
+                <span className="project-picker-item-title">
+                  {separator > 0 ? <span className="composer-branch-prefix">{branch.slice(0, separator)}</span> : null}
+                  {branch.slice(separator)}
+                </span>
+              </span>
+              <span className="composer-branch-trailing">
+                {dirty ? (
+                  <Tooltip asChild content={dirty}><span className="composer-branch-dirty" role="img" aria-label={dirty}>
+                    <FileDiff aria-hidden="true" />{gitStatus.dirty_count}
+                  </span></Tooltip>
+                ) : null}
+                {worktreePath ? <ArrowUpRight aria-hidden="true" /> : selected ? <Check /> : null}
+              </span>
+            </button>
+          );
+        })}
+      </div> : null}
+      {offerCreate ? <>
+        {branches.length > 0 ? <div className="project-picker-divider" /> : null}
+        <button type="button" role="menuitem" disabled={pending} onClick={() => void run(() => onCreate!(name))}>
+          <Plus />
+          <span>{t("composer.createNamedBranch", { branch: name })}</span>
+        </button>
+      </> : null}
+    </div>
+  );
+}

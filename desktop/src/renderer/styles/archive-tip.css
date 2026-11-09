@@ -1,0 +1,132 @@
+/*
+ * Archive tip toast.
+ *
+ * Renders the floating archive result notice shown by App.tsx. The container
+ * is a fixed-positioned pill anchored to
+ * the top of the viewport, centered horizontally, with a slide-down/fade-in
+ * entrance and an upward fade for the `.leaving` dismissal class managed by
+ * ArchiveTip.tsx. Keep it visually quiet — the toast must read as ephemeral
+ * feedback, not as a permanent banner over the shell.
+ */
+
+.archive-tip {
+  position: fixed;
+  /* Keep the whole notice below the shell's 48px draggable titlebar. A
+     fixed sibling painted over that strip still loses real pointer input to
+     Electron's window drag region, even at a higher z-index. */
+  top: 56px;
+  left: 50%;
+  z-index: 9999; /* above .sidebar (140) and SettingsShell (140), below image-preview (~2.1e9) */
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  /* Avoid fixed-position auto sizing shrinking to the right half of the
+     viewport before translateX centers it. Short notices stay compact. */
+  width: max-content;
+  max-width: min(640px, calc(100vw - 48px));
+  padding: 10px 12px 10px 14px;
+  /* Transient layers share the menu material and shell corner. */
+  background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
+  color: var(--ink);
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  box-shadow: var(--menu-shadow);
+  font-size: var(--font-ui);
+  line-height: 1.4;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+  --enter-y: -12px;
+  --exit-y: -4px;
+  animation: wuu-enter var(--motion-slow) var(--ease-out) both;
+}
+
+/* `.leaving` is set shortly before onDismiss fires. Disable hit testing so a
+   fading toast cannot queue duplicate close or navigation actions. */
+.archive-tip.leaving {
+  pointer-events: none;
+  animation: wuu-exit var(--motion-base) var(--ease-in) both;
+}
+
+.archive-tip-icon {
+  flex: 0 0 auto;
+  width: var(--icon-size);
+  height: var(--icon-size);
+  color: var(--ink-soft);
+}
+
+.archive-tip.is-error .archive-tip-icon {
+  color: var(--danger);
+}
+
+.archive-tip-message {
+  display: block;
+  min-width: 0;
+  max-height: min(40vh, 20rem);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  color: var(--ink);
+}
+
+.archive-tip-message strong {
+  display: inline-block;
+  vertical-align: bottom;
+  white-space: nowrap;
+  font-weight: var(--weight-medium);
+  color: var(--ink-strong);
+  max-width: 16em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.archive-tip-action {
+  flex: 0 0 auto;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 4px 6px;
+  margin: -4px -2px;
+  font: inherit;
+  font-weight: var(--weight-medium);
+  color: var(--info);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+
+.archive-tip-action:hover {
+  background: var(--ink-overlay-8);
+}
+
+.archive-tip-dismiss {
+  flex: 0 0 auto;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  /* A 24px target around the 14px glyph. */
+  padding: 5px;
+  margin: -5px -5px -5px 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-pill);
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+
+.archive-tip-dismiss:hover {
+  background: var(--ink-overlay-8);
+  color: var(--ink);
+}
+
+@media (max-width: 480px) {
+  .archive-tip {
+    max-width: calc(100vw - 24px);
+  }
+
+  .archive-tip-message strong {
+    max-width: 100%;
+  }
+}

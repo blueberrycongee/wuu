@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+        <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f0eee6" />
+    <title>A fresh window, the same work — Wuu</title>
+    <meta
+      name="description"
+      content="From automatic summaries to prepared handover notes: Note Compaction in Wuu."
+    />
+    <link rel="icon" href="assets/brand/wuu.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=note-diagrams-2" />
+    <script type="module" src="mascot-motion.mjs"></script>
+    <script type="module" src="site-nav.mjs"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <div class="site-header-shell">
+      <header class="site-header wrap">
+        <a class="wordmark" href="./" aria-label="Wuu home"
+          ><img
+            src="assets/brand/wuu.svg"
+            width="36"
+            height="36"
+            alt=""
+          />wuu</a
+        >
+        <nav aria-label="Main navigation">
+          <a
+            class="language-switch"
+            href="zh-note-compaction.html"
+            lang="zh-CN"
+            hreflang="zh-CN"
+            aria-label="切换到当前页面的中文版"
+            >中文</a
+          >
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="product"
+          >
+            <summary>Product</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">Wuu</span>
+                  <p>
+                    A workspace for turning your ideas into working code with
+                    AI.
+                  </p>
+                </div>
+                <div class="nav-destinations">
+                  <a class="nav-featured" href="features.html"
+                    >Explore Wuu <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="blog">
+            <summary>Blog</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a class="nav-featured" href="blog.html"
+                    >The Wuu blog <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a href="context-projection.html"
+                    >How much should the first read return?</a
+                  ><a href="note-compaction.html"
+                    >A fresh window, the same work</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="docs">
+            <summary>Docs</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a
+                    class="nav-featured"
+                    href="https://blueberrycongee.github.io/wuu/en/"
+                    >Documentation <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    href="https://blueberrycongee.github.io/wuu/en/getting-started/first-task/"
+                    >Start your first task</a
+                  ><a
+                    href="https://blueberrycongee.github.io/wuu/en/getting-started/model-services/"
+                    >Connect a model</a
+                  ><a href="https://blueberrycongee.github.io/wuu/en/customize/"
+                    >Extend Wuu</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="download"
+          >
+            <summary class="button">Download</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">Desktop app</span>
+                  <p>Wuu for Mac</p>
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    class="nav-featured"
+                    href="https://github.com/blueberrycongee/wuu/releases/latest"
+                    >Download for Mac <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+        </nav>
+      </header>
+      <div class="nav-backdrop" aria-hidden="true"></div>
+    </div>
+    <main id="main" class="wrap">
+      <article class="editorial">
+        <a class="text-link" href="blog.html">← Blog</a>
+        <h1>A fresh window, the same work</h1>
+        <p class="article-lead">
+          Inside Wuu’s Note Compaction: preparing a continuation before context
+          runs out, and keeping the original history within reach.
+        </p>
+        <img
+          class="article-image"
+          src="assets/brand/meadow.webp"
+          width="1086"
+          height="477"
+          alt="A meadow beneath a mountain"
+        />
+        <div class="article-body">
+
+<p>When working with an agent on a long task, we often ask it to write a note before starting a new conversation: what it is doing, how far it has got, and what remains unfinished. That note gives the next conversation somewhere to begin.</p>
+<p>While building context compaction in Wuu, we kept coming back to this habit. If the model can already prepare a handover, could that become part of the default compaction flow?</p>
+<h2>How traditional compaction works</h2>
+<p>A model request starts with foundational material such as the system prompt and tool schemas, followed by the growing conversation and tool results. As the context approaches its limit, the harness preserves the foundational material and recent turns, asks the model to summarize the older conversation in between, and assembles a new context:</p>
+<figure class="note-diagram">
+  <a href="assets/blog/note-traditional-en.png" target="_blank" rel="noopener" aria-label="View full-size diagram">
+    <img src="assets/blog/note-traditional-en.png" width="1536" height="1024" loading="lazy" decoding="async" alt="Before and after compaction: system and tools and recent turns remain; earlier conversation becomes a summary, freeing context space." />
+  </a>
+  <figcaption>Summarize earlier turns, retaining the foundations and recent conversation.</figcaption>
+</figure>
+<p>The recent work keeps its detail. Earlier material travels forward as a summary, leaving room for the task to continue.</p>
+<p>The harness monitors context capacity and triggers compaction at a predefined point, making room for the next request while the model focuses on the task.</p>
+<h2>Let the model help choose the handover</h2>
+<p>The harness uses remaining capacity to choose when to compact. The task also has natural handover points, such as completing an investigation or verifying a set of changes. Recognizing them requires understanding the work in progress.</p>
+<p>The model doing the work has that context. As its capabilities improve, it should be able to help decide when to pause, organize the work, and move into a fresh window. We want context management to develop alongside those capabilities.</p>
+<p>Our experience with handover notes suggested a place to start. Leaving the objective, key decisions, and next steps at a suitable point in the task resembles an ordinary handover more closely than interrupting work only when the window is almost full.</p>
+<h2>The complication with BYOK</h2>
+<p>Implementation brought the differences between models into focus. Wuu is a bring-your-own-key application, so users connect models with different capabilities and training. Some can maintain notes and initiate fresh windows themselves; others need the harness to prompt and trigger the handover.</p>
+<p>To support those models, we kept the harness in control of the timing and moved note preparation earlier.</p>
+<h2>Move the waiting into the background</h2>
+<p>Previously, work reached the compaction point, stopped while a summary was written, and then resumed. If that summary would be needed, could we start preparing it while the main conversation was still working?</p>
+<p>We reuse the current conversation’s history in a background fork. Once enough context has accumulated, the fork turns a portion of the conversation into a note. The main task continues, while later background updates combine the existing note with new material.</p>
+<p>At the compaction point, Wuu assembles the prepared note and the conversation it has not yet covered:</p>
+<p><code>system prompt + tool schemas + note + uncovered conversation</code></p>
+<p>When the note is ready, the serial wait at that point disappears. Summarization overlaps with the main task, reducing end-to-end latency. The transition picks up the prepared note and lets the work continue.</p>
+<figure class="note-diagram">
+  <a href="assets/blog/note-timing-en.png" target="_blank" rel="noopener" aria-label="View full-size diagram">
+    <img src="assets/blog/note-timing-en.png" width="1536" height="1024" loading="lazy" decoding="async" alt="Traditional compaction pauses work for a summary. Note Compaction writes a note in the background while work continues and resumes directly when the note is ready." />
+  </a>
+  <figcaption>Prepare the note while the main task continues.</figcaption>
+</figure>
+<p>The main conversation keeps advancing while the note is written, so all uncovered progress travels into the new context. If the note is not ready, or the assembled context still cannot fit, Wuu uses the original compaction flow.</p>
+<h2>Keep the earlier conversation within reach</h2>
+<p>It is hard to know, while writing a note, which detail the next stage will need. A failure that seems unimportant now may become a useful clue later.</p>
+<p>Wuu therefore retains the original conversation records and asks the note to include addresses for important history. In the new window, the model can read those addresses or search the old conversation. The note gets the work moving again; the original records supply details when needed.</p>
+<figure class="note-diagram">
+  <a href="assets/blog/note-assembly-en.png" target="_blank" rel="noopener" aria-label="View full-size diagram">
+    <img src="assets/blog/note-assembly-en.png" width="1536" height="1024" loading="lazy" decoding="async" alt="The fresh context contains system and tools, a ready note, and uncovered turns. Original history remains available for note preparation and later retrieval." />
+  </a>
+  <figcaption>Carry the note forward and return to the original history for details.</figcaption>
+</figure>
+<p>This also gives us a path forward. As models become better at managing context, more of the note maintenance and handover timing can move to them. History storage, recovery, and window transitions can keep supporting the work as the handover process evolves.</p>
+
+          <a class="article-next" href="context-projection.html"
+            >Read next<strong>How much should the first read return? ↗</strong></a
+          >
+        </div>
+      </article>
+    </main>
+    <footer class="site-footer wrap">
+      <a class="wordmark" href="./"
+        ><img src="assets/brand/wuu.svg" width="32" height="32" alt="" />wuu</a
+      >
+      <nav aria-label="Footer">
+        <a href="features.html">Product</a><a href="blog.html">Blog</a
+        ><a href="https://github.com/blueberrycongee/wuu">GitHub ↗</a>
+      </nav>
+    </footer>
+  </body>
+</html>

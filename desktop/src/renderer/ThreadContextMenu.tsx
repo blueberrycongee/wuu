@@ -1,0 +1,210 @@
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useActiveContextMenu } from "./ActiveContextMenu";
+import { useOptionalDesktopControls } from "./DesktopControlsContext";
+import { NativeContextMenu } from "./NativeContextMenu";
+import { placeContextMenu, type ContextMenuLayout } from "./ContextMenuPlacement";
+import { moveMenuFocus } from "./MenuKeyboardNavigation";
+import { UILayerPortal } from "./ui/layers/UILayerHost";
+
+/**
+ * ThreadContextMenu is a lightweight right-click menu for thread rows in the
+ * session tree. Items trigger an action (typically a clipboard write) and the
+ * menu auto-closes on selection, Escape, or an outside click.
+ *
+ * The menu is positioned via fixed coordinates so callers can pass raw
+ * clientX/clientY from a contextmenu event without computing offsets against
+ * any parent container. Opening it dismisses any other context menu.
+ *
+ * Once placed it takes focus without highlighting an item, so the arrow keys
+ * enter from either end; Escape and Tab hand focus back to whatever held it
+ * when the menu opened.
+ */
+
+export type ThreadContextMenuItem =
+  | {
+      /** Display label. */
+      label: string;
+      /**
+       * Action to perform when the item is selected. The promise is intentionally
+       * not awaited so the menu closes immediately even if the action is slow
+       * (e.g. a clipboard write with feedback animation).
+       */
+      onSelect: () => void | Promise<void>;
+      /** When true, the item is rendered disabled and clicks are ignored. */
+      disabled?: boolean;
+      icon?: ReactNode;
+      danger?: boolean;
+    }
+  | {
+      /** Render a horizontal divider between items. */
+      separator: true;
+    };
+
+type ThreadContextMenuProps = {
+  x: number;
+  y: number;
+  items: ThreadContextMenuItem[];
+  onClose: () => void;
+};
+
+export function ThreadContextMenu(props: ThreadContextMenuProps): JSX.Element {
+  const native = useOptionalDesktopControls()?.contextMenu;
+  if (native) return <NativeContextMenu api={native} {...props} items={props.items.map((item, index) =>
+    "separator" in item ? item : { id: String(index), label: item.label, disabled: item.disabled, onSelect: item.onSelect })} />;
+  return <WebThreadContextMenu {...props} />;
+}
+
+function WebThreadContextMenu({ x, y, items, onClose }: ThreadContextMenuProps): JSX.Element {
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(null);
+  const [layout, setLayout] = useState<ContextMenuLayout | null>(null);
+  useActiveContextMenu(onClose);
+
+  useLayoutEffect(() => {
+    const focused = document.activeElement;
+    openerRef.current = focused instanceof HTMLElement && focused !== document.body ? focused : null;
+  }, []);
+
+  useLayoutEffect(() => {
+    const menuElement = menuRef.current;
+    if (!menuElement) {
+      return;
+    }
+    const next = placeContextMenu(
+      x,
+      y,
+      menuElement.offsetWidth,
+      menuElement.offsetHeight,
+      window.innerWidth,
+      window.innerHeight,
+    );
+    setLayout((current) =>
+      current &&
+      current.left === next.left &&
+      current.top === next.top &&
+      current.origin === next.origin
+        ? current
+        : next,
+    );
+  }, [x, y, items]);
+
+  const placed = layout !== null;
+  useEffect(() => {
+    if (placed) menuRef.current?.focus({ preventScroll: true });
+  }, [placed]);
+
+  useEffect(() => {
+    function handlePointerDown(event: PointerEvent): void {
+      // Right-click is the opening gesture (and the leftover pointer burst
+      // after contextmenu). Dismissing on it races the opener. A new
+      // context menu dismisses this one via useActiveContextMenu instead.
+      if (event.button !== 0) {
+        return;
+      }
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        onClose();
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === "Escape" || (event.key === "Tab" && menuRef.current?.contains(event.target as Node))) {
+        if (openerRef.current?.isConnected) openerRef.current.focus({ preventScroll: true });
+        onClose();
+      }
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    // Defer pointer listeners so the opening contextmenu's pointer burst
+    // cannot dismiss the menu on the same gesture. Same rule as
+    // ComposerContextMenu and WorkspaceTreeContextMenu.
+    let active = true;
+    const id = window.setTimeout(() => {
+      if (!active) {
+        return;
+      }
+      document.addEventListener("pointerdown", handlePointerDown, true);
+    }, 0);
+    return () => {
+      active = false;
+      window.clearTimeout(id);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <UILayerPortal layer="menu">
+      <div
+        ref={menuRef}
+        role="menu"
+        className="thread-row-context-menu"
+        data-wuu-component="menu"
+        data-wuu-layer="menu"
+        data-wuu-state="open"
+        data-origin={layout?.origin ?? "top-left"}
+        data-placed={layout ? "true" : undefined}
+        style={
+          layout
+            ? { left: layout.left, top: layout.top }
+            : { left: x, top: y, visibility: "hidden" }
+        }
+        data-testid="thread-row-context-menu"
+        tabIndex={-1}
+        onContextMenu={(event) => event.preventDefault()}
+        onKeyDown={(event) => {
+          moveMenuFocus(event, menuRef.current);
+        }}
+      >
+        {items.map((item, idx) => {
+          if ("separator" in item) {
+            return (
+              <div
+                key={`sep-${idx}`}
+                role="separator"
+                className="thread-row-context-menu-separator"
+              />
+            );
+          }
+          return (
+            <button
+              key={`item-${idx}-${item.label}`}
+              role="menuitem"
+              type="button"
+              className="thread-row-context-menu-item"
+              disabled={item.disabled}
+              data-tone={item.danger ? "danger" : undefined}
+              onClick={() => {
+                if (item.disabled) return;
+                void item.onSelect();
+                onClose();
+              }}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </UILayerPortal>
+  );
+}
+
+/**
+ * copyToClipboard writes text to the system clipboard and returns whether the
+ * write succeeded. The error is intentionally swallowed because clipboard
+ * failures (denied permission, focus loss) are not actionable in this UI;
+ * the caller can show its own "failed" state if it tracks copy feedback.
+ */
+export async function copyToClipboard(text: string): Promise<boolean> {
+  if (text.trim() === "") {
+    return false;
+  }
+  try {
+    const clipboard = navigator.clipboard;
+    if (!clipboard?.writeText) {
+      return false;
+    }
+    await clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}

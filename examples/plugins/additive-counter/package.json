@@ -1,0 +1,10 @@
+{
+  "name": "@wuu-example/additive-counter",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": { "./contract": { "types": "./dist/contract.d.ts", "import": "./dist/contract.js" } },
+  "files": ["dist", "plugin.json"],
+  "scripts": { "build": "tsc" },
+  "devDependencies": { "@wuu/plugin-sdk": "file:../../../packages/plugin-sdk" }
+}

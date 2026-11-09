@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "dream",
+  "name": "Dream",
+  "description": "Background review, verification, and consolidation of durable memory.",
+  "icon": { "path": "icon.webp" },
+  "version": "0.1.0",
+  "defaultEnabled": false,
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "0.1.0",
+  "dependencies": [{ "id": "memory", "optional": true }],
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 30 },
+  "desktop": { "entry": "desktop.js" },
+  "contributes": {
+    "settingsPages": [
+      { "id": "dream", "title": "Dream", "description": "Configure background memory consolidation", "view": "dream.settings", "icon": { "path": "icon.webp" }, "order": 31 }
+    ]
+  },
+  "interface": { "displayName": "Dream", "shortDescription": "Consolidate durable workspace knowledge in the background.", "developerName": "Wuu", "category": "Productivity", "capabilities": ["Write"] }
+}

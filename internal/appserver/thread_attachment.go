@@ -1,0 +1,168 @@
+package appserver
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"image"
+	_ "image/gif"
+	"image/jpeg"
+	_ "image/png"
+	"strings"
+
+	"context"
+	"golang.org/x/image/draw"
+	_ "golang.org/x/image/webp"
+)
+
+func (s *Server) handleThreadAttachmentRead(ctx context.Context, req Request) error {
+	var params struct {
+		ThreadID string `json:"thread_id"`
+		TurnID   string `json:"turn_id"`
+		ItemID   string `json:"item_id"`
+		Index    int    `json:"index"`
+		Kind     string `json:"kind"`
+		SHA256   string `json:"sha256"`
+		Offset   int    `json:"offset"`
+		Preview  bool   `json:"preview"`
+	}
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if params.Index < 0 || params.Offset < 0 || len(params.SHA256) != 64 {
+		return s.writeResponse(req.ID, nil, errors.New("invalid attachment reference or offset"))
+	}
+	binding, _, err := s.retainUserThreadExecutionState(params.ThreadID, true)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer binding.Close()
+	th, err := s.historyThread(binding, params.ThreadID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	var found ThreadItemImage
+	var artifactURI string
+	var content *ThreadItem
+	th.mu.Lock()
+	for _, turn := range th.Turns {
+		if turn.ID != params.TurnID {
+			continue
+		}
+		for _, item := range turn.Items {
+			if item.ID == params.ItemID {
+				if req.Method == "thread/content/read" {
+					copy := cloneThreadItem(item)
+					content = &copy
+				} else if (params.Kind == "result" || params.Kind == "artifact") && item.ResultDetail != nil && params.Index < len(item.ResultDetail.Content) {
+					part := item.ResultDetail.Content[params.Index]
+					if part.Type == "image" {
+						if params.Kind == "artifact" {
+							if part.Artifact != nil && part.Artifact.SHA256 == params.SHA256 {
+								artifactURI = part.URI
+								found.MediaType = part.MIMEType
+							}
+						} else {
+							found = ThreadItemImage{MediaType: part.MIMEType, Data: part.Data}
+						}
+					}
+				} else if params.Kind == "" && params.Index < len(item.Images) {
+					found = item.Images[params.Index]
+				}
+				break
+			}
+		}
+		break
+	}
+	th.mu.Unlock()
+	hash := sha256.New()
+	if artifactURI != "" {
+		services, err := binding.Services()
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		data, media, err := services.Artifacts.Read(ctx, params.ThreadID, artifactURI, 12*1024*1024)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if media != found.MediaType {
+			return s.writeResponse(req.ID, nil, errors.New("artifact media type changed"))
+		}
+		hash.Write(data)
+		found.Data = base64.StdEncoding.EncodeToString(data)
+	} else if content != nil {
+		raw, _ := json.Marshal(content)
+		hash.Write(raw)
+		found = ThreadItemImage{MediaType: "application/json", Data: base64.StdEncoding.EncodeToString(raw)}
+	} else {
+		hash.Write([]byte(found.MediaType))
+		hash.Write([]byte{0})
+		hash.Write([]byte(found.Data))
+	}
+	if found.Data == "" || hex.EncodeToString(hash.Sum(nil)) != params.SHA256 {
+		return s.writeResponse(req.ID, nil, errors.New("attachment changed or was removed"))
+	}
+	result, err := readAttachmentChunk(found.Data, found.MediaType, params.Offset, params.Preview)
+	return s.writeResponse(req.ID, result, err)
+}
+
+// Channels and harness messages use the same bounded original/thumbnail format.
+type attachmentChunk struct {
+	SHA256    string `json:"sha256,omitempty"`
+	Data      string `json:"data"`
+	Total     int    `json:"total"`
+	Offset    int    `json:"offset"`
+	MediaType string `json:"content_type"`
+}
+
+func readAttachmentChunk(data, mediaType string, offset int, preview bool) (attachmentChunk, error) {
+	if preview {
+		var err error
+		data, err = attachmentThumbnail(data)
+		if err != nil {
+			return attachmentChunk{}, err
+		}
+		mediaType = "image/jpeg"
+	}
+	if offset < 0 || offset > len(data) {
+		return attachmentChunk{}, errors.New("attachment offset exceeds its size")
+	}
+	return attachmentChunk{Data: data[offset:min(len(data), offset+128*1024)], Total: len(data), Offset: offset, MediaType: mediaType}, nil
+}
+
+func attachmentThumbnail(data string) (string, error) {
+	// Check dimensions before decoding: a tiny compressed image can require a
+	// huge bitmap. Unsupported formats retain explicit original-image loading.
+	config, _, err := image.DecodeConfig(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
+	if err != nil {
+		return "", err
+	}
+	if config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 40_000_000 {
+		return "", errors.New("image is too large to preview")
+	}
+	source, _, err := image.Decode(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)))
+	if err != nil {
+		return "", err
+	}
+	w, h := config.Width, config.Height
+	if w > 384 || h > 384 {
+		if w >= h {
+			h = max(1, h*384/w)
+			w = 384
+		} else {
+			w = max(1, w*384/h)
+			h = 384
+		}
+	}
+	preview := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(preview, preview.Bounds(), image.White, image.Point{}, draw.Src)
+	draw.ApproxBiLinear.Scale(preview, preview.Bounds(), source, source.Bounds(), draw.Over, nil)
+	var encoded bytes.Buffer
+	if err := jpeg.Encode(&encoded, preview, &jpeg.Options{Quality: 75}); err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(encoded.Bytes()), nil
+}

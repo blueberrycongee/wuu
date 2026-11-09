@@ -1,0 +1,119 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { WuuDesktopApi } from "../shared/protocol";
+
+let root: Root | undefined;
+let container: HTMLDivElement | undefined;
+let disposeFixture: (() => Promise<void>) | undefined;
+const originalHost = window.wuu;
+
+afterEach(async () => {
+  act(() => root?.unmount());
+  root = undefined;
+  await disposeFixture?.(); disposeFixture = undefined;
+  container?.remove();
+  window.wuu = originalHost;
+  vi.unstubAllEnvs();
+  vi.resetModules();
+});
+
+describe.each([undefined, "true"])("production phone access (build override: %s)", (override) => {
+  it.each(["remote", "subscriptions"] as const)("hides phone access while retaining external connections from %s", async (initialPage) => {
+    vi.stubEnv("DEV", false);
+    vi.stubEnv("VITE_ENABLE_ACCOUNT", override);
+    vi.stubEnv("VITE_ENABLE_REMOTE_CONTROL", override);
+    vi.resetModules();
+    const { SidebarSettingsMenu } = await import("./SidebarSettingsMenu");
+    const { DesktopControlsProvider } = await import("./DesktopControlsContext");
+    const { ApplicationDesktop } = await import("./plugins/ApplicationDesktop");
+    const { SettingsView } = await import("./SettingsView");
+    const { translateCurrent: t } = await import("./i18n");
+    const remoteAccount = vi.fn().mockResolvedValue({ username: "test-user" });
+    const getRemoteControlSnapshot = vi.fn().mockResolvedValue({ status: null, host_running: false, pair_uri: null });
+    const onRemoteControlEvent = vi.fn(() => () => {});
+    const listEngines = vi.fn().mockResolvedValue({ engines: [] });
+    window.wuu = {
+      remoteAccount,
+      getRemoteControlSnapshot,
+      onRemoteControlEvent,
+      listEngines,
+      getBuildInfo: vi.fn().mockResolvedValue({}),
+      listMCPServers: vi.fn().mockResolvedValue({ servers: [] }),
+    } as unknown as WuuDesktopApi;
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+    const onOpenSettings = vi.fn();
+    const desktop = new ApplicationDesktop();
+    const lifetime = new AbortController();
+    await act(async () => root!.render(
+      <DesktopControlsProvider controls={desktop.createScope(lifetime.signal)}>
+        <SidebarSettingsMenu disabled={false} onOpenSettings={onOpenSettings} />
+      </DesktopControlsProvider>,
+    ));
+    expect(container.querySelectorAll(".sidebar-account-trigger")).toHaveLength(1);
+    expect(container.querySelector(".sidebar-account-menu-trigger")).toBeNull();
+    await act(async () => container!.querySelector<HTMLButtonElement>('[data-settings-entry="settings"]')!.click());
+    expect(onOpenSettings).toHaveBeenCalledWith();
+    expect(document.querySelector(".sidebar-account-menu")).toBeNull();
+    expect(remoteAccount).not.toHaveBeenCalled();
+
+    const pets = { home: "", enabled: false, selected_id: "", pets: [], errors: [] };
+    const engines = { engines: [] };
+    const { createApplicationSettingsControls } = await import("./plugins/hostApplicationSettingsControls");
+    const [{ PluginHost }, { WorkbenchController }, react] = await Promise.all([
+      import("./plugins/PluginHost"), import("./plugins/Workbench"), import("react"),
+    ]);
+    const host = new PluginHost({ react });
+    let settingsControls!: ReturnType<typeof createApplicationSettingsControls>;
+    await host.activateGeneration({ pluginId: "phone-settings-fixture", generation: "one", register: api => {
+      const workbench = new WorkbenchController(api.contributions);
+      settingsControls = createApplicationSettingsControls({ host: api.contributions, controller: workbench });
+      disposeFixture = async () => { workbench.dispose(); await host.unloadAndWait("phone-settings-fixture"); };
+    } });
+    const application = { settingsControls };
+    await act(async () => root!.render(
+      <SettingsView
+        application={application}
+        initialPage={initialPage}
+        running={false}
+        codexPetsLoading={false}
+        codexPetsError=""
+        sidebarWidth={280}
+        sidebarMinWidth={240}
+        sidebarMaxWidth={480}
+        resizingSidebar={false}
+        sidebarCollapsed={false}
+        sidebarAnimating={false}
+        onToggleSidebar={vi.fn()}
+        onBack={vi.fn()}
+        onSave={vi.fn()}
+        onRemoveProvider={vi.fn()}
+        onRefreshModelCatalog={vi.fn()}
+        onRefreshEngineInventory={vi.fn().mockResolvedValue(engines)}
+        onUpdateEngineInventory={vi.fn().mockResolvedValue(engines)}
+        onAdvancedSave={vi.fn()}
+        onGeneralSave={vi.fn()}
+        onCodexPetsRefresh={vi.fn().mockResolvedValue(pets)}
+        onCodexPetsUpdate={vi.fn().mockResolvedValue(pets)}
+        onSidebarResizeStart={vi.fn()}
+        onSidebarSeparatorKey={vi.fn()}
+        onUnarchiveThread={vi.fn()}
+      />,
+    ));
+    const navigation = container.querySelector('[data-wuu-component="settings-navigation"]')!;
+    expect(navigation.textContent).not.toContain(t("settings.remote"));
+    expect(navigation.textContent).not.toContain(t("settings.subscriptions"));
+    expect(container.querySelector('[data-testid="settings-providers"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-engine-connections"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="settings-subscriptions"]')).toBeNull();
+    expect(listEngines).toHaveBeenCalledExactlyOnceWith({ include_quota: true, include_activity: false });
+    expect(container.querySelector('[data-testid="settings-remote-page"]')).toBeNull();
+    expect(container.querySelector(".settings-nav-item.active")?.textContent).toBe(t("settings.providers"));
+    expect(getRemoteControlSnapshot).not.toHaveBeenCalled();
+    expect(onRemoteControlEvent).not.toHaveBeenCalled();
+    lifetime.abort();
+    await desktop.dispose();
+  });
+});

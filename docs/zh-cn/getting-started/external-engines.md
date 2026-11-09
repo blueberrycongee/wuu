@@ -1,0 +1,141 @@
+# 外部 Agent 引擎
+
+外部引擎运行已安装的 Agent，使用它自己的账号、模型配置、工具和原生会话存储。它与内置 Wuu 引擎使用的[模型服务](model-services.md)不同。除了 Codex 和 Claude Code，Wuu 还提供下列接入。
+
+## 安装与选择引擎
+
+请按上游说明自行安装 Agent 或适配器，Wuu 不会下载可执行文件。在**设置 → Agent**中查看检测结果、指定可执行文件路径或禁用引擎；在**设置 → 常规**中选择新会话的默认引擎，也可以在输入框中选择可用引擎。
+
+Codex 和 Claude Code 的详情会在限时 `--version` 检查成功时显示已安装 CLI 版本；无法确认时显示未知。更新指南打开供应商文档，请按管理该可执行文件的安装方式更新，然后刷新检测。Wuu 不会替换或升级用户自行管理的二进制文件。
+
+| 引擎 ID | 启动命令 | 接入方式与安装说明 |
+|---|---|---|
+| `cursor` | `cursor-agent acp` | ACP v1；[Cursor CLI](https://cursor.com/docs/cli/acp) |
+| `devin` | `devin acp` | ACP v1；[Devin CLI](https://docs.devin.ai/cli) |
+| `dsh` | `dsh --profile acp` | ACP v1；[DeepSeek Harness ACP（英文）](https://github.com/deepseek-ai/deepseek-harness/tree/master/packages/acp/acp) |
+| `grok` | `grok --no-auto-update agent --no-leader stdio` | ACP v1；[Grok CLI](https://x.ai/cli) |
+| `hermes` | `hermes acp` | ACP v1；[Hermes ACP](https://hermes-agent.nousresearch.com/docs/user-guide/features/acp) |
+| `pi` | `pi-acp` | 通过[社区适配器](https://github.com/svkozak/pi-acp)使用 ACP v1，不是直接运行 `pi` |
+| `opencode` | `opencode serve --hostname 127.0.0.1 --port 0` | 原生 HTTP/SSE，要求 OpenCode 1.x；[OpenCode](https://opencode.ai/docs) |
+| `antigravity` | `agy_acp_server` 或 `agy acp` | ACP v1；使用兼容的[独立服务端](https://antigravity.google/docs/ide/extensions)或 [Antigravity CLI](https://antigravity.google/docs/cli/overview) |
+
+Antigravity 按 `agy_acp_server`、`agy_acp_server.par`、`agy` 的顺序检测。Wuu 使用 `agy acp` 启动 CLI；Linux 下仅为独立服务端附加 `--uid=`。指定的可执行文件名为 `agy` 或 `agy.exe` 时也使用 CLI 命令，其他名称沿用独立服务端的启动参数。CLI 和独立服务端的登录状态及原生会话可能各自保存，切换时可能需要重新登录，也可能无法恢复已有原生会话。
+
+这些命令描述适配器要求，不代表每个 CLI 版本都兼容。ACP 必须协商为协议版本 1；OpenCode 必须报告健康的 1.x 服务。不兼容时会明确报错。
+
+这些引擎依次使用 `engines.<id>.binary_path`、`WUU_<ID>_BINARY`（如 `WUU_DEVIN_BINARY`）、`PATH` 查找可执行文件。指定路径无效时直接报错，不会悄悄换用其他程序。路径应指向程序，不要填写带参数的命令。检测只查找可执行文件，不验证凭据，也不创建对话。
+
+从访达或 Dock 打开桌面版时，进程拿不到终端里的 PATH。PATH 中找不到可执行文件时，会继续在常规安装位置查找（`~/.local/bin`、`~/bin`、Homebrew、`~/.opencode/bin`，以及 nvm、mise 这类版本管理器的 shim）。如果进程里仍然没有任何用户目录，再读取登录 shell 的 PATH。Codex 和 Claude Code 使用同一套回退。
+
+机器本地配置为每个引擎提供 `enabled`、`binary_path`，并用 `default_engine` 指定新会话默认值。省略 `enabled` 表示自动检测，`false` 表示禁用。例如：
+
+```json
+{
+  "engines": {
+    "default_engine": "devin",
+    "devin": { "enabled": true },
+    "grok": { "enabled": false }
+  }
+}
+```
+
+缺失或禁用的引擎无法运行。已有会话保留原引擎绑定，不会自动切换。配置文件位置与作用范围见[配置参考](../reference/configuration.md)。
+
+## DeepSeek Harness 设置
+
+安装 DeepSeek Harness 及其官方 ACP profile，并配置好它的模型服务和模型，再在 Wuu 中选择该引擎。Wuu 在会话工作目录运行 `dsh --profile acp`；普通 TUI profile 不是 ACP 服务端。如果安装方式需要自定义 profile 或配置路径，可在**设置 → Agent → DeepSeek Harness**中指定包装脚本的可执行文件路径。脚本应转发 Wuu 传入的参数，并将 stdout 专用于 JSON-RPC。
+
+官方 `@deepseek-ai/dsh-acp` `0.2.1-rc.2` 契约提供持久化 `session/resume`、`session/close`、模型/推理配置及 HTTP MCP。请按上游说明安装配套的 CLI 和 profile 包；npm 的 `latest` 标签可能仍指向较旧的 ACP 实现。模型服务凭据由 DSH 管理，它不提供 ACP 登录方式。配置完成后，在 Wuu 中重新检测。
+
+DSH 输出已提交的消息、思考内容和通用工具事件，不输出原始逐 token 增量，也不提供 TUI 的专有卡片、计划和终端视图。其 ACP profile 不声明只读模式。Wuu 保留界面历史，DSH 恢复原生上下文时不会重放这些历史消息。DSH 自己的历史中可能保留未发送提示词的模型探测会话；关闭会话不会删除它。
+
+## 登录与模型选择
+
+可以使用 Agent 自身的 CLI 登录和配置。ACP 引擎也在设置中提供**登录**入口：点击后才启动 Agent 并查询登录方式，明确选择一种方式后才调用认证流程，该流程可能打开浏览器。打开设置、展开引擎或刷新检测不会发起这一流程。取消会停止登录进程；凭据仍由 Agent 自己保存。
+
+此界面只支持 Agent 驱动的认证方式，没有可选方式时请使用原生 CLI。查询方式不是检查账号状态，登录成功也不保证模型可用。Wuu 不会把这些引擎的凭据导入模型服务。
+
+Claude Code 通过 CLI 初始化握手发现模型，无需发送提示词。模型选择器显示 CLI 返回的模型名称和实际映射目标，选择值保留 CLI 原始别名与上下文后缀。推理档位和快速模式支持情况来自 CLI，不再由 Wuu 固定列举。发现结果反映已安装 CLI 及其配置，不代表账号一定能调用每个返回的模型。
+
+修改原生登录或配置后，可在 **设置 → Agent → 重新检测** 重新读取。所有外部引擎的模型目录都使用会话的实际工作目录（包括 Git worktree），成功结果缓存两分钟。手动刷新会重新探测原生引擎，重叠的刷新请求共用一次探测。复用及发布结果前，Wuu 检查可执行文件、环境和已知原生配置/认证文件的元数据；Claude 还会检查原生登录状态。仅保存在钥匙串或远端账号中的变化，可能需要手动刷新或等待缓存到期。
+
+刷新失败时，仅保留相同发现上下文下的历史结果并显示警告。引擎明确返回空列表时会清除旧模型；不支持目录、部分探测失败和完整探测失败会分别表示。Wuu 不会向外部引擎套用自己的模型服务目录。新会话只需等待引擎可用性清单即可提交；完整模型目录会继续在后台发现，使用原生默认配置或已记住的选择不再被目录探测阻塞。
+
+Codex 使用其 app-server 模型目录。ACP 引擎使用 `session/new` 返回的模型/配置及 `config_option_update` 通知，包括 Devin 延迟发送的初始配置。模型配置选项优先于旧的一等模型列表。Wuu 分别探测每个模型的推理、速度及额外的选择/布尔选项，保留原生选项 ID 和取值，并先切换模型再应用关联选项。引擎拒绝选择时明确报错。OpenCode 使用原生 HTTP API，列出已连接服务的 `provider/model` 标识，并把已声明的变体显示为 **Variant** 选项。
+
+已有会话保留引擎身份，但空闲时仍可修改模型和选项。选择 **Agent 默认模型** 会清除模型、推理、速度及额外选项的覆盖值；下一轮重新解析原生默认值，避免继续沿用旧会话的覆盖值。单个选项也提供**默认**入口。恢复 Claude 会话需要其 `get_settings` 控制接口提供已配置模型。OpenCode 恢复默认 Agent 的模型或其配置模型；两者都未提供时，需先明确选择模型再恢复。其 API 不公开最近使用模型的回退值。无法解析原生默认值时会报错，不会静默沿用旧覆盖值。
+
+ACP 图片附件会写成本地文件，并把路径写进提示词，让 Agent 用自己的读文件工具查看。Wuu 不发送 ACP 图片内容块，即使 Agent 声明了图片输入也一样。
+
+Agent 产出的媒体内容也会沿内置工具相同的富工具结果通道在对话记录中渲染：ACP `tool_call` content、Codex `mcpToolCall` 结果、Claude `tool_result` 内容块和 OpenCode 文件附件都会保留图片、文件和资源内容块；ACP `agent_message_chunk` 的图片块会像生成图片一样挂到回复上。只给出文件路径或 URL 的结果保留引用，由渲染层解析。Agent 也可以在回复里输出 Markdown 图片语法来内联展示图片。
+
+## Wuu 浏览器和电脑工具
+
+Codex、Claude Code 和 OpenCode 通过本地 HTTP MCP 端点使用 Wuu 内嵌浏览器和已启用的 CUA 工具。包括 Pi 和 DeepSeek Harness 在内的 ACP 引擎，只有在已安装的适配器声明支持 HTTP MCP 时才会获得这些工具。不支持该能力的适配器仍可使用自身工具继续对话，Wuu 会以临时提示说明浏览器和电脑工具不可用。
+
+宿主为每个会话轮次创建独立端点，通过引擎的启动参数或会话配置传入，不会修改 CLI 的全局配置。浏览器需要已连接且支持浏览器操作的桌面客户端；CUA 需要已启用并连接的电脑控制插件。Codex 和 Claude Code 还会获得本轮通过 `@` 或 **+** 明确引用的插件工具，其他插件工具仍不会导出。其他适配器需要声明 `conversation-plugins`，才能接受这些引用。Wuu 模型服务的延迟加载和 Code Mode 设置不影响这个 MCP 工具目录，工具调用循环由外部引擎负责。
+
+这些调用沿用内置引擎相同的 Wuu 权限、插件钩子、活动预览、停止和接管控制。截图除了元数据，还会返回原生 MCP 图片。同一个端点还会提供 Wuu 的 `present_artifact` 工具，外部 Agent 可以把生成或已有的图片、文件作为预览展示在对话记录中。关闭预览窗口只会隐藏窗口。停止、接管、中断、工具退役和轮次结束都会撤销该执行的控制权，旧端点无法借用后续轮次的权限。新的明确用户轮次可以重新取得控制权。如果「代我审批」要求 Wuu 模型审查，该操作会被阻止，因为外部引擎轮次不会运行 Wuu 审查模型。外部 Agent 自身原生工具的限制仍取决于该 Agent，详见下文。
+
+## Fast mode
+
+打开模型浮层，所选模型支持加速时，标题行会显示紧凑的闪电按钮。速度与推理强度独立，按会话保存；已有会话空闲时也可以修改，并用于下一次请求。重置按钮恢复引擎自身的配置默认值。`/fast`、`/fast on`、`/fast off` 和 `/fast status` 使用同一组选项。加速可能增加费用或额度消耗，实际可用性由账户和服务决定。
+
+Codex 从实时模型目录读取支持情况，并在原生会话创建、恢复及每轮请求中发送 `serviceTier: "fast"` 或 `"default"`。Claude 引擎为 CLI 元数据声明支持的模型选项传递显式 `fastMode` 设置。ACP 逐模型发现选择项，支持分组取值；通过 `session/set_config_option` 使用 agent 宣告的 `fast-mode`、`fast_mode`、`speed` 或 `service_tier` ID 和取值。切换模型后先刷新完整配置列表，再设置速度。未宣告可识别速度选项的 agent 不显示开关；当前 OpenCode 集成没有宣告该能力。
+
+这些映射依据上游的 [Codex 速度配置（英文）](https://learn.chatgpt.com/docs/agent-configuration/speed)、[原生 CLI Fast mode（英文）](https://code.claude.com/docs/en/fast-mode)、[ACP 会话配置协议（英文）](https://agentclientprotocol.com/protocol/v1/session-config-options)及 [Codex ACP 适配器](https://github.com/agentclientprotocol/codex-acp/blob/main/src/FastModeConfig.ts)。保存的选项代表 Wuu 请求的速度，不保证上游服务一定提供加速处理。
+
+## 原生子代理
+
+Claude 后台子代理及其自动汇总属于同一个 Wuu 回合。已观察到的子代理仍在运行，或其结果还需要后续汇总时，仅报告启动情况的原生结果不会结束对话回合。Wuu 会保持进程，追加主代理的汇总，直到这些后续处理完成。子代理内部消息不会混入主回复。停止会取消整个回合并关闭进程，不会把子代理转为独立后台任务。
+
+目前原生子代理状态是临时展示。Codex 通过父回合报告子代理活动；Wuu 不提供可独立恢复的子会话。ACP 的完成仍遵循 Agent 的提示请求协议。厂商特有的 ACP 子代理扩展不构成通用后台生命周期契约，Wuu 也未通过它们提供持久子会话。
+
+## 权限与会话恢复
+
+Codex 保留原生会话，Wuu 在每轮请求中传入准入时确定的工作目录与有效权限模式。会话切换到关联工作树后，原生回合的工作目录也随之切换，不会把旧工作树追加为额外可写目录。进程级显式权限覆盖仍优先于会话保存的模式。
+
+这些适配器以你的用户权限启动受信任的本地程序。Wuu 不会把它们的原生工具放入自己的操作系统进程沙箱。ACP Agent 如果广告了只读或 plan 模式，会写入该原生设置；否则拒绝 `read_only`，因为 Wuu 自己无法强制该边界。OpenCode 没有对等的原生模式，同样会被拒绝。标准模式会映射到 Agent 广告的询问模式（如有），协议收到的权限请求进入 Wuu 审批流程；没有审批支持时拒绝请求。`unconfined` 会映射到免询问的原生模式（如有），否则接受受支持的单次请求。ACP 审批不会转换成持久的 `allow_always` 规则。OpenCode 每轮都会刷新 `ask` 规则，恢复会话时也一样。Agent 不发起权限请求就执行的行为不在这一审批边界内。新外部引擎会话在调用方省略权限模式时默认使用 `unconfined`，请在统一输入框的权限菜单里明确选择。详见[权限说明](../reference/permissions.md)。
+
+Wuu 保存原生会话引用，并在后续轮次恢复；Agent 声明支持时使用 `session/resume`，否则使用 `session/load`。两者都不支持或恢复失败时，Wuu 会创建替代会话，并明确提示 Agent 已失去此前上下文。声明 `session/close` 的 Agent 会在进程清理前收到有时限的关闭请求，包括取消后及模型探测会话；关闭失败会报错。关闭保留 Agent 的持久化历史，供后续恢复。ACP 回合通常由原生提示请求的响应结束。Grok 还可能先发出 `x.ai/session/prompt_complete` 扩展通知；当这条通知先到时，Wuu 用它结束本轮，因为 Grok 的提示 RPC 可能在回合实际结束后仍挂起。Agent 确认提示之后的静默不作为完成依据。提示发出后完全没有队列记账、更新或请求，会报错：那是卡住的 Agent，不是 Extra high 推理。停止操作会取消原生任务并清理子进程。OpenCode 使用带密码的本机回环服务，每个进程生成新密码，不作为远程服务开放。
+
+
+## 分支与编辑历史
+
+Codex 会话可从已完成的整轮或该轮的最终回复创建分支。编辑用户消息时，
+保留该原生轮次之前的历史。Wuu 创建独立的原生分支，再将其引用与对应的
+可见历史一起保存；后续轮次与重启恢复均使用新分支。原生源历史保持不变。
+这两项操作均不会撤销文件修改或工具产生的副作用。
+
+Codex 必须支持带明确截止点的 `thread/fork`，并返回完整轮次历史。Wuu 会
+核对返回的轮次、条目标识以及原生工具上下文。旧版 CLI 若忽略截止点，
+操作会明确失败，需要更新 CLI，不能接受包含多余上下文的分支。创建分支前
+请等待源轮次结束。原生轮次内部的用户消息、中间说明或单个工具结果不能
+作为截止点，请选择该轮的最终回复。旧 Wuu 会话需要可匹配的原生输出标识
+才能确认截止位置。
+
+OpenCode 会话可从用户消息或已完成轮次的最终回复创建分支。调用
+`session/{id}/fork` 前，Wuu 会把每条可见提示的摘要与该会话的原生用户
+消息逐一比对，再以下一条提示的消息 ID 作为截止点；可见记录与原生历史
+不一致时明确失败，不会另猜一个截止位置。编辑用户消息时保留该提示
+之前的历史。原生轮次内部不能作为截止点：OpenCode 把一轮输出存为一条
+消息，请选择该轮的最终回复。
+
+声明 `sessionCapabilities.fork` 且支持重新载入会话的 ACP Agent 可在会话
+当前末尾创建分支；该方法复制整个原生会话，因此更早的截止点会被拒绝。
+未声明该能力的 Agent —— Devin、Claude Code 及其余适配器 —— 尚未通过
+Wuu 提供已验证的原生历史截止操作。已有非空历史仍可查看和继续，但分支
+或编辑请求会在修改前失败。
+失败回合提供**继续**操作，在原会话中发送后续消息，保留原生历史。
+尚未运行的空会话仍可创建分支。托管会话的上下文复制同样会拒绝外部历史，
+不会把界面文字当作可重放的原生上下文。
+
+原生分支或 Wuu 持久化失败后，原会话仍可继续使用。若原生分支已创建，
+而 Wuu 提交失败，CLI 自己的历史中可能保留一个没有对应 Wuu 会话的分支；
+Wuu 不会删除原生审计历史来掩盖该失败。
+
+若新的 Codex 请求已发出，但无法确认其原生结果，Wuu 会跨重启保留该不确定状态，
+避免把下一条消息发送到可能仍在运行的原生轮次。已知轮次 ID 时，下次继续会先
+读取原生历史，确认该轮已结束后再发送。若 ID 未能保存，请从更早且可核实的
+已完成轮次创建分支。没有此不确定标记的普通旧会话仍可继续；正常确认结束的
+停止操作不需要这一步恢复。

@@ -1,0 +1,73 @@
+// Isolated production sidebar: no preload, credentials, or real workspace data.
+import { createRef, useLayoutEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { AppSidebar } from "../../src/renderer/AppSidebar";
+import { initialState, type ThreadSummary } from "../../src/renderer/AppState";
+import { applyMessageFlowFontSize } from "../../src/renderer/MessageFlowFontSizeSection";
+import { WuuUIRoot } from "../../src/renderer/ui/layers/UILayerHost";
+import { createFixtureApplication, FixtureServices } from "../preview-services";
+import { I18nProvider } from "../../src/renderer/i18n";
+import "../../src/renderer/styles.css";
+
+const application = createFixtureApplication();
+const noop = () => {};
+const date = "2026-09-17T00:00:00Z";
+const params = new URLSearchParams(location.search);
+const project = { id: "preview", name: "wuu", path: "/preview", created_at: date, updated_at: date };
+// `full` adds sibling workspaces, matching a populated rail.
+const full = params.has("full");
+const siblings = full ? ["dsh-TUI", "sglang-omni", "infra", "简历"].map(name => ({ ...project, id: name, name, path: `/${name}` })) : [];
+const workspaces = [...siblings, project];
+const threads: ThreadSummary[] = [
+  ["idle", "普通会话：长标题应该在操作区域之前省略"],
+  ["running", "正在运行的会话"],
+  ["fork", "分支会话：消息气泡长内容折叠显示"],
+  ["fork-running", "正在运行的分支会话"],
+  ["fork-unread", "有未读结果的分支会话"],
+].map(([id, preview]) => ({
+  id, preview, pinned: id === "idle", cwd: "/preview", model_provider: "preview", model: "preview",
+  status: id.includes("running") ? "in_progress" : "idle",
+  created_at: date, updated_at: date, turn_count: 1, turns: [],
+  latest_completed_turn_id: "done",
+  ...(id.startsWith("fork") ? { forked_from_id: "idle" } : {}),
+}));
+
+function Fixture() {
+  const [active, setActive] = useState("idle");
+  const [expanded, setExpanded] = useState(new Set([project.id]));
+  const [collapsedFolderIDs, setCollapsedFolderIDs] = useState<Set<string>>(() => new Set());
+  useLayoutEffect(() => {
+    applyMessageFlowFontSize(Number(params.get("size")) || 14);
+    document.documentElement.dataset.theme = params.get("theme") || "light";
+  }, []);
+  const empty = params.has("empty");
+  const [unreadViewOpen, setUnreadViewOpen] = useState(false);
+  const visible = empty ? [] : threads;
+  return <WuuUIRoot><div className="app-shell navigation-ribbon-layout" style={{ height: "100dvh", gridTemplateColumns: "var(--sidebar-open-width) 1fr", "--sidebar-open-width": `${Number(params.get("width")) || 296}px` } as React.CSSProperties}>
+    <AppSidebar
+      initialized
+      activeContextKind="project"
+      activeSessionTabID={initialState.activeSessionTabID}
+      lastViewedTurnByThreadID={{ idle: "done", running: "done", fork: "done", "fork-running": "done" }}
+      sidebarWorkspaces={workspaces} pinnedThreads={empty ? [] : [threads[0]]}
+      activeThreadID={active} activeWorkspaceID={project.id}
+      collapsedSidebarSectionIDs={new Set()} expandedSidebarSectionIDs={expanded}
+      collapsedFolderIDs={collapsedFolderIDs} setCollapsedFolderIDs={setCollapsedFolderIDs}
+      workspaceThreadsByWorkspaceID={{ [project.id]: visible }}
+      workspaceMenuOpen={false} workspaceMenuRef={createRef()} searchOpen={false}
+      sectionOrder={workspaces.map(workspace => workspace.id)} onStartNewThread={noop} onOpenSkillsTab={noop}
+      onToggleConversationSearch={noop} onSelectThread={setActive}
+      onTogglePinned={noop} onArchiveThread={noop} onDeleteThread={noop} onRenameThread={noop}
+      onToggleWorkspaceMenu={noop} onCreateWorkspace={noop} onOpenWorkspaceFolder={noop}
+      onToggleSidebarSectionCollapsed={id => setExpanded(current => current.has(id) ? new Set() : new Set([id]))}
+      onLoadWorkspaceThreads={async () => {}}
+      onStartNewThreadInWorkspace={noop} onSelectWorkspaceThread={(_project, id) => setActive(id)}
+      onRemoveWorkspace={noop} onRelocateWorkspace={noop} onOpenSettings={noop} onMarkThreadsViewed={noop}
+      unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(open => !open)}
+      sidebarCollapsed={false} onShowConversations={noop}
+    />
+    <main style={{ padding: 24 }}>Sidebar accessory preview · {params.get("theme") || "light"} · {params.get("size") || 14}px</main>
+  </div></WuuUIRoot>;
+}
+
+createRoot(document.getElementById("root")!).render(<I18nProvider><FixtureServices application={application}><Fixture /></FixtureServices></I18nProvider>);

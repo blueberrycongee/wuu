@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/blueberrycongee/wuu/blob/main/evals/result.schema.json",
+  "title": "wuu public evaluation result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "title",
+    "case",
+    "run",
+    "environment",
+    "models",
+    "outcome",
+    "metrics",
+    "artifacts",
+    "disclosure",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$" },
+    "title": { "type": "string", "minLength": 1 },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "source", "prompt_artifact"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "source": { "type": "string", "minLength": 1 },
+        "source_url": { "type": ["string", "null"] },
+        "source_commit": { "type": ["string", "null"] },
+        "prompt_artifact": { "type": "string", "minLength": 1 }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["started_at", "finished_at", "command", "wuu_version", "wuu_commit", "dirty"],
+      "properties": {
+        "started_at": { "type": "string", "format": "date-time" },
+        "finished_at": { "type": "string", "format": "date-time" },
+        "command": { "type": "string", "minLength": 1 },
+        "wuu_version": { "type": "string", "minLength": 1 },
+        "wuu_commit": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+        "dirty": { "const": false }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "hardware": { "type": ["string", "null"] },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "model", "settings"],
+        "properties": {
+          "provider": { "type": "string", "minLength": 1 },
+          "model": { "type": "string", "minLength": 1 },
+          "role": { "type": ["string", "null"] },
+          "settings": { "type": "object" }
+        }
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "score", "grader"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "error"] },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "grader": { "type": "string", "minLength": 1 },
+        "notes": { "type": ["string", "null"] }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["duration_ms", "input_tokens", "output_tokens", "cost_usd", "cost_source"],
+      "properties": {
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cost_usd": { "type": ["number", "null"], "minimum": 0 },
+        "cost_source": { "type": "string", "minLength": 1 }
+      }
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256", "kind"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "kind": { "enum": ["prompt", "raw_report", "grader", "transcript", "fixture", "other"] }
+        }
+      }
+    },
+    "disclosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contains_secrets", "contains_personal_data", "redactions"],
+      "properties": {
+        "contains_secrets": { "const": false },
+        "contains_personal_data": { "const": false },
+        "redactions": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

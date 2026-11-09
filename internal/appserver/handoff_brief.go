@@ -1,0 +1,95 @@
+package appserver
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
+)
+
+func (s *Server) prepareHandoffSeed(binding *runtime.State, ctx context.Context, params pluginhost.SessionCreateParams) (pluginhost.SessionCreateParams, error) {
+	if params.ContextSource != pluginhost.SessionContextSourceSeed || params.Seed == nil || strings.TrimSpace(params.Seed.Body) != "" {
+		return params, nil
+	}
+	if s == nil {
+		return params, errors.New("handoff brief generation requires a runtime")
+	}
+	provider, model, fork, err := s.rt.HandoffBriefForState(binding)
+	if err != nil {
+		return params, err
+	}
+	sourceID := strings.TrimSpace(params.Seed.Source.SessionID)
+	if sourceID == "" {
+		sourceID = strings.TrimSpace(params.ParentSessionID)
+	}
+	if sourceID == "" {
+		return params, errors.New("handoff brief requires a source session")
+	}
+	if params.Seed.Source.SessionID == "" {
+		params.Seed.Source.SessionID = sourceID
+	}
+	page, err := binding.Sessions.WithContext(ctx).
+		ReadHistoryQuery(session.HistoryReadQuery{
+			SessionID: sourceID, StartSeq: 1, EndSeq: params.Seed.Source.ThroughSeq, SnapshotSeq: params.Seed.Source.ThroughSeq, Limit: 50,
+		})
+	if err != nil {
+		return params, err
+	}
+	if params.Seed.Source.ThroughSeq < 1 {
+		params.Seed.Source.ThroughSeq = page.HeadSeq
+	}
+	records := make([]persistedMessage, 0, len(page.Records))
+	for _, record := range page.Records {
+		message, err := persistedMessageFromHistoryRecord(record)
+		if err != nil {
+			return params, err
+		}
+		records = append(records, message)
+	}
+	messages := chatMessagesFromPersistedMessages(records)
+	previous := agent.CompactionNote{}
+	if note, ok, err := binding.Sessions.LoadCompactionNote(sourceID, provider.CompactionKey()); err != nil {
+		return params, err
+	} else if ok {
+		previous = agent.CompactionNote{Markdown: note.Markdown, CoveredMessages: note.CoveredMessages, CoveredHash: note.CoveredHash}
+	}
+	intent := ""
+	if params.Launch != nil {
+		intent = strings.TrimSpace(params.Launch.Intent)
+	}
+	plan, err := provider.PlanHandoffBrief(ctx, model, messages, previous, intent, sourceID, params.Seed.Source.ThroughSeq)
+	if err != nil {
+		return params, err
+	}
+	if strings.TrimSpace(plan.Prompt) == "" {
+		return params, errors.New("handoff brief prompt is empty")
+	}
+	result, err := fork(ctx, messages, plan)
+	if err != nil {
+		return params, err
+	}
+	body := strings.TrimSpace(result.Markdown)
+	if body == "" {
+		return params, errors.New("handoff brief generator returned empty Markdown")
+	}
+	if plan.MaxBytes > 0 && len([]byte(body)) > plan.MaxBytes {
+		return params, fmt.Errorf("handoff brief exceeds %d bytes", plan.MaxBytes)
+	}
+	params.Seed.Body = body
+	if strings.TrimSpace(params.Seed.Provenance.Producer) == "" {
+		if _, builtin := provider.(agent.DefaultContextWindowProvider); builtin {
+			params.Seed.Provenance.Producer = provider.CompactionKey()
+		} else {
+			params.Seed.Provenance.Producer = "plugin:" + strings.TrimSpace(provider.CompactionKey())
+		}
+	}
+	if strings.TrimSpace(params.Seed.Provenance.SourceModel) == "" {
+		params.Seed.Provenance.SourceModel = strings.TrimSpace(model)
+	}
+	return params, nil
+}

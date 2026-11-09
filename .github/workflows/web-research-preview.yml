@@ -1,0 +1,94 @@
+name: Compact web sources recording
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: web-research-recording-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    # This review-only recording retires with PR #625; it is not a merge gate.
+    if: github.event.pull_request.number == 625 && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/compact-web-sources'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: |
+            desktop/package-lock.json
+            clients/core/package-lock.json
+            clients/mobile-web/package-lock.json
+
+      - name: Install fixture dependencies
+        run: |
+          npm ci --prefix desktop
+          npm ci --prefix clients/core
+          npm ci --prefix clients/mobile-web
+          node desktop/node_modules/electron/install.js
+          node -e 'require("./desktop/node_modules/electron")'
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-noto-color-emoji
+
+      - name: Record synthetic source interactions
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$GITHUB_WORKSPACE/artifacts/web-research-compact"
+          mkdir -p "$output"
+          test -z "$(git status --porcelain --untracked-files=no)"
+          python3 - "$output/source-manifest.json" <<'PYTHON'
+          import json, os, pathlib, subprocess, sys
+          def git(*args):
+              return subprocess.check_output(["git", *args], text=True).strip()
+          pathlib.Path(sys.argv[1]).write_text(json.dumps({
+              "sourceCommit": git("rev-parse", "HEAD"),
+              "sourceTree": git("rev-parse", "HEAD^{tree}"),
+              "workflowRun": os.environ["GITHUB_RUN_ID"],
+              "workflowAttempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "scope": "Production React/CSS components with synthetic fixture data; no app-server, model requests, or user profile.",
+          }, indent=2) + "\n")
+          PYTHON
+          node --version > "$output/environment.txt"
+          ffmpeg -version >> "$output/environment.txt"
+          (cd desktop && exec node_modules/.bin/vite --config dev/web-research/vite.config.ts) > "$output/vite.log" 2>&1 &
+          vite_pid=$!
+          trap 'kill "$vite_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:5218/dev/web-research/ > /dev/null; then
+              break
+            fi
+            kill -0 "$vite_pid"
+            sleep 0.5
+          done
+          curl --fail --silent http://127.0.0.1:5218/dev/web-research/ > /dev/null
+          # Match the established Electron/Xvfb execution mode in Desktop CI.
+          xvfb-run --auto-servernum desktop/node_modules/.bin/electron --no-sandbox desktop/dev/web-research/capture.cjs 2>&1 | tee "$output/capture.log"
+          ffmpeg -y -f concat -safe 0 -i "$output/frames.txt" \
+            -filter_complex '[0:v]fps=20,crop=900:590:0:0,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=sierra2_4a' \
+            -loop 0 "$output/preview.gif" 2>&1 | tee "$output/encode.log"
+          test -s "$output/preview.gif"
+          sha256sum "$output/preview.gif" > "$output/preview.sha256"
+
+      - name: Upload synthetic recording evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-research-compact-evidence
+          path: artifacts/web-research-compact/
+          if-no-files-found: ignore
+          retention-days: 7

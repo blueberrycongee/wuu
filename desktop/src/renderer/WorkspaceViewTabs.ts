@@ -1,0 +1,321 @@
+import type { ApplicationPreviewContextV1 } from "../../../packages/plugin-sdk/src/ui-preview";
+import { arrayMove } from "@dnd-kit/sortable";
+import type { ExtensionIconDescriptor, RuntimeContext } from "../shared/protocol";
+import {
+  parseWorkspaceFileTarget,
+  type WorkspaceFileLinkTarget,
+  type WorkspaceFileSelection,
+} from "./LinkTargets";
+import type { WorkspacePanelView } from "./WorkspacePanels";
+import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
+import type { ArtifactPreviewRequest } from "./ArtifactPreviewContext";
+import { workspacePathToSlash } from "./WorkspacePaths";
+
+/**
+ * Content shown in the workspace right panel's tab strip. Built-in tools are
+ * singleton tabs, while files and diffs have one tab per resource. A file
+ * tab renders its editor beside the persistent file tree.
+ */
+export type WorkspaceToolViewTab = {
+  kind: WorkspacePanelView;
+  id: WorkspacePanelView;
+};
+
+export type WorkspaceDiffViewTab = {
+  kind: "diff";
+  id: string;
+  threadID: string;
+  path: string;
+  title: string;
+  selection: TurnFileDiffSelection;
+};
+
+export type WorkspaceFileViewTab = {
+  kind: "file";
+  id: string;
+  context: ApplicationPreviewContextV1;
+  path: string;
+  title: string;
+  selection?: WorkspaceFileSelection;
+  anchor?: string;
+};
+
+export type WorkspacePluginViewTab = {
+  kind: "plugin";
+  id: string;
+  pluginId: string;
+  fingerprint: string;
+  viewTypeId: string;
+  title: string;
+  icon?: ExtensionIconDescriptor;
+};
+
+export type WorkspaceArtifactViewTab = ArtifactPreviewRequest & {
+  kind: "artifact";
+  id: string;
+  title: string;
+};
+
+export function workspaceArtifactViewTab(input: ArtifactPreviewRequest): WorkspaceArtifactViewTab {
+  const { artifact, threadID, cwd } = input;
+  // Snapshot identity is separate from the editable workspace file path.
+  const identity = [...(artifact.locator ? [artifact.locator.execution_host] : []), threadID, cwd, artifact.sha256 ?? artifact.uri ?? artifact.id, artifact.name, artifact.mimeType];
+  return { ...input, kind: "artifact", id: `artifact:${JSON.stringify(identity)}`, title: artifact.name };
+}
+
+export type WorkspaceViewTab =
+  | { kind: "new"; id: string }
+  | { kind: "side-thread"; id: "side-thread" }
+  | WorkspaceToolViewTab
+  | WorkspaceDiffViewTab
+  | WorkspaceFileViewTab
+  | WorkspacePluginViewTab
+  | WorkspaceArtifactViewTab;
+
+// The conversation participates in focus history without becoming a resource tab.
+export const WORKSPACE_CONVERSATION_TAB_ID = "conversation";
+
+type WorkspaceViewTabOpenOptions = { activate?: boolean; replaceActiveNewTab?: boolean };
+
+export type WorkspaceViewTabsState = {
+  tabs: WorkspaceViewTab[];
+  activeTabID: string | undefined;
+  // Mirrors activeTabID when a file is active. Kept separately so the shell
+  // can derive the selected tree path without inspecting view rendering.
+  activeFileTabID: string | undefined;
+  // Most-recently-active tab ids, oldest first, excluding the current
+  // activeTabID. Lets closing a tab restore whichever tab was active
+  // immediately before it, instead of always falling back to the tool
+  // picker.
+  activationHistory: string[];
+};
+
+export const initialWorkspaceViewTabsState: WorkspaceViewTabsState = {
+  tabs: [],
+  activeTabID: undefined,
+  activeFileTabID: undefined,
+  activationHistory: [],
+};
+
+export function workspaceToolViewTab(kind: WorkspacePanelView): WorkspaceToolViewTab {
+  return { kind, id: kind };
+}
+
+export function workspacePluginViewTab(entry: {
+  id: string;
+  pluginId: string;
+  generation: string;
+  view: string;
+  title: string;
+  icon?: ExtensionIconDescriptor;
+}): WorkspacePluginViewTab {
+  return {
+    kind: "plugin",
+    id: `plugin:${entry.pluginId}:${entry.id}`,
+    pluginId: entry.pluginId,
+    fingerprint: entry.generation,
+    viewTypeId: entry.view,
+    title: entry.title,
+    ...(entry.icon ? { icon: entry.icon } : {}),
+  };
+}
+
+export function workspaceDiffViewTabID(threadID: string, path: string, artifactID?: string): string {
+  return `diff:${threadID}:${artifactID ? `${encodeURIComponent(artifactID)}:` : ""}${encodeURIComponent(path)}`;
+}
+
+export function workspaceDiffViewTab({
+  threadID,
+  path,
+  selection,
+}: {
+  threadID: string;
+  path: string;
+  selection: TurnFileDiffSelection;
+}): WorkspaceDiffViewTab {
+  return {
+    kind: "diff",
+    id: workspaceDiffViewTabID(threadID, path, selection.artifactID),
+    threadID,
+    path,
+    title: workspaceFileBasename(path),
+    selection,
+  };
+}
+
+export function workspaceFileViewTabID(context: ApplicationPreviewContextV1, path: string): string {
+  const normalizedPath = normalizeWorkspaceFileTabPath(
+    context,
+    workspaceFileTarget(path).path,
+  );
+  const contextKey =
+    context.kind === "project"
+      ? `project:${context.project_id}:${context.cwd}`
+      : `no_project:${context.cwd}`;
+  return `file:${encodeURIComponent(contextKey)}:${encodeURIComponent(normalizedPath)}`;
+}
+
+export function workspaceFileViewTab({
+  context,
+  path,
+}: {
+  context: ApplicationPreviewContextV1;
+  path: string;
+}): WorkspaceFileViewTab {
+  const target = workspaceFileTarget(path);
+  const normalizedPath = normalizeWorkspaceFileTabPath(context, target.path);
+  return {
+    kind: "file",
+    id: workspaceFileViewTabID(context, normalizedPath),
+    context,
+    path: normalizedPath,
+    title: workspaceFileBasename(normalizedPath),
+    ...(target.selection ? { selection: target.selection } : {}),
+    ...(target.anchor ? { anchor: target.anchor } : {}),
+  };
+}
+
+function workspaceFileTarget(path: string): WorkspaceFileLinkTarget {
+  return parseWorkspaceFileTarget(path) ?? { kind: "workspace-file", path };
+}
+
+export function normalizeWorkspaceFileTabPath(context: ApplicationPreviewContextV1, path: string): string {
+  const normalizedRoot = workspacePathToSlash(context.cwd, context.cwd).replace(/\/+$/, "");
+  const normalizedPath = workspacePathToSlash(path, context.cwd).replace(/\/+$/, "");
+  const relativePath = normalizedPath.startsWith(`${normalizedRoot}/`)
+    ? normalizedPath.slice(normalizedRoot.length + 1)
+    : normalizedPath.replace(/^\/+/, "");
+  return relativePath
+    .split("/")
+    .filter((segment) => segment.length > 0 && segment !== ".")
+    .join("/");
+}
+
+export function workspaceFileBasename(path: string): string {
+  const trimmed = path.replace(/[/\\]+$/, "");
+  const separatorIndex = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"));
+  const base = separatorIndex < 0 ? trimmed : trimmed.slice(separatorIndex + 1);
+  return base || path;
+}
+
+/**
+ * Opens `tab`, replacing an existing resource with the same id or appending
+ * a new one. A picker selection consumes only the active new page, keeping
+ * its position unless the resource already has a tab. Background opens never
+ * consume new pages. Files replace the temporary Files browser entry.
+ */
+export function openViewTab(
+  state: WorkspaceViewTabsState,
+  tab: WorkspaceViewTab,
+  options: WorkspaceViewTabOpenOptions = {},
+): WorkspaceViewTabsState {
+  const activate = options.activate !== false;
+  const replacingIndex = activate && options.replaceActiveNewTab
+    ? state.tabs.findIndex((candidate) => candidate.id === state.activeTabID && candidate.kind === "new")
+    : -1;
+  const replacingID = replacingIndex < 0 ? undefined : state.tabs[replacingIndex].id;
+  const remaining = state.tabs.filter((candidate) =>
+    candidate.id !== replacingID && (tab.kind !== "file" || candidate.kind !== "files"),
+  );
+  const index = remaining.findIndex((candidate) => candidate.id === tab.id);
+  const insertionIndex = replacingIndex < 0 ? remaining.length
+    : state.tabs.slice(0, replacingIndex).filter((candidate) => remaining.includes(candidate)).length;
+  const tabs = index < 0
+    ? [...remaining.slice(0, insertionIndex), tab, ...remaining.slice(insertionIndex)]
+    : remaining.map((candidate, i) => i === index ? tab : candidate);
+  const nextState = replacingID
+    ? {
+        ...state,
+        tabs,
+        activeTabID: undefined,
+        activationHistory: state.activationHistory.filter((id) => id !== replacingID),
+      }
+    : { ...state, tabs };
+  return activate ? focusViewTab(nextState, tab.id) : nextState;
+}
+
+/** Focuses the tab with the given id (or the tool picker, when `id` is undefined). */
+export function focusViewTab(state: WorkspaceViewTabsState, id: string | undefined): WorkspaceViewTabsState {
+  const fileTab = id ? state.tabs.find((tab) => tab.id === id && tab.kind === "file") : undefined;
+  if (fileTab) {
+    if (state.activeTabID === id && state.activeFileTabID === id) {
+      return state;
+    }
+    const activationHistory = state.activeTabID
+      ? [...state.activationHistory.filter((entry) => entry !== state.activeTabID), state.activeTabID]
+      : state.activationHistory;
+    return { ...state, activeTabID: id, activeFileTabID: id, activationHistory };
+  }
+  if (state.activeTabID === id) {
+    return state;
+  }
+  const activationHistory = state.activeTabID
+    ? [...state.activationHistory.filter((entry) => entry !== state.activeTabID), state.activeTabID]
+    : state.activationHistory;
+  return {
+    ...state,
+    activeTabID: id,
+    activeFileTabID: id === "files" ? undefined : state.activeFileTabID,
+    activationHistory,
+  };
+}
+
+/**
+ * Closes the tab with the given id. If it was the active tab, focuses
+ * whichever tab was active immediately before it (walking back through the
+ * activation history for one that still exists after the close), falling
+ * back to the tool picker (`activeTabID: undefined`) if there is none.
+ */
+export function closeViewTab(state: WorkspaceViewTabsState, id: string): WorkspaceViewTabsState {
+  const tabs = state.tabs.filter((tab) => tab.id !== id);
+  let activeFileTabID = state.activeFileTabID === id
+    ? tabs.findLast((tab) => tab.kind === "file")?.id
+    : state.activeFileTabID;
+  let activationHistory = state.activationHistory.filter((entry) => entry !== id);
+  if (state.activeTabID !== id) {
+    return { ...state, tabs, activeFileTabID, activationHistory };
+  }
+  let activeTabID: string | undefined;
+  while (activationHistory.length > 0) {
+    const candidate = activationHistory[activationHistory.length - 1];
+    activationHistory = activationHistory.slice(0, -1);
+    if (candidate === WORKSPACE_CONVERSATION_TAB_ID || tabs.some((tab) => tab.id === candidate)) {
+      activeTabID = candidate;
+      break;
+    }
+  }
+  if (tabs.some((tab) => tab.id === activeTabID && tab.kind === "file")) {
+    activeFileTabID = activeTabID;
+  }
+  return { tabs, activationHistory, activeTabID, activeFileTabID };
+}
+
+/** Closes every tab matching `predicate`, one at a time, preserving closeViewTab's fallback-focus behavior. */
+export function closeViewTabsWhere(
+  state: WorkspaceViewTabsState,
+  predicate: (tab: WorkspaceViewTab) => boolean,
+): WorkspaceViewTabsState {
+  let next = state;
+  for (const tab of state.tabs) {
+    if (predicate(tab)) {
+      next = closeViewTab(next, tab.id);
+    }
+  }
+  return next;
+}
+
+export function reorderViewTabs(
+  state: WorkspaceViewTabsState,
+  activeID: string,
+  overID: string,
+): WorkspaceViewTabsState {
+  if (activeID === overID) {
+    return state;
+  }
+  const sourceIndex = state.tabs.findIndex((tab) => tab.id === activeID);
+  const targetIndex = state.tabs.findIndex((tab) => tab.id === overID);
+  if (sourceIndex < 0 || targetIndex < 0) {
+    return state;
+  }
+  return { ...state, tabs: arrayMove(state.tabs, sourceIndex, targetIndex) };
+}

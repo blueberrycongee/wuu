@@ -1,0 +1,832 @@
+package appserver
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/extensions"
+	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
+)
+
+func (s *Server) handlePluginDesktopModuleRead(req Request) error {
+	if s.rt.WuuHome != "" {
+		catalog, acquired, err := session.TryAcquirePluginCatalogReadLease(s.rt.WuuHome)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if !acquired {
+			return s.writeResponse(req.ID, nil, errors.New("plugin catalog is being published; retry loading the asset"))
+		}
+		defer catalog.Release()
+	}
+	if s.rt.SafeMode {
+		return s.writeResponse(req.ID, nil, errors.New("desktop plugin modules are unavailable in safe mode"))
+	}
+	var params PluginDesktopModuleReadParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	params.ID = strings.TrimSpace(params.ID)
+	params.Fingerprint = strings.TrimSpace(params.Fingerprint)
+	if params.ID == "" || params.Fingerprint == "" {
+		return s.writeResponse(req.ID, nil, errors.New("plugin id and fingerprint are required"))
+	}
+
+	snapshot, releaseSnapshot := s.rt.RetainExtensionSnapshot()
+	defer releaseSnapshot()
+	if params.GraphGeneration != "" && params.GraphGeneration != snapshot.GenerationID {
+		return s.writeResponse(req.ID, nil, errors.New("desktop plugin graph is no longer active"))
+	}
+	for _, module := range snapshot.NativeRendererModules() {
+		if params.ID != module.SubjectID {
+			continue
+		}
+		if params.Fingerprint != module.Fingerprint {
+			return s.writeResponse(req.ID, nil, errors.New("desktop module changed; refresh inventory before loading it"))
+		}
+		return s.writeResponse(req.ID, PluginDesktopModuleReadResult{
+			ID: module.SubjectID, Fingerprint: module.Fingerprint, Entry: module.Entry, MediaType: "text/javascript",
+		}, nil)
+	}
+
+	var selected *pluginpkg.Plugin
+	for index := range snapshot.ActivePlugins {
+		if snapshot.ActivePlugins[index].SubjectID == params.ID {
+			selected = &snapshot.ActivePlugins[index]
+			break
+		}
+	}
+	if selected == nil {
+		if _, err := s.requireActiveDesktopPluginIn(snapshot, params.ID, params.Fingerprint); err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		return s.writeResponse(req.ID, nil, errors.New("desktop plugin generation is not active"))
+	}
+	fresh, err := pluginpkg.LoadManifestWithOptions(selected.ManifestPath, pluginpkg.LoadOptions{
+		Source:      selected.Source,
+		Official:    selected.Official,
+		WorkspaceID: selected.WorkspaceID,
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("reload desktop plugin %q: %w", params.ID, err))
+	}
+	if fresh.SubjectID != params.ID || fresh.Fingerprint != params.Fingerprint {
+		return s.writeResponse(req.ID, nil, errors.New("desktop plugin changed; refresh inventory before loading it"))
+	}
+	// Development authorization is established by the receipt-backed discovery
+	// path, not by plugin.json. Preserve that verified state across the required
+	// fresh manifest read so inventory and desktop module loading apply the same
+	// trust decision.
+	fresh.AuthorizedDev = selected.AuthorizedDev
+
+	settings := extensions.Settings{}
+	if snapshot.ExtensionSettings != nil {
+		settings = *snapshot.ExtensionSettings
+	} else if cfg := s.currentExtensionConfig(); cfg.Extensions != nil {
+		settings = *cfg.Extensions
+	}
+	approval, state, _, enabled := pluginPackageInventoryState(settings, fresh, runtime.PluginEnabledByDefault(s.currentExtensionConfig(), fresh))
+	approved := approval == ExtensionApprovalGranted || approval == ExtensionApprovalOfficial
+	active := state == ExtensionStateGranted || state == ExtensionStateActive
+	if !enabled || !approved || !active {
+		return s.writeResponse(req.ID, nil, errors.New("desktop plugin is not approved and enabled"))
+	}
+	if err := desktopPluginRuntimeError(snapshot.PluginHost, fresh.ID); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if fresh.Desktop == nil {
+		return s.writeResponse(req.ID, nil, errors.New("plugin does not declare a desktop entry"))
+	}
+	source, err := os.ReadFile(filepath.Join(fresh.Root, filepath.FromSlash(fresh.Desktop.Entry)))
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("read desktop plugin entry: %w", err))
+	}
+	digest := sha256.Sum256(source)
+	return s.writeResponse(req.ID, PluginDesktopModuleReadResult{
+		ID:          fresh.SubjectID,
+		Fingerprint: fresh.Fingerprint,
+		Entry:       fresh.Desktop.Entry,
+		MediaType:   "text/javascript",
+		Digest:      hex.EncodeToString(digest[:]),
+		Source:      string(source),
+	}, nil)
+}
+
+func (s *Server) handlePluginIconRead(req Request) error {
+	return s.handlePluginImageRead(req, false)
+}
+
+func (s *Server) handlePluginImageRead(req Request, skinImage bool) error {
+	if s.rt.WuuHome != "" {
+		catalog, acquired, err := session.TryAcquirePluginCatalogReadLease(s.rt.WuuHome)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		if !acquired {
+			return s.writeResponse(req.ID, nil, errors.New("plugin catalog is being published; retry loading the asset"))
+		}
+		defer catalog.Release()
+	}
+	var params PluginIconReadParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	params.ID = strings.TrimSpace(params.ID)
+	params.Fingerprint = strings.TrimSpace(params.Fingerprint)
+	params.Path = filepath.ToSlash(strings.TrimSpace(params.Path))
+	if params.ID == "" || params.Fingerprint == "" || params.Path == "" {
+		return s.writeResponse(req.ID, nil, errors.New("plugin id, fingerprint, and icon path are required"))
+	}
+
+	snapshot, releaseSnapshot := s.rt.RetainExtensionSnapshot()
+	defer releaseSnapshot()
+	var selected *pluginpkg.Plugin
+	for index := range snapshot.Plugins {
+		if snapshot.Plugins[index].SubjectID == params.ID {
+			selected = &snapshot.Plugins[index]
+			break
+		}
+	}
+	if selected == nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("plugin %q is not available in this workspace", params.ID))
+	}
+	for index := range snapshot.ActivePlugins {
+		if snapshot.ActivePlugins[index].SubjectID == params.ID && snapshot.ActivePlugins[index].Fingerprint == params.Fingerprint {
+			selected = &snapshot.ActivePlugins[index]
+			break
+		}
+	}
+	fresh, err := pluginpkg.LoadManifestWithOptions(selected.ManifestPath, pluginpkg.LoadOptions{
+		Source: selected.Source, Official: selected.Official, WorkspaceID: selected.WorkspaceID,
+	})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("reload plugin icon %q: %w", params.ID, err))
+	}
+	if fresh.SubjectID != params.ID || fresh.Fingerprint != params.Fingerprint {
+		return s.writeResponse(req.ID, nil, errors.New("plugin changed; refresh inventory before loading its icon"))
+	}
+	declared := false
+	check := func(icon *pluginpkg.IconSpec) {
+		if icon == nil {
+			return
+		}
+		for _, path := range icon.AssetPaths() {
+			if path == params.Path {
+				declared = true
+			}
+		}
+	}
+	if skinImage {
+		for _, skin := range fresh.Skins {
+			if params.Path == skin.Light.Image || params.Path == skin.Dark.Image {
+				declared = true
+			}
+		}
+	} else {
+		check(fresh.Icon)
+		for _, entries := range [][]pluginpkg.ViewEntryContributionSpec{fresh.Navigation, fresh.WorkspaceTools, fresh.SettingsPages} {
+			for _, entry := range entries {
+				check(entry.Icon)
+			}
+		}
+	}
+	if !declared {
+		return s.writeResponse(req.ID, nil, errors.New("icon path is not declared by this plugin generation"))
+	}
+	data, err := os.ReadFile(filepath.Join(fresh.Root, filepath.FromSlash(params.Path)))
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("read plugin icon: %w", err))
+	}
+	mediaType := ""
+	switch strings.ToLower(filepath.Ext(params.Path)) {
+	case ".svg":
+		mediaType = "image/svg+xml"
+	case ".png":
+		mediaType = "image/png"
+	case ".webp":
+		mediaType = "image/webp"
+	case ".jpg", ".jpeg":
+		if skinImage {
+			mediaType = "image/jpeg"
+		}
+	}
+	if mediaType == "" {
+		return s.writeResponse(req.ID, nil, errors.New("unsupported plugin icon format"))
+	}
+	digest := sha256.Sum256(data)
+	return s.writeResponse(req.ID, PluginIconReadResult{
+		ID: fresh.SubjectID, Fingerprint: fresh.Fingerprint, Path: params.Path,
+		MediaType: mediaType, Digest: hex.EncodeToString(digest[:]), Data: data,
+	}, nil)
+}
+
+func (s *Server) handlePluginPackageSource(ctx context.Context, req Request) error {
+	var params PluginPackageInspectParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	handle := s.handlePluginPackageInspect
+	if req.Method == MethodPluginPackageInstall {
+		handle = s.handlePluginPackageInstall
+	}
+	if !strings.HasPrefix(params.Path, "npm:") && !strings.HasPrefix(params.Path, "lock:") {
+		return handle(ctx, req)
+	}
+	// Registry IO cannot occupy the serial stdio loop. Keep the authenticated
+	// request context and join the existing background shutdown ownership.
+	operationCtx, cancel := context.WithCancel(ctx)
+	stop := func() bool { return false }
+	if s.packageDownloadCtx != nil {
+		stop = context.AfterFunc(s.packageDownloadCtx, cancel)
+	}
+	if !s.startBackground(func() {
+		defer stop()
+		defer cancel()
+		if err := handle(operationCtx, req); err != nil {
+			log.Printf("wuu: %s: %v", req.Method, err)
+		}
+	}) {
+		stop()
+		cancel()
+		return s.writeResponse(req.ID, nil, errServerClosed)
+	}
+	return nil
+}
+
+func (s *Server) handlePluginPackageInspect(ctx context.Context, req Request) error {
+	var params PluginPackageInspectParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	resolved, err := pluginpkg.ResolvePackageSource(ctx, params.Path, pluginpkg.DistributionOptions{Registry: params.Registry, Integrity: params.Integrity})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect plugin package: %w", err))
+	}
+	defer resolved.Close()
+	return s.writeResponse(req.ID, PluginPackageInspectResult{
+		Package: pluginPackageMetadata(resolved.Inspection),
+	}, nil)
+}
+
+func (s *Server) handlePluginPackageInstall(ctx context.Context, req Request) error {
+	var params PluginPackageInstallParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	resolved, err := pluginpkg.ResolvePackageSource(ctx, params.Path, pluginpkg.DistributionOptions{Registry: params.Registry, Integrity: params.Integrity})
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("install plugin package: %w", err))
+	}
+	defer resolved.Close()
+	if err := ctx.Err(); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	releaseMutation, err := s.beginPluginGenerationMutation("install", pluginGenerationMutationCatalog)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseMutation()
+
+	inspected := resolved.Inspection
+	services, releaseServices, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseServices()
+	identity := resolved.Identity
+	installedPath := filepath.Join(s.rt.WuuHome, "plugins", inspected.ID)
+	if _, statErr := os.Lstat(installedPath); statErr == nil {
+		pending, err := pluginpkg.StagePackageUpdateFromSource(s.rt.WuuHome, resolved.Path, identity)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("stage plugin package update: %w", err))
+		}
+		view, err := services.Config.Read(context.Background())
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		subject := extensions.SubjectID("user", inspected.ID)
+		if view.Config.Extensions != nil && view.Config.Extensions.TrustsSource(subject, pending.ActiveFingerprint, identity) {
+			var selected pluginpkg.Plugin
+			for _, item := range s.rt.ExtensionSnapshot().Plugins {
+				if item.SubjectID == subject {
+					selected = item
+					break
+				}
+			}
+			committed, activationErr := s.applyPendingPluginUpdate(selected, pending, services, identity)
+			if activationErr != nil && !committed {
+				return s.writeResponse(req.ID, nil, activationErr)
+			}
+			inventory, skills := s.currentExtensionState()
+			return s.writePluginGenerationResponse(req, PluginPackageInstallResult{Package: pluginPackageMetadata(pending.Package), Replaced: true, ExtensionInventory: inventory, Skills: skills}, activationErr, releaseMutation)
+		}
+		inventory, skills := s.currentExtensionState()
+		return s.writePluginGenerationResponse(req, PluginPackageInstallResult{
+			Package:            pluginPackageMetadata(pending.Package),
+			Pending:            true,
+			ActiveFingerprint:  pending.ActiveFingerprint,
+			ExtensionInventory: inventory,
+			Skills:             skills,
+		}, nil, releaseMutation)
+	} else if !os.IsNotExist(statErr) {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect installed plugin package %q: %w", inspected.ID, statErr))
+	}
+
+	installed, err := pluginpkg.InstallPackage(s.rt.WuuHome, resolved.Path)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("install plugin package: %w", err))
+	}
+	keep, committed, activationErr := s.activateInstalledPackage(installed, identity, services)
+	if !keep {
+		activationErr = errors.Join(activationErr, pluginpkg.RollbackInstallation(s.rt.WuuHome, installed.Plugin.ID, installed.Plugin.Fingerprint))
+	}
+	if activationErr != nil && !committed {
+		return s.writeResponse(req.ID, nil, activationErr)
+	}
+	inventory, skills := s.currentExtensionState()
+	return s.writePluginGenerationResponse(req, PluginPackageInstallResult{Package: pluginPackageMetadata(installed.Package), Replaced: installed.Replaced, ExtensionInventory: inventory, Skills: skills}, activationErr, releaseMutation)
+}
+
+func (s *Server) activateInstalledPackage(installed pluginpkg.InstallResult, identity string, services *runtime.StateServices) (preservePackage bool, committed bool, resultErr error) {
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return preservePackage, false, err
+	}
+	source, err := editableConfigSource(view)
+	if err != nil {
+		return preservePackage, false, err
+	}
+	next, settings, err := config.UpdateExtensionSettingsSource(source, func(settings *extensions.Settings) error {
+		return settings.TrustInstallation(installed.Plugin.SubjectID, installed.Plugin.Fingerprint, identity, installed.Plugin.EffectivePermissions, true)
+	})
+	if err != nil {
+		return preservePackage, false, err
+	}
+	cfg := view.Config
+	cfg.Extensions = &settings
+	discovered := append(s.rt.ExtensionSnapshot().Plugins, installed.Plugin)
+	candidate, err := s.rt.PreflightDiscoveredExtensions(cfg, discovered, installed.Plugin.ID)
+	if err != nil {
+		return preservePackage, false, fmt.Errorf("prepare installed plugin: %w", err)
+	}
+	var committedView config.SourceView
+	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
+		var err error
+		preservePackage = true // Unknown CAS outcomes retain the package for reconciliation.
+		committedView, err = services.Config.CompareExchange(context.Background(), view.Revision, next)
+		var serviceErr *pluginhost.HostServiceError
+		if errors.As(err, &serviceErr) && serviceErr.Code == "config_conflict" {
+			preservePackage = false
+		}
+		return err
+	})
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return preservePackage, false, activationErr
+	}
+	activationErr = errors.Join(activationErr, configActivationError(committedView), s.recordPublishedConfig(cfg))
+	s.scheduleCurrentPluginTurnLifecycleReplay()
+	s.resetThreadRuntimesForGeneralSettings("")
+
+	return true, true, activationErr
+}
+
+func (s *Server) handlePluginPackageRemove(req Request) error {
+	var params PluginPackageRemoveParams
+	if err := decodeParams(req.Params, &params); err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	releaseMutation, err := s.beginPluginGenerationMutation("remove", pluginGenerationMutationLive)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseMutation()
+
+	params.ID = strings.TrimSpace(params.ID)
+	if err := pluginpkg.ValidateInstallID(params.ID); err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("remove plugin package: %w", err))
+	}
+	services, releaseServices, err := s.rt.RetainStateServices()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseServices()
+	// Package management targets the installed catalog; captured services still
+	// own configuration writes and never replace retained execution inventory.
+	snapshot := s.rt.ExtensionSnapshot()
+	var selected *pluginpkg.Plugin
+	for index := range snapshot.Plugins {
+		item := &snapshot.Plugins[index]
+		if item.Source == "user" && item.ID == params.ID {
+			selected = item
+			break
+		}
+	}
+	if selected == nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("installed user plugin %q was not found", params.ID))
+	}
+	pending, pendingErr := pluginpkg.ReadPendingUpdate(s.rt.WuuHome, params.ID)
+	if pendingErr != nil && !errors.Is(pendingErr, pluginpkg.ErrPendingUpdateNotFound) {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("remove plugin package: inspect pending update: %w", pendingErr))
+	}
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	source, err := editableConfigSource(view)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	next, preparedSettings, err := config.UpdateExtensionSettingsSource(source, func(settings *extensions.Settings) error { settings.Revoke(selected.SubjectID); return nil })
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	cfg := view.Config
+	cfg.Extensions = &preparedSettings
+	candidate, err := s.rt.PreflightPluginRemoval(cfg, params.ID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("prepare plugin removal: %w", err))
+	}
+	var (
+		packageRemoval *pluginpkg.UninstallTransaction
+		pendingRemoval *pluginpkg.PendingUpdateRemoval
+		removed        pluginpkg.UninstallResult
+		committedView  config.SourceView
+	)
+	rollbackRemoval := func(cause error) error {
+		var rollbackErr error
+		if pendingRemoval != nil {
+			rollbackErr = errors.Join(rollbackErr, pendingRemoval.Rollback())
+		}
+		if packageRemoval != nil {
+			rollbackErr = errors.Join(rollbackErr, packageRemoval.Rollback())
+		}
+		if rollbackErr != nil {
+			return fmt.Errorf("%w (rollback plugin removal: %v)", cause, rollbackErr)
+		}
+		return cause
+	}
+	binding, err := s.rt.RetainState()
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer binding.Close()
+	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
+		var prepareErr error
+		packageRemoval, removed, prepareErr = pluginpkg.PrepareUninstallPackage(s.rt.WuuHome, params.ID)
+		if prepareErr != nil {
+			return fmt.Errorf("remove plugin package: %w", prepareErr)
+		}
+		if packageRemoval == nil || !removed.Removed {
+			return errors.New("installed plugin disappeared during removal")
+		}
+		if pendingErr == nil {
+			pendingRemoval, prepareErr = pluginpkg.PreparePendingUpdateRemoval(s.rt.WuuHome, params.ID, pending.Package.Fingerprint)
+			if prepareErr != nil {
+				return rollbackRemoval(fmt.Errorf("remove pending plugin update: %w", prepareErr))
+			}
+		}
+		committedView, prepareErr = services.Config.CompareExchange(context.Background(), view.Revision, next)
+		if prepareErr != nil {
+			return rollbackRemoval(fmt.Errorf("clear plugin policy: %w", prepareErr))
+		}
+		return nil
+	})
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return s.writeResponse(req.ID, nil, activationErr)
+	}
+	activationErr = errors.Join(activationErr, configActivationError(committedView), s.recordPublishedConfig(cfg))
+	if pendingRemoval != nil {
+		if err := pendingRemoval.Commit(); err != nil {
+			providers.DebugLogf("finalize pending plugin removal: %v", err)
+		}
+	}
+	if err := packageRemoval.Commit(); err != nil {
+		providers.DebugLogf("finalize plugin removal: %v", err)
+	} else if err := binding.Sessions.DeletePluginTurnLifecycleOutboxForPlugin(removed.ID); err != nil {
+		providers.DebugLogf("delete plugin lifecycle outbox for removed plugin %q: %v", removed.ID, err)
+	}
+	s.scheduleCurrentPluginTurnLifecycleReplay()
+	s.resetThreadRuntimesForGeneralSettings("")
+	inventory, skills := s.currentExtensionState()
+	return s.writePluginGenerationResponse(req, PluginPackageRemoveResult{
+		ID:                 removed.ID,
+		Removed:            removed.Removed,
+		ExtensionInventory: inventory,
+		Skills:             skills,
+	}, activationErr, releaseMutation)
+}
+
+func (s *Server) handlePendingPluginUpdate(req Request, params ExtensionPackageUpdateParams, selected pluginpkg.Plugin, services *runtime.StateServices, finish func() error) error {
+	if selected.Source != "user" {
+		return s.writeResponse(req.ID, nil, errors.New("pending updates can only be managed for installed user plugins"))
+	}
+	pending, err := pluginpkg.ReadPendingUpdate(s.rt.WuuHome, selected.ID)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("read pending plugin update: %w", err))
+	}
+	if strings.TrimSpace(params.Fingerprint) == "" || params.Fingerprint != pending.Package.Fingerprint {
+		return s.writeResponse(req.ID, nil, errors.New("pending plugin update changed; refresh inventory before updating it"))
+	}
+	if params.Action == ExtensionPackageRejectUpdate {
+		if err := pluginpkg.RejectPendingUpdate(s.rt.WuuHome, selected.ID, params.Fingerprint); err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("reject pending plugin update: %w", err))
+		}
+		return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, nil, finish)
+	}
+	committed, activationErr := s.applyPendingPluginUpdate(selected, pending, services, "")
+	if activationErr != nil && !committed {
+		return s.writeResponse(req.ID, nil, activationErr)
+	}
+	return s.writePluginGenerationResponse(req, ExtensionPackageUpdateResult{ExtensionInventory: s.currentExtensionInventory()}, activationErr, finish)
+}
+
+func (s *Server) applyPendingPluginUpdate(selected pluginpkg.Plugin, pending pluginpkg.PendingUpdate, services *runtime.StateServices, expectedSource string) (bool, error) {
+	view, err := services.Config.Read(context.Background())
+	if err != nil {
+		return false, err
+	}
+	source, err := editableConfigSource(view)
+	if err != nil {
+		return false, err
+	}
+	preparedSettings := cloneExtensionSettings(view.Config.Extensions)
+	if expectedSource != "" && !preparedSettings.TrustsSource(selected.SubjectID, pending.ActiveFingerprint, expectedSource) {
+		return false, errors.New("plugin source authorization changed; reread before retry")
+	}
+	scope := extensions.GrantScopeUser
+	if prior, ok := preparedSettings.Grants[selected.SubjectID]; ok && prior.Scope != "" {
+		scope = prior.Scope
+	}
+	grant := extensions.Grant{
+		SourceIdentity: pending.SourceIdentity,
+		SubjectID:      selected.SubjectID,
+		Fingerprint:    pending.Package.Fingerprint,
+		Scope:          scope,
+		Permissions:    append([]string(nil), pending.Package.EffectivePermissions...),
+		ApprovedAt:     time.Now().UTC(),
+	}
+	next, preparedSettings, err := config.UpdateExtensionSettingsSource(source, func(settings *extensions.Settings) error { return settings.RecordGrant(grant) })
+	if err != nil {
+		return false, fmt.Errorf("prepare plugin update approval: %w", err)
+	}
+	cfg := view.Config
+	cfg.Extensions = &preparedSettings
+	candidate, err := s.rt.PreflightPluginUpdate(cfg, selected.ID, pending.Package.Fingerprint, filepath.Join(pending.Path, "package"), pending.Package.ManifestPath)
+	if err != nil {
+		return false, fmt.Errorf("activate pending plugin update: %w", err)
+	}
+	var committedView config.SourceView
+	activationErr := s.rt.ActivatePluginGeneration(candidate, func() error {
+		var persistErr error
+		committedView, persistErr = services.Config.CompareExchange(context.Background(), view.Revision, next)
+		if persistErr != nil {
+			return fmt.Errorf("persist plugin update approval: %w", persistErr)
+		}
+		_, promoteErr := pluginpkg.PromotePendingUpdate(s.rt.WuuHome, selected.ID, pending.Package.Fingerprint)
+		if promoteErr != nil {
+			// Restore only the exact revision this operation committed. A newer
+			// configuration or unknown write outcome must never be overwritten.
+			restored, rollbackErr := services.Config.CompareExchange(context.Background(), committedView.Revision, source)
+			rollbackErr = errors.Join(rollbackErr, configActivationError(restored))
+			if rollbackErr != nil {
+				return fmt.Errorf("promote pending plugin update: %w (restore previous plugin approval: %v)", promoteErr, rollbackErr)
+			}
+			return fmt.Errorf("promote pending plugin update: %w", promoteErr)
+		}
+		return nil
+	})
+	if activationErr != nil && !runtime.PluginGenerationWasCommitted(activationErr) {
+		return false, activationErr
+	}
+	activationErr = errors.Join(activationErr, configActivationError(committedView), s.recordPublishedConfig(cfg))
+	s.scheduleCurrentPluginTurnLifecycleReplay()
+	s.resetThreadRuntimesForGeneralSettings("")
+	return true, activationErr
+}
+
+func cloneExtensionSettings(current *extensions.Settings) extensions.Settings {
+	clone := extensions.Settings{
+		Grants:   map[string]extensions.Grant{},
+		Enabled:  map[string]bool{},
+		Disabled: map[string]bool{},
+		Rejected: map[string]extensions.PolicyDecision{},
+	}
+	if current == nil {
+		return clone
+	}
+	for key, grant := range current.Grants {
+		grant.Permissions = append([]string(nil), grant.Permissions...)
+		clone.Grants[key] = grant
+	}
+	for key, disabled := range current.Disabled {
+		clone.Disabled[key] = disabled
+	}
+	for key, enabled := range current.Enabled {
+		clone.Enabled[key] = enabled
+	}
+	for key, decision := range current.Rejected {
+		clone.Rejected[key] = decision
+	}
+	return clone
+}
+
+// pluginGenerationMutationKind distinguishes catalog and live-policy publication
+// from maintenance that requires exclusive generation ownership. Ordinary package
+// changes preserve running snapshots; disable and removal also revoke behavior.
+type pluginGenerationMutationKind int
+
+const (
+	pluginGenerationMutationCatalog pluginGenerationMutationKind = iota
+	pluginGenerationMutationLive
+	pluginGenerationMutationExclusive
+)
+
+func (s *Server) beginPluginGenerationMutation(action string, kind pluginGenerationMutationKind) (func() error, error) {
+	if s == nil || s.rt == nil {
+		return func() error { return nil }, errors.New("runtime is not initialized")
+	}
+	if strings.TrimSpace(s.rt.WuuHome) == "" {
+		return func() error { return nil }, errors.New("runtime Wuu home is not configured")
+	}
+	if !s.pluginGenerationMutation.CompareAndSwap(false, true) {
+		return func() error { return nil }, fmt.Errorf("cannot %s plugin packages while another plugin change is running", action)
+	}
+	s.cancelPluginAdditivePreparation()
+	releaseAdmission := func() { s.pluginGenerationMutation.Store(false) }
+
+	if kind == pluginGenerationMutationExclusive {
+		s.mu.Lock()
+		threads := make([]*threadState, 0, len(s.threads))
+		for _, th := range s.threads {
+			threads = append(threads, th)
+		}
+		s.mu.Unlock()
+		for _, th := range threads {
+			if th == nil {
+				continue
+			}
+			th.mu.Lock()
+			busy := (th.running || th.executionLease != nil || th.admissionReserved || th.runtimeSelectionMutation ||
+				(th.execRuntime != nil && threadRuntimeHasOutstandingWork(th.ID, th.execRuntime)))
+			th.mu.Unlock()
+			if busy {
+				releaseAdmission()
+				return func() error { return nil }, fmt.Errorf("cannot %s plugin packages while a turn is running or background work remains on thread %q", action, th.ID)
+			}
+		}
+	}
+
+	// New turn admission is closed before taking this mutex, so any admission
+	// already holding a thread lock can finish its refresh first. Mutations then
+	// share the same serialization boundary as the watcher for their complete
+	// disk and runtime transaction.
+	s.pluginGenerationRefreshMu.Lock()
+	// A policy commit also wakes the config watcher. Keep its model updates
+	// outside preparation, activation and publication of this generation.
+	s.configRefreshMu.Lock()
+	releaseLocal := func() {
+		s.configRefreshMu.Unlock()
+		s.pluginGenerationRefreshMu.Unlock()
+		releaseAdmission()
+	}
+
+	// Catalog and live-policy mutations use a lease that is compatible with
+	// in-flight executions: installing a package or enabling a plugin must not
+	// block turns. Running conversations keep their pinned generation. The
+	// epoch is advanced on release, after the caller's disk work, so peers
+	// only revalidate complete state.
+	if kind == pluginGenerationMutationCatalog || kind == pluginGenerationMutationLive {
+		catalogLease, acquired, err := session.TryAcquirePluginCatalogMutationLease(s.rt.WuuHome)
+		if err != nil {
+			releaseLocal()
+			return func() error { return nil }, fmt.Errorf("acquire plugin catalog mutation lease: %w", err)
+		}
+		if !acquired {
+			releaseLocal()
+			return func() error { return nil }, fmt.Errorf("cannot %s plugin packages while another app-server is changing the plugin catalog", action)
+		}
+		// Epoch() was sampled before acquiring the catalog writer lock. A
+		// peer may have published in between; compare under the held lock.
+		observedEpoch, err := session.ReadPluginGenerationEpoch(s.rt.WuuHome)
+		if err != nil {
+			_ = catalogLease.Release()
+			releaseLocal()
+			return func() error { return nil }, fmt.Errorf("read plugin catalog epoch: %w", err)
+		}
+		wasSynchronized := s.pluginGenerationEpoch.Load() == observedEpoch
+		return sync.OnceValue(func() error {
+			epoch, advanceErr := catalogLease.Advance()
+			if advanceErr == nil {
+				s.adoptPluginMutationEpoch(epoch, wasSynchronized)
+			}
+			releaseErr := catalogLease.Release()
+			releaseLocal()
+			s.retireIdlePluginRuntimes()
+			if err := errors.Join(advanceErr, releaseErr); err != nil {
+				err = fmt.Errorf("plugin %s changes may be saved, but generation publication is uncertain: %w", action, err)
+				providers.DebugLogf("%v", err)
+				return err
+			}
+			return nil
+		}), nil
+	}
+
+	lease, acquired, err := session.TryAcquirePluginGenerationMutationLease(s.rt.WuuHome)
+	if err != nil {
+		releaseLocal()
+		return func() error { return nil }, fmt.Errorf("acquire plugin generation mutation lease: %w", err)
+	}
+	if !acquired {
+		releaseLocal()
+		return func() error { return nil }, fmt.Errorf("cannot %s plugin packages while another app-server is running a turn or background work", action)
+	}
+	wasSynchronized := s.pluginGenerationEpoch.Load() == lease.Epoch()
+	epoch, err := lease.Advance()
+	if err != nil {
+		_ = lease.Release()
+		releaseLocal()
+		return func() error { return nil }, fmt.Errorf("advance plugin generation: %w", err)
+	}
+	return sync.OnceValue(func() error {
+		s.adoptPluginMutationEpoch(epoch, wasSynchronized)
+		releaseErr := lease.Release()
+		releaseLocal()
+		s.retireIdlePluginRuntimes()
+		if releaseErr != nil {
+			err := fmt.Errorf("plugin %s changes may be saved, but generation publication is uncertain: %w", action, releaseErr)
+			providers.DebugLogf("%v", err)
+			return err
+		}
+		return nil
+	}), nil
+}
+
+// The caller still owns local refresh/config and cross-process mutation locks.
+// A mutation that canceled an unobserved catalog must not swallow that catalog
+// on a failed/no-op transaction, or when it rebuilt only previously known IDs.
+func (s *Server) adoptPluginMutationEpoch(epoch uint64, wasSynchronized bool) {
+	if !wasSynchronized {
+		cfg, _, err := s.rt.LoadEffectiveConfig()
+		if err != nil || !s.rt.ObservesPluginCatalog(cfg, pluginpkg.Discover(s.rt.RootDir, s.rt.WuuHome)) {
+			return
+		}
+	}
+	s.pluginGenerationEpoch.Store(epoch)
+}
+
+func pluginPackageMetadata(item pluginpkg.PackageInspection) PluginPackageMetadata {
+	return PluginPackageMetadata{
+		ID:                   item.ID,
+		Name:                 item.Name,
+		Version:              item.Version,
+		Description:          item.Description,
+		SourceKind:           PluginPackageSourceKind(item.SourceKind),
+		ArchiveRoot:          item.ArchiveRoot,
+		ManifestPath:         item.ManifestPath,
+		FileCount:            item.FileCount,
+		UnpackedSize:         item.UnpackedSize,
+		Fingerprint:          item.Fingerprint,
+		RequestedPermissions: append([]string(nil), item.RequestedPermissions...),
+		EffectivePermissions: append([]string(nil), item.EffectivePermissions...),
+		UnsupportedFields:    append([]string(nil), item.UnsupportedFields...),
+		Distribution:         item.Distribution,
+	}
+}
+
+// The originating client needs the same complete publication as peers: finish
+// advances its observed epoch, so its watcher will not announce this mutation.
+// Capture the committed state before releasing mutation ownership. Activation
+// failures still publish it and retain their actionable response error.
+func (s *Server) writePluginGenerationResponse(req Request, result any, activationErr error, finish func() error) error {
+	publicationErr := s.finishPluginGenerationPublication(finish)
+	if activationErr != nil || publicationErr != nil {
+		result = nil
+	}
+	return s.writeResponse(req.ID, result, errors.Join(activationErr, publicationErr))
+}
+
+func (s *Server) finishPluginGenerationPublication(finish func() error) error {
+	inventory, skills := s.currentExtensionState()
+	shell, surfaces := s.rt.ApplicationBindings()
+	publication := PluginInventoryChangedNotification{
+		ApplicationShell: shell, ApplicationSurfaces: surfaces, ExtensionInventory: inventory, Skills: skills,
+	}
+	finishErr := finish()
+	publication.Epoch = s.pluginGenerationEpoch.Load()
+	notifyErr := s.writeNotification(NotificationPluginInventoryChanged, publication)
+	return errors.Join(finishErr, notifyErr)
+}

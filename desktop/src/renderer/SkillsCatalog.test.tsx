@@ -1,0 +1,1133 @@
+import { act, useMemo } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ExtensionInventoryRecord, SkillSummary, WuuDesktopApi } from "../shared/protocol";
+import { ApplicationController } from "./plugins/ApplicationController.test-support";
+import { initialState } from "./AppState";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
+import { ConfirmDialogHost } from "./ConfirmDialog";
+import { SkillsCatalog as PublicSkillsCatalog } from "./SkillsCatalog";
+import type { ComponentProps } from "react";
+import type { ApplicationCatalogV1 } from "../../../packages/plugin-sdk/src/ui-catalog";
+import type { ExtensionPackageUpdateParams, PluginPackageInstallResult, PluginPackageRemoveResult, RuntimeContext } from "../shared/protocol";
+import { I18nProvider, translate } from "./i18n";
+import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
+
+// Existing UI scenarios provide a public application fixture; production accepts
+// no business callbacks or window transport fallback.
+function SkillsCatalog(props: Omit<ComponentProps<typeof PublicSkillsCatalog>, "application"> & {
+ activeContext?:RuntimeContext; extensionInventory?:ExtensionInventoryRecord[];
+ onTrySkill?:(skill:SkillSummary)=>void;
+ draftApplication?: Pick<ApplicationServiceV1, "getSnapshot" | "invoke">;
+ onRefreshCatalog?:()=>Promise<SkillSummary[]|undefined>;
+ onUpdateExtensionPackage?:(input:ExtensionPackageUpdateParams)=>Promise<void>;
+ onInstallPluginPackage?:()=>Promise<PluginPackageInstallResult|undefined>;
+ onRemovePluginPackage?:(id:string)=>Promise<PluginPackageRemoveResult|undefined>;
+}) {
+ const application = useMemo(() => {
+  const empty: never[] = [];
+  const snapshot = {contextKey:JSON.stringify(props.activeContext ?? null),inventory:props.extensionInventory ?? [],
+   capabilities:{install:!window.wuu?.unsupportedMethods?.includes("installPluginPackage"),update:!!props.onUpdateExtensionPackage,remove:!!props.onRemovePluginPackage}};
+  const catalog:ApplicationCatalogV1 = {
+   getSnapshot:()=>snapshot,
+   listSkills:async()=>(await window.wuu.listSkills()).skills,
+   listSkillsForThread:async input=>({ contextKey:snapshot.contextKey, threadId:input.threadId, skills:(await window.wuu.listSkills({thread_id:input.threadId})).skills }),
+   readSkill:input=>window.wuu.readSkillContent(input),
+   refresh:props.onRefreshCatalog ?? (async()=>(await window.wuu.listSkills()).skills),
+   update:async input=>{await props.onUpdateExtensionPackage?.(input.updates ? { updates: input.updates.map(update => ({ ...update })) } : input);},
+   install:async()=>props.onInstallPluginPackage?.(),remove:async id=>props.onRemovePluginPackage?.(id),
+   loadIcon:async(id,fingerprint,path)=>(await window.wuu.loadPluginIcon({id,fingerprint,path})).url,
+  };
+  return {catalog,getSnapshot:props.draftApplication?.getSnapshot ?? (()=>({tabs:{activeTabId:"test-source",navigationRevision:7}})),settingsControls:{capabilities:{diagnostics:false},listMCPServers:async()=>({servers:[]}),subscribeRemote:()=>()=>{},subscribe:()=>()=>{},getConflicts:()=>empty,getDiagnostics:()=>empty},subscribe:()=>()=>{},invoke:props.draftApplication?.invoke ?? (async(action:string,input:unknown)=>{
+   if(action === "draft.start-with-content") {
+    const text=(input as {text:string}).text;
+    const identity=JSON.parse(text.split("\n")[0].slice("/skill ".length));
+    const skill=(await window.wuu.listSkills()).skills.find(item=>item.name===identity.name);
+    if(skill) props.onTrySkill?.(skill);
+   }
+  })} as unknown as ComponentProps<typeof PublicSkillsCatalog>["application"];
+ }, [props.draftApplication,props.activeContext,props.extensionInventory,props.onTrySkill,props.onRefreshCatalog,props.onUpdateExtensionPackage,props.onInstallPluginPackage,props.onRemovePluginPackage]);
+ return <PublicSkillsCatalog {...props} application={application} />;
+}
+
+
+const toastMocks = vi.hoisted(() => ({
+  showErrorToast: vi.fn(),
+  showToast: vi.fn(),
+}));
+
+vi.mock("./Toast", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./Toast")>(),
+  showErrorToast: toastMocks.showErrorToast,
+  showToast: toastMocks.showToast,
+}));
+
+vi.mock("./RichContent", () => ({
+  RichContent: ({ text }: { text: string }) => <div data-testid="rich-content">{text}</div>,
+}));
+
+let container: HTMLDivElement;
+let root: Root | null = null;
+
+beforeEach(() => {
+  toastMocks.showErrorToast.mockClear();
+  toastMocks.showToast.mockClear();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+});
+
+afterEach(() => {
+  act(() => {
+    root?.unmount();
+  });
+  root = null;
+  container.remove();
+  delete (globalThis as { wuu?: WuuDesktopApi }).wuu;
+  delete (window as { wuu?: WuuDesktopApi }).wuu;
+  vi.restoreAllMocks();
+});
+
+describe("SkillsCatalog", () => {
+  it("keeps local install available with an empty catalog and treats picker cancellation as a no-op", async () => {
+    installSkillList([]);
+    const onInstallPluginPackage = vi.fn().mockResolvedValue(undefined);
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog onInstallPluginPackage={onInstallPluginPackage} />,
+      );
+    });
+
+    await act(async () => { buttonByText("添加")!.click(); });
+    expect(buttonByText("安装本地插件")).toBeTruthy();
+    await act(async () => {
+      buttonByText("安装本地插件")?.click();
+    });
+
+    expect(onInstallPluginPackage).toHaveBeenCalledOnce();
+    expect(container.querySelector(".skills-catalog-error")).toBeNull();
+    expect(container.querySelector(".settings-group-empty")).toBeTruthy();
+  });
+
+  it("shows install errors as a toast instead of inline catalog state", async () => {
+    installSkillList([]);
+    const onInstallPluginPackage = vi
+      .fn()
+      .mockRejectedValue(new Error("Package manifest is invalid"));
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog onInstallPluginPackage={onInstallPluginPackage} />,
+      );
+    });
+    await act(async () => { buttonByText("添加")!.click(); });
+    await act(async () => {
+      buttonByText("安装本地插件")?.click();
+    });
+
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Package manifest is invalid" }),
+      "无法安装插件",
+    );
+    expect(container.textContent).not.toContain("Package manifest is invalid");
+    expect(container.querySelector(".skills-catalog-error")).toBeNull();
+  });
+
+  it("reports a failed skill load with a retry instead of an empty list", async () => {
+    installSkillList([existingSkill]);
+    (window.wuu.listSkills as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("core unavailable"));
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog />);
+    });
+
+    const notice = container.querySelector<HTMLElement>(".skills-catalog-error");
+    expect(notice?.getAttribute("role")).toBe("alert");
+    expect(notice?.textContent).toContain("core unavailable");
+    expect(container.querySelector(".settings-group-empty")).toBeNull();
+
+    await act(async () => {
+      notice?.querySelector("button")?.click();
+    });
+    expect(container.querySelector(".skills-catalog-error")).toBeNull();
+    expect(skillButton(existingSkill.name)).toBeTruthy();
+  });
+
+  it("refreshes the complete extension catalog through the parent runtime", async () => {
+    installSkillList([]);
+    const refreshedSkills: SkillSummary[] = [{
+      name: "fresh-skill",
+      description: "Discovered after refresh",
+      source: "plugin:fresh",
+      user_invocable: true,
+      disable_model_invoke: false,
+    }];
+    const onRefreshCatalog = vi.fn().mockResolvedValue(refreshedSkills);
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog onRefreshCatalog={onRefreshCatalog} />);
+    });
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".catalog-refresh")?.click();
+    });
+
+    expect(onRefreshCatalog).toHaveBeenCalledOnce();
+    expect(container.textContent).toContain("fresh-skill");
+  });
+
+  it.each([
+    'cannot refresh plugin packages while a turn is running or background work remains on thread "thread-busy"',
+    "cannot refresh plugin packages while another app-server is running a turn or background work",
+    "cannot refresh plugin packages while another plugin change is running",
+    "cannot refresh plugin packages while another app-server is changing the plugin catalog",
+  ])("keeps the catalog and reports admission refusals through the shared notice: %s", async (reason) => {
+    installSkillList([existingSkill]);
+    const onRefreshCatalog = vi.fn().mockRejectedValue(new Error(
+      `Error invoking remote method 'wuu:extension-catalog-refresh': Error: ${reason}`,
+    ));
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog onRefreshCatalog={onRefreshCatalog} />);
+    });
+    const existingRow = skillButton(existingSkill.name);
+    expect(existingRow).toBeTruthy();
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>(".catalog-refresh")!.click();
+    });
+
+    expect(skillButton(existingSkill.name)).toBe(existingRow);
+    expect(container.querySelector(".skills-catalog-error")).toBeNull();
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).toHaveBeenCalledOnce();
+    const notice = toastMocks.showToast.mock.calls[0][0];
+    expect(notice.tone).toBe("info");
+    expect(notice.message).toBeTruthy();
+    expect(notice.message).not.toMatch(/thread-busy|wuu:|cannot refresh|app-server/);
+  });
+
+  it("preserves rows during refresh and failure, blocks duplicate clicks, and permits retry", async () => {
+    installSkillList([existingSkill]);
+    let rejectRefresh!: (error: Error) => void;
+    const onRefreshCatalog = vi.fn()
+      .mockImplementationOnce(() => new Promise<SkillSummary[]>((_, reject) => { rejectRefresh = reject; }))
+      .mockResolvedValue([{ ...existingSkill, name: "updated-skill" }]);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog onRefreshCatalog={onRefreshCatalog} />);
+    });
+    const refresh = container.querySelector<HTMLButtonElement>(".catalog-refresh")!;
+    const existingRow = skillButton(existingSkill.name);
+    expect(existingRow).toBeTruthy();
+    await act(async () => { refresh.click(); });
+    expect(refresh.disabled).toBe(true);
+    expect(skillButton(existingSkill.name)).toBe(existingRow);
+    await act(async () => { refresh.click(); });
+    expect(onRefreshCatalog).toHaveBeenCalledOnce();
+
+    const failure = new Error("Catalog unavailable");
+    await act(async () => { rejectRefresh(failure); });
+    expect(refresh.disabled).toBe(false);
+    expect(skillButton(existingSkill.name)).toBe(existingRow);
+    expect(container.querySelector(".skills-catalog-error")).toBeNull();
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith(failure, expect.any(String));
+    await act(async () => { refresh.click(); });
+    expect(onRefreshCatalog).toHaveBeenCalledTimes(2);
+    expect(skillButton("updated-skill")).toBeTruthy();
+    expect(skillButton(existingSkill.name)).toBeUndefined();
+  });
+
+  it("releases the refresh button when the parent discards a result", async () => {
+    installSkillList([existingSkill]);
+    const onRefreshCatalog = vi.fn().mockResolvedValue(undefined);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog onRefreshCatalog={onRefreshCatalog} />);
+    });
+    const refresh = container.querySelector<HTMLButtonElement>(".catalog-refresh")!;
+    await act(async () => { refresh.click(); });
+    expect(refresh.disabled).toBe(false);
+    expect(skillButton(existingSkill.name)).toBeTruthy();
+    expect(toastMocks.showToast).not.toHaveBeenCalled();
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
+  });
+
+  it("separates official and personal skills and shows concise descriptions", async () => {
+    installSkillList([
+      {
+        name: "browser",
+        description: "Navigate and observe web pages. Use when no safer interface is available.",
+        source: "bundled",
+        user_invocable: true,
+        disable_model_invoke: false,
+      },
+      {
+        name: "write",
+        description: "Rewrite prose",
+        source: "user",
+        user_invocable: true,
+        disable_model_invoke: false,
+      },
+    ]);
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog />);
+    });
+
+    expect(container.textContent).toContain("官方技能");
+    expect(container.textContent).toContain("你的技能");
+    expect(container.querySelector(".catalog-search input[type=\"search\"]")).toBeTruthy();
+    expect(container.textContent).toContain("Navigate and observe web pages.");
+    expect(container.textContent).not.toContain("Use when no safer interface is available.");
+  });
+
+  it("hides every section that a search leaves empty", async () => {
+    installSkillList([existingSkill]);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[{
+            id: "plugin:user:scheduler",
+            name: "Scheduler",
+            kind: "plugin",
+            provenance: { kind: "plugin", source: "community", scope: "user", plugin_id: "scheduler" },
+            state: "read_only",
+          }]}
+        />,
+      );
+    });
+    const sectionRows = () => Array.from(container.querySelectorAll(".plugin-catalog-grid, section section:not([data-testid=mcp-services])")).map(
+      (section) => Array.from(section.querySelectorAll(".catalog-row")).map((row) => row.textContent ?? ""),
+    ).filter(rows => rows.length);
+    const search = async (query: string) => {
+      const input = container.querySelector<HTMLInputElement>(".catalog-search input")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, query);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+
+    expect(sectionRows()).toEqual([[expect.stringContaining("Scheduler")]]);
+
+    await search("existing");
+    expect(sectionRows()).toEqual([]);
+    await selectTab("skills");
+    expect(sectionRows()).toEqual([[expect.stringContaining("existing-skill")]]);
+
+    await search("scheduler");
+    expect(sectionRows()).toEqual([]);
+    await selectTab("plugins");
+    expect(sectionRows()).toEqual([[expect.stringContaining("Scheduler")]]);
+
+    await search("no such extension");
+    expect(sectionRows()).toEqual([]);
+  });
+
+  it("lists installed plugins and tags plugin-provided skills", async () => {
+    installSkillList([
+      {
+        name: "cua-mac",
+        description: "Observe and control native macOS apps",
+        source: "plugin:cua-mac",
+        path: "/bundle/plugins/cua-mac/skills/cua-mac/SKILL.md",
+        user_invocable: true,
+        disable_model_invoke: false,
+      },
+    ]);
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[
+            {
+              id: "plugin:user:cua-mac",
+              name: "Computer Use for Mac",
+              description: "Control macOS apps through Accessibility.",
+              kind: "plugin",
+              icon: { name: "layout-grid" },
+              provenance: {
+                kind: "plugin",
+                source: "wuu",
+                scope: "user",
+                plugin_id: "cua-mac",
+                official: true,
+              },
+              state: "read_only",
+            },
+            {
+              id: "mcp:plugin:cua-mac:computer",
+              name: "computer",
+              kind: "mcp",
+              provenance: {
+                kind: "mcp",
+                source: "plugin:cua-mac",
+                scope: "user",
+                plugin_id: "cua-mac",
+              },
+              state: "granted",
+            },
+            {
+              id: "plugin:user:community-tools",
+              name: "community-tools",
+              description: "Community-maintained utilities.",
+              kind: "plugin",
+              provenance: {
+                kind: "plugin",
+                source: "community",
+                scope: "user",
+                plugin_id: "community-tools",
+                official: false,
+              },
+              state: "read_only",
+            },
+          ]}
+        />,
+      );
+    });
+
+    expect(container.textContent).toContain("Control macOS apps through Accessibility.");
+    // A catalog without package actions lists plugins read-only.
+    expect(container.querySelector('[role="switch"]')).toBeNull();
+    expect(container.querySelector(".plugin-row .catalog-row-mark [data-icon=\"layout-grid\"]")).toBeTruthy();
+    // A plugin's skill names its plugin the way the plugin card does.
+    await selectTab("skills");
+    expect(container.querySelector(".catalog-row-meta")?.textContent).toBe("Computer Use for Mac");
+    // Non-plugin inventory records (the plugin's MCP server) stay out of the
+    // plugin list.
+    expect(container.textContent).not.toContain("computer");
+  });
+
+  it("preserves plugin-owned artwork when using capability marks for the catalog", async () => {
+    installSkillList([]);
+    const loadPluginIcon = vi.fn().mockImplementation(async (request) => ({
+      ...request,
+      url: "data:image/svg+xml,%3Csvg/%3E",
+    }));
+    Object.assign(window.wuu!, { loadPluginIcon });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog extensionInventory={[{
+        id: "plugin:user:brand-artwork",
+        name: "Brand artwork",
+        kind: "plugin",
+        icon: { path: "assets/brand.svg" },
+        fingerprint: "brand-revision",
+        provenance: { kind: "plugin", source: "community", scope: "user" },
+        state: "read_only",
+      }]} />);
+    });
+    expect(loadPluginIcon).toHaveBeenCalledWith({
+      id: "plugin:user:brand-artwork", fingerprint: "brand-revision", path: "assets/brand.svg",
+    });
+    const image = container.querySelector(".catalog-row-mark img");
+    expect(image?.getAttribute("src")).toBe("data:image/svg+xml,%3Csvg/%3E");
+    expect(image?.getAttribute("alt")).toBe("");
+  });
+
+  it("shows package permissions and grants a pending plugin through the update callback", async () => {
+    installSkillList([]);
+    const onUpdateExtensionPackage = vi.fn().mockResolvedValue(undefined);
+    const extensionInventory = [
+      {
+        id: "plugin:project:docs",
+        name: "docs",
+        description: "Project documentation commands",
+        kind: "plugin",
+        provenance: {
+          kind: "plugin",
+          source: "project",
+          scope: "project",
+          plugin_id: "docs",
+          official: false,
+        },
+        state: "pending",
+        approval_state: "pending",
+        runtime_state: "inactive",
+        enabled: false,
+        fingerprint: "sha256:docs",
+        requested_permissions: ["file.read", "command.prompt"],
+        contributions: {
+          commands: [{ id: "ask-docs", title: "Ask docs", kind: "prompt_template", template: "Ask {{args}}" }],
+          settings: [],
+          themes: [],
+        },
+      },
+    ] as unknown as ExtensionInventoryRecord[];
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={extensionInventory}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+
+    expect(pluginAction("docs")?.getAttribute("aria-label")).toBe("启用 docs");
+    // The plus action still reviews requested permissions before first use.
+    await act(async () => {
+      pluginAction("docs")!.click();
+    });
+    expect(onUpdateExtensionPackage).not.toHaveBeenCalled();
+    expect(document.body.textContent).toContain("file.read");
+
+    const grantButton = buttonByText("授权并启用");
+    await act(async () => {
+      grantButton?.click();
+    });
+
+    expect(onUpdateExtensionPackage).toHaveBeenCalledWith({
+      id: "plugin:project:docs",
+      fingerprint: "sha256:docs",
+      action: "grant",
+    });
+  });
+
+  it("shows a busy-thread authorization failure as a toast", async () => {
+    installSkillList([]);
+    const busyError = new Error(
+      'Error invoking remote method \'wuu:extension-package-update\': Error: cannot change plugin packages while a turn is running or background work remains on thread "thread-busy"',
+    );
+    const onUpdateExtensionPackage = vi.fn().mockRejectedValue(busyError);
+    const extensionInventory = [
+      {
+        id: "plugin:user:manga-studio",
+        name: "manga-studio",
+        kind: "plugin",
+        provenance: {
+          kind: "plugin",
+          source: "user",
+          scope: "user",
+          plugin_id: "manga-studio",
+          official: false,
+        },
+        state: "changed",
+        approval_state: "changed",
+        runtime_state: "inactive",
+        enabled: false,
+        fingerprint: "sha256:manga-studio",
+      },
+    ] as unknown as ExtensionInventoryRecord[];
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={extensionInventory}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+    await act(async () => {
+      skillButton("manga-studio")?.click();
+    });
+    await act(async () => {
+      buttonByText("重新授权")?.click();
+    });
+
+    expect(toastMocks.showErrorToast).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).toHaveBeenCalledWith(expect.objectContaining({ tone: "info" }));
+    expect(container.textContent).not.toContain("cannot change plugin packages");
+  });
+
+  it("renders Remove only for user-installed plugins and removes by plugin ID after confirmation", async () => {
+    installSkillList([]);
+    const onRemovePluginPackage = vi.fn().mockResolvedValue({
+      id: "community-tools",
+      removed: true,
+      extension_inventory: [],
+      skills: [
+        {
+          name: "remaining-skill",
+          description: "Still installed",
+          source: "user",
+          user_invocable: true,
+          disable_model_invoke: false,
+        },
+      ],
+    });
+    const extensionInventory = [
+      {
+        id: "plugin:user:community-tools",
+        name: "community-tools",
+        kind: "plugin",
+        provenance: {
+          kind: "plugin",
+          source: "user",
+          scope: "user",
+          plugin_id: "community-tools",
+          official: false,
+        },
+        state: "pending",
+        approval_state: "pending",
+      },
+      {
+        id: "plugin:user:official-tools",
+        name: "official-tools",
+        kind: "plugin",
+        provenance: {
+          kind: "plugin",
+          source: "wuu",
+          scope: "user",
+          plugin_id: "official-tools",
+          official: true,
+        },
+        state: "read_only",
+        approval_state: "official",
+      },
+    ] as ExtensionInventoryRecord[];
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <>
+          <SkillsCatalog
+            extensionInventory={extensionInventory}
+            onRemovePluginPackage={onRemovePluginPackage}
+          />
+          <ConfirmDialogHost />
+        </>,
+      );
+    });
+
+    expect(buttonsByText("移除")).toHaveLength(0);
+    await act(async () => {
+      skillButton("community-tools")?.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="community-tools 的更多操作"]')?.click();
+    });
+    expect(buttonsByText("移除")).toHaveLength(1);
+    await act(async () => {
+      buttonByText("移除")?.click();
+    });
+
+    // Declining keeps the plugin; nothing is removed until it is confirmed.
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[role="dialog"] [data-confirm-action="cancel"]')?.click();
+    });
+    expect(onRemovePluginPackage).not.toHaveBeenCalled();
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="community-tools 的更多操作"]')?.click();
+    });
+    await act(async () => {
+      buttonByText("移除")?.click();
+    });
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[role="dialog"] [data-confirm-action="confirm"]')?.click();
+    });
+    expect(onRemovePluginPackage).toHaveBeenCalledWith("community-tools");
+    await act(async () => {
+      container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')?.click();
+    });
+    await selectTab("skills");
+    expect(container.textContent).toContain("remaining-skill");
+  });
+
+  it("requires an exact decision for a staged plugin update", async () => {
+    installSkillList([]);
+    const onUpdateExtensionPackage = vi.fn().mockResolvedValue(undefined);
+    const extensionInventory = [
+      {
+        id: "plugin:user:update-demo",
+        name: "update-demo",
+        kind: "plugin",
+        provenance: {
+          kind: "plugin",
+          source: "user",
+          scope: "user",
+          plugin_id: "update-demo",
+        },
+        state: "granted",
+        fingerprint: "sha256:active",
+        approval_state: "granted",
+        runtime_state: "active",
+        enabled: true,
+        pending_update: {
+          version: "2.0.0",
+          fingerprint: "sha256:pending",
+          active_fingerprint: "sha256:active",
+        },
+      },
+    ] as ExtensionInventoryRecord[];
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={extensionInventory}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+
+    expect(pluginAction("update-demo")?.getAttribute("aria-haspopup")).toBe("menu");
+    await act(async () => {
+      skillButton("update-demo")?.click();
+    });
+    expect(document.body.textContent).toContain("有可用更新");
+    await act(async () => {
+      buttonByText("授权并更新")?.click();
+    });
+    expect(onUpdateExtensionPackage).toHaveBeenLastCalledWith({
+      id: "plugin:user:update-demo",
+      fingerprint: "sha256:pending",
+      action: "promote_update",
+    });
+
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[aria-label="update-demo 的更多操作"]')?.click();
+    });
+    await act(async () => {
+      buttonByText("拒绝更新")?.click();
+    });
+    expect(onUpdateExtensionPackage).toHaveBeenLastCalledWith({
+      id: "plugin:user:update-demo",
+      fingerprint: "sha256:pending",
+      action: "reject_update",
+    });
+  });
+
+  it("surfaces changed fingerprints and runtime failures", async () => {
+    installSkillList([]);
+    const extensionInventory = [
+      {
+        id: "plugin:project:changed",
+        name: "changed",
+        kind: "plugin",
+        provenance: { kind: "plugin", source: "project", scope: "project", plugin_id: "changed" },
+        state: "changed",
+        approval_state: "changed",
+        runtime_state: "inactive",
+        enabled: false,
+      },
+      {
+        id: "plugin:user:broken",
+        name: "broken",
+        kind: "plugin",
+        provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "broken" },
+        state: "granted",
+        approval_state: "granted",
+        runtime_state: "failed",
+        enabled: true,
+        last_error: "Plugin process exited before initialize",
+      },
+    ] as unknown as ExtensionInventoryRecord[];
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog extensionInventory={extensionInventory} />);
+    });
+
+    expect(pluginAction("broken")?.getAttribute("aria-haspopup")).toBe("menu");
+    expect(pluginAction("changed")?.getAttribute("aria-label")).toBe("启用 changed");
+    expect(toastMocks.showToast).toHaveBeenCalledWith(expect.objectContaining({
+      tone: "error", message: "broken: Plugin process exited before initialize",
+    }));
+    await act(async () => {
+      skillButton("broken")?.click();
+    });
+    expect(buttonByText(translate("zh-CN", "skills.pluginRetryStart"))).toBeDefined();
+  });
+
+  // Regression: the Host's dependency diagnostics must not become conflict
+  // warnings or imply a failed runtime for an optional relationship.
+  it.each(["en-US", "zh-CN"] as const)("preserves dependency severity and recovery in %s", async (locale) => {
+    installSkillList([]);
+    Object.assign(window.wuu, { initialLanguagePreference: locale });
+    const update = vi.fn(async () => {});
+    const plugin: ExtensionInventoryRecord = {
+      id: "plugin:user:consumer", name: "Consumer", kind: "plugin",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "consumer" },
+      state: "active", approval_state: "granted", runtime_state: "active", enabled: true,
+    };
+    const render = async (record: ExtensionInventoryRecord) => {
+      await act(async () => {
+        root ??= createRoot(container);
+        root.render(<I18nProvider><SkillsCatalog extensionInventory={[record]} onUpdateExtensionPackage={update} /></I18nProvider>);
+      });
+    };
+    const messages = new Set<string>();
+    for (const kind of ["optional_missing", "optional_version_mismatch", "optional_cycle", "version_mismatch", "missing_requirement", "conflict"] as const) {
+      const blocking = kind === "version_mismatch" || kind === "missing_requirement";
+      await render({ ...plugin, runtime_state: blocking ? "inactive" : "active", activation_issues: [{ kind, related_plugin_id: "provider" }] });
+      const notice = toastMocks.showToast.mock.calls.at(-1)![0];
+      expect(notice.tone).toBe(blocking ? "error" : "info");
+      expect(notice.message).toContain("provider");
+      await act(async () => skillButton("Consumer")!.click());
+      if (kind !== "conflict") {
+        expect(notice.message).not.toBe(`Consumer: ${translate(locale, "skills.pluginConflictWarning", { plugin: "provider" })}`);
+      }
+      messages.add(notice.message);
+      const toggle = container.querySelector<HTMLButtonElement>('[role="switch"]')!;
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      expect(toggle.disabled).toBe(false);
+      await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')!.click());
+      expect(toastMocks.showToast.mock.calls.at(-1)![0]).toBe(notice);
+    }
+    expect(messages.size).toBe(6);
+    // Replacing the inventory after remediation removes stale diagnostics,
+    // including when the detail page remains open.
+    await act(async () => skillButton("Consumer")!.click());
+    await render(plugin);
+    expect(container.querySelector(".plugin-detail-notice")).toBeNull();
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="plugin-page-back"]')!.click());
+    expect(update).not.toHaveBeenCalled();
+    expect(toastMocks.showToast).toHaveBeenCalledTimes(6);
+  });
+
+  it("reports a failed plugin once through toast and clears its retry action after remediation", async () => {
+    installSkillList([]);
+    const broken: ExtensionInventoryRecord = {
+      id: "plugin:user:broken", name: "broken", kind: "plugin",
+      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "broken" },
+      state: "granted", approval_state: "granted", runtime_state: "failed", enabled: true,
+      last_error: "runtime observer capability requires protocol version 2",
+    };
+    let finish!: (skills: SkillSummary[]) => void;
+    const refresh = vi.fn(() => new Promise<SkillSummary[]>(resolve => { finish = resolve; }));
+    const update = vi.fn(async () => {});
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog extensionInventory={[broken]} onRefreshCatalog={refresh} onUpdateExtensionPackage={update} />);
+    });
+    await act(async () => skillButton("broken")!.click());
+    expect(toastMocks.showToast).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      tone: "error", message: `broken: ${broken.last_error}`, dedupeKey: `error:${broken.last_error}`,
+    }));
+    expect(container.querySelector<HTMLButtonElement>('[role="switch"]')!.disabled).toBe(false);
+    const retry = buttonByText(translate("zh-CN", "skills.pluginRetryStart"))!;
+    await act(async () => retry.click());
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(retry.disabled).toBe(true);
+    await act(async () => finish([]));
+    expect(retry.disabled).toBe(false);
+    expect(toastMocks.showToast).toHaveBeenCalledTimes(1);
+    await act(async () => root!.render(<SkillsCatalog extensionInventory={[{ ...broken, state: "active", runtime_state: "active", last_error: undefined }]}
+      onRefreshCatalog={refresh} onUpdateExtensionPackage={update} />));
+    expect(retry.isConnected).toBe(false);
+    expect(container.querySelector('[aria-busy="true"]')).toBeNull();
+    expect(toastMocks.showToast).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    { name: "owned retirement", error: new PluginLifecycleCancellationError() },
+    { name: "matching ordinary error", error: new Error(new PluginLifecycleCancellationError().message) },
+    { name: "unowned abort", error: new DOMException("Provider aborted the update", "AbortError") },
+  ])("preserves a settled catalog mutation's $name for the error sink without replaying it", async ({ error }) => {
+    installSkillList([]);
+    const plugin: ExtensionInventoryRecord = {
+      id: "plugin:bundled:widget", name: "widget", kind: "plugin",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "widget", official: true },
+      state: "active", approval_state: "official", runtime_state: "active", enabled: true, fingerprint: "widget",
+    };
+    let reject!: (error: unknown) => void;
+    const update = vi.fn(() => new Promise<void>((_, fail) => { reject = fail; }));
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog extensionInventory={[plugin]} onUpdateExtensionPackage={update} />);
+    });
+    await act(async () => { pluginAction("widget")!.click(); });
+    await act(async () => { buttonByText("停用 widget")!.click(); });
+    // The committed inventory may reach the replacement shell before the old
+    // scoped action settles. Its typed retirement is not a provider failure.
+    await act(async () => root!.render(<SkillsCatalog extensionInventory={[{ ...plugin, enabled: false, runtime_state: "stopped" }]} onUpdateExtensionPackage={update} />));
+    await act(async () => reject(error));
+    expect(pluginAction("widget")!.getAttribute("aria-label")).toBe("启用 widget");
+    expect(pluginAction("widget")!.disabled).toBe(false);
+    expect(update).toHaveBeenCalledOnce();
+    expect(toastMocks.showToast).not.toHaveBeenCalled();
+    expect(toastMocks.showErrorToast).toHaveBeenCalledWith(error, expect.any(String));
+  });
+
+  it("switches trusted plugins on and off in place and blocks duplicate changes", async () => {
+    installSkillList([]);
+    let finish!: () => void;
+    const onUpdateExtensionPackage = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    const plugin = (id: string, enabled: boolean): ExtensionInventoryRecord => ({
+      id: `plugin:bundled:${id}`,
+      name: id,
+      kind: "plugin",
+      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: id, official: true },
+      state: enabled ? "active" : "rejected",
+      approval_state: "official",
+      runtime_state: enabled ? "active" : "stopped",
+      enabled,
+      fingerprint: `sha256:${id}`,
+    });
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[plugin("dream", false), plugin("todo", true)]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+
+    expect(pluginAction("dream")?.getAttribute("aria-label")).toBe("启用 dream");
+    expect(pluginAction("todo")?.getAttribute("aria-haspopup")).toBe("menu");
+    const todoRow = pluginAction("todo")!.closest(".plugin-row");
+    await act(async () => { pluginAction("todo")!.click(); });
+    await act(async () => {
+      buttonByText("停用 todo")!.click();
+      pluginAction("dream")!.click();
+    });
+    expect(onUpdateExtensionPackage).toHaveBeenCalledExactlyOnceWith({
+      id: "plugin:bundled:todo",
+      fingerprint: "sha256:todo",
+      action: "disable",
+    });
+    expect(pluginAction("dream")?.disabled).toBe(true);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    await act(async () => finish());
+    // Changing enablement preserves the row and its place under the pointer.
+    await act(async () => {
+      root!.render(
+        <SkillsCatalog
+          extensionInventory={[plugin("dream", false), plugin("todo", false)]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+    expect(pluginAction("todo")?.getAttribute("aria-label")).toBe("启用 todo");
+    expect(pluginAction("todo")!.closest(".plugin-row")).toBe(todoRow);
+    await act(async () => {
+      pluginAction("dream")!.click();
+    });
+    expect(onUpdateExtensionPackage).toHaveBeenLastCalledWith({
+      id: "plugin:bundled:dream",
+      fingerprint: "sha256:dream",
+      action: "enable",
+    });
+    // Re-entering the catalog presents the current enablement.
+    await act(async () => {
+      root!.unmount();
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[plugin("dream", true), plugin("todo", false)]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+    expect(pluginAction("todo")?.getAttribute("aria-label")).toBe("启用 todo");
+    expect(pluginAction("dream")?.getAttribute("aria-haspopup")).toBe("menu");
+  });
+
+  it("grants a pending plugin that asks for no permissions from its page", async () => {
+    installSkillList([]);
+    const onUpdateExtensionPackage = vi.fn().mockResolvedValue(undefined);
+    await act(async () => {
+      root = createRoot(container);
+      root.render(
+        <SkillsCatalog
+          extensionInventory={[{
+            id: "plugin:user:paper",
+            name: "paper",
+            kind: "plugin",
+            provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "paper" },
+            state: "pending",
+            approval_state: "pending",
+            runtime_state: "inactive",
+            enabled: true,
+            fingerprint: "sha256:paper",
+          }]}
+          onUpdateExtensionPackage={onUpdateExtensionPackage}
+        />,
+      );
+    });
+
+    expect(pluginAction("paper")?.getAttribute("aria-label")).toBe("启用 paper");
+    await act(async () => {
+      skillButton("paper")!.click();
+    });
+    expect(container.querySelector(".plugin-permission-row")).toBeNull();
+    await act(async () => {
+      buttonByText("授权并启用")?.click();
+    });
+    expect(onUpdateExtensionPackage).toHaveBeenCalledWith({
+      id: "plugin:user:paper",
+      fingerprint: "sha256:paper",
+      action: "grant",
+    });
+  });
+
+  it("opens a skill preview dialog from a skill row", async () => {
+    installSkillList([
+      {
+        name: "bug-fix",
+        description: "Fix a bug from a report",
+        when_to_use: "Use when the user reports a crash",
+        trigger_condition: "Bug reports and stack traces",
+        source: "bundled",
+        argument_hint: "Describe the failing behavior",
+        examples: ["Fix this stack trace"],
+        verification_checklist: ["Run the targeted test"],
+        user_invocable: true,
+        disable_model_invoke: false,
+      },
+    ]);
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog />);
+    });
+
+    await act(async () => {
+      skillButton("bug-fix")?.click();
+    });
+
+    expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+    expect(document.body.textContent).toContain("# Bug Fix Workflow");
+    expect(document.body.textContent).toContain("Read the report and inspect the code");
+    expect(document.body.textContent).not.toContain("来源");
+    expect(document.body.textContent).not.toContain("路径");
+  });
+
+  it("closes the preview and reports the selected skill when trying it", async () => {
+    const onTrySkill = vi.fn();
+    installSkillList([
+      {
+        name: "write",
+        description: "Rewrite prose",
+        source: "user",
+        user_invocable: true,
+        disable_model_invoke: false,
+      },
+    ]);
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog onTrySkill={onTrySkill} />);
+    });
+
+    await act(async () => {
+      skillButton("write")?.click();
+    });
+    await act(async () => {
+      buttonByText("立即试用")?.click();
+    });
+
+    expect(onTrySkill).toHaveBeenCalledWith(expect.objectContaining({ name: "write" }));
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it.each(["cancel", "switch"] as const)("does not overwrite a newer draft when Try now is superseded by %s", async superseding => {
+    installSkillList([existingSkill]);
+    const context = { kind: "no_project" as const, cwd: "/workspace" };
+    const controller = new ApplicationController({ ...initialState, activeContext: context, activeSessionTabID: "draft:a", sessionTabs: [
+      { id: "draft:a", kind: "draft", context, title: "A", createdAt: 1, prompt: "original", images: [], files: [] },
+    ] });
+    const invoke = vi.spyOn(controller, "invoke");
+    const draftApplication = { getSnapshot: controller.getSnapshot, invoke: controller.invoke.bind(controller) };
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog draftApplication={draftApplication} />);
+    });
+    await act(async () => { skillButton(existingSkill.name)?.click(); });
+    await act(async () => {
+      buttonByText("立即试用")?.click();
+      if (superseding === "cancel") {
+        await controller.invoke("navigation.cancel", {});
+        controller.setDraft("new user text");
+      } else {
+        const nextContext = { kind: "no_project" as const, cwd: "/other" };
+        controller.updateState(state => ({ ...state, activeContext: nextContext, activeSessionTabID: "draft:b", sessionTabs: [
+          ...state.sessionTabs, { id: "draft:b", kind: "draft", context: nextContext, title: "B", createdAt: 2, prompt: "new user text", images: [], files: [] },
+        ] }));
+      }
+    });
+    expect(controller.getSnapshot().drafts.primary.text).toBe("new user text");
+    expect(invoke).toHaveBeenCalledWith("draft.start-with-content", expect.objectContaining({ sourceTabId: "draft:a", navigationRevision: 0 }));
+    expect(invoke.mock.calls.some(([action]) => action === "composer.checkpoint" || action === "draft.start")).toBe(false);
+  });
+
+  it("does not offer Try now for a non-user-invocable skill", async () => {
+    const onTrySkill = vi.fn();
+    installSkillList([
+      {
+        name: "internal-review",
+        description: "Model-only review workflow",
+        source: "bundled",
+        user_invocable: false,
+        disable_model_invoke: false,
+      },
+    ]);
+
+    await act(async () => {
+      root = createRoot(container);
+      root.render(<SkillsCatalog onTrySkill={onTrySkill} />);
+    });
+    await act(async () => {
+      skillButton("internal-review")?.click();
+    });
+
+    expect(document.querySelector('[role="dialog"]')).toBeTruthy();
+    expect(buttonByText("立即试用")).toBeUndefined();
+    expect(onTrySkill).not.toHaveBeenCalled();
+  });
+});
+
+const existingSkill: SkillSummary = {
+  name: "existing-skill",
+  description: "A previously loaded skill",
+  source: "user",
+  user_invocable: true,
+  disable_model_invoke: false,
+};
+
+function installSkillList(skills: SkillSummary[]): void {
+  const stub: Partial<WuuDesktopApi> = {
+    listSkills: vi.fn().mockResolvedValue({ skills }),
+    readSkillContent: vi.fn().mockResolvedValue({
+      content: [
+        "---",
+        "name: bug-fix",
+        "---",
+        "# Bug Fix Workflow",
+        "",
+        "Read the report and inspect the code.",
+      ].join("\n"),
+    }),
+  };
+  (globalThis as { wuu?: WuuDesktopApi }).wuu = stub as WuuDesktopApi;
+  (window as unknown as { wuu: WuuDesktopApi }).wuu = stub as WuuDesktopApi;
+}
+
+function skillButton(name: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+    (button) => button.textContent?.includes(name),
+  );
+}
+
+function pluginAction(name: string): HTMLButtonElement | undefined {
+  return Array.from(container.querySelectorAll<HTMLButtonElement>('.plugin-row .catalog-row-action')).find(
+    (button) => button.closest(".plugin-row")?.querySelector(".catalog-row-title")?.textContent === name,
+  );
+}
+
+async function selectTab(tab: "plugins" | "skills"): Promise<void> {
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>(`[data-tab="${tab}"]`)?.click();
+  });
+}
+
+function buttonByText(text: string): HTMLButtonElement | undefined {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+    (button) => button.textContent === text,
+  );
+}
+
+function buttonsByText(text: string): HTMLButtonElement[] {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>("button")).filter(
+    (button) => button.textContent === text,
+  );
+}

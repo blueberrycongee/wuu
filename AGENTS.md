@@ -1,0 +1,306 @@
+# Wuu contributor and agent instructions
+
+These instructions apply throughout the repository. Read applicable instructions
+in subdirectories before changing their files. Keep personal preferences and
+machine-specific setup in user-level configuration. This is the only tracked
+agent-instruction file: directory-level `AGENTS.md`, `CLAUDE.md`, tool configs,
+and `.agents/notes/` stay untracked, so shared project norms belong here and
+reusable agent workflows belong under `.agents/skills/`.
+
+## Scope and authorization
+
+- Read the relevant code before proposing or making changes. Trace the complete
+  flow, module boundaries, shared contracts, callers, and downstream effects.
+- Reviews, audits, explanations, and proposals are read-only unless the user
+  also requests implementation. A proposed plan does not authorize execution.
+- Complete authorized work. Make routine implementation decisions independently;
+  ask when ambiguity materially changes scope, architecture, security, risk, or
+  authorization. Explain meaningful tradeoffs and recommend a path.
+- Commit, push, PR mutations, release, and deployment actions require explicit
+  authorization or an established workflow for those specific actions in the
+  current task. Authorization does not carry over to unrelated work.
+- Once commits are authorized, commit each independently validated step as a
+  coherent, reviewable change. Commit authorization alone does not authorize push.
+- Never merge or enable auto-merge without an explicit request for that PR.
+  Passing CI, approval, or a request to continue is not merge authorization.
+- Never force-push unless explicitly authorized to rewrite the published history
+  of the specific branch. Report a non-fast-forward rejection instead of forcing.
+
+## Implementation and review
+
+- For maintenance, prefer focused changes and established conventions. When a
+  redesign or compatibility break is explicitly requested, evaluate the design
+  from its requirements rather than silently imposing compatibility constraints.
+- Apply a corrected design criterion across the relevant scope, not only the
+  first example. Avoid duplicate logic and fixes that move failures to another layer.
+- Require a concrete benefit for helpers, abstractions, and special cases. Prefer
+  simple code and a few coherent abstractions over speculative infrastructure.
+- Keep a helper or extra module when it has at least two call sites, or when the
+  inlined logic is too long to read in one pass. A short operation used once stays
+  at the call site. Add an interface, base type, or registry only after a second
+  concrete implementation exists.
+- Define a constant used by one module in that module. Write a policy or default
+  once in the layer that owns it and pass that value down. Do not copy it into a
+  lower-layer constant or factory default.
+- A defensive branch stays only when removing it would break a real failure path.
+  Delete debugging-only catch blocks, checks for impossible states, and tests
+  that exist only to preserve that scaffolding once the contract is settled. A
+  missing field on a known type fails visibly.
+- Keep parameters that the function actually uses. When an established interface
+  requires an unused parameter, preserve the signature and state that constraint
+  instead of discarding the value to satisfy a type checker or linter.
+- Isolate a temporary compatibility workaround and name its removal condition in
+  one comment.
+- Follow the language's own visibility, error handling, and control flow. Go
+  returns early on errors. Match the surrounding file's types, imports, and
+  logging.
+- Derive renderer context provider values only from their inputs so they stay
+  referentially stable across unrelated re-renders; memoized subtrees require
+  value-compared or identity-stable props.
+- Read each resource's freshness from one shared store or subscription and
+  retain unchanged snapshot fields structurally; do not rebuild them on every
+  publication.
+- Judge public APIs from the caller's perspective: discoverability, misuse
+  resistance, error semantics, configuration, compatibility, and evolution.
+- Base repository claims on inspected code, tests, configuration, and history.
+  For third-party behavior, prefer official sources matching the relevant version.
+  Identify uncertainty and conflicts rather than presenting assumptions as facts.
+- Bound probes, discovery scans, and catalog refreshes, and dispose of their
+  temporary sessions, so a slow or stalled provider cannot hold up unrelated
+  work or block admission.
+- Review the relevant scope systematically. Report concrete bugs, security issues,
+  and logic errors with their impact and evidence. Do not invent findings or
+  substitute cosmetic suggestions for defects. Say "no issues found" when appropriate.
+- Challenge proposals when evidence warrants it. Avoid reflexive agreement.
+
+## Working tree, validation, and handoff
+
+- Preserve unrelated staged, unstaged, and untracked work. Stage explicit paths or
+  selected hunks; do not include another task's changes in a commit.
+- Use `gh` for GitHub operations. Write code comments and commit messages in English.
+  Use conventional commit messages; follow [CONTRIBUTING.md](CONTRIBUTING.md) for
+  contribution workflow and the [development guide](docs/en/project/development.md)
+  for build and test commands.
+- Use [change-validation](.agents/skills/change-validation/SKILL.md) to choose
+  proportionate local checks and CI coverage; do not turn small edits into release gates.
+- Run checks appropriate to the change before declaring it complete. Distinguish
+  tests and builds from rendered UI, simulator, real-device, and production checks.
+- Prefer end-to-end tests as the primary testing mechanism. Use them to verify
+  complex features work end to end. At the end of an E2E run, produce a
+  verifiable and repeatable artifact (logs, screenshots, recordings, or other
+  evidence a reviewer can re-check). Binary-level verification evidence must
+  identify the tested build — record the binary hash and source commit with the
+  artifact. A check that did not run, a skipped case, or a run against a
+  different build is not a pass.
+- Never write unit tests after the implementation. If a system must be tested in
+  isolation, first enumerate the ways it could fail, then write the code against
+  those failure cases.
+- Add a focused automated test only to protect an important contract: a public
+  API, protocol, persistence or migration rule, security or permission boundary,
+  recovery behavior, or a concrete bug that has already escaped. Prefer extending
+  an existing behavioral or E2E suite over adding a new unit suite. Design tests
+  around observable behavior and the failure cases callers depend on.
+- Skip a new test when the change has no such contract, when the goal is
+  coverage, or when the test would mirror literals, mappings, obvious control
+  flow, implementation details, or a removed feature. Absence is a contract only
+  when callers rely on that absence.
+- Coordinate concurrency deterministically instead of relying on sleeps when
+  practical.
+- Keep merge-gate tests on behavior, protocols, recovery, and public contracts.
+  Do not add tests that read stylesheet source, pin CSS declarations or class
+  lists, snapshot generated theme matrices, or assert prompt/i18n wording. Run
+  `make test-policy-check` when changing tests; existing stylesheet-read
+  exceptions do not authorize new ones.
+- Regenerate derived files with their Make target in the same change rather
+  than editing generated output: `make generate-theme-contract` and
+  `make build-plugins` are enforced (`repository-check` and `check-plugins`
+  reject stale output). `make generate-theme-surface-matrix` refreshes the
+  tracked surface matrix, coverage baseline, and docs pages when theme CSS
+  changes.
+- Comments explain rationale, invariants, safety constraints, or external quirks.
+  Public API documentation describes observable contracts, not incidental internals.
+- For long tasks, preserve the overall objective and report material progress.
+  Handoffs state results, validation, remaining limitations, and required user input.
+  When committing or pushing, report the commit hash and the verified outcome.
+
+## UI design and visual acceptance
+
+- Use the [design system](docs/en/project/design-system.md) for color, type,
+  spacing, radius, and elevation roles; the
+  [desktop UI maintenance](docs/en/project/desktop-ui.md) guide for surface,
+  interaction, and motion contracts; and
+  [desktop i18n maintenance](desktop/src/renderer/i18n/README.md) for UI copy,
+  locale formatting, and voice.
+- Add a user-facing string in every shipped locale in the same change: the same
+  `domain.camelCase` key and position in `zh-CN.ts` and `en-US.ts`, with
+  identical placeholders. Render through `useI18n().t`, `translateCurrent`, or
+  `localizedText` and the i18n number/date helpers — never `toLocaleString` or
+  literal copy in components.
+- Use shared components and design variables for equivalent controls. Preserve
+  consistent typography, icon treatment, spacing, corners, and interaction states.
+- Use one UI font-size baseline for sidebars, prose, menus, settings, and controls.
+  Keep code size independent across code blocks, editors, and diffs. Preserve saved
+  preferences. Current defaults are 15px UI and 13px code; these are reference
+  values, not fixed sizes that override user preferences.
+- Establish hierarchy with position, spacing, type size, and weight. Default text
+  should remain regular; use emphasis selectively. Keep secondary text readable.
+- Distinguish row spacing, heading-to-content spacing, content-to-action spacing,
+  and group spacing. Define each relationship once rather than accumulating gaps
+  across wrappers. Include invisible drag targets and placeholders in measurements.
+- As text grows, adapt row heights and necessary spacing. Scale icons according to
+  their role rather than enlarging every element mechanically. Never hide layout
+  problems by shrinking text, tightening letter spacing, or reducing contrast.
+  Check the longest strings in every shipped locale, not only the one you are
+  editing.
+- Align peer labels, icon columns, and trailing actions. Indentation expresses
+  hierarchy and must not depend on whether an item is running or unread.
+- Reserve the actual footprint of status indicators and actions plus a reading
+  gap. Check combinations such as selected, running, unread, forked, hovered,
+  keyboard-focused, disabled, and dragging when those states can coexist.
+- Keep compact controls usable and reading areas comfortable. Adapt mobile layout
+  and interaction to the device; do not merely shrink the desktop interface.
+- In product UI, confirm only irreversible or disruptive actions through the
+  shared confirmation dialog, and reserve the danger tone for the destructive
+  choice. Ordinary reversible actions proceed without a second prompt.
+- Use whitespace and alignment before adding containers. Add borders, backgrounds,
+  and shadows only to express grouping, interaction boundaries, elevation, or
+  deliberate brand identity. Use semantic colors consistently.
+- Include only text that helps users understand, decide, or act. Avoid repeating a
+  label in a subtitle or hint. Retain explanations for non-obvious consequences
+  and restrictions. Remove redundant copy, wrappers, and decoration before handoff.
+- Route hover hints through the shared Tooltip component; keep native `title`
+  only at embedded-browser and native-chrome boundaries where renderer portals
+  cannot composite. A tooltip names an otherwise-unlabeled control and never
+  carries information that is not otherwise reachable.
+- For UI copy, write the target locale directly instead of translating English
+  word order, and use one verb for the same action across the product. Keep
+  labels neutral rather than promotional.
+- Default to the shared toast system for user-action failures; preserve the current
+  view and user input. Plugins use public `api.showNotice` rather than custom
+  error notifications or private renderer imports. Keep field validation next to
+  the field, page-load failures in place with a retry control, and conversation
+  or task failures in their history with appropriate recovery actions. Settings
+  surfaces are an exception: keep a blocking settings failure beside its controls
+  with diagnostics on demand (`SettingsFailure`), rather than a temporary toast.
+  A temporary toast does not replace a persistent failure state. Avoid duplicate
+  notifications for the same failure. Follow the [error feedback contract](docs/en/customize/ui-sdk.md#error-feedback).
+- Motion explains changes and provides feedback. Keep frequent actions responsive,
+  avoid layout jumps and moving click targets, and respect reduced-motion settings.
+- Reopening or refreshing a rendered view restores its settled state —
+  reading position, folds, and follow mode — without replayed entrances,
+  placeholder flicker, or a cleared-and-reloaded list.
+- Before declaring a UI change complete, walk the primary task as a first-time
+  user, using only what the interface shows. Fix blockers, unclear next steps,
+  and broken handoffs between screens; add a hint only where the interface
+  cannot make the step clear.
+- Inspect actual rendering after UI changes. Cover affected themes, default and
+  large font sizes, wide and narrow windows, long and empty content, scrolling,
+  fixed regions, menus, and relevant state combinations. Check alignment,
+  readability, clipping, truncation, overlap, and focus visibility.
+- Tests do not replace visual acceptance. State precisely what was inspected and
+  what remains unverified; do not claim full coverage from one screenshot.
+- Gate unreleased or developer-only UI behind the shared feature flags
+  (`FeatureFlags.ts`, `import.meta.env.DEV && VITE_ENABLE_*`) so production
+  builds never expose it; debug controls stay behind the development-only
+  Settings switch.
+
+## Product versioning
+
+- Product releases use UTC CalVer `YYYY.MMDD.P`, where `YYYY` is the release
+  year, `MMDD` is the UTC month and day packed as `month * 100 + day` (`1108`
+  is November 8), and `P` is the same-day release index starting at 0 — at
+  most ten final releases per UTC day. Prereleases append a suffix such as
+  `-rc.1`. Releases before this scheme used `YYYY.M.D`; both forms remain
+  valid for existing tags and release tooling.
+- `VERSION` is the product version source. Use `make version-sync` to synchronize
+  desktop and active native iOS/Android metadata; do not edit generated versions.
+- Use `make release-prepare` for the next UTC CalVer, or pass
+  `RELEASE_VERSION=YYYY.MMDD.P`. Run `make version-check` before tagging.
+  Release tags are `vYYYY.MMDD.P`; product releases do not use SemVer bump rules.
+- For a maintainer-requested release, follow
+  [release-check](.agents/skills/release-check/SKILL.md) and the
+  [release guide](docs/en/project/release.md): write
+  `docs/releases/<version>.md` before `make release-prepare` (it requires the
+  notes file), land through a release PR, and tag the merged commit with
+  `make tag-release`. Push only the tag.
+- Ordinary changes do not update `CHANGELOG.md` or add release-note files;
+  maintainers collect `docs/releases/<version>.md` in the release PR. Describe
+  user-visible impact and migration requirements in the PR body instead.
+- Product versions express release recency. Check and document Extension API,
+  protocol, storage, and migration compatibility separately. `minimum_wuu_version`
+  accepts the same CalVer values as the product version.
+- CalVer tags are not Go module major versions. Install the CLI from a checkout
+  with `make install`; do not promise `go install github.com/blueberrycongee/wuu/cmd/wuu@latest`
+  for a CalVer release tag.
+
+## Extension architecture
+
+- Assemble the default product from selected providers through public contracts.
+  Agent loops, engine adapters, persistence, execution, policy, credentials,
+  project coordination, and application UI must allow external replacements.
+  Disabling a selected provider stops its behavior; do not silently substitute
+  a built-in implementation. Preserve existing user data and explicit session
+  bindings when changing the default composition.
+- Wuu is a decentralized trusted-extension system. Installation grants trust and
+  enables the extension. Same-source updates retain trust; source changes require
+  confirmation. Do not add approval, inspection, restart, or per-update ceremonies
+  unless the threat model changes.
+- Wuu owns a small, public, versioned Extension API, loading, lifecycle, safe mode,
+  diagnostics, and cleanup. It does not audit, certify, sandbox, rank, host, or
+  maintain third-party extensions.
+- Keep the Go core and production product. Do not pursue a whole-product rewrite
+  or a TypeScript kernel. Direct execution and reload of one local TypeScript file
+  is the development floor; builds, manifests, packaging, installation, and
+  validation must remain optional for that path.
+- The bootstrap owns composition loading, identity-aware routing, dependency
+  resolution, scopes, lifecycle, and minimal configuration recovery. Providers
+  own loop algorithms, storage semantics, execution backends, policies,
+  credentials, scheduling, business state, and application presentation. Native
+  Go providers may ship with the product but must be replaceable by external
+  processes using the same observable contracts and configured bindings.
+- Maintain one authoritative service graph across Go, process, and renderer
+  implementations. Keep provider resources alive until dependent consumers finish
+  cleanup. Retain execution bindings across updates; require explicit compatible
+  checkpoints or a stopped writer and migration for stateful replacements.
+  A failed preparation preserves the active composition. An activation failure
+  after a durable commit must report the committed state and its diagnostics.
+- Bundled and community extensions use the same public contracts. Do not introduce
+  product-ID checks, privileged APIs, private shortcuts, duplicated plugin state,
+  or silent host fallbacks. Choose plugin boundaries around complete capabilities;
+  shared protocols, types, and pure utilities can remain ordinary libraries.
+- Add host capabilities or public abstractions only for demonstrated needs shared
+  by at least two plausible extensions. Internal machinery is not automatically a
+  public compatibility promise.
+- Fix domain-specific failures in the plugin and shared lifecycle or contract
+  failures in the host. Isolate temporary compatibility workarounds and document
+  their removal conditions.
+- For plugin design, implementation, debugging, or review, consult
+  [wuu-plugin-development](.agents/skills/wuu-plugin-development/SKILL.md) and its
+  linked [plugin development practices](docs/en/customize/plugin-development-practices.md)
+  when they are accessible in the current workspace.
+  The practices are advisory; existing public API and protocol requirements still apply.
+- Treat reference implementations as prior art, not specifications. Verify their
+  assumptions, invariants, costs, and failure conditions before borrowing a design.
+  Preserve licenses and attribution; do not expose private reference paths or
+  identities in public material.
+
+## Documentation and communication
+
+- Public product, development, protocol, and design documentation belongs in
+  `docs/`; follow [docs/README.md](docs/README.md). Update both locales,
+  `docs/site.json` navigation, and affected links in the same change.
+  `make docs-policy-check` is a required PR gate: every tracked `docs/**/*.md`
+  must be registered in `docs/site.json` (except `docs/README.md` and
+  `docs/releases/<version>.md`), local links must resolve to tracked files, and
+  one-off or private material stays outside the repository. Pre-declare
+  unstaged pages with `make docs-policy-check DOCS_NEW_FILES="..."`.
+- Keep sensitive research, private reference material, and unpublished plans out
+  of tracked public files. Use the maintainer-designated private documentation
+  location when available; public contributors must not depend on that checkout.
+- Quote no evaluation or benchmark result in docs, release notes, or READMEs
+  unless the supporting record is committed under `evals/results/` and passes
+  `make eval-check`. Keep exploratory runs in the ignored `bench/` directory.
+- Write plainly and lead with the result or main point. Give each paragraph one
+  purpose; use lists and tables for genuinely parallel or comparative information.
+  Explain necessary technical terms and avoid filler, repeated conclusions, and
+  unsupported claims. Follow the user's language for discussion.

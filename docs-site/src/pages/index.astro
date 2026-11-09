@@ -1,0 +1,6 @@
+---
+import source from "../../../landing/index.html?raw"
+import { marketingHtml } from "../marketing"
+const html = marketingHtml(source, import.meta.env.BASE_URL)
+---
+<Fragment set:html={html} />

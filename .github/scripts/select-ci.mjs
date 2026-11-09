@@ -1,0 +1,138 @@
+import { execFileSync, spawnSync } from 'node:child_process';
+import { appendFileSync, readFileSync } from 'node:fs';
+
+const { suites, entries } = JSON.parse(readFileSync(new URL('./desktop-ci-suites.json', import.meta.url)));
+const desktopSuites = new Set();
+let fullDesktop = false;
+let relatedEligible = true;
+let desktopArchitecture = false;
+const relatedSources = [];
+const selected = { go: false, race: false, desktop: false, clients: false, native: false };
+const all = () => {
+  Object.keys(selected).forEach(key => { selected[key] = true; });
+  fullDesktop = true;
+  relatedEligible = false;
+};
+// Desktop suites that execute the embedded Go core: session journeys run the
+// session-switch binary and fixture, corpus replays through it, and the shell
+// quota journey builds it with an overlay. Renderer-only lanes (unit, layout,
+// selection) never start a Go process, so binary-only diffs select this set.
+const GO_BINARY_DESKTOP_SUITES = ['corpus', 'session', 'session-lifecycle', 'shell'];
+const selectGoBinary = () => {
+  selected.go = selected.desktop = selected.clients = selected.native = true;
+  desktopArchitecture = true;
+  GO_BINARY_DESKTOP_SUITES.forEach(suite => desktopSuites.add(suite));
+};
+const event = process.env.GITHUB_EVENT_NAME;
+if (!['pull_request', 'push', 'workflow_dispatch'].includes(event)) {
+  throw new Error(`Unsupported CI event: ${event}`);
+}
+
+// Missing or non-ancestral push bases cannot safely narrow validation.
+const unusablePushBase = event === 'push' && (!process.env.CI_BASE || /^0+$/.test(process.env.CI_BASE)
+  || spawnSync('git', ['merge-base', '--is-ancestor', process.env.CI_BASE, process.env.CI_HEAD || 'HEAD'], { stdio: 'ignore' }).status !== 0);
+if (event === 'workflow_dispatch' || unusablePushBase || /^0+$/.test(process.env.CI_BASE || '')) {
+  all();
+} else {
+  if (!process.env.CI_BASE || !process.env.CI_HEAD) throw new Error('Missing CI comparison refs');
+  // Include both sides of renames and deletions, without API pagination limits.
+  // A missing commit or failed diff must fail selection, never skip validation.
+  const paths = execFileSync('git', [
+    'diff', '--name-only', '--no-renames', '-z', process.env.CI_BASE, process.env.CI_HEAD, '--',
+  ], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 }).split('\0').filter(Boolean);
+  for (const path of paths) {
+    // Only known non-runtime documentation is exempt. Markdown under prompts,
+    // plugins, or fixtures can be executable input and is not ignored globally.
+    if (/^(docs\/|docs-site\/|landing\/|\.github\/(ISSUE_TEMPLATE\/|PULL_REQUEST_TEMPLATE\.md$))/.test(path)
+      || /^\.agents\/skills\/[^/]+\/SKILL\.md$/.test(path)
+      || /^(README(?:\.[^/]+)?\.md|README\.md|CHANGELOG\.md|CONTRIBUTING\.md|CODE_OF_CONDUCT\.md|AGENTS\.md)$/.test(path)) continue;
+    // Desktop transport and additive plugin fixtures consume these boundaries
+    // without Electron. Unrelated renderer edits do not rerun provider checks.
+    if (/^desktop\/(src\/(main|shared|renderer\/plugins)\/|src\/renderer\/test\/setup\.ts$|scripts\/trusted-desktop-|(?:package(?:-lock)?\.json|vitest\.config\.ts)$)/.test(path)) desktopArchitecture = true;
+    // Only existing renderer modules use parsed import dependencies. Global inputs,
+    // plugin loading, and additions/deletions retain the full suite.
+    if (/^desktop\/src\/renderer\/(?!test\/|plugins\/).*\.(ts|tsx)$/.test(path) && !path.endsWith('.d.ts')) {
+      const status = execFileSync('git', ['diff', '--name-status', '--no-renames', process.env.CI_BASE, process.env.CI_HEAD, '--', path], { encoding: 'utf8' });
+      if (status.startsWith('M\t')) relatedSources.push(path.slice('desktop/'.length));
+      else relatedEligible = false;
+    } else {
+      relatedEligible = false;
+    }
+    // Native apps have their own workflow; shared client packages do not.
+    if (/^clients\/native\//.test(path)) continue;
+    if (Object.hasOwn(entries, path)) {
+      selected.desktop = true;
+      desktopSuites.add(entries[path]);
+      // Session checks are sharded for latency; a targeted edit still runs both.
+      if (['session', 'session-lifecycle'].includes(entries[path])) {
+        desktopSuites.add('session');
+        desktopSuites.add('session-lifecycle');
+      }
+    } else if (/^desktop\/src\/renderer\//.test(path)) {
+      fullDesktop = true;
+      // mobile-web imports production renderer modules, styles and assets.
+      selected.desktop = selected.clients = true;
+    } else if (/^desktop\//.test(path)) {
+      fullDesktop = true;
+      // Config, native helpers, scripts, vendored modules and dependencies can
+      // affect both Web builds and native packaging.
+      selected.desktop = selected.clients = selected.native = true;
+    } else if (/^clients\/(mobile|mobile-app)\//.test(path)) {
+      selected.clients = true;
+    } else if (/^clients\/mobile-web\//.test(path)) {
+      // The phone web bundle ships as a packaged desktop resource and imports
+      // renderer sources, but its own code never reaches the Go binary, the
+      // desktop build, or provider-boundary journeys.
+      selected.clients = selected.native = true;
+    } else if (/^(?:clients\/core|packages\/protocol)\//.test(path)) {
+      // The remote client and the wire protocol compile into desktop main and
+      // renderer, and boundary journeys pack their public TypeScript sources.
+      fullDesktop = true;
+      selected.desktop = selected.clients = selected.native = true;
+      desktopArchitecture = true;
+    } else if (/^internal\/plugin\/bundled\//.test(path)) {
+      // Generated plugin artifacts are embedded in the binary but contain no
+      // Go code, so race lanes cannot observe anything Go validation misses.
+      selectGoBinary();
+    } else if (/\.go$/.test(path) || /^go\.(?:mod|sum)$/.test(path) || /^(?:internal|cmd)\//.test(path)) {
+      // Go code reaches the binary, the packaged core, and boundary journeys;
+      // only it can introduce the data races the race lanes guard.
+      selectGoBinary();
+      selected.race = true;
+    } else if (/^(?:plugins|packages\/plugin-sdk|prompts)\//.test(path)
+        || (/^scripts\//.test(path) && !/\.go$/.test(path))) {
+      // Plugin sources, SDK TypeScript, prompts and CI-side scripts validate
+      // through the embedded binary they generate. Embedded data cannot create
+      // a Go data race, and every race-guarded test also runs without -race in
+      // Go validation, so the race lanes are redundant for these inputs.
+      selectGoBinary();
+    } else {
+      // Shared protocol, core, Go, plugins, dependency locks, build scripts and
+      // unknown/new roots retain full coverage until their consumers are known.
+      all();
+    }
+  }
+  console.log(`Compared ${paths.length} changed paths`);
+}
+
+// Unit work retains one selected surface but executes both inventory shards.
+if (desktopSuites.has('unit')) desktopSuites.add('unit-extra');
+
+const desktopSelection = selected.desktop
+  ? suites.filter(suite => fullDesktop || desktopSuites.has(suite)) : [];
+const outputs = {
+  go: selected.go,
+  race: selected.race,
+  architecture: selected.go || desktopArchitecture,
+  desktop: selected.desktop,
+  clients: selected.clients,
+  native: selected.native,
+  desktop_related: JSON.stringify(event !== 'workflow_dispatch' && relatedEligible ? relatedSources : []),
+  desktop_suites: JSON.stringify(desktopSelection),
+  desktop_e2e_suites: JSON.stringify(desktopSelection.filter(suite => !suite.startsWith('unit'))),
+};
+for (const [key, value] of Object.entries(outputs)) {
+  const line = `${key}=${value}\n`;
+  process.stdout.write(line);
+  if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, line);
+}

@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f0eee6" />
+    <title>博客 — Wuu</title>
+    <meta
+      name="description"
+      content="关于 Wuu 的设计、开发，以及如何用它完成工作。"
+    />
+    <link rel="icon" href="assets/brand/wuu.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="mascot-motion.mjs"></script>
+    <script type="module" src="site-nav.mjs"></script>
+  </head>
+  <body class="zh-page">
+    <a class="skip" href="#main">跳到正文</a>
+    <div class="site-header-shell">
+      <header class="site-header wrap">
+        <a class="wordmark" href="zh.html" aria-label="Wuu 中文首页"
+          ><img
+            src="assets/brand/wuu.svg"
+            width="36"
+            height="36"
+            alt=""
+          />wuu</a
+        >
+        <nav aria-label="主导航">
+          <a
+            class="language-switch"
+            href="blog.html"
+            lang="en"
+            hreflang="en"
+            aria-label="Switch this page to English"
+            >EN</a
+          >
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="product"
+          >
+            <summary>产品</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">Wuu</span>
+                  <p>在自己的项目里，和 AI 一起把想法做出来。</p>
+                </div>
+                <div class="nav-destinations">
+                  <a class="nav-featured" href="zh-features.html"
+                    >认识 Wuu <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="blog">
+            <summary aria-current="page">博客</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a class="nav-featured" href="zh-blog.html"
+                    >博客 <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a href="zh-context-projection.html">第一次读取，需要多少信息</a
+                  ><a href="zh-note-compaction.html"
+                    >换一个窗口，接着把事做完</a
+                  >
+                </div>
+            
+
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="docs">
+            <summary>文档</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a
+                    class="nav-featured"
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/"
+                    >文档 <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/getting-started/first-task/"
+                    >开始第一个任务</a
+                  ><a
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/getting-started/model-services/"
+                    >连接模型服务</a
+                  ><a
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/customize/"
+                    >扩展 Wuu</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="download"
+          >
+            <summary class="button">下载</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">桌面应用</span>
+                  <p>Wuu for Mac</p>
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    class="nav-featured"
+                    href="https://github.com/blueberrycongee/wuu/releases/latest"
+                    >下载 Mac 版 <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+        </nav>
+      </header>
+      <div class="nav-backdrop" aria-hidden="true"></div>
+    </div>
+    <main id="main" class="wrap">
+      <section class="introduction">
+        <h1>博客</h1>
+        <p>关于 Wuu 的设计、开发，以及如何用它完成工作。</p>
+      </section>
+      <section class="editorial">
+        <div class="blog-index">
+          <a class="blog-entry" href="zh-context-projection.html">
+            <h2>第一次读取，需要多少信息</h2>
+            <p>从限制单次输出，到按需继续读取：Wuu 的裁剪投影是怎样形成的。</p>
+          </a>
+          <a class="blog-entry" href="zh-note-compaction.html">
+            <h2>换一个窗口，接着把事做完</h2>
+            <p>从传统压缩，到一份提前准备的交接文档：Wuu 的 Note Compaction。</p>
+          </a>
+        </div>
+      </section>
+
+
+    </main>
+    <footer class="site-footer wrap">
+      <a class="wordmark" href="zh.html"
+        ><img src="assets/brand/wuu.svg" width="32" height="32" alt="" />wuu</a
+      >
+      <nav aria-label="页脚">
+        <a href="zh-features.html">产品</a><a href="zh-blog.html">博客</a
+        ><a href="https://github.com/blueberrycongee/wuu">GitHub ↗</a>
+      </nav>
+    </footer>
+  </body>
+</html>

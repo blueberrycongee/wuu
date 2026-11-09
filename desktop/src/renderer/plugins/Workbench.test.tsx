@@ -1,0 +1,990 @@
+import { ApplicationWorkbenchProvider } from "./ApplicationWorkbenchContext";
+import * as React from "react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+import type { ExtensionInventoryRecord } from "../../shared/protocol";
+import {
+  STATUS_ACTIONS,
+  type PresentationHost,
+  type ViewHostAPI,
+  type StatusSnapshotV1,
+} from "../../shared/workbench";
+import { RichContent } from "../RichContent";
+import { desktopPluginHost, DesktopPluginRuntime } from "./DesktopPluginRuntime";
+import { DesktopWorkbench, PluginViewContent, visibleWorkbenchView, WorkbenchController } from "./Workbench";
+import { PluginHost, type PluginGenerationApi } from "./PluginHost";
+
+describe("WorkbenchController", () => {
+  beforeEach(() => {
+  window.wuu = { ...window.wuu, reportPluginDesktopActivation: async () => {} };
+    window.localStorage.clear();
+    document.documentElement.dataset.theme = "dark";
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
+    document.documentElement.removeAttribute("style");
+    document.documentElement.removeAttribute("data-theme");
+  });
+
+  it("does not republish identical availability during application reconciliation", () => {
+    const host = new PluginHost({ react: React });
+    const controller = new WorkbenchController(host);
+    const listener = vi.fn(() => controller.setAvailablePluginIds(new Set(["owner"])));
+    const off = controller.subscribe(listener);
+    try {
+      controller.setAvailablePluginIds(new Set(["owner"]));
+      expect(listener).toHaveBeenCalledTimes(1);
+      controller.setAvailablePluginIds(new Set(["owner"]));
+      expect(listener).toHaveBeenCalledTimes(1);
+    } finally { off(); controller.dispose(); }
+  });
+
+  it.each(["view", "renderer", "presenter"] as const)("revokes captured %s host actions across same-fingerprint reactivation", async (kind) => {
+    const host = new PluginHost({ react: React });
+    const command = vi.fn();
+    const dispatch = vi.fn();
+    const getStorage = vi.fn(async () => "saved");
+    const controller = new WorkbenchController(host, { getStorage });
+    const register = (api: PluginGenerationApi): void => {
+      api.registerViewType({ id: "panel", title: "Panel", render: () => null });
+      api.registerCommand({ id: "run", title: "Run", execute: command });
+    };
+    try {
+      await host.activateGeneration({ pluginId: "owner", generation: "same", register });
+      const id = await controller.openPluginView("owner", "panel");
+      const view = controller.getSnapshot().views.find((item) => item.id === id)!;
+      const api = kind === "view" ? controller.createViewHostAPI(view)
+        : kind === "renderer" ? controller.createRendererHostAPI("owner", "same")
+        : controller.createPresentationHostAPI("owner", "same", ["act"], dispatch);
+      await api.executeCommand("run", "before");
+      expect(command).toHaveBeenCalledWith("before");
+      command.mockClear();
+      await host.activateGeneration({ pluginId: "owner", generation: "same", register });
+      await expect(api.executeCommand("run", "stale")).rejects.toThrow("no longer active");
+      await expect(api.openView("panel")).rejects.toThrow("no longer active");
+      if (kind === "presenter") await expect((api as PresentationHost).invoke("act", "stale")).rejects.toThrow("no longer active");
+      await expect((api as ViewHostAPI).getStorage("setting")).rejects.toThrow("no longer active");
+      expect(command).not.toHaveBeenCalled();
+      expect(dispatch).not.toHaveBeenCalled();
+      expect(getStorage).not.toHaveBeenCalled();
+      const current = controller.createPresentationHostAPI("owner", "same", ["act"], dispatch);
+      await current.executeCommand("run", "current");
+      await current.invoke("act", "current");
+      expect(command).toHaveBeenCalledWith("current");
+      expect(dispatch).toHaveBeenCalledWith("act", "current");
+    } finally {
+      controller.dispose();
+    }
+  });
+
+  it("updates service handles without publishing an unchanged snapshot", () => {
+    const host = new PluginHost({ react: React });
+    const controller = new WorkbenchController(host);
+    const listener = vi.fn();
+    const unsubscribe = controller.subscribe(listener);
+    const services = { openSettings: vi.fn() };
+
+    controller.updateServices(services);
+
+    expect(controller.services).toBe(services);
+    expect(listener).not.toHaveBeenCalled();
+    unsubscribe();
+    controller.dispose();
+  });
+
+  it.each(["view", "renderer", "presenter"] as const)("retires captured %s actions with their business controller, not just their plugin", async kind => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({ pluginId: "owner", generation: "same", register(api) {
+      api.registerViewType({ id: "panel", title: "Panel", persistence: "durable", render: () => null });
+    } });
+    let resolveRead!: (value: string) => void;
+    const getStorage = vi.fn(() => new Promise<string>(resolve => { resolveRead = resolve; }));
+    const setStorage = vi.fn(async () => {}), dispatch = vi.fn(async () => {});
+    const controller = new WorkbenchController(host, { getStorage, setStorage });
+    const id = await controller.openView("panel");
+    const view = controller.getSnapshot().views.find(item => item.id === id)!;
+    const api = kind === "view" ? controller.createViewHostAPI(view)
+      : kind === "renderer" ? controller.createRendererHostAPI("owner", "same")
+      : controller.createPresentationHostAPI("owner", "same", ["save"], dispatch);
+    const pending = api.getStorage("draft");
+    void pending.catch(() => {});
+    let resume!: () => void;
+    const gate = new Promise<void>(resolve => { resume = resolve; });
+    const delayed = gate.then(() => api.setStorage("draft", "late"));
+    void delayed.catch(() => {});
+    try {
+      controller.dispose();
+      const saved = window.localStorage.getItem("wuu.plugin-workbench.layout.v1");
+      resolveRead("retired result"); resume();
+      await expect(pending).rejects.toThrow("no longer active");
+      await expect(delayed).rejects.toThrow("no longer active");
+      await expect(controller.closeView(id)).rejects.toThrow("no longer active");
+      expect(() => controller.activateView(id)).toThrow("no longer active");
+      expect(() => controller.updateServices({ setStorage })).toThrow("no longer active");
+      if (kind === "presenter") await expect((api as PresentationHost).invoke("save")).rejects.toThrow("no longer active");
+      expect(window.localStorage.getItem("wuu.plugin-workbench.layout.v1")).toBe(saved);
+      expect(setStorage).not.toHaveBeenCalled(); expect(dispatch).not.toHaveBeenCalled();
+    } finally { resolveRead("released"); resume(); controller.dispose(); }
+  });
+
+  it("maps views to every semantic region and persists only durable state", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "user:views",
+      generation: "one",
+      register(api) {
+        api.registerViewType({
+          id: "views.dashboard",
+          title: "Dashboard",
+          defaultRegion: "primary",
+          persistence: "durable",
+          render: () => <div>Dashboard</div>,
+        });
+        api.registerViewPlacement({
+          id: "default-dashboard",
+          region: "navigation",
+          view: "views.dashboard",
+        });
+      },
+    });
+    const controller = new WorkbenchController(host);
+    controller.setAvailablePluginIds(new Set(["user:views"]));
+
+    for (const region of ["navigation", "primary", "auxiliary", "inspector", "settings", "overlay"] as const) {
+      await controller.openView("views.dashboard", { region, context: { region } });
+    }
+
+    expect(new Set(controller.getSnapshot().views.map((view) => view.region))).toEqual(
+      new Set(["navigation", "primary", "auxiliary", "inspector", "settings", "overlay"]),
+    );
+    expect(controller.getSnapshot().views).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "placement:user:views:default-dashboard", region: "navigation" }),
+    ]));
+
+    const restored = new WorkbenchController(host);
+    restored.setAvailablePluginIds(new Set(["user:views"]));
+    expect(restored.getSnapshot().views.every((view) => view.persistence === "durable")).toBe(true);
+    expect(restored.getSnapshot().views.map((view) => view.region)).toEqual(
+      expect.arrayContaining(["navigation", "primary", "auxiliary", "inspector", "settings", "overlay"]),
+    );
+    controller.dispose();
+    restored.dispose();
+  });
+
+  it.each(["session", "durable"] as const)("preserves an instance's %s override across host changes and restart", async (persistence) => {
+    const host = new PluginHost({ react: React });
+    const register = (api: PluginGenerationApi): void => {
+      api.registerViewType({
+        id: "panel",
+        title: "Panel",
+        persistence: persistence === "durable" ? "session" : "durable",
+        render: () => null,
+      });
+    };
+    await host.activateGeneration({ pluginId: "owner", generation: "one", register });
+    const controller = new WorkbenchController(host);
+    let restored: WorkbenchController | undefined;
+    try {
+      const id = await controller.openPluginView("owner", "panel", { persistence });
+      await host.activateGeneration({ pluginId: "unrelated", generation: "one", register(api) {
+        api.registerViewType({ id: "other", title: "Other", render: () => null });
+      } });
+      expect(controller.getSnapshot().views.find((view) => view.id === id)?.persistence).toBe(persistence);
+      await host.activateGeneration({ pluginId: "owner", generation: "two", register });
+      expect(controller.getSnapshot().views.find((view) => view.id === id)).toMatchObject({
+        generation: "two", persistence,
+      });
+      controller.dispose();
+      restored = new WorkbenchController(host);
+      expect(restored.getSnapshot().views.map((view) => view.id)).toEqual(persistence === "durable" ? [id] : []);
+    } finally {
+      controller.dispose();
+      restored?.dispose();
+    }
+  });
+
+  it("asks the shell to reveal the placement region when opening a view", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "user:views",
+      generation: "one",
+      register(api) {
+        api.registerViewType({ id: "views.dashboard", title: "Dashboard", render: () => null });
+      },
+    });
+    const requestRegionVisible = vi.fn();
+    const controller = new WorkbenchController(host);
+    controller.updateServices({ requestRegionVisible });
+
+    await controller.openView("views.dashboard", { region: "auxiliary" });
+    expect(requestRegionVisible).toHaveBeenCalledWith("auxiliary");
+
+    // Revealing an already-open view also asks for the region.
+    requestRegionVisible.mockClear();
+    await controller.openView("views.dashboard", { region: "auxiliary" });
+    expect(requestRegionVisible).toHaveBeenCalledWith("auxiliary");
+    controller.dispose();
+  });
+
+  it("reveals an existing plugin View and can hide its region without destroying state", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "product",
+      generation: "one",
+      register(api) {
+        api.registerViewType({ id: "dashboard", title: "Dashboard", render: () => null });
+      },
+    });
+    const controller = new WorkbenchController(host);
+
+    const first = await controller.openPluginView("product", "dashboard", { region: "primary" });
+    const revealed = await controller.openPluginView("product", "dashboard", { region: "primary" });
+    expect(revealed).toBe(first);
+    expect(controller.getSnapshot().views).toHaveLength(1);
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")?.view.id).toBe(first);
+
+    controller.deactivateRegion("primary");
+    expect(controller.getSnapshot().views).toHaveLength(1);
+    expect(controller.getSnapshot().activeViewByRegion.primary).not.toBe(first);
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")).toBeUndefined();
+
+    expect(await controller.openPluginView("product", "dashboard", { region: "primary" })).toBe(first);
+    expect(controller.getSnapshot().activeViewByRegion.primary).toBe(first);
+    expect(visibleWorkbenchView(controller.getSnapshot(), "primary")?.view.id).toBe(first);
+    controller.dispose();
+  });
+
+  it("uses placement priority only for the initial default and preserves user dismissal", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "user:priority",
+      generation: "one",
+      register(api) {
+        api.registerViewType({
+          id: "views.low",
+          title: "Low",
+          persistence: "durable",
+          render: () => null,
+        });
+        api.registerViewType({
+          id: "views.high",
+          title: "High",
+          persistence: "durable",
+          render: () => null,
+        });
+        api.registerViewPlacement({
+          id: "low",
+          view: "views.low",
+          region: "primary",
+          priority: 10,
+        });
+        api.registerViewPlacement({
+          id: "high",
+          view: "views.high",
+          region: "primary",
+          priority: 20,
+        });
+      },
+    });
+    const controller = new WorkbenchController(host);
+    controller.setAvailablePluginIds(new Set(["user:priority"]));
+
+    const initial = controller.getSnapshot();
+    const high = initial.views.find((view) => view.viewTypeId === "views.high");
+    expect(initial.activeViewByRegion.primary).toBe(high?.id);
+    expect(high).toBeDefined();
+    if (!high) throw new Error("expected high-priority View placement");
+
+    await controller.closeView(high.id);
+    expect(controller.getSnapshot().activeViewByRegion.primary).toBe(
+      controller.getSnapshot().views.find((view) => view.viewTypeId === "views.low")?.id,
+    );
+
+    const restored = new WorkbenchController(host);
+    restored.setAvailablePluginIds(new Set(["user:priority"]));
+    expect(restored.getSnapshot().views.some((view) => view.viewTypeId === "views.high")).toBe(false);
+    controller.dispose();
+    restored.dispose();
+  });
+
+  it("exposes controlled commands, settings, and plugin-namespaced storage", async () => {
+    const execute = vi.fn((input?: unknown) => ({ accepted: input }));
+    const getSetting = vi.fn((_pluginId: string, _generation: string, key: string) => key === "density" ? "compact" : null);
+    const stored = new Map<string, string>();
+    const getStorage = vi.fn(async (pluginId: string, _generation: string, key: string, scope: string) => stored.get(`${pluginId}:${scope}:${key}`) ?? null);
+    const setStorage = vi.fn(async (pluginId: string, _generation: string, key: string, value: string, scope: string) => { stored.set(`${pluginId}:${scope}:${key}`, value); });
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "user:actions",
+      generation: "one",
+      register(api) {
+        api.registerViewType({ id: "actions.view", title: "Actions", render: () => null });
+        api.registerCommand({ id: "actions.run", title: "Run", execute });
+        api.registerRenderer({
+          id: "actions.low",
+          category: "document",
+          match: "text/plain",
+          priority: 1,
+          render: () => null,
+        });
+        api.registerRenderer({
+          id: "actions.high",
+          category: "document",
+          match: "text/plain",
+          priority: 10,
+          render: () => null,
+        });
+      },
+    });
+    const controller = new WorkbenchController(host, { getSetting, getStorage, setStorage });
+    const instanceId = await controller.openView("actions.view");
+    const view = controller.getSnapshot().views.find((candidate) => candidate.id === instanceId);
+    expect(view).toBeDefined();
+    if (!view) return;
+    const api = controller.createViewHostAPI(view);
+
+    await api.setStorage("panel.mode", "focused");
+    expect(await api.getStorage("panel.mode")).toBe("focused");
+    expect(await api.getSetting("density")).toBe("compact");
+    expect(getStorage).toHaveBeenCalledWith("user:actions", "one", "panel.mode", "workspace");
+    expect(await api.executeCommand("actions.run", 7)).toEqual({ accepted: 7 });
+    expect(execute).toHaveBeenCalledWith(7);
+    expect(controller.getRenderer("document", "text/plain")?.id).toBe("actions.high");
+    await expect(api.getStorage("../private")).rejects.toThrow("storage key is invalid");
+
+    await host.activateGeneration({
+      pluginId: "user:other",
+      generation: "one",
+      register(api) {
+        api.registerViewType({ id: "other.view", title: "Other", render: () => null });
+      },
+    });
+    const otherId = await controller.openView("other.view");
+    const other = controller.getSnapshot().views.find((candidate) => candidate.id === otherId);
+    expect(other).toBeDefined();
+    if (other) expect(await controller.createViewHostAPI(other).getStorage("panel.mode")).toBeNull();
+    host.unload("user:actions");
+    await expect(api.getSetting("density")).rejects.toThrow("no longer active");
+    controller.dispose();
+  });
+
+  it("keeps colliding view IDs bound to their plugin across placements, persistence, and reloads", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "user:alpha",
+      generation: "one",
+      register: (api) => registerCollidingGeneration(api, "alpha", "one"),
+    });
+    await host.activateGeneration({
+      pluginId: "user:beta",
+      generation: "one",
+      register: (api) => registerCollidingGeneration(api, "beta", "one"),
+    });
+    const availablePlugins = new Set(["user:alpha", "user:beta"]);
+    const controller = new WorkbenchController(host);
+    controller.setAvailablePluginIds(availablePlugins);
+
+    expect(controller.getSnapshot().views).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: "placement:user:alpha:default-shared",
+        pluginId: "user:alpha",
+        generation: "one",
+      }),
+      expect.objectContaining({
+        id: "placement:user:beta:default-shared",
+        pluginId: "user:beta",
+        generation: "one",
+      }),
+    ]));
+    await expect(controller.openView("shared.view")).rejects.toThrow("view type is ambiguous");
+
+    const alphaLauncherId = await controller.openView("alpha.launcher");
+    const alphaLauncher = controller.getSnapshot().views.find((view) => view.id === alphaLauncherId);
+    expect(alphaLauncher).toBeDefined();
+    if (!alphaLauncher) return;
+    const alphaHost = controller.createViewHostAPI(alphaLauncher);
+    await alphaHost.openView("shared.view", { region: "primary" });
+    await alphaHost.openView("beta.unique", { region: "inspector" });
+    expect(controller.getSnapshot().views).toEqual(expect.arrayContaining([
+      expect.objectContaining({ viewTypeId: "shared.view", pluginId: "user:alpha", region: "primary" }),
+      expect.objectContaining({ viewTypeId: "beta.unique", pluginId: "user:beta", region: "inspector" }),
+    ]));
+
+    const restored = new WorkbenchController(host);
+    restored.setAvailablePluginIds(availablePlugins);
+    expect(restored.getSnapshot().views.filter((view) => view.viewTypeId === "shared.view")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ pluginId: "user:alpha", generation: "one" }),
+        expect.objectContaining({ pluginId: "user:beta", generation: "one" }),
+      ]),
+    );
+
+    await host.activateGeneration({
+      pluginId: "user:alpha",
+      generation: "two",
+      register: (api) => registerCollidingGeneration(api, "alpha", "two"),
+    });
+    const reloadedSharedViews = restored.getSnapshot().views.filter((view) =>
+      view.viewTypeId === "shared.view");
+    expect(new Set(reloadedSharedViews
+      .filter((view) => view.pluginId === "user:alpha")
+      .map((view) => view.generation))).toEqual(new Set(["two"]));
+    expect(new Set(reloadedSharedViews
+      .filter((view) => view.pluginId === "user:beta")
+      .map((view) => view.generation))).toEqual(new Set(["one"]));
+
+    controller.dispose();
+    restored.dispose();
+  });
+
+  it("reconciles generation resources without retaining stale views, renderers, tokens, or status", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "user:reload",
+      generation: "one",
+      register: (api) => registerGeneration(api, "one"),
+    });
+    const controller = new WorkbenchController(host);
+    controller.setAvailablePluginIds(new Set(["user:reload"]));
+    const instanceId = await controller.openView("reload.view", { region: "primary" });
+    expect(document.documentElement.style.getPropertyValue("--wuu-color-accent")).toBe("one");
+    expect(document.documentElement.style.getPropertyValue("--wuu-font-family-ui")).toBe("one-ui");
+    expect(document.documentElement.style.getPropertyValue("--wuu-syntax-keyword")).toBe("one-keyword");
+    expect(controller.getRenderer("document", "text/demo")?.generation).toBe("one");
+    expect(host.getStatusItems().map((item) => item.label)).toEqual(["one"]);
+
+    await host.activateGeneration({
+      pluginId: "user:reload",
+      generation: "two",
+      register: (api) => registerGeneration(api, "two"),
+    });
+    expect(controller.getSnapshot().views.find((view) => view.id === instanceId)?.generation).toBe("two");
+    expect(controller.getRenderer("document", "text/demo")?.generation).toBe("two");
+    expect(document.documentElement.style.getPropertyValue("--wuu-color-accent")).toBe("two");
+    expect(document.documentElement.style.getPropertyValue("--wuu-font-family-ui")).toBe("two-ui");
+    expect(host.getStatusItems().map((item) => item.label)).toEqual(["two"]);
+
+    host.unload("user:reload");
+    expect(controller.getSnapshot().views).toEqual([]);
+    expect(controller.getRenderer("document", "text/demo")).toBeUndefined();
+    expect(document.documentElement.style.getPropertyValue("--wuu-color-accent")).toBe("");
+    expect(document.documentElement.style.getPropertyValue("--wuu-font-family-ui")).toBe("");
+    expect(document.documentElement.style.getPropertyValue("--wuu-syntax-keyword")).toBe("");
+    expect(host.getStatusItems()).toEqual([]);
+    controller.dispose();
+  });
+});
+
+describe("DesktopWorkbench product path", () => {
+  let root: Root;
+  let container: HTMLDivElement;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    container = document.createElement("div");
+    container.innerHTML = '<aside class="sidebar" data-workbench-region="navigation"></aside><main class="conversation-pane"></main>';
+    document.body.appendChild(container);
+    const workbenchRoot = document.createElement("div");
+    workbenchRoot.dataset.workbenchRoot = "true";
+    container.appendChild(workbenchRoot);
+    root = createRoot(workbenchRoot);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    document.querySelectorAll(".plugin-workbench-status").forEach((item) => item.remove());
+  });
+
+  it("rebinds supplied business controllers without redirecting old callbacks or remounting view DOM", async () => {
+    const host = new PluginHost({ react: React });
+    let current!: ViewHostAPI;
+    await host.activateGeneration({ pluginId: "owner", generation: "same", register(api) {
+      api.registerViewType({ id: "panel", title: "Panel", persistence: "durable", render: ({ host: actions }) => {
+        current = actions;
+        return <textarea defaultValue="unsent" />;
+      } });
+      api.registerViewPlacement({ id: "panel", view: "panel", region: "navigation" });
+    } });
+    const oldServices = { setStorage: vi.fn(async () => {}) };
+    const nextServices = { setStorage: vi.fn(async () => {}) };
+    const previous = new WorkbenchController(host, oldServices);
+    let next: WorkbenchController | undefined;
+    const updateOld = vi.spyOn(previous, "updateServices");
+    let resume!: () => void;
+    const gate = new Promise<void>(resolve => { resume = resolve; });
+    try {
+      await act(async () => root.render(<DesktopWorkbench host={host} controller={previous} services={oldServices} />));
+      const textarea = container.querySelector("textarea")!;
+      textarea.focus(); textarea.setSelectionRange(2, 4);
+      const captured = current;
+      const delayed = gate.then(() => captured.setStorage("draft", "late"));
+      void delayed.catch(() => {});
+      const checkpoint = previous.getSnapshot();
+      previous.dispose(); updateOld.mockClear();
+      next = new WorkbenchController(host, nextServices, window.localStorage, checkpoint);
+      await act(async () => root.render(<DesktopWorkbench host={host} controller={next} services={nextServices} />));
+      expect(updateOld).not.toHaveBeenCalled();
+      expect(previous.services).toBe(oldServices);
+      expect(current).not.toBe(captured);
+      expect(container.querySelector("textarea")).toBe(textarea);
+      expect(textarea.value).toBe("unsent"); expect(textarea.selectionStart).toBe(2); expect(textarea.selectionEnd).toBe(4);
+      expect(document.activeElement).toBe(textarea);
+      resume(); await expect(delayed).rejects.toThrow("no longer active");
+      await current.setStorage("draft", "current");
+      expect(oldServices.setStorage).not.toHaveBeenCalled();
+      expect(nextServices.setStorage).toHaveBeenCalledExactlyOnceWith("owner", "same", "draft", "current", "workspace");
+      await act(async () => next!.closeView(checkpoint.views[0].id));
+      expect(container.querySelector("textarea")).toBeNull();
+    } finally { resume(); updateOld.mockRestore(); act(() => root.render(null)); previous.dispose(); next?.dispose(); }
+  });
+
+  it.each(["settings", "auxiliary"] as const)("mounts embedded %s view actions without an empty toolbar", async (region) => {
+    const host = new PluginHost({ react: React });
+    const controller = new WorkbenchController(host);
+    const execute = vi.fn();
+    await host.activateGeneration({ pluginId: "user:embedded-actions", generation: "one", register(api) {
+      api.registerViewType({ id: "embedded.view", title: "Embedded", render: () => <div>Embedded body</div> });
+    } });
+    await act(async () => root.render(<PluginViewContent controller={controller} pluginId="user:embedded-actions" viewTypeId="embedded.view" region={region} />));
+    expect(container.querySelector('[role="toolbar"]')).toBeNull();
+    let actionRegistration: { dispose(): void } | undefined;
+    await act(async () => host.activateGeneration({ pluginId: "user:embedded-actions", generation: "two", register(api) {
+      api.registerViewType({ id: "embedded.view", title: "Embedded", render: () => <div>Embedded body</div> });
+      actionRegistration = api.registerCommand({ id: "embedded.refresh", title: "Refresh embedded view", placements: ["view.title"], execute });
+    } }));
+    const action = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh embedded view"]')!;
+    expect(action).not.toBeNull();
+    await act(async () => action.click());
+    expect(execute).toHaveBeenCalledWith(expect.objectContaining({ target: "view.title", region, viewTypeId: "embedded.view", viewPluginId: "user:embedded-actions" }));
+    await act(async () => actionRegistration!.dispose());
+    expect(container.querySelector('[role="toolbar"]')).toBeNull();
+    controller.dispose();
+  });
+
+  it.each(["primary", "auxiliary"] as const)("mounts %s view-title commands with public context and replaces them on reload", async (region) => {
+    const host = new PluginHost({ react: React });
+    const firstExecute = vi.fn();
+    const secondExecute = vi.fn();
+    const register = (api: PluginGenerationApi, execute: ReturnType<typeof vi.fn>): void => {
+      api.registerViewType({ id: "actions.view", title: "Actions view", render: () => <div>View body</div> });
+      api.registerViewPlacement({ id: "actions-panel", region, view: "actions.view" });
+      api.registerCommand({
+        id: "actions.refresh", title: "Refresh plugin view", placements: ["view.title"], execute,
+        when: (context) => context.target === "view.title" && context.viewTypeId === "actions.view",
+      });
+      api.registerCommand({
+        id: "actions.other", title: "Other view action", placements: ["view.title"], execute: vi.fn(),
+        when: (context) => context.target === "view.title" && context.viewTypeId === "other.view",
+      });
+    };
+    await host.activateGeneration({ pluginId: "user:view-actions", generation: "one", register: (api) => register(api, firstExecute) });
+    await act(async () => root.render(<DesktopWorkbench host={host} inventory={[inventoryPlugin("user:view-actions")]} />));
+    const header = container.querySelector(".plugin-workbench-view-header")!;
+    const action = header.querySelector<HTMLButtonElement>('button[aria-label="Refresh plugin view"]')!;
+    expect(action).not.toBeNull();
+    expect(header.textContent).not.toContain("Other view action");
+    expect(header.querySelector('[role="tablist"]')!.compareDocumentPosition(action) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(action.compareDocumentPosition([...header.querySelectorAll("button")].at(-1)!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await act(async () => action.click());
+    expect(firstExecute).toHaveBeenCalledWith({
+      contractVersion: 1, target: "view.title", viewId: "placement:user:view-actions:actions-panel",
+      viewTypeId: "actions.view", viewPluginId: "user:view-actions", region,
+    });
+    expect(Object.isFrozen(firstExecute.mock.calls[0]?.[0])).toBe(true);
+    await act(async () => host.activateGeneration({ pluginId: "user:view-actions", generation: "two", register: (api) => register(api, secondExecute) }));
+    await act(async () => action.click());
+    expect(firstExecute).toHaveBeenCalledOnce();
+    const replacement = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh plugin view"]')!;
+    await act(async () => replacement.click());
+    expect(secondExecute).toHaveBeenCalledOnce();
+    await act(async () => host.unload("user:view-actions"));
+    expect(container.querySelector('button[aria-label="Refresh plugin view"]')).toBeNull();
+  });
+
+  it("renders default View placements and restores built-in UI after unload", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "user:product",
+      generation: "one",
+      register(api) {
+        api.registerViewType({ id: "product.view", title: "Product", render: () => <div>Plugin product view</div> });
+        api.registerViewPlacement({
+          id: "product-main",
+          region: "primary",
+          view: "product.view",
+        });
+        api.registerStatusItem({ id: "ready", label: "Plugin ready" });
+      },
+    });
+
+    await act(async () => root.render(
+      <DesktopWorkbench host={host} inventory={[inventoryPlugin("user:product")]} />,
+    ));
+    expect(container.querySelector(".conversation-pane")?.textContent).toContain("Plugin product view");
+    expect(document.body.textContent).toContain("Plugin ready");
+
+    await act(async () => host.unload("user:product"));
+    expect(container.querySelector(".conversation-pane")?.textContent).not.toContain("Plugin product view");
+    expect(document.body.textContent).not.toContain("Plugin ready");
+  });
+
+  it("drains mounted view effects before generation cleanup on unload", async () => {
+    const host = new PluginHost({ react: React });
+    const events: string[] = [];
+    function View() { React.useEffect(() => () => { events.push("view"); }, []); return <span>Owned view</span>; }
+    await host.activateGeneration({ pluginId: "owner", generation: "one", register(api) {
+      api.registerCleanup(() => events.push("generation"));
+      api.registerViewType({ id: "page", title: "Page", render: View });
+      api.registerViewPlacement({ id: "page", view: "page", region: "primary" });
+    } });
+    await act(async () => root.render(<DesktopWorkbench host={host} />));
+    expect(container.textContent).toContain("Owned view");
+    await act(async () => { host.unload("owner"); });
+    expect(events).toEqual(["view", "generation"]);
+    expect(container.textContent).not.toContain("Owned view");
+  });
+
+  it("passes the active locale and registered plugin translations to Views", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "user:localized-view",
+      generation: "one",
+      register(api) {
+        api.registerLocale({
+          id: "localized-view-zh",
+          locale: "zh-CN",
+          entries: { "localized.title": "本地化视图" },
+        });
+        api.registerViewType({
+          id: "localized.view",
+          title: "Localized",
+          render: ({ locale, translate }) => <div>{locale}:{translate("localized.title")}</div>,
+        });
+        api.registerViewPlacement({ id: "localized-main", region: "primary", view: "localized.view" });
+      },
+    });
+
+    await act(async () => root.render(
+      <DesktopWorkbench host={host} inventory={[inventoryPlugin("user:localized-view")]} />,
+    ));
+
+    expect(container.querySelector(".conversation-pane")?.textContent).toContain("zh-CN:本地化视图");
+  });
+
+  it("replaces the complete status root with a sanitized immutable snapshot and controlled actions", async () => {
+    const host = new PluginHost({ react: React });
+    const execute = vi.fn();
+    let presentedSnapshot: StatusSnapshotV1 | undefined;
+    let presentationHost: PresentationHost | undefined;
+    await host.activateGeneration({
+      pluginId: "user:status-presenter",
+      generation: "one",
+      register(api) {
+        api.registerPresenter({
+          id: "status",
+          target: "app.status",
+          render({ snapshot, host: presenterHost }) {
+            presentedSnapshot = snapshot as StatusSnapshotV1;
+            presentationHost = presenterHost;
+            return <section data-status-replacement>Wuu status</section>;
+          },
+        });
+      },
+    });
+
+    await act(async () => root.render(<DesktopWorkbench host={host} />));
+    expect(document.body.querySelector("[data-status-replacement]")?.parentElement).toBe(document.body);
+    expect(document.body.querySelector(".plugin-workbench-status")).toBeNull();
+
+    await act(async () => host.activateGeneration({
+      pluginId: "user:status-source",
+      generation: "one",
+      register(api) {
+        api.registerCommand({ id: "status.open", title: "Open", execute });
+        api.registerStatusItem({
+          id: "runtime",
+          label: "Wuu running",
+          icon: "pulse",
+          tooltip: "Private tooltip",
+          command: "status.open",
+          priority: 12,
+        });
+      },
+    }));
+
+    expect(presentedSnapshot?.contractVersion).toBe(1);
+    expect(presentedSnapshot?.items).toHaveLength(1);
+    const item = presentedSnapshot?.items[0];
+    expect(item).toEqual({
+      id: JSON.stringify(["user:status-source", "runtime"]),
+      label: "Wuu running",
+      icon: "pulse",
+      busy: false,
+      disabled: false,
+      actionId: STATUS_ACTIONS.activateItem,
+    });
+    expect(Object.isFrozen(presentedSnapshot)).toBe(true);
+    expect(Object.isFrozen(presentedSnapshot?.items)).toBe(true);
+    expect(Object.isFrozen(item)).toBe(true);
+    expect(Object.keys(item ?? {})).not.toEqual(expect.arrayContaining([
+      "pluginId", "generation", "command", "tooltip", "priority", "order",
+    ]));
+
+    await expect(presentationHost?.invoke(STATUS_ACTIONS.activateItem, { id: item?.id })).resolves.toBeUndefined();
+    expect(execute).toHaveBeenCalledOnce();
+    await expect(presentationHost?.invoke(STATUS_ACTIONS.activateItem, {})).rejects.toThrow("valid item id");
+    await expect(presentationHost?.invoke(STATUS_ACTIONS.activateItem, { id: "missing" })).rejects.toThrow("not available");
+    expect(execute).toHaveBeenCalledOnce();
+
+    await act(async () => host.unload("user:status-source"));
+    expect(presentedSnapshot?.items).toEqual([]);
+  });
+
+  it("keeps native additive status behavior through live registration, presenter failure, and unload", async () => {
+    const host = new PluginHost({ react: React });
+    const execute = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await act(async () => root.render(<DesktopWorkbench host={host} />));
+    expect(document.body.querySelector(".plugin-workbench-status")).toBeNull();
+
+    await act(async () => host.activateGeneration({
+      pluginId: "user:native-status",
+      generation: "one",
+      register(api) {
+        api.registerCommand({ id: "status.run", title: "Run", execute });
+        api.registerStatusItem({ id: "ready", label: "Wuu ready", icon: "check", tooltip: "Ready", command: "status.run" });
+        api.registerStatusItem({ id: "passive", label: "Wuu idle" });
+      },
+    }));
+    const nativeRoot = document.body.querySelector(".plugin-workbench-status");
+    expect(nativeRoot?.getAttribute("role")).toBe("status");
+    expect(nativeRoot?.textContent).toBe("Wuu idlecheckWuu ready");
+    const readyButton = [...(nativeRoot?.querySelectorAll<HTMLButtonElement>("button") ?? [])]
+      .find((button) => button.textContent === "checkWuu ready");
+    expect(readyButton?.getAttribute("aria-description")).toBe("Ready");
+    act(() => readyButton?.click());
+    expect(execute).toHaveBeenCalledOnce();
+
+    await act(async () => host.activateGeneration({
+      pluginId: "user:broken-status",
+      generation: "one",
+      register(api) {
+        api.registerPresenter({ id: "broken", target: "app.status", render: () => { throw new Error("status failed"); } });
+      },
+    }));
+    expect(document.body.querySelector(".plugin-workbench-status")?.textContent).toBe("Wuu idlecheckWuu ready");
+    expect(host.getGenerationDiagnostics("user:broken-status", "one")).toHaveLength(1);
+
+    await act(async () => host.unload("user:broken-status"));
+    expect(document.body.querySelector(".plugin-workbench-status")?.textContent).toBe("Wuu idlecheckWuu ready");
+    await act(async () => host.unload("user:native-status"));
+    expect(document.body.querySelector(".plugin-workbench-status")).toBeNull();
+    consoleError.mockRestore();
+  });
+
+  it("renders colliding layout view IDs with each plugin's own definition", async () => {
+    const host = new PluginHost({ react: React });
+    await host.activateGeneration({
+      pluginId: "user:alpha",
+      generation: "one",
+      register: (api) => registerCollidingGeneration(api, "alpha", "one"),
+    });
+    await host.activateGeneration({
+      pluginId: "user:beta",
+      generation: "one",
+      register: (api) => registerCollidingGeneration(api, "beta", "one"),
+    });
+
+    await act(async () => root.render(
+      <DesktopWorkbench
+        host={host}
+        inventory={[inventoryPlugin("user:alpha"), inventoryPlugin("user:beta")]}
+      />,
+    ));
+    expect(container.querySelector(".sidebar")?.textContent).toContain("alpha");
+    expect(container.querySelector(".conversation-pane")?.textContent).toContain("beta");
+  });
+
+  it("keeps settings, disable, and built-in UI escape actions available after a render failure", async () => {
+    const host = new PluginHost({ react: React });
+    const openSettings = vi.fn();
+    const disablePlugin = vi.fn();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await host.activateGeneration({
+      pluginId: "user:broken",
+      generation: "one",
+      register(api) {
+        api.registerViewType({
+          id: "broken.view",
+          title: "Broken",
+          render: () => { throw new Error("render failed"); },
+        });
+        api.registerViewPlacement({
+          id: "broken-main",
+          region: "primary",
+          view: "broken.view",
+        });
+      },
+    });
+
+    await act(async () => root.render(
+      <DesktopWorkbench
+        host={host}
+        inventory={[inventoryPlugin("user:broken")]}
+        services={{ openSettings, disablePlugin }}
+      />,
+    ));
+    const buttons = [...container.querySelectorAll<HTMLButtonElement>(".plugin-workbench-error button")];
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "Use default UI",
+      "Open settings",
+      "Disable plugin",
+    ]);
+    act(() => buttons[1]?.click());
+    act(() => buttons[2]?.click());
+    expect(openSettings).toHaveBeenCalledOnce();
+    expect(disablePlugin).toHaveBeenCalledWith("user:broken");
+    act(() => buttons[0]?.click());
+    expect(container.querySelector(".plugin-workbench-error")).toBeNull();
+    consoleError.mockRestore();
+  });
+
+  it("uses registered message renderers and releases them with their generation", async () => {
+    await desktopPluginHost.activateGeneration({ graphGeneration: "test-graph",
+      pluginId: "user:renderer",
+      generation: "one",
+      register(api) {
+        api.registerRenderer({
+          id: "markdown",
+          category: "message",
+          match: "text/markdown",
+          render: ({ content }) => <div>Plugin markdown: {String(content)}</div>,
+        });
+      },
+    });
+
+    const controller = new WorkbenchController(desktopPluginHost);
+    await act(async () => root.render(<ApplicationWorkbenchProvider value={controller}><RichContent text="hello" /></ApplicationWorkbenchProvider>));
+    expect(container.textContent).toContain("Plugin markdown: hello");
+
+    await act(async () => desktopPluginHost.unload("user:renderer"));
+    expect(container.textContent).not.toContain("Plugin markdown");
+    expect(container.textContent).toContain("hello");
+    controller.dispose();
+  });
+});
+
+function registerGeneration(api: PluginGenerationApi, label: string): void {
+  api.registerViewType({
+    id: "reload.view",
+    title: `Reload ${label}`,
+    persistence: "durable",
+    render: () => <div>{label}</div>,
+  });
+  api.registerRenderer({
+    id: "reload.renderer",
+    category: "document",
+    match: "text/demo",
+    render: () => <div>{label}</div>,
+  });
+  api.registerThemeTokens({
+    theme: "dark",
+    base: "dark",
+    tokens: {
+      "--wuu-color-accent": label,
+      "--wuu-font-family-ui": `${label}-ui`,
+    },
+    syntax: { "--wuu-syntax-keyword": `${label}-keyword` },
+  });
+  api.registerStatusItem({ id: "reload.status", label });
+}
+
+function registerCollidingGeneration(
+  api: PluginGenerationApi,
+  label: "alpha" | "beta",
+  generation: string,
+): void {
+  api.registerViewType({
+    id: "shared.view",
+    title: `${label} ${generation}`,
+    persistence: "durable",
+    render: () => <div>{label}</div>,
+  });
+  api.registerViewType({
+    id: `${label}.launcher`,
+    title: `${label} launcher`,
+    render: () => null,
+  });
+  if (label === "beta") {
+    api.registerViewType({
+      id: "beta.unique",
+      title: "Beta unique",
+      persistence: "durable",
+      render: () => null,
+    });
+  }
+  api.registerViewPlacement({
+    id: "default-shared",
+    region: label === "alpha" ? "navigation" : "auxiliary",
+    view: "shared.view",
+  });
+}
+
+function inventoryPlugin(id: string): ExtensionInventoryRecord {
+  return {
+    id,
+    name: id,
+    kind: "plugin",
+    provenance: { kind: "plugin", source: "user", scope: "user" },
+    state: "granted",
+    approval_state: "granted",
+    enabled: true,
+  };
+}
+
+it.each(["direct-same", "disable-enable", "changed-code"])("recovers embedded views after %s activation", async (mode) => {
+  const previousWuu = window.wuu;
+  window.wuu = { ...previousWuu, loadPluginDesktopModule: async ({ id, fingerprint }: { id: string; fingerprint: string }) => ({ id, fingerprint, digest: "a".repeat(64), url: "wuu-plugin://module/review.js"}) } as typeof window.wuu;
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  let broken = true;
+  const View = () => {
+    if (broken) throw new Error("transient render failure");
+    return <span data-recovered>Recovered</span>;
+  };
+  const register = (api: PluginGenerationApi) => { api.registerViewType({ id: "panel", title: "Panel", render: View }); };
+  const host = new PluginHost({ react: React });
+  const controller = new WorkbenchController(host);
+  const runtime = new DesktopPluginRuntime(host, async () => ({ activate: register }));
+  const plugin: ExtensionInventoryRecord = {
+    ...inventoryPlugin("user:review"),
+    runtime_state: "active",
+    fingerprint: "same",
+    desktop: { entry: "desktop.js" },
+  };
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await runtime.sync([plugin]);
+    await act(async () => root.render(<PluginViewContent controller={controller} pluginId={plugin.id} viewTypeId="panel" />));
+    expect(container.querySelector('[role="alert"]')).not.toBeNull();
+    broken = false;
+    if (mode === "direct-same") await act(async () => host.activateGeneration({ pluginId: plugin.id, generation: "same", register }));
+    if (mode === "disable-enable") {
+      await act(async () => runtime.sync([{ ...plugin, enabled: false }]));
+      await act(async () => runtime.sync([plugin]));
+    }
+    if (mode === "changed-code") await act(async () => runtime.sync([{ ...plugin, fingerprint: "new" }]));
+    expect(container.querySelector('[data-recovered]')?.textContent).toBe("Recovered");
+  } finally {
+    await act(async () => root.unmount());
+    controller.dispose();
+    container.remove();
+    log.mockRestore();
+    window.wuu = previousWuu;
+  }
+});

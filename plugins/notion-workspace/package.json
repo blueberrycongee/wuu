@@ -1,0 +1,20 @@
+{
+  "name": "@wuu/notion-workspace-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=notion-workspace",
+    "test:e2e": "node scripts/api-e2e.mjs"
+  },
+  "wuu": {
+    "dev": {
+      "watch": [
+        "../../packages/plugin-sdk/src",
+        "../../scripts/build-bundled-plugins.mjs",
+        "package/plugin.json",
+        "package/desktop.js"
+      ]
+    }
+  }
+}

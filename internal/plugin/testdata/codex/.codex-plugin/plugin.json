@@ -1,0 +1,19 @@
+{
+  "name": "codex-demo",
+  "version": "1.2.3",
+  "author": {"name": "OpenAI"},
+  "skills": "./skills",
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "read_file", "command": "codex-hook"}
+    ]
+  },
+  "mcpServers": {
+    "docs": {"command": "codex-docs", "tool_timeout_ms": 45000}
+  },
+  "requestedPermissions": ["network", "filesystem.read"],
+  "activityKinds": ["browser"],
+  "minimumWuuVersion": "0.2.0",
+  "commands": "./commands",
+  "bundledContentVariant": "backend-specific"
+}

@@ -1,0 +1,230 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/blueberrycongee/wuu/internal/process"
+	"github.com/blueberrycongee/wuu/internal/toolctx"
+)
+
+func TestSetSessionWorkspaceUpdatesSubsequentToolRoot(t *testing.T) {
+	root := t.TempDir()
+	oldRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "after.txt"), []byte("linked workspace\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var reboundRoot string
+	env := &Env{
+		RootDir:        oldRoot,
+		FileScopeRoots: []string{oldRoot},
+		OnSessionWorkspaceChanged: func(got string) error {
+			reboundRoot = got
+			return nil
+		},
+	}
+
+	result, err := NewSetSessionWorkspaceTool(env).Execute(
+		context.Background(),
+		`{"root":`+quoteJSONForTest(root)+`}`,
+	)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	want, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reboundRoot != want {
+		t.Fatalf("callback root = %q, want %q", reboundRoot, want)
+	}
+	if env.RootDir != want {
+		t.Fatalf("subsequent tool root = %q, want %q", env.RootDir, want)
+	}
+	if len(env.FileScopeRoots) != 1 || env.FileScopeRoots[0] != want {
+		t.Fatalf("file scope roots = %q, want [%q]", env.FileScopeRoots, want)
+	}
+	readResult, err := NewReadFileTool(env).Execute(context.Background(), `{"path":"after.txt"}`)
+	if err != nil {
+		t.Fatalf("read_file after workspace change: %v", err)
+	}
+	if !strings.Contains(readResult, "linked workspace") {
+		t.Fatalf("read_file result = %s", readResult)
+	}
+	if result != `{"root":`+quoteJSONForTest(want)+`}` {
+		t.Fatalf("result = %s", result)
+	}
+}
+
+// A turn binds the thread's worktree into its tool context once, at turn
+// start. An explicit rebind later in the same turn must win over that
+// snapshot, as it does for every later turn.
+func newMidTurnRebindKit(t *testing.T, checkout string) (*Toolkit, context.Context) {
+	t.Helper()
+	kit, err := New(checkout)
+	if err != nil {
+		t.Fatalf("tools.New: %v", err)
+	}
+	kit.SetOnSessionWorkspaceChanged(func(string) error { return nil })
+	return kit, toolctx.WithWorktreeBinding(context.Background(), kit.RootDir(), checkout)
+}
+
+func TestSetSessionWorkspaceMidTurnLeavesDeletedWorktree(t *testing.T) {
+	base := t.TempDir()
+	project := filepath.Join(base, "project")
+	checkout := filepath.Join(base, "worktrees", "session", "thread")
+	for _, dir := range []string{project, checkout} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kit, ctx := newMidTurnRebindKit(t, checkout)
+	if err := os.RemoveAll(checkout); err != nil {
+		t.Fatal(err)
+	}
+
+	executeToolForWorktreeTest(t, kit, ctx, "set_session_workspace", `{"root":`+quoteJSONForTest(project)+`}`)
+	executeToolForWorktreeTest(t, kit, ctx, "write_file", `{"path":"after.txt","content":"project\n"}`)
+
+	if _, err := os.Stat(filepath.Join(project, "after.txt")); err != nil {
+		t.Fatalf("write after rebind must land in the project: %v", err)
+	}
+	if _, err := os.Stat(checkout); !os.IsNotExist(err) {
+		t.Fatalf("deleted worktree must not be recreated, stat err=%v", err)
+	}
+}
+
+func TestSetSessionWorkspaceMidTurnMovesToAnotherWorktree(t *testing.T) {
+	base := t.TempDir()
+	first := filepath.Join(base, "first")
+	second := filepath.Join(base, "second")
+	for _, dir := range []string{first, second} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	kit, ctx := newMidTurnRebindKit(t, first)
+
+	executeToolForWorktreeTest(t, kit, ctx, "set_session_workspace", `{"root":`+quoteJSONForTest(second)+`}`)
+	executeToolForWorktreeTest(t, kit, ctx, "write_file", `{"path":"after.txt","content":"second\n"}`)
+
+	if _, err := os.Stat(filepath.Join(second, "after.txt")); err != nil {
+		t.Fatalf("write after rebind must land in the new worktree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(first, "after.txt")); !os.IsNotExist(err) {
+		t.Fatalf("write after rebind must not land in the old worktree, stat err=%v", err)
+	}
+}
+
+func TestSharedProcessManagerKeepsEachSessionWorkspaceAfterRebind(t *testing.T) {
+	oldRoot, newRoot := t.TempDir(), t.TempDir()
+	manager, err := process.NewManager(oldRoot, filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := manager.CleanupOwned(); err != nil {
+			t.Error(err)
+		}
+	})
+	first := &Env{RootDir: oldRoot, ProcessMgr: manager, SessionID: "first", Unconfined: true, AllowMutations: true, OnSessionWorkspaceChanged: func(string) error { return nil }}
+	second := &Env{RootDir: oldRoot, ProcessMgr: manager, SessionID: "second", Unconfined: true, AllowMutations: true}
+	if _, err := NewSetSessionWorkspaceTool(first).Execute(context.Background(), `{"root":`+quoteJSONForTest(newRoot)+`}`); err != nil {
+		t.Fatal(err)
+	}
+	for _, env := range []*Env{first, second} {
+		result, err := NewBashTool(env).Execute(context.Background(), `{"command":"pwd -P","run_in_background":true}`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var launched process.Process
+		if err := json.Unmarshal([]byte(result), &launched); err != nil {
+			t.Fatal(err)
+		}
+		zero := int64(0)
+		snapshot, err := manager.ReadOutputSnapshot(context.Background(), launched.ID, process.OutputReadOptions{OffsetBytes: &zero, Wait: 2 * time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		output := strings.TrimSpace(StripTerminalControls(snapshot.Output))
+		if !sameRuntimeFileScopePath(launched.CWD, env.RootDir) || !sameRuntimeFileScopePath(output, env.RootDir) {
+			t.Fatalf("session %q launched outside its workspace: cwd=%q output=%q want=%q", env.SessionID, launched.CWD, output, env.RootDir)
+		}
+		stored, err := manager.Get(launched.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.RootThreadID != env.SessionID {
+			t.Fatalf("process ownership = %q, want %q", stored.RootThreadID, env.SessionID)
+		}
+	}
+}
+
+func TestSetSessionWorkspaceDoesNotMoveRootWhenPersistenceFails(t *testing.T) {
+	oldRoot := t.TempDir()
+	env := &Env{
+		RootDir:        oldRoot,
+		FileScopeRoots: []string{oldRoot},
+		OnSessionWorkspaceChanged: func(string) error {
+			return errors.New("rejected")
+		},
+	}
+
+	_, err := NewSetSessionWorkspaceTool(env).Execute(
+		context.Background(),
+		`{"root":`+quoteJSONForTest(t.TempDir())+`}`,
+	)
+	if err == nil {
+		t.Fatal("Execute unexpectedly succeeded")
+	}
+	if env.RootDir != oldRoot {
+		t.Fatalf("tool root changed to %q after failure", env.RootDir)
+	}
+	if len(env.FileScopeRoots) != 1 || env.FileScopeRoots[0] != oldRoot {
+		t.Fatalf("file scope changed after failure: %q", env.FileScopeRoots)
+	}
+}
+
+func TestCloneForRootPreservesSessionWorkspaceCallback(t *testing.T) {
+	kit, err := New(t.TempDir())
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var got string
+	kit.SetOnSessionWorkspaceChanged(func(root string) error {
+		got = root
+		return nil
+	})
+	clone, err := kit.CloneForRoot(t.TempDir())
+	if err != nil {
+		t.Fatalf("CloneForRoot: %v", err)
+	}
+	if clone.env.OnSessionWorkspaceChanged == nil {
+		t.Fatal("clone dropped session workspace callback")
+	}
+	if err := clone.env.OnSessionWorkspaceChanged("linked"); err != nil {
+		t.Fatal(err)
+	}
+	if got != "linked" {
+		t.Fatalf("callback root = %q, want linked", got)
+	}
+}
+
+func quoteJSONForTest(value string) string {
+	quoted := "\""
+	for _, r := range value {
+		switch r {
+		case '\\', '"':
+			quoted += "\\" + string(r)
+		default:
+			quoted += string(r)
+		}
+	}
+	return quoted + "\""
+}

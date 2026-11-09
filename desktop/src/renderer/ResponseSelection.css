@@ -1,0 +1,60 @@
+.response-selection-toolbar { z-index: 220; }
+
+/* A sent quote sits above the message like an attachment card. */
+.response-selection-reference {
+  display: grid;
+  box-sizing: border-box;
+  min-width: 0;
+  justify-self: end;
+  width: fit-content;
+  max-width: min(472px, 100%);
+  gap: var(--space-1);
+  margin: 0 0 var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: var(--font-ui);
+  font-weight: inherit;
+  line-height: var(--line-body);
+  text-align: start;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.response-selection-reference-quote {
+  margin: 0;
+  padding: 1px 0 1px var(--space-2);
+  border-inline-start: 2px solid var(--hairline-strong);
+  color: var(--ink-soft);
+  white-space: pre-wrap;
+}
+
+.response-selection-reference-comment {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.response-selection-reference:hover {
+  border-color: var(--hairline-strong);
+}
+
+.response-selection-reference:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+::highlight(wuu-response-source),
+::highlight(wuu-response-selection) {
+  background: var(--selection-bg);
+  color: var(--ink-strong);
+}
+
+@container style(--motion-reduced: 1) {
+  .response-selection-reference {
+    transition: none;
+  }
+}

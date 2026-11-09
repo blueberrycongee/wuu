@@ -1,0 +1,454 @@
+// Sidebar hover cards in the real product renderer, driven by native mouse
+// input over a synthetic bridge (sidebar-hover-card-e2e-preload.cjs).
+// Run after building: electron scripts/sidebar-hover-card-e2e.cjs
+// Evidence (screenshots + results.json) is written to out/sidebar-hover-card-e2e-*.
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { app, BrowserWindow } = require("electron");
+
+const desktop = path.resolve(__dirname, "..");
+fs.mkdirSync(path.join(desktop, "out"), { recursive: true });
+const output = fs.mkdtempSync(path.join(desktop, "out", "sidebar-hover-card-e2e-"));
+app.setPath("userData", path.join(output, "profile"));
+process.env.WUU_HOVER_E2E_CWD = path.resolve(desktop, "..");
+const results = [];
+
+app.whenReady().then(async () => {
+  const timeout = setTimeout(() => { console.error("Sidebar hover card E2E timed out"); app.exit(1); }, 120000);
+  const win = new BrowserWindow({
+    width: 1200, height: 820, show: false,
+    webPreferences: {
+      preload: path.join(__dirname, "sidebar-hover-card-e2e-preload.cjs"),
+      contextIsolation: true, sandbox: false, backgroundThrottling: false,
+    },
+  });
+  win.webContents.on("console-message", ({ level, message }) => {
+    if (level === "error") console.error(`Renderer: ${message}`);
+  });
+  const evaluate = (fn, value) => win.webContents.executeJavaScript(`(${fn})(${JSON.stringify(value ?? null)})`);
+  const waitFor = async (fn, value, ms = 5000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      const result = await evaluate(fn, value);
+      if (result) return result;
+      await new Promise((resolve) => setTimeout(resolve, 16));
+    }
+    throw new Error(`Timed out: ${fn}`);
+  };
+  const capture = async (name) => {
+    await evaluate(async () => {
+      await Promise.all((document.querySelector(".sidebar-hover-card")?.getAnimations() ?? [])
+        .map((animation) => animation.finished.catch(() => undefined)));
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+    });
+    fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG());
+  };
+  const move = (x, y) => win.webContents.sendInputEvent({ type: "mouseMove", x: Math.round(x), y: Math.round(y) });
+  const click = async (selector) => {
+    const point = await anchorPoint(selector);
+    assert.ok(point, "Clickable control exists: " + selector);
+    move(point.x, point.y);
+    for (const type of ["mouseDown", "mouseUp"]) {
+      win.webContents.sendInputEvent({ type, x: Math.round(point.x), y: Math.round(point.y), button: "left", clickCount: 1 });
+    }
+  };
+  const key = (keyCode) => {
+    win.webContents.sendInputEvent({ type: "keyDown", keyCode });
+    if (keyCode === "Enter") win.webContents.sendInputEvent({ type: "char", keyCode: "\r" });
+    win.webContents.sendInputEvent({ type: "keyUp", keyCode });
+  };
+  const cardShown = () => {
+    const card = document.querySelector(".sidebar-hover-card");
+    return card && getComputedStyle(card).visibility === "visible";
+  };
+  const rest = async () => {
+    // Park the pointer over the conversation pane and let any card close.
+    const bounds = win.getContentBounds();
+    move(bounds.width - 40, bounds.height / 2);
+    await waitFor(() => !document.querySelector(".sidebar-hover-card"));
+    await new Promise((resolve) => setTimeout(resolve, 350)); // leave the skip-delay window
+  };
+  // Resolve an anchor to the viewport point the mouse should rest on.
+  const anchorPoint = (selector) => evaluate(async (selector) => {
+    const node = document.querySelector(selector);
+    if (!node) return null;
+    node.scrollIntoView({ block: "nearest" });
+    // Let the scroll event dispatch before the pointer arrives; it would
+    // otherwise retire the card this case is about to open.
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
+    const rect = node.getBoundingClientRect();
+    return { x: rect.left + Math.min(rect.width / 2, 120), y: rect.top + rect.height / 2 };
+  }, selector);
+  const measure = (selector) => evaluate(async (selector) => {
+    await new Promise(requestAnimationFrame);
+    const card = document.querySelector(".sidebar-hover-card");
+    // Let the entrance run out rather than finish() it: an animation
+    // finished on the main thread can still be mid-flight in the next
+    // captured frame, which records the card half transparent.
+    await Promise.all(card.getAnimations().map((a) => a.finished.catch(() => undefined)));
+    await new Promise(requestAnimationFrame);
+    const anchor = document.querySelector(selector);
+    const rect = card.getBoundingClientRect();
+    const row = anchor.getBoundingClientRect();
+    const title = card.querySelector(".sidebar-hover-card-title");
+    return {
+      card: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width },
+      row: { top: row.top, right: row.right, center: row.top + row.height / 2 },
+      sidebarRight: anchor.closest(".sidebar").getBoundingClientRect().right,
+      titleCenter: title.getBoundingClientRect().top + parseFloat(getComputedStyle(title).lineHeight) / 2,
+      viewport: { width: innerWidth, height: innerHeight },
+      horizontalOverflow: card.scrollWidth - card.clientWidth,
+      titleLines: Math.round(title.getBoundingClientRect().height / parseFloat(getComputedStyle(title).lineHeight)),
+      titleClamped: title.scrollHeight > title.clientHeight + 1,
+      status: card.querySelector(".sidebar-hover-card-status")?.dataset.tone ?? null,
+      statusText: card.querySelector(".sidebar-hover-card-status")?.textContent ?? null,
+      statusColor: card.querySelector(".sidebar-hover-card-status") &&
+        getComputedStyle(card.querySelector(".sidebar-hover-card-status")).color,
+      time: card.querySelector(".sidebar-hover-card-time")?.textContent ?? null,
+      facts: [...card.querySelectorAll(".sidebar-hover-card-fact")].map((fact) => ({
+        tone: fact.dataset.tone ?? null, text: fact.textContent,
+      })),
+      pointerEvents: getComputedStyle(card).pointerEvents,
+      interactive: card.getAttribute("role") === "dialog",
+      countSplit: [...card.querySelectorAll(".sidebar-hover-card-count")].some((node) => node.getClientRects().length > 1),
+      nativeTitle: anchor.querySelector("[title]")?.closest(".project-row")?.getAttribute("title") ?? null,
+    };
+  }, selector);
+  const assertPlacement = (label, m) => {
+    assert.ok(m.card.left >= m.sidebarRight + 8, `${label}: card clears the sidebar edge`);
+    assert.ok(m.card.left >= 0 && m.card.right <= m.viewport.width, `${label}: card fits horizontally`);
+    assert.ok(m.card.top >= 0 && m.card.bottom <= m.viewport.height, `${label}: card fits vertically`);
+    // The title's first line centers on the row unless that would push the
+    // card off the bottom.
+    const atBottom = Math.abs(m.card.bottom - (m.viewport.height - 8)) <= 1;
+    assert.ok(atBottom || Math.abs(m.titleCenter - m.row.center) <= 1, `${label}: card aligns with the row`);
+    assert.ok(m.horizontalOverflow <= 0, `${label}: nothing overflows the card`);
+    assert.equal(m.pointerEvents, m.interactive ? "auto" : "none", label + ": only session cards take the pointer");
+    assert.equal(m.countSplit, false, `${label}: a count never breaks across lines`);
+  };
+
+  try {
+    for (const [theme, size, width] of [["light", 14, 1200], ["dark", 14, 1200], ["light", 20, 1200], ["dark", 20, 900]]) {
+      const label = `${theme}-${size}-${width}`;
+      win.setContentSize(width, 820);
+      await win.loadFile(path.join(desktop, "out/renderer/index.html"));
+      await evaluate(({ theme, size }) => {
+        document.documentElement.dataset.theme = theme;
+        document.documentElement.style.setProperty("--conversation-message-font-size", `${size}px`);
+        window.dispatchEvent(new Event("wuu-content-size-change"));
+      }, { theme, size });
+      await waitFor(() => [...document.querySelectorAll(".project-row-name")].some((node) => node.textContent === "wuu"));
+      await evaluate(() => {
+        const header = [...document.querySelectorAll(".sidebar-section-header-group")]
+          .find((node) => node.querySelector(".project-row-name")?.textContent === "wuu");
+        const toggle = header.querySelector(".project-row");
+        if (toggle.getAttribute("aria-expanded") !== "true") toggle.click();
+      });
+      await waitFor(() => document.querySelectorAll(".thread-row .thread-row-title").length >= 5);
+      await evaluate(async () => {
+        while (document.querySelector(".thread-list-more")) {
+          document.querySelector(".thread-list-more").click();
+          await new Promise(requestAnimationFrame);
+        }
+      });
+      // Tag fixture rows by title so the cases below read by intent.
+      const tagged = await evaluate(() => {
+        const titles = {
+          "Review the changes in PR 499": "hover-running",
+          "Release checklist": "hover-checklist",
+          "Older conversation 10": "hover-filler-9",
+          "Older conversation 9": "hover-filler-8",
+        };
+        let count = 0;
+        for (const node of document.querySelectorAll(".project-thread-list .thread-row")) {
+          const text = node.querySelector(".thread-row-title")?.textContent ?? "";
+          const id = text.startsWith("Refactor the extension host") ? "hover-failed" : titles[text];
+          if (id) { node.dataset.e2eThread = id; count += 1; }
+        }
+        for (const node of document.querySelectorAll(".sidebar-section-header-group")) {
+          const name = node.querySelector(".project-row-name")?.textContent;
+          if (name) node.dataset.e2eHeader = name;
+        }
+        return count;
+      });
+      assert.equal(tagged, 5, `${label}: fixture rows are listed`);
+      const threadRow = (id) => `[data-e2e-thread="${id}"]`;
+      const header = (name) => `[data-e2e-header="${name}"]`;
+      await evaluate(() => {
+        window.__hoverE2EPointerOvers = [];
+        for (const type of ["pointerover", "pointerout", "pointerdown", "scroll", "blur", "focusin", "focusout"]) {
+          document.addEventListener(type, (event) => {
+            window.__hoverE2EPointerOvers.push(`${type}:${event.target?.className ?? event.target?.nodeName}`.slice(0, 60));
+          }, true);
+        }
+      });
+      await rest();
+
+      // Cold hover waits for intent; the card does not flash on a pass-through.
+      const running = await anchorPoint(threadRow("hover-running"));
+      move(running.x, running.y);
+      const hoverStarted = Date.now();
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      assert.equal(await evaluate(cardShown), null, `${label}: no card before the hover delay`);
+      await waitFor(cardShown);
+      const openDelay = Date.now() - hoverStarted;
+      const runningCard = await measure(threadRow("hover-running"));
+      assertPlacement(`${label} running`, runningCard);
+      assert.equal(runningCard.status, "running", `${label}: running row explains its spinner`);
+      assert.match(runningCard.statusText, /\d/, `${label}: running status carries its elapsed time`);
+      assert.equal(runningCard.time, null, `${label}: running elapsed time replaces last activity time`);
+      assert.ok(runningCard.facts.some((fact) => fact.text === "Codex · gpt-5.1-codex"),
+        `${label}: the session's engine and model are listed`);
+      assert.ok(runningCard.facts.some((fact) => fact.text === "wuu"), `${label}: the owning workspace is listed`);
+      results.push({ label, case: "running", openDelay, ...runningCard });
+      await capture(`${label}-running`);
+
+      // Sweeping to a neighbour switches immediately (skip delay).
+      const failed = await anchorPoint(threadRow("hover-failed"));
+      move(failed.x, failed.y);
+      const sweepStarted = Date.now();
+      await waitFor(() => document.querySelector(".sidebar-hover-card-status")?.dataset.tone === "failed", null, 2000);
+      const sweepDelay = Date.now() - sweepStarted;
+      assert.ok(sweepDelay < 250, `${label}: sweeping between rows does not repay the delay (${sweepDelay}ms)`);
+      const failedCard = await measure(threadRow("hover-failed"));
+      assertPlacement(`${label} failed`, failedCard);
+      assert.ok(failedCard.titleLines <= 3, `${label}: long titles clamp at three lines`);
+      assert.ok(failedCard.facts.some((fact) => fact.tone === null), `${label}: worktree fact is listed`);
+      results.push({ label, case: "failed-worktree-long-title", sweepDelay, ...failedCard });
+      await capture(`${label}-failed-long-title`);
+      await click(".sidebar-hover-card-title-editable");
+      await waitFor(() => document.activeElement?.matches(".sidebar-hover-card-title-input"));
+      const editingCard = await measure(threadRow("hover-failed"));
+      assertPlacement(`${label} long title editor`, editingCard);
+      assert.ok(Math.abs(editingCard.card.width - failedCard.card.width) <= 1, `${label}: editing retains card width`);
+      await capture(`${label}-long-title-editing`);
+      key("Escape");
+      await waitFor(() => !document.querySelector(".sidebar-hover-card-title-input"));
+      key("Escape");
+      await waitFor(() => !document.querySelector(".sidebar-hover-card"));
+
+
+      // Completed conversations retain the same hover and press behavior.
+      const completed = await anchorPoint(threadRow("hover-checklist"));
+      move(completed.x, completed.y);
+      await waitFor(() => document.querySelector(".sidebar-hover-card-title")?.textContent === "Release checklist", null, 2000);
+      const completedCard = await measure(threadRow("hover-checklist"));
+      assertPlacement(`${label} completed`, completedCard);
+      results.push({ label, case: "completed", ...completedCard });
+
+      // Pressing a row retires the card until the pointer leaves.
+      win.webContents.sendInputEvent({ type: "mouseDown", x: Math.round(completed.x), y: Math.round(completed.y), button: "left", clickCount: 1 });
+      await waitFor(() => !document.querySelector(".sidebar-hover-card"), null, 1000);
+      win.webContents.sendInputEvent({ type: "mouseUp", x: Math.round(completed.x), y: Math.round(completed.y), button: "left", clickCount: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      assert.equal(await evaluate(() => document.querySelector(".sidebar-hover-card")), null,
+        `${label}: a pressed row stays quiet while the pointer remains`);
+      await rest();
+
+      // Workspace headers: counts and folder; the native title hint is gone.
+      const wuu = await anchorPoint(header("wuu"));
+      move(wuu.x, wuu.y);
+      await waitFor(cardShown);
+      const workspaceCard = await measure(header("wuu"));
+      assertPlacement(`${label} workspace`, workspaceCard);
+      assert.equal(workspaceCard.nativeTitle, null, `${label}: no native title competes with the card`);
+      assert.equal(workspaceCard.facts.length, 2, `${label}: workspace card lists counts and folder`);
+      results.push({ label, case: "workspace", ...workspaceCard });
+      await capture(`${label}-workspace`);
+
+      const gone = await anchorPoint(header("old-prototype"));
+      move(gone.x, gone.y);
+      await waitFor(() => document.querySelector(".sidebar-hover-card-title")?.textContent === "old-prototype", null, 2000);
+      const missingCard = await measure(header("old-prototype"));
+      assertPlacement(`${label} missing`, missingCard);
+      assert.ok(missingCard.facts.some((fact) => fact.tone === "warning"), `${label}: a missing folder is called out`);
+      results.push({ label, case: "missing-workspace", ...missingCard });
+      await capture(`${label}-missing-workspace`);
+      await rest();
+
+      // Scrolling the sidebar retires the card; its anchor geometry moved.
+      const filler = await anchorPoint(threadRow("hover-filler-8"));
+      move(filler.x, filler.y);
+      await waitFor(cardShown);
+      const fillerCard = await measure(threadRow("hover-filler-8"));
+      assertPlacement(`${label} lower row`, fillerCard);
+      results.push({ label, case: "lower-row", ...fillerCard });
+      await capture(`${label}-lower-row`);
+      const scrollable = await evaluate(() => {
+        const list = document.querySelector(".sidebar-main");
+        if (list.scrollHeight <= list.clientHeight) return false;
+        list.scrollBy(0, list.scrollTop > 0 ? -40 : 40);
+        return true;
+      });
+      if (scrollable) await waitFor(() => !document.querySelector(".sidebar-hover-card"), null, 1000);
+      results.push({ label, case: "scroll-dismiss", scrollable });
+      await rest();
+
+      // Crossing the gap must retain the card, focus must retain a draft,
+      // blank names and cancellation must not persist, and saving must
+      // rename the hovered session without selecting it.
+      const editable = await anchorPoint(threadRow("hover-running"));
+      const selectedBeforeRename = await evaluate(() => document.querySelector('.thread-row[aria-current="page"]')?.dataset.e2eThread ?? null);
+      move(editable.x, editable.y);
+      await waitFor(cardShown);
+      const cardLeft = await evaluate(() => document.querySelector(".sidebar-hover-card").getBoundingClientRect().left);
+      const titlePoint = await anchorPoint(".sidebar-hover-card-title-editable");
+      move(titlePoint.x, titlePoint.y);
+      await capture(label + "-title-hover");
+      move(cardLeft - 4, editable.y);
+      await evaluate(async () => { await new Promise(requestAnimationFrame); });
+      await click(".sidebar-hover-card-title-editable");
+      await waitFor(() => document.activeElement?.matches(".sidebar-hover-card-title-input"));
+      await win.webContents.insertText("   ");
+      key("Enter");
+      assert.ok(await evaluate(() => document.activeElement?.matches(".sidebar-hover-card-title-input")), label + ": blank title cannot save");
+      key("Escape");
+      await waitFor(() => !document.querySelector(".sidebar-hover-card-title-input"));
+      assert.equal(await evaluate(async () => (await window.wuu.listThreads()).threads.find((t) => t.id === "hover-running").title), "Review the changes in PR 499");
+      await click(".sidebar-hover-card-title-editable");
+      await waitFor(() => document.activeElement?.matches(".sidebar-hover-card-title-input"));
+      await win.webContents.insertText("  Renamed from hover panel  ");
+      move(width - 40, 410);
+      await evaluate(async () => { await new Promise(requestAnimationFrame); });
+      assert.ok(await evaluate(cardShown), label + ": focused draft survives pointer exit");
+      await capture(label + "-rename-editing");
+      key("Enter");
+      await waitFor(() => document.querySelector('[data-e2e-thread="hover-running"] .thread-row-title')?.textContent === "Renamed from hover panel");
+      assert.equal(await evaluate(async () => (await window.wuu.listThreads()).threads.find((t) => t.id === "hover-running").title), "Renamed from hover panel");
+      await click(".sidebar-hover-card-title-editable");
+      await waitFor(() => document.activeElement?.matches(".sidebar-hover-card-title-input"));
+      await win.webContents.insertText("Discard this name");
+      key("Escape");
+      await waitFor(() => !document.querySelector(".sidebar-hover-card-title-input"));
+      assert.equal(await evaluate(async () => (await window.wuu.listThreads()).threads.find((t) => t.id === "hover-running").title), "Renamed from hover panel");
+      await capture(label + "-rename-saved");
+      assert.equal(await evaluate(() => document.querySelector('.thread-row[aria-current="page"]')?.dataset.e2eThread ?? null), selectedBeforeRename, label + ": renaming does not select the hovered session");
+      results.push({ label, case: "title-click-rename-enter-escape-blank" });
+      key("Escape");
+      await waitFor(() => !document.querySelector(".sidebar-hover-card"));
+      move(width - 40, 410);
+      // Keyboard focus opens the same card; Tab enters its action without
+      // selecting the session, and an outside press discards the draft.
+      win.webContents.focus();
+      await waitFor(() => document.hasFocus());
+      await evaluate(() => {
+        document.activeElement?.blur();
+        document.documentElement.setAttribute("data-focus-modality", "keyboard");
+        document.querySelector('[data-e2e-thread="hover-running"] .thread-row-main').focus();
+      });
+      await waitFor(cardShown);
+      key("Tab");
+      await waitFor(() => document.activeElement?.matches(".sidebar-hover-card-title-editable"));
+      key("Enter");
+      await waitFor(() => document.activeElement?.matches(".sidebar-hover-card-title-input"));
+      await win.webContents.insertText("Discard on outside press");
+      for (const type of ["mouseDown", "mouseUp"]) {
+        win.webContents.sendInputEvent({ type, x: width - 40, y: 410, button: "left", clickCount: 1 });
+      }
+      await waitFor(() => !document.querySelector(".sidebar-hover-card"));
+      assert.equal(await evaluate(async () => (await window.wuu.listThreads()).threads.find((t) => t.id === "hover-running").title), "Renamed from hover panel");
+      results.push({ label, case: "keyboard-rename-outside-dismiss" });
+      await evaluate(() => window.wuu.renameThread("hover-running", "Review the changes in PR 499"));
+
+      // A portaled session card belongs to the hover drawer, not just the row.
+      // Exercise the actual collapsed rail, including its animated geometry.
+      await rest();
+      await click('.section-sidebar-toggle');
+      move(width - 40, 410);
+      await waitFor(() => {
+        const shell = document.querySelector(".app-shell");
+        return shell.classList.contains("sidebar-collapsed") &&
+          !shell.classList.contains("sidebar-drawer-open") &&
+          !shell.classList.contains("sidebar-drawer-closing");
+      });
+      console.log(`${label}: collapsed drawer checks`);
+      const drawerOpen = () => document.querySelector(".app-shell").classList.contains("sidebar-drawer-open");
+      const openDrawerCard = async () => {
+        const zone = await anchorPoint(".sidebar-hover-zone");
+        move(zone.x, zone.y);
+        await waitFor(drawerOpen);
+        await waitFor(() => [document.querySelector(".sidebar"), document.querySelector(".sidebar-content")]
+          .every((node) => node.getAnimations().every((animation) => animation.playState !== "running")));
+        const row = await anchorPoint(threadRow("hover-running"));
+        move(row.x, row.y);
+        await waitFor(cardShown);
+        return row;
+      };
+      const drawerRow = await openDrawerCard();
+      const drawerCard = await measure(threadRow("hover-running"));
+      assertPlacement(`${label} drawer`, drawerCard);
+      // Traverse the row inset and the outer gap separately, with pauses
+      // longer than the leave grace period. Reaching the card must not race a timer.
+      for (const x of [(drawerCard.row.right + drawerCard.sidebarRight) / 2, drawerCard.card.left - 4]) {
+        move(x, drawerRow.y);
+        await new Promise((resolve) => setTimeout(resolve, 450));
+        assert.ok(await evaluate(drawerOpen), label + ": pausing on the path to the card retains the drawer");
+        assert.ok(await evaluate(cardShown), label + ": pausing on the path retains the card");
+      }
+      const drawerTitle = await anchorPoint(".sidebar-hover-card-title-editable");
+      move(drawerTitle.x, drawerTitle.y);
+      await new Promise((resolve) => setTimeout(resolve, 300)); // beyond the card's leave grace period
+      assert.ok(await evaluate(drawerOpen), label + ": hovering the card retains the drawer");
+      assert.ok(await evaluate(cardShown), label + ": the drawer's card remains reachable");
+      await capture(label + "-drawer-card-hover");
+      await click(".sidebar-hover-card-title-editable");
+      await waitFor(() => document.activeElement?.matches(".sidebar-hover-card-title-input"));
+      await win.webContents.insertText("Unsaved drawer draft");
+      move(width - 40, 410);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      assert.ok(await evaluate(drawerOpen), label + ": editing retains the parent after pointer exit");
+      assert.ok(await evaluate(cardShown), label + ": focused drawer draft survives pointer exit");
+      await capture(label + "-drawer-card-editing");
+      for (const type of ["mouseDown", "mouseUp"]) {
+        win.webContents.sendInputEvent({ type, x: width - 40, y: 410, button: "left", clickCount: 1 });
+      }
+      await waitFor(() => !document.querySelector(".sidebar-hover-card") &&
+        !document.querySelector(".app-shell").classList.contains("sidebar-drawer-open"));
+      assert.equal(await evaluate(async () => (await window.wuu.listThreads()).threads.find((t) => t.id === "hover-running").title),
+        "Review the changes in PR 499", label + ": outside dismissal discards the draft");
+      results.push({ label, case: "drawer-gap-hover-editor-outside-dismiss", ...drawerCard });
+
+      await openDrawerCard();
+      await evaluate(() => window.dispatchEvent(new Event("wuu:workbench-back")));
+      await waitFor(() => !document.querySelector(".sidebar-hover-card") &&
+        !document.querySelector(".app-shell").classList.contains("sidebar-drawer-open"));
+      await capture(label + "-drawer-forced-close");
+      results.push({ label, case: "drawer-forced-close-retires-card" });
+
+      move(width - 40, 410);
+      const exitRow = await openDrawerCard();
+      const exitCard = await measure(threadRow("hover-running"));
+      move(exitCard.card.left - 4, exitRow.y);
+      await new Promise((resolve) => setTimeout(resolve, 450));
+      assert.ok(await evaluate(cardShown), label + ": the gap itself keeps the card reachable");
+      // Abandoning the bridge does not produce a pointerleave on the row or
+      // card: both points hit the conversation. It must still retire the group.
+      move(width - 40, 410);
+      await waitFor(() => !document.querySelector(".sidebar-hover-card") &&
+        !document.querySelector(".app-shell").classList.contains("sidebar-drawer-open"));
+      results.push({ label, case: "drawer-gap-exit-retires-both" });
+      // Restore the docked preference for the next theme/size case.
+      await click('.section-sidebar-toggle');
+      await waitFor(() => !document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
+    }
+    console.log(`PASS: ${results.length} sidebar hover card cases; evidence: ${output}`);
+  } catch (error) {
+    console.error(error);
+    console.error("Diagnostics:", await evaluate(() => ({
+      pointerOvers: window.__hoverE2EPointerOvers,
+      card: document.querySelector(".sidebar-hover-card")?.outerHTML.slice(0, 300) ?? null,
+      focused: document.hasFocus(),
+      activeElement: document.activeElement?.className,
+      modality: document.documentElement.getAttribute("data-focus-modality"),
+    })).catch(() => null));
+    process.exitCode = 1;
+    await capture("failure").catch(() => undefined);
+  } finally {
+    fs.writeFileSync(path.join(output, "results.json"), JSON.stringify(results, null, 2));
+    clearTimeout(timeout);
+    app.exit(process.exitCode || 0);
+  }
+});

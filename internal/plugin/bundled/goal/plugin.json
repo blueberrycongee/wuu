@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "goal",
+  "name": "Goal",
+  "description": "Persistent session goals with automatic continuation and usage tracking.",
+  "icon": { "path": "icon.webp" },
+  "version": "0.2.0",
+  "author": {
+    "name": "Wuu"
+  },
+  "minimumWuuVersion": "0.1.0",
+  "runtime": {
+    "protocol": "wuu-plugin-v1",
+    "command": "node",
+    "args": [
+      "runtime.mjs"
+    ],
+    "timeout": 30
+  },
+  "contributes": {
+    "commands": [
+      {
+        "id": "goal",
+        "title": "Set a persistent goal",
+        "description": "Keep working toward an explicit objective across turns.",
+        "kind": "prompt_template",
+        "prompt": "./prompts/goal.md",
+        "keywords": [
+          "goal",
+          "\u76ee\u6807",
+          "\u6301\u7eed\u6267\u884c"
+        ]
+      }
+    ]
+  },
+  "interface": {
+    "family": {
+      "id": "wuu.goals",
+      "name": "Goals",
+      "description": "Set persistent goals and manage their progress."
+    },
+    "displayName": "Goal",
+    "shortDescription": "Continue toward a persistent goal.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ]
+  }
+}

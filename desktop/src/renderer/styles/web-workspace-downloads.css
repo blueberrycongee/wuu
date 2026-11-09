@@ -1,0 +1,98 @@
+.web-workspace-downloads-trigger {
+  width: auto;
+  min-width: var(--control-size-toolbar);
+  gap: var(--space-1);
+  padding-inline: var(--space-1);
+}
+
+.web-workspace-download-count {
+  color: var(--accent);
+  font-size: var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+
+.web-workspace-downloads {
+  display: flex;
+  flex-direction: column;
+  width: var(--floating-menu-available-width, 400px);
+  max-height: min(70vh, var(--floating-menu-available-height, 70vh));
+  overflow: hidden;
+  border: 1px solid var(--menu-border);
+  border-radius: var(--menu-shell-radius);
+  background: var(--menu-bg);
+  backdrop-filter: var(--surface-blur);
+  box-shadow: var(--menu-shadow);
+  color: var(--ink);
+  font-size: var(--font-ui);
+  line-height: var(--line-ui);
+  -webkit-app-region: no-drag;
+}
+
+.web-workspace-downloads-heading {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+}
+
+.web-workspace-downloads-empty {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-4);
+  color: var(--ink-soft);
+}
+
+.web-workspace-downloads-list {
+  margin: 0;
+  padding: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+}
+
+.web-workspace-download {
+  padding: var(--space-3);
+  border-top: 1px solid var(--menu-border);
+}
+
+.web-workspace-download-filename {
+  overflow-wrap: anywhere;
+}
+
+.web-workspace-download-status,
+.web-workspace-download-size,
+.web-workspace-download-error {
+  margin: var(--space-1) 0 0;
+  color: var(--ink-soft);
+  overflow-wrap: anywhere;
+}
+
+.web-workspace-download-size {
+  font-variant-numeric: tabular-nums;
+}
+
+.web-workspace-download-status[data-failed="true"],
+.web-workspace-download-error {
+  color: var(--danger);
+}
+
+.web-workspace-download-progress {
+  display: block;
+  width: 100%;
+  height: var(--space-1);
+  margin-top: var(--space-2);
+  accent-color: var(--accent);
+}
+
+.web-workspace-download-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.web-workspace-download-actions:empty {
+  display: none;
+}

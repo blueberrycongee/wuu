@@ -1,0 +1,129 @@
+# Wuu 原生手机客户端
+
+**状态：原生首版已实现，发布验收未完成。** 手机负责账号、电脑目录、会话历史、发送消息和控制电脑上的任务。Agent、模型凭据、工具和工作区执行留在电脑。
+
+iOS 使用 Swift 与 SwiftUI；Android 使用 Kotlin 与 Jetpack Compose。聊天、导航、键盘和附件操作使用原生界面，遵循同一远程协议和恢复语义。iOS 会话的 Agent 小球直接打包电脑端的 React/SVG 组件，在无网络、无原生权限桥接的小型 WebView 中显示；动画状态、形状和配饰不在手机重复实现。旧 `clients/mobile`、`clients/mobile-web`、`clients/mobile-app` 手机实现已经停止开发，保留作交互与历史参考。
+
+账号服务器保存用户明确开启同步后的对话文字副本。手机先读本地缓存，再按服务器 generation、cursor 和 revision 补齐变化；无变化的服务器历史不会重复写入磁盘缓存。电脑离线时仍可读已同步历史；发送、停止与新建会话需要在线电脑。历史读取使用账号 HTTPS API，执行控制使用现有端到端加密远程通道，不把账号服务器变成 Agent 执行器。
+
+iOS 首次打开可直接配对电脑，也可选择账号登录；账号方式保留服务器选择、GitHub、密码和恢复密钥。直接配对的电脑身份与手机密钥保存在钥匙串中，不依赖账号服务器。进入电脑后提供会话列表、工作目录选择和消息页。账号令牌与设备身份使用系统安全存储，退出或凭据被撤销时清除账号会话及历史缓存。
+
+## Personal 入口状态
+
+Personal 使用公开服务提供具名助理对话、附件、事项与来源、今天、共享记忆、通知设置；重连、通知及持久化重试继续原助理。Coding 宿主保留原 Projects 行为。服务可用性需要可信用户级宿主、当前清单指纹与明确的 `graph_generation`；缺失时明确显示不可用。未确认消息仍保留原请求身份，只能明确重试，不会自动发送。入口、离线缓存、重试和推送定位契约见[原生 Personal 客户端](../../docs/zh-cn/integrations/native-personal.md)。请使用下列工具链与真机流程验证原生构建、渲染、推送、系统听写、附件与恢复；协议测试不能替代这些检查。
+
+## 当前能力
+
+App 重启后恢复上次的电脑、工作区和会话。账号连接的恢复位置仅对原登录及仍有权限的电脑有效；iOS 直接配对的恢复位置绑定保存的电脑身份，连接时重新验证主机与手机权限。账号设置可在会话列表中打开。
+
+两端均实现 GitHub 浏览器登录、返回 App、中断恢复与取消，密码登录、注册、修改密码和恢复密钥找回。重置密码明确确认退出所有设备，并保存新恢复密钥。退出登录会请求服务器撤销此手机，再清除本机数据；离线撤销失败时提示使用其他设备移除。
+
+电脑目录会定时更新，并按当前登录保存离线入口；重启后断网仍可进入已缓存的电脑记录，联网后重新检查设备权限。会话页支持工作区选择、新建、发送、流式更新、停止、排队和暂停消息的恢复与移除，以及主机提问的选项和自由文本回答。左侧支持全文搜索、重命名、置顶、归档与恢复；归档需要确认。
+
+iOS 点击新建时仅打开本地草稿，首次发送文字或附件时才在电脑创建会话；返回列表或反复新建不会留下电脑端空会话。发送前可重命名并调整模型、推理配置和权限。草稿仅保存在本次 App 运行中。
+
+会话设置支持选择电脑上已配置的模型、推理配置和执行权限。iOS 保存模型、推理配置与执行权限（包括确认后的不受限），供同一电脑、同一引擎的新会话使用，重启后仍有效；账号偏好分别保存，已有会话保留各自的设置。修改需要电脑在线且任务空闲；不受限访问需要确认。iOS 将引擎选择统一放在「… → 会话设置」顶部：首次发送前可选择电脑上已启用且可用的引擎，已有会话显示绑定的引擎，不能更换。外部引擎的模型、推理配置和主机声明的权限选项也可在此调整；安装、登录与凭据仍在电脑上管理。
+
+在线长历史按页读取；iOS 上滑接近顶部时自动读取更早的消息，保留阅读位置和正在更新的回复。超长消息先显示预览，可明确请求完整内容；读取分块校验，超过手机内存预算时提示在电脑查看。对话可导出为文本文件，历史未全部加载时入口明确标为导出已加载文本。
+
+iOS 会话将连续工具调用收成当前动作或操作数量，点开查看完整摘要与逐项状态，直接复用桌面端的分类、摘要和小球动效；运行时可在输入栏点击停止图标。排队区固定在输入栏上方，只显示一条短预览，其余消息从列表查看。可将排队消息立即引导到当前回复，也可将未消费的引导改回排队；已进入对话的消息会从队列移除。Android 仍可展开工具参数、文字结果与错误，并预览工具结果中的图片。主机发送有大小限制的开始和完成记录，不发送工具输出增量。工具详情不进入账号服务器历史或对话文字导出；完整工具过程和扩展自定义界面可在电脑查看。
+
+iOS 的摘要规则在一个 JavaScriptCore 实例中执行，文字由 SwiftUI 排版，历史工具组不创建 WebView。读取、查看图片的结果默认收在操作详情中，展开后才加载缩略图；明确展示给用户的图片仍显示在消息流中。消息投影按更新缓存，Markdown 解析离开主线程；列表从滚动容器读取实际位置，手动上翻不被新消息拉回底部。流式 Markdown 按 100ms 的节奏合并解析，连续增量不会一直推迟显示。iOS 18 及以上使用原生文字绘制让新增内容在 300ms 内淡入，动画帧不重新解析 Markdown；iOS 17 使用新段落淡入。历史初次显示、系统减少动态效果和超过 128 KB 的普通文本不播放流式动画。当前淡入的段落在动画结束后恢复文字选择，整条消息和代码的复制入口始终可用；MarkdownUI 无法区分位置的重复同文段落直接显示，避免旧段落重复闪烁。
+
+助手消息使用原生 Markdown 排版，支持代码、列表、表格和网页链接；超过 128 KB 的单条文本使用普通文本显示。iOS 使用 [MarkdownUI 2.4.1 的本地兼容副本](ios/Vendor/swift-markdown-ui/README.md)，修复纯文本、Markdown 和 HTML 转换的 C 缓冲区泄漏；Android 使用 Markwon 4.6.2 的原生 TextView。两端的 Mermaid 代码块单独使用离线 WebView，打包与桌面相同的 Mermaid 引擎；聊天文字仍是原生视图。图表约每 500ms 合并一次流式更新，保留有效中间图，结束时立即处理最终源码；宽图、高图可内部滚动，支持查看和复制源码。图表禁止外部请求与导航，桥接仅报告高度。Agent 回复中明确以 Markdown 图片语法引用的工作区图片，通过同一加密通道读取；代码块和普通文件链接不会触发图片读取。Markdown 不自动下载外部网络图片，网页链接仅打开 HTTP/HTTPS 地址。MarkdownUI 已进入维护期；其后继 Textual 要求 iOS 18，本客户端目前支持 iOS 17。
+
+账号设置中的开源许可可离线阅读；两端安装包包含同一份依赖署名和许可文本，位于 [licenses](licenses)。更新依赖时同步核对这份清单。
+
+通知使用部署方提供的 APNs / FCM。手机按当前登录单独保存同意状态，支持开启、重新注册和关闭；关闭失败会保留关闭意图并在回到前台时重试。点击通知后重新读取当前账号的电脑目录，再进入仍有权限的电脑。通知只包含通用提醒和电脑标识，不包含对话内容。
+
+系统照片与文件选择器支持图片和 PDF；相机入口使用系统拍照界面。选择后立即显示照片草稿缩略图。图片保留相机方向并缩至最长边 1600 像素，转换为 JPEG；源图片限制为 32 MB、4000 万像素。每条消息最多 4 个附件，处理后的内容合计不超过 3 MB，文字不超过 128 KB。附件通过加密通道发给电脑，不进入账号服务器文字历史。
+
+屏幕内的消息图片自动读取最长边 384 像素的缩略图，每端最多同时读取两张、缓存 48 张。点击图片才分块读取原图并校验摘要，单个附件最多读取约 12 MB。图片在解码前检查像素上限并缩小；iOS 使用 Quick Look 查看图片和 PDF，Android 使用支持缩放的原生图片组件并交给设备上的阅读器打开 PDF。两端支持保存或分享原文件；切换会话或账号后，过期读取不会打开旧附件。
+
+iOS 与主机协商加密通道内的逐条 gzip 压缩；较大的协议消息只有在压缩后更小时才使用，小的流式增量仍直接发送。解压后每条消息最多 32 MiB，与远程主机协议上限一致；解压失败、数据不完整或超过上限会中止连接。
+
+iOS 支持读取 `present_artifact` 发布的图片快照，主机按会话、消息和内容摘要验证归属。完整附件和超长消息在首块确认后最多并发读取四块，每块不超过 128 KB；结果按偏移重组，保留大小和完整性校验。
+
+iOS 将预览解码为最长边 288 像素，按固定 96×72 点在文字气泡外排列；同一组可见图片共用换行网格，浅色图片保留细边界。加载完成不改变行高，同一图片的并发请求会合并，离屏请求可取消。
+
+iOS 长按自己的消息气泡或附件可复制、编辑、选择文本或分享；回复下方的复制和分叉按钮在本轮结束后显示。分叉可选择当前目录或基于当前提交的新 Git 工作树；返回与通知均限制近期历史大小，避免长会话一次传输完整历史。编辑确认前不会改动历史，重新发送时保留原附件并替换后续对话；会话运行、存在待发消息、只读或离线时不能提交编辑。最终回复出现后，前面的过程文字与工具调用默认折叠，点开查看详情；读取图片随操作折叠，明确展示的图片继续在消息流显示。操作说明见[手机远程访问](../../docs/zh-cn/automation/remote.md)。
+
+服务器历史与电脑实时会话合并展示。同步有明确的开启说明和关闭确认，本地缓存按服务器、账号、手机身份和电脑隔离；代际重置、删除记录、过期响应不会恢复已经清除的记录。恢复快照与后续实时通知按同一通道顺序更新界面。历史同步与执行连接分别恢复，慢历史请求不会阻塞发消息；重新连接保留已显示内容，单个会话读取失败不会主动关闭整条连接。iOS 回到前台等待快照时保留已显示的会话，顶部浮层提示正在更新，不因插入连接横幅移动内容；电脑快照到达后一次应用，断开期间的增量不会叠加到旧内容上。快照与已加载页面重叠时保留更早页面；无法确认连续时只保留快照，可重新加载更早消息，此时阅读位置仍可能变化。快照读取失败时保留旧内容并提供重新加载入口，成功前不应用实时增量。连接横幅用于连接失败，以及没有待恢复会话时的连接过程。发送超时不自动重发，避免重复执行。
+
+## 构建
+
+iOS 安装包使用仓库中已提交的小球与过程摘要资源快照，普通原生构建不要求安装 Node.js，也不要求快照跟随电脑端源码同步。需要主动采用电脑端表现层更新时，在安装好 `desktop` 依赖的仓库中运行：
+
+```sh
+node clients/native/shared-ui/build.mjs
+node clients/native/shared-ui/build.mjs --check
+```
+
+更新时一起提交 `NativeUI/mascot.html`、`NativeUI/process.js` 和 `NativeUI/sources.sha256`。`--check` 用于确认主动更新后的快照与当前源码一致，不是两端构建的前置条件。入口与边界见 [shared-ui](shared-ui/README.md)。
+
+Mermaid 资源与小球快照独立更新：运行 `node clients/native/shared-ui/build-mermaid.mjs`，再加 `--check` 验证，并提交 `NativeUI/mermaid.html`、`NativeUI/mermaid.sha256` 和 `licenses/Mermaid-Notices.txt`。两端原生构建直接打包快照。真实浏览器检查与模拟器样本命令见 [shared-ui](shared-ui/README.md)。
+
+回复操作的复制、分叉和成功勾号复用 `desktop/src/shared/iconArtwork.ts`，以 14pt 矢量图标显示，按钮中心间距为 32pt，触控区域为 32×44pt。运行 `node clients/native/shared-ui/export-icons.mjs` 导出，再用同一命令加 `--check` 验证；一起提交 `ios/App/Assets.xcassets` 中三个 `Wuu*.imageset` 目录。Xcode 直接编译已提交的 SVG，无需 Node 或 WebView。
+
+iOS App 最低 iOS 17，使用 Xcode 打开 [ios/Wuu.xcodeproj](ios/Wuu.xcodeproj)，选择 `Wuu` scheme。模拟器运行使用 Xcode 自动生成的本地临时签名，无需开发团队；真机安装需要在 Xcode 配置自己的开发团队。Swift Package 是可单独测试的通信与缓存模块，不是另一个 App。
+
+```sh
+xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \
+  -sdk iphonesimulator -derivedDataPath clients/native/ios/.build-xcode \
+  build
+```
+
+仅检查编译时可以添加 `CODE_SIGNING_ALLOWED=NO`；该未签名产物不能用于完整模拟器验收，系统钥匙串访问会失败。
+
+Android 最低 Android 9 / API 28，需要 JDK 17、Android SDK 36，配置 `JAVA_HOME` 和 `ANDROID_HOME`，或用 Android Studio 打开 [android](android)。APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。
+
+```sh
+clients/native/android/gradlew -p clients/native/android :app:assembleDebug
+adb install -r clients/native/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+iOS 可从电脑的「设置 → 手机访问」打开配对码，在手机上确认连接；也支持导入 CLI 的 `wuu://pair` 链接，以及旧 Web 配对链接中的 `#pair` 内容。网络与 Tailscale 配置见[远程连接](../../docs/zh-cn/automation/remote.md)。两端仍可在连接设置中填写电脑使用的 HTTPS 账号服务器，登录同一账号查看电脑。当前客户端依赖支持 `mobile_activity` 远程过滤和用户提问协议的 Wuu 主机版本；iOS 的分叉分页与已发布图片读取还要求主机支持 `thread/fork.history_page` 和 `thread/attachment/read` 的 `artifact` 类型，应同时更新电脑端与手机端；账号连接还需要账号历史 API。旧 `mobile_chat` 文本过滤的行为保持不变。电脑不在线时不能发送或执行任务。Android App 禁止明文 HTTP；核心 JVM 测试使用的回环 HTTP 不代表生产网络策略。
+
+### 可选推送配置
+
+默认构建不开启推送注册。账号服务器必须通过 `/v1/account/config` 的 `push_platforms` 声明对应平台，并配置自己的 APNs / FCM 发送凭据。客户端通过认证的 `/v1/account/push` 管理此手机的注册；不使用旧 Expo 推送入口。
+
+iOS 签名构建需启用 Push Notifications capability，并设置 `WUU_PUSH_ENABLED=YES`、`CODE_SIGN_ENTITLEMENTS=Config/Push.entitlements` 和 `WUU_APNS_ENVIRONMENT=development` 或 `production`。开发团队、Bundle ID、provisioning profile 必须支持该 entitlement；服务器 APNs topic 与环境必须对应。APNs 私钥只放在服务器。
+
+Android 构建可通过同名 Gradle 属性或环境变量提供 `WUU_FIREBASE_APP_ID`、`WUU_FIREBASE_API_KEY`、`WUU_FIREBASE_PROJECT_ID`、`WUU_FIREBASE_SENDER_ID`。这些值是 Firebase Android App 的公开客户端配置，不是 service-account 私钥；不需要 `google-services.json` 或 Google Services Gradle 插件。未配置时仍可构建和使用其他功能，设备没有 Google Play 服务时不能启用 FCM。SDK 自动注册和 Analytics 收集默认关闭，用户明确开启后才获取 token；当前使用 Firebase Messaging 25.0.1 的 registration-token API，与服务器契约保持一致。
+
+两端回到前台时重新获取 token 并更新服务器。Android 后台轮换的 token 在下次回到前台时上传，这段时间通知可能无法送达；不把推送当作消息同步或任务完成的权威来源。Android 构建自动打包 Google SDK 原始依赖许可，并在许可页面按段加载。
+
+## 自动验证
+
+从仓库根目录运行以下命令，可选择 `ios`、`android` 或默认的 `all`。需要安装 PostgreSQL 服务端工具；`pg_config --bindir` 用于定位，或设置 `WUU_TEST_PG_BIN`。脚本创建自己的临时数据库集群，只监听临时 Unix socket，结束时停止并删除，不连接已有数据库。
+
+```sh
+bash clients/native/verify.sh all
+```
+
+`testhost` 启动真实 Go relay、执行主机和 app-server，使用一次性身份、临时工作区和可控测试模型，不访问真实模型或用户配置。两端集成测试复用界面的发送参数，覆盖图片与 PDF 发送、排队撤回、暂停恢复、搜索归档、快照与实时更新顺序、持久化和全新连接恢复。预置的旧会话覆盖历史翻页、超长 Unicode 消息和工具结果的完整读取。核心测试还覆盖 Go 加密向量与重放拒绝、服务器地址校验、历史代际切换、版本保护、删除记录、工具完成与迟到读取的竞争，以及输入资源上限。
+
+`testaccount` 使用生产账号 HTTP handler 和 PostgreSQL，覆盖注册、修改密码、恢复密钥轮换、全部设备撤销和服务器退出，以及历史跨页同步、磁盘恢复、编辑失效、删除与延迟响应、跨账号隔离。OAuth 测试仅替代外部 GitHub 响应，实际执行服务器的浏览器 cookie、PKCE、账号绑定和设备签名验证，并覆盖取消、拒绝、恢复和重复完成。
+
+也可以分别执行 `swift test --package-path clients/native/ios` 和 Gradle 的 `:app:testDebugUnitTest`。独立运行的集成测试需要 `WUU_NATIVE_TESTHOST`、`WUU_NATIVE_TESTACCOUNT` 可执行文件路径和临时数据库；缺少环境会明确跳过对应集成测试，完整验收请使用上述脚本。
+
+`testaccount -live` 可启动供模拟器登录的隔离账号与主机，但默认独立执行模式的任务由手机 app-server 连接持有，不能据此验收桌面任务的后台持续运行。验证桌面生命周期时，先启动仓库的 `desktop/test-fixtures/sharedRemoteHost.ts` 共享服务池，再使用 `testaccount -live -desktop`，显式传入其 `WUU_DESKTOP_APP_SERVER_ADDR`、`WUU_DESKTOP_APP_SERVER_TOKEN` 和临时 `WUU_TEST_WORKSPACE`。模型仍可使用本地受控服务；服务池、远程桥接、执行、持久化和原生 UI 使用产品代码。未指定 `-desktop` 时忽略环境中的桌面端点，避免测试连接到日常桌面。
+
+模拟器上的整段登录/发送/前后台流程会跟着界面一起变，不适合作为日常门禁。CI 只跑核心集成、未签名 Release 构建和 Android lint。
+
+iOS Debug 构建可通过 `xcrun simctl launch booted ai.wuu.native --native-ui-fixture` 打开本地长会话样本：80 轮消息、Markdown、图片网格、纯图片消息和工具图片，不读取账号或连接电脑。检查正常与辅助功能大字号、明暗主题、快速滚动、图片预览，以及会话上翻后点击“末尾追加”，或依次点击“模拟重连”“应用快照”，是否保留阅读位置。点击“流式动画”可检查每 20ms 到达的连续增量、Markdown 换行、Unicode、代码和表格；再次点击“停止”可检查中断后的正文。启动时同时传入 `--native-stream-fixture` 可自动播放，便于使用 `simctl io <device> recordVideo` 录制相同场景。正常启动恢复原入口；Release 不包含这些验收入口。样本只验证渲染，不替代真实协议集成或真机性能测试。
+
+同时传入 `--native-composer-fixture` 可在同一份本地数据上打开实际会话页面及输入框；再加 `--native-empty-fixture` 可检查空会话。传入 `--native-refresh-fixture` 可停留在刷新状态，与 `--native-empty-fixture` 组合可复现尚未收到消息的首次加载，用于检查加载提示在明暗主题、大字号及不同屏幕宽度下是否居中、完整显示。检查输入框左侧与上下留白是否一次点击就弹出键盘、多行输入与长按选字，以及点击消息区域收起键盘后重新聚焦。此入口不连接电脑，发送与其他远程操作不在此样本的验收范围内。
+
+同时传入 `--native-composer-fixture --native-pending-fixture --native-stream-fixture` 可检查待处理消息菜单：本地回复每 50ms 追加文字，持续一分钟。长按输入栏上方的排队消息或“查看全部”中的消息，检查复制后菜单关闭且剪贴板包含完整原文，以及引导、改为排队、移除能够触发操作。此样本不连接电脑，远程操作会显示状态校验错误；实际队列变更由协议集成验证。去掉 `--native-stream-fixture` 可对照静止状态。
+
+## 验收边界
+
+自动验证与模拟器视觉检查分别记录，不将编译或协议测试视为真机验收。发布前需要使用本次代码重新运行完整验证，并检查真机滚动帧率、键盘、VoiceOver/TalkBack、主题和屏幕尺寸。iOS 会话小球的 WebView 首次加载与内存表现也需覆盖真机。
+
+发布前仍需验证部署的 HTTPS、真实 GitHub OAuth 配置和系统浏览器返回，再做 iPhone 和 Android 真机交互测试。推送注册、轮换、关闭与撤销已通过本地账号服务测试；APNs / FCM 实际送达、点击和系统权限需要配置签名及服务凭据后联调。商店图标、截图、隐私政策与发布签名尚未准备。手机后台会断开执行通道，回到前台重新连接并恢复，不承诺后台常驻连接。
+
+iOS 安装包声明本机偏好设置，以及缓存和用户选择文件的元数据访问理由；商店的数据收集声明仍需按实际服务器部署填写。Android 明确排除云备份和换机数据迁移，避免把设备身份、推送同意和历史缓存复制到另一部手机。
+
+Native mobile 工作流在相关 PR 与 `main` 推送上自动验证 iOS 核心集成和模拟器／真机目标构建，手动触发时还验证 Android 核心集成、Release 构建和 lint。发布签名、商店分发和分支保护仍需单独配置。临时 PostgreSQL 不连接已有数据库，也不需要账号或模型密钥。旧手机实现停止开发的标记不会删除原有代码，也不表示已有新的商店版本。CI 政策见[开发指南](../../docs/zh-cn/project/development.md#ci-覆盖范围)。

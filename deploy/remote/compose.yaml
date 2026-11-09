@@ -1,0 +1,65 @@
+services:
+  postgres:
+    image: postgres:18-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wuu
+      POSTGRES_USER: wuu
+      POSTGRES_PASSWORD: ${WUU_POSTGRES_PASSWORD:?Set WUU_POSTGRES_PASSWORD}
+    volumes:
+      - postgres:/var/lib/postgresql
+    networks: [remote]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wuu -d wuu"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+  accounts:
+    build:
+      context: ../..
+      dockerfile: deploy/remote/Dockerfile
+    environment:
+      WUU_ACCOUNT_PUBLIC_URL: https://${WUU_DOMAIN:?Set WUU_DOMAIN to your server domain}
+      WUU_GITHUB_CLIENT_ID: ${WUU_GITHUB_CLIENT_ID:-}
+      WUU_GITHUB_CLIENT_SECRET: ${WUU_GITHUB_CLIENT_SECRET:-}
+      WUU_DATABASE_URL: postgres://wuu:${WUU_POSTGRES_PASSWORD:?Set WUU_POSTGRES_PASSWORD}@postgres:5432/wuu?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["--registration", "--trusted-proxies", "172.30.87.2/32"]
+    restart: unless-stopped
+    volumes:
+      - accounts:/data
+    networks: [remote]
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "http://127.0.0.1:8787/readyz"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+  proxy:
+    image: caddy:2.10.2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      WUU_DOMAIN: ${WUU_DOMAIN:?Set WUU_DOMAIN to your server domain}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - certificates:/data
+      - proxy_config:/config
+    networks:
+      remote:
+        ipv4_address: 172.30.87.2
+    depends_on:
+      accounts:
+        condition: service_healthy
+volumes:
+  postgres:
+  accounts:
+  certificates:
+  proxy_config:
+networks:
+  remote:
+    ipam:
+      config:
+        - subnet: 172.30.87.0/24

@@ -1,0 +1,10 @@
+OpenAI Codex
+Copyright 2025 OpenAI
+
+The general main-agent instructions in system_main.md are adapted from
+OpenAI Codex (https://github.com/openai/codex), licensed under Apache-2.0.
+See LICENSE-Codex.
+
+Wuu modifications adapt identity, scope and authorization, file references,
+tool names and conversation behavior. Product-specific capabilities and
+automatic compaction assumptions are omitted.

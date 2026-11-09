@@ -1,0 +1,10 @@
+.personal-genui { min-width: 0; color: var(--ink); line-height: 1.6; }
+.personal-genui h3 { margin: 0 0 var(--space-4); font-size: 1.15em; font-weight: 600; }
+.personal-genui p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.personal-genui .plugin-ui-row { flex-wrap: wrap; align-items: end; }
+.personal-genui .plugin-ui-row > .plugin-ui-field,
+.personal-genui .plugin-ui-row > .plugin-ui-card { flex: 1 1 200px; min-width: 0; }
+.personal-genui .plugin-ui-input { max-width: 100%; }
+.personal-genui input[type="range"] { padding-inline: 0; accent-color: var(--ink); }
+.personal-genui-feedback { min-height: 1.6em; margin-top: var(--space-3); color: var(--ink-secondary); }
+.personal-genui [role="alert"] { color: var(--danger); margin-block: var(--space-3); }

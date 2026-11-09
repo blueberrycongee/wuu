@@ -1,0 +1,122 @@
+name: Native mobile
+
+on:
+  pull_request:
+    paths:
+      - "clients/native/ios/**"
+      - "clients/native/shared-ui/**"
+      - "clients/native/testhost/**"
+      - "clients/native/testaccount/**"
+      - "clients/native/testsupport/**"
+      - "clients/native/*.sh"
+      - "internal/remote/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/native-mobile.yml"
+  push:
+    branches: [main]
+    paths:
+      - "clients/native/ios/**"
+      - "clients/native/shared-ui/**"
+      - "clients/native/testhost/**"
+      - "clients/native/testaccount/**"
+      - "clients/native/testsupport/**"
+      - "clients/native/*.sh"
+      - "internal/remote/**"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/native-mobile.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-mobile-${{ github.ref }}-${{ github.event_name == 'pull_request' && 'pr' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  ios:
+    name: iOS / ${{ matrix.suite }}
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [core, simulator, device]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        if: matrix.suite == 'core'
+        with:
+          go-version-file: go.mod
+      - name: PostgreSQL tools
+        if: matrix.suite == 'core'
+        run: |
+          brew install postgresql@18
+          echo "WUU_TEST_PG_BIN=$(brew --prefix postgresql@18)/bin" >> "$GITHUB_ENV"
+      - name: Core and real-server integration
+        if: matrix.suite == 'core'
+        run: bash clients/native/verify.sh ios-core | tee native-ios-core.log
+      - name: Unsigned iOS simulator build
+        if: matrix.suite == 'simulator'
+        run: |
+          xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \
+            -sdk iphonesimulator -derivedDataPath clients/native/ios/.build-xcode \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee native-ios-simulator.log
+      - name: Unsigned iOS device Release build
+        if: matrix.suite == 'device'
+        run: |
+          xcodebuild -project clients/native/ios/Wuu.xcodeproj -scheme Wuu \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath clients/native/ios/.build-xcode CODE_SIGNING_ALLOWED=NO build \
+            2>&1 | tee native-ios-release.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-ios-${{ matrix.suite }}-results
+          retention-days: 7
+          include-hidden-files: true
+          path: |
+            native-ios-*.log
+
+  android:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: PostgreSQL tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql
+          echo "WUU_TEST_PG_BIN=$(pg_config --bindir)" >> "$GITHUB_ENV"
+      - name: Core, real-server integration and APK build
+        run: bash clients/native/verify.sh android | tee native-android-core.log
+      - name: Unsigned Android Release and lint
+        run: |
+          clients/native/android/gradlew -p clients/native/android \
+            :app:assembleRelease :app:bundleRelease :app:lintRelease 2>&1 | tee native-android-release.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-android-results
+          retention-days: 7
+          path: |
+            native-android-*.log
+            clients/native/android/app/build/reports/lint-results-release.*
+            clients/native/android/app/build/reports/tests

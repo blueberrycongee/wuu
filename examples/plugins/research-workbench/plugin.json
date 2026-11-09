@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "id": "research-workbench",
+  "name": "Research workbench",
+  "version": "1.0.0",
+  "desktop": {
+    "entry": "dist/shell.js",
+    "services": [
+      {
+        "name": "ui.shell",
+        "version": "1.0.0",
+        "methods": [
+          {
+            "name": "describe",
+            "input_schema": "ui.shell.describe.input.v1",
+            "output_schema": "ui.shell.describe.output.v1"
+          }
+        ]
+      }
+    ],
+    "required_services": [
+      {
+        "name": "ui.application",
+        "major_version": 1,
+        "required": true
+      }
+    ]
+  }
+}

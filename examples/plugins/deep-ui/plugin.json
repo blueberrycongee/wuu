@@ -1,0 +1,41 @@
+{
+  "schemaVersion": 1,
+  "id": "deep-ui-example",
+  "name": "Deep UI Example",
+  "version": "1.0.0",
+  "description": "Demonstrates declarative themes and a replaceable conversation item surface.",
+  "desktop": {
+    "entry": "desktop.js"
+  },
+  "contributes": {
+    "themes": [
+      {
+        "id": "violet-night",
+        "name": "Violet Night",
+        "base": "dark",
+        "tokens": {
+          "--wuu-color-canvas": "#15131d",
+          "--wuu-color-surface": "#1b1824",
+          "--wuu-color-surface-muted": "#201c2a",
+          "--wuu-color-surface-elevated": "#292337",
+          "--wuu-color-text": "#f5f1ff",
+          "--wuu-color-text-muted": "#afa7c2",
+          "--wuu-color-border-subtle": "#332d42",
+          "--wuu-color-accent": "#9b7cff",
+          "--wuu-color-accent-pressed": "#8664f5",
+          "--wuu-radius-inner": "4px",
+          "--wuu-radius-control": "8px",
+          "--wuu-radius-panel": "12px",
+          "--wuu-radius-overlay": "16px"
+        },
+        "syntax": {
+          "--wuu-syntax-keyword": "#ff79c6",
+          "--wuu-syntax-function": "#8be9fd",
+          "--wuu-syntax-string": "#f1fa8c",
+          "--wuu-syntax-number": "#bd93f9",
+          "--wuu-syntax-comment": "#777188"
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+        <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f0eee6" />
+    <title>换一个窗口，接着把事做完 — Wuu</title>
+    <meta
+      name="description"
+      content="从传统压缩，到一份提前准备的交接文档：Wuu 的 Note Compaction。"
+    />
+    <link rel="icon" href="assets/brand/wuu.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css?v=note-diagrams-2" />
+    <script type="module" src="mascot-motion.mjs"></script>
+    <script type="module" src="site-nav.mjs"></script>
+  </head>
+  <body class="zh-page">
+    <a class="skip" href="#main">跳到正文</a>
+    <div class="site-header-shell">
+      <header class="site-header wrap">
+        <a class="wordmark" href="zh.html" aria-label="Wuu 中文首页"
+          ><img
+            src="assets/brand/wuu.svg"
+            width="36"
+            height="36"
+            alt=""
+          />wuu</a
+        >
+        <nav aria-label="主导航">
+          <a
+            class="language-switch"
+            href="note-compaction.html"
+            lang="en"
+            hreflang="en"
+            aria-label="Switch this page to English"
+            >EN</a
+          >
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="product"
+          >
+            <summary>产品</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">Wuu</span>
+                  <p>在自己的项目里，和 AI 一起把想法做出来。</p>
+                </div>
+                <div class="nav-destinations">
+                  <a class="nav-featured" href="zh-features.html"
+                    >认识 Wuu <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="blog">
+            <summary>博客</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a class="nav-featured" href="zh-blog.html"
+                    >博客 <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a href="zh-context-projection.html">第一次读取，需要多少信息</a
+                  ><a href="zh-note-compaction.html"
+                    >换一个窗口，接着把事做完</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="docs">
+            <summary>文档</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a
+                    class="nav-featured"
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/"
+                    >文档 <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/getting-started/first-task/"
+                    >开始第一个任务</a
+                  ><a
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/getting-started/model-services/"
+                    >连接模型服务</a
+                  ><a
+                    href="https://blueberrycongee.github.io/wuu/zh-cn/customize/"
+                    >扩展 Wuu</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="download"
+          >
+            <summary class="button">下载</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">桌面应用</span>
+                  <p>Wuu for Mac</p>
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    class="nav-featured"
+                    href="https://github.com/blueberrycongee/wuu/releases/latest"
+                    >下载 Mac 版 <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+        </nav>
+      </header>
+      <div class="nav-backdrop" aria-hidden="true"></div>
+    </div>
+    <main id="main" class="wrap">
+      <article class="editorial">
+        <a class="text-link" href="zh-blog.html">← 博客</a>
+        <h1>换一个窗口，接着把事做完</h1>
+        <p class="article-lead">
+          从传统压缩，到一份提前准备的交接文档：Wuu 的 Note Compaction。
+        </p>
+        <img
+          class="article-image"
+          src="assets/brand/meadow.webp"
+          width="1086"
+          height="477"
+          alt="山脚下的草地"
+        />
+        <div class="article-body">
+
+<p>在使用 Agent 做长任务的时候，我们往往会让模型写一份交接文档，并将这份交接文档复制到一个新的会话窗口中，作为新的上下文，让模型开始新的工作。</p>
+<p>在 Wuu 里实现上下文压缩时，我们想起了这个习惯，开始尝试把写交接文档放进默认的压缩流程。</p>
+<h2>原来的压缩怎样工作</h2>
+<p>先看传统的做法。一次模型请求里，开头是 system prompt、工具 schema 等固定内容，后面是不断积累的对话和工具结果。当对话接近窗口上限时，harness 会保留开头的固定内容和最近几轮对话，把更早的历史交给模型，生成一份摘要，再拼成新的上下文：</p>
+<figure class="note-diagram">
+  <a href="assets/blog/note-traditional-zh.png" target="_blank" rel="noopener" aria-label="查看大图">
+    <img src="assets/blog/note-traditional-zh.png" width="1536" height="1024" loading="lazy" decoding="async" alt="压缩前后对比：系统与工具定义和最近几轮对话保留，更早的对话变成摘要，腾出上下文空间。" />
+  </a>
+  <figcaption>更早的对话压成摘要，保留开头的固定内容和最近几轮对话</figcaption>
+</figure>
+<p>这样，手头正在做的事还能保留细节，更早的内容则由摘要代替，为任务腾出空间。</p>
+<p>harness 负责监测上下文的余量，在预设的时机触发压缩，为下一次请求腾出空间。模型可以继续专注于当前任务。</p>
+<h2>让模型参与决定交接时机</h2>
+<p>harness 根据剩余容量决定压缩时机。任务本身也有适合交接的节点：排查完一个问题，或验证完一组改动。识别这些节点，需要了解正在进行的工作。</p>
+<p>模型在做任务时，清楚这些进展。随着能力增强，它也应该能判断什么时候适合停下来、整理工作，再进入新的窗口。我们希望上下文管理能跟上模型能力的成长。</p>
+<p>手动写交接文档的习惯给了我们启发。让模型留下目标、关键决策和下一步，比等到窗口快满时才打断任务，更接近一次正常的工作交接。</p>
+<h2>BYOK 带来的现实问题</h2>
+<p>实现过程中，BYOK 带来了差异。Wuu 由用户自己接入模型，各个模型的能力和训练数据都不同。有些模型能主动写交接文档、自己选择合适的时机开启新窗口，有些则需要 harness 提醒和触发。</p>
+<p>为了让这些模型都能完成交接，我们保留 harness 对时机的控制，同时把生成交接文档的工作提前。</p>
+<h2>把串行等待挪到后台</h2>
+<p>原来的流程是，工作进行到压缩点，先停下来，等摘要写完，再继续。我们把写摘要的工作提前，主会话还在工作时，后台就开始准备。</p>
+<p>我们复用当前会话的历史，在后台分支里生成交接文档。上下文积累到一定量，就把已经发生的部分内容整理进去；主会话继续往下走，后台则结合已有文档和新增内容持续更新。</p>
+<p>到了需要压缩的时候，把已经准备好的交接文档和它还没涵盖的新对话拼起来：</p>
+<p><code>system prompt + tool schema + note + 还没涵盖的新对话</code></p>
+<p>交接文档已经完成时，原来卡在压缩点的那段串行等待就省掉了。写摘要与主任务同时进行，端到端延迟也随之下降。压缩点要做的是接上已有的文档，让工作继续。</p>
+<figure class="note-diagram">
+  <a href="assets/blog/note-timing-zh.png" target="_blank" rel="noopener" aria-label="查看大图">
+    <img src="assets/blog/note-timing-zh.png" width="1536" height="1024" loading="lazy" decoding="async" alt="时间线对比：传统流程在工作和继续之间等待摘要；Note Compaction 在主任务进行时于后台写交接文档，文档就绪后直接继续。" />
+  </a>
+  <figcaption>提前准备交接文档，让写摘要与主任务同时进行</figcaption>
+</figure>
+<p>后台写交接文档的时候，主会话还在继续推进。这部分新内容会和文档一起完整地带进新窗口。如果文档还没准备好，或拼起来的内容仍然放不下，就回到原来的压缩流程。</p>
+<h2>交接以后，还能看原始内容</h2>
+<p>写交接文档时，很难提前知道下一阶段会用到哪一个细节。现在看起来不重要的一次失败，之后可能变成线索。</p>
+<p>因此，Wuu 保留原始会话记录，并让交接文档带上重要内容的历史引用。进入新窗口后，模型可以顺着引用去查，也可以搜索旧对话。文档负责让它接上工作，需要细节时再回到原始记录里看。</p>
+<figure class="note-diagram">
+  <a href="assets/blog/note-assembly-zh.png" target="_blank" rel="noopener" aria-label="查看大图">
+    <img src="assets/blog/note-assembly-zh.png" width="1536" height="1024" loading="lazy" decoding="async" alt="新窗口由系统与工具定义、已准备好的 note 和还没涵盖的新对话组成。原始历史保留，用于提前生成交接文档，需要时还可以回去查看。" />
+  </a>
+  <figcaption>新窗口接上交接文档，需要细节时再回看原始历史</figcaption>
+</figure>
+<p>这也让后续的演进更自然。当模型更善于管理自己的上下文时，维护文档、判断交接时机这些工作可以更多地交给它。原始记录的保存、读取和窗口切换仍然提供支持，交接方式可以跟着模型的能力一起演进。</p>
+
+          <a class="article-next" href="zh-context-projection.html"
+            >继续阅读<strong>第一次读取，需要多少信息 ↗</strong></a
+          >
+        </div>
+      </article>
+    </main>
+    <footer class="site-footer wrap">
+      <a class="wordmark" href="zh.html"
+        ><img src="assets/brand/wuu.svg" width="32" height="32" alt="" />wuu</a
+      >
+      <nav aria-label="页脚">
+        <a href="zh-features.html">产品</a><a href="zh-blog.html">博客</a
+        ><a href="https://github.com/blueberrycongee/wuu">GitHub ↗</a>
+      </nav>
+    </footer>
+  </body>
+</html>

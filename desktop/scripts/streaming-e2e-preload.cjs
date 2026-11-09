@@ -1,0 +1,284 @@
+const withDefaultShell = require("./default-shell-e2e.cjs");
+const { contextBridge, ipcRenderer } = require("electron");
+
+const cwd = process.env.WUU_STREAM_E2E_CWD || process.cwd();
+const project = {
+  id: process.env.WUU_WORKSPACE_NEW_TAB_E2E ? "tabbar-demo" : "e2e-workspace",
+  name: process.env.WUU_WORKSPACE_NEW_TAB_E2E ? "Tabbar demo" : "E2E workspace",
+  path: cwd,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+const runtimeContext = { kind: "project", project_id: project.id, cwd };
+let startedThreadCount = 0;
+let workspacePreviewReadFailed = false;
+const threads = new Map();
+const heldMessages = new Map();
+
+function projectList() {
+  return {
+    projects: [project],
+    active_context: runtimeContext
+  };
+}
+
+function mockThread(id, source) {
+  const now = new Date().toISOString();
+  return {
+    id,
+    preview: "",
+    model_provider: "e2e",
+    model: "mock-stream",
+    ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { model_variant: "medium" } : {}),
+    cwd,
+    workspace_id: project.id,
+    workspace_kind: "project",
+    status: "idle",
+    ...(source ? { source } : {}),
+    created_at: now,
+    updated_at: now,
+    turns: []
+  };
+}
+
+// Opt-in sidebar overflow for the scroll-fade regression using the same bridge.
+const sidebarSeedTime = Date.now();
+const sidebarSeedCount = new URLSearchParams(location.search).has("emptyRecent")
+  ? 0 : Number(process.env.WUU_STREAM_E2E_SIDEBAR_THREADS || 0);
+for (let index = 0; index < sidebarSeedCount; index++) {
+  const thread = mockThread(`sidebar-fade-${index}`);
+  thread.preview = `Conversation ${String(index + 1).padStart(2, "0")}: scroll boundary regression`;
+  thread.created_at = thread.updated_at = new Date(sidebarSeedTime - index * 1000).toISOString();
+  threads.set(thread.id, thread);
+}
+
+// Only the workspace-tab scenario enables these sanitized in-memory resources.
+const workspaceDemoFiles = {
+  "README.md": "# Tabbar demo\n\nA small workspace for navigation and reading checks.\n",
+  "src/a-long-workspace-file-name-for-checking-new-page-truncation.md": [
+    "# Workspace navigation notes", "",
+    "Keep the current document close while moving between conversations and files.", "",
+    "## Reading and navigation", "",
+    "- Select a file from the workspace tree.",
+    "- Keep several resources open without losing your place.",
+    "- Use the tab title to return to a document after checking another view.", "",
+    "## Keyboard access", "",
+    "Arrow keys move between tabs. Home and End jump to the first and last resource.", "",
+    "Long names stay available in the tab tooltip. Close controls keep their own space.", "",
+  ].join("\n"),
+  "src/navigation.ts": "export const destinations = ['conversations', 'files'];\n",
+  "docs/review-notes.md": "# Review notes\n\nCheck readable labels, stable close targets, and retained document state.\n",
+};
+function workspaceDemoPath(path) {
+  const normalized = path.replace(/\\/g, "/");
+  return normalized === cwd ? "" : normalized.startsWith(cwd + "/") ? normalized.slice(cwd.length + 1) : normalized;
+}
+
+async function catalogThreads() {
+  if (process.env.WUU_RECENT_CATALOG_E2E) {
+    const catalog = await ipcRenderer.invoke("test:recent-catalog");
+    if (catalog) { threads.clear(); for (const thread of catalog) threads.set(thread.id, thread); }
+  }
+  return [...threads.values()];
+}
+
+contextBridge.exposeInMainWorld("wuu", withDefaultShell({
+  acquireArtifactSource: input => ipcRenderer.invoke("test:artifact-acquire",input),
+  releaseArtifactSource: id => ipcRenderer.invoke("test:artifact-release",id),
+  initialLanguagePreference: process.env.WUU_STREAM_E2E_LOCALE,
+  listProjects: async () => projectList(),
+  createBlankProject: async () => projectList(),
+  chooseProjectFolder: async () => projectList(),
+  selectProject: async () => projectList(),
+  selectNoProject: async () => projectList(),
+  gitStatus: async () => ({
+    is_repo: true,
+    branch: "streaming-e2e",
+    branches: ["streaming-e2e"],
+    dirty_count: 0
+  }),
+  checkoutGitBranch: async (branch) => ({
+    is_repo: true,
+    branch,
+    branches: [branch],
+    dirty_count: 0
+  }),
+  listWorkspaceFiles: async () => ({
+    root: cwd,
+    paths: [],
+    truncated: false
+  }),
+  listWorkspaceDirectory: async (path = "") => ({
+    root: cwd,
+    path: path.replace(/\\/g, "/").replace(/^\/+/, "").replace(/\/+$/, ""),
+    entries: [],
+    truncated: false
+  }),
+  readWorkspaceFile: async (path) => ({
+    root: cwd,
+    path,
+    absolute_path: path,
+    size_bytes: 0,
+    binary: false,
+    truncated: false,
+    text: ""
+  }),
+  initialize: async () => ({
+    protocol_version: "e2e",
+    ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { extension_inventory: [{
+      id: "user:workspace-e2e", name: "Workspace E2E", kind: "plugin",
+      provenance: { kind: "plugin", source: "user", scope: "user" },
+      state: "granted", approval_state: "granted", enabled: true, fingerprint: "workspace-e2e",
+      graph_generation: "default-shell-e2e-graph",
+      desktop: { entry: "desktop.js" },
+      contributions: { workspace_tools: [{
+        id: "notes", view: "notes", title: "Workspace notes with a long descriptive title",
+        description: "An installed extension exposed through the public workspace tool contract.",
+      }] },
+    }] } : {}),
+    provider: "e2e",
+    model: "mock-stream",
+    workspace_root: cwd,
+    ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { variant: "medium" } : {}),
+    providers: [{ name: "e2e", type: "mock", model: "mock-stream", connection_locked: true, api_key_configured: true,
+      auto_discovered: process.env.WUU_STREAM_E2E_DISCOVERED_PROVIDER === "1",
+      ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? { models: [{ id: "mock-stream", display_name: "Workspace preview model",
+        supported_efforts: ["low", "medium", "high"], capabilities: { context_window: 128000 } }] } : {}),
+    }]
+  }),
+  updateRuntimeSettings: async (provider, model) => ({
+    provider,
+    model,
+    providers: [{ name: provider, type: "mock", model, connection_locked: true, api_key_configured: true }]
+  }),
+  ...(process.env.WUU_WORKSPACE_NEW_TAB_E2E ? {
+    listGitChanges: async () => ({ is_repo: true, root: cwd,
+      files: [{ path: "src/review-example.ts", status: "modified", additions: 20, deletions: 20 }] }),
+    readGitFileDiff: async (path) => ({ is_repo: true, path, status: "modified",
+      additions: 20, deletions: 20, patch: "", truncated: false,
+      original_text: "const value = 'before';\n".repeat(20),
+      modified_text: "const value = 'after';\n".repeat(20) }),
+    listWorkspaceFiles: async () => ({ root: cwd, paths: Object.keys(workspaceDemoFiles), truncated: false }),
+    listWorkspaceDirectory: async (path = "") => {
+      const relative = workspaceDemoPath(path).replace(/\/$/, "");
+      const prefix = relative ? relative + "/" : "";
+      const entries = new Map();
+      for (const file of Object.keys(workspaceDemoFiles)) {
+        if (!file.startsWith(prefix)) continue;
+        const rest = file.slice(prefix.length);
+        const name = rest.split("/")[0];
+        const kind = rest.includes("/") ? "directory" : "file";
+        entries.set(name, { kind, name, path: prefix + name + (kind === "directory" ? "/" : "") });
+      }
+      return { root: cwd, path: relative, entries: [...entries.values()], truncated: false };
+    },
+    readWorkspaceFile: async (path) => {
+      const relative = workspaceDemoPath(path);
+      if (relative === process.env.WUU_WORKSPACE_FILE_RETRY_E2E && !workspacePreviewReadFailed) {
+        workspacePreviewReadFailed = true;
+        throw new Error("File temporarily unavailable");
+      }
+      const text = workspaceDemoFiles[relative];
+      if (text === undefined) throw new Error("Unknown demo file: " + relative);
+      return { root: cwd, path: relative, absolute_path: cwd + "/" + relative,
+        size_bytes: new TextEncoder().encode(text).length, mtime_ms: 1000,
+        sha256: "a".repeat(64), binary: false, truncated: false, text };
+    },
+    loadPluginDesktopModule: async ({ id, fingerprint }) => ({
+      id, fingerprint, digest: "a".repeat(64), url: "wuu-plugin://module/workspace-new-tab-e2e.js",
+    }),
+  } : {}),
+  startThread: async (params = {}) => {
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "thread/start");
+    startedThreadCount += 1;
+    const id = startedThreadCount === 1
+      ? "thread-immediate-title-e2e"
+      : startedThreadCount === 2
+        ? "thread-streaming-e2e"
+        : `thread-started-e2e-${startedThreadCount}`;
+    const thread = mockThread(id);
+    threads.set(id, thread);
+    return { thread };
+  },
+  resumeThread: async (id) => ({ thread: threads.get(id) ?? null,
+    ...(heldMessages.has(id) ? { held_user_messages: heldMessages.get(id) } : {}),
+  }),
+  listEngines: async () => ({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] }),
+  // The app asks the core for slash-command skills on composer mount; the mock
+  // answers empty unless a test opts in via WUU_STREAM_E2E_SKILLS.
+  listSkills: async () => {
+    if (!process.env.WUU_STREAM_E2E_SKILLS) return { skills: [] };
+    return { skills: [
+      { name: "review", description: "Review changes", source: "user", user_invocable: true },
+      { name: "debug", description: "Debug helper", source: "user", user_invocable: true },
+    ] };
+  },
+  forkThread: async () => ({ thread: null }),
+  editThreadMessage: async (threadId) => {
+    await ipcRenderer.invoke("test:request-lifecycle", "thread/edit-message", { threadId });
+    const thread = { ...threads.get(threadId), turns: [], status: "idle" };
+    threads.set(threadId, thread);
+    return { thread };
+  },
+  listThreads: async () => ({ threads: process.env.WUU_STREAM_E2E_SIDEBAR_THREADS ? await catalogThreads() : [] }),
+  listAllThreads: async () => ({ threads: await catalogThreads() }),
+  getSessionOrganization: async () => ({ organization: { folders: [] } }),
+  listArchivedThreads: async () => ({ threads: [] }),
+  queueTurn: async (threadId, text, _images, id, _files, _permission, _document, _parts, _context, hold) => {
+    ipcRenderer.send("test:queued-input", { threadId, text, id, hold });
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/queue", { threadId, id });
+    return { queued: { id, thread_id: threadId } };
+  },
+  steerTurn: async (threadId, turnId, text, _images, id) => {
+    ipcRenderer.send("test:queued-input", { threadId, turnId, text, id });
+    return { turn_id: turnId };
+  },
+  startTurn: async (threadId, text, images = [], _files, _permission, _document, _parts, _context, clientId) => {
+    const turnId = process.env.WUU_REQUEST_LIFECYCLE_E2E ? `turn-${clientId}` : `turn-${threadId}`;
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/start", { threadId, turnId, text, clientId });
+    const now = new Date().toISOString();
+    return {
+      turn: {
+        id: turnId,
+        items: [
+          {
+            id: `user-${threadId}`,
+            type: "user_message",
+            status: "completed",
+            text,
+            source_id: clientId,
+            images
+          }
+        ],
+        items_view: "full",
+        status: "in_progress",
+        started_at: now
+      }
+    };
+  },
+  interruptTurn: async () => {
+    if (process.env.WUU_REQUEST_LIFECYCLE_E2E) await ipcRenderer.invoke("test:request-lifecycle", "turn/interrupt");
+    return { ok: true };
+  },
+  ...(process.env.WUU_REQUEST_LIFECYCLE_E2E ? {
+    listUserQuestions: async () => ({ questions: [] }),
+    answerUserQuestion: (requestId, answer) => ipcRenderer.invoke("test:request-lifecycle", "user-question/respond", { requestId, answer }),
+    cancelUserQuestion: (requestId) => ipcRenderer.invoke("test:request-lifecycle", "user-question/cancel", { requestId }),
+    holdUserQuestion: (requestId) => ipcRenderer.invoke("test:request-lifecycle", "user-question/hold", { requestId }),
+  } : {}),
+  respondToServerRequest: async () => undefined,
+  rejectServerRequest: async () => undefined,
+  onServerEvent: (handler) => {
+    const listener = (_event, payload) => {
+      const thread = payload.message?.params?.thread;
+      if (thread) threads.set(thread.id, thread);
+      if (payload.message?.method === "turn/held") {
+        heldMessages.set(payload.message.params.thread_id, payload.message.params.messages);
+      }
+      handler(payload);
+    };
+    ipcRenderer.on("test:server-event", listener);
+    return () => ipcRenderer.removeListener("test:server-event", listener);
+  },
+  onWindowResizeState: () => () => undefined
+}));

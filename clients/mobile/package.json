@@ -1,0 +1,42 @@
+{
+  "name": "@wuu/mobile",
+  "version": "0.0.0",
+  "main": "index.ts",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "typecheck": "node node_modules/@typescript/native/bin/tsc --noEmit",
+    "test": "vitest run",
+    "export:web": "expo export --platform web"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~57.0.3",
+    "@wuu/protocol": "file:../../packages/protocol",
+    "@wuu/remote-core": "file:../core",
+    "blobatar": "^0.2.0",
+    "expo": "~57.0.3",
+    "expo-camera": "~57.0.1",
+    "expo-constants": "~57.0.3",
+    "expo-notifications": "~57.0.3",
+    "expo-secure-store": "~57.0.0",
+    "expo-status-bar": "~57.0.0",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-get-random-values": "~1.11.0",
+    "react-native-svg": "15.15.4",
+    "react-native-web": "^0.21.2"
+  },
+  "devDependencies": {
+    "@types/react": "~19.2.2",
+    "@typescript/native": "npm:typescript@~7.0.2",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "vitest": "^4.0.17"
+  }
+}

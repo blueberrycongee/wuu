@@ -1,0 +1,5 @@
+Notion mark from Simple Icons (CC0 1.0 Universal).
+Source: https://github.com/simple-icons/simple-icons/blob/develop/icons/notion.svg
+Retrieved 2026-10-19. Only fill color differs between light and dark variants.
+Notion is a trademark of Notion Labs, Inc.; CC0 does not grant trademark rights.
+This optional integration is not endorsed by Notion.

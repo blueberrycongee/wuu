@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/nexu-io/open-design.git",
+  "revision": "26d60298f8129e229a1c10aab4df7ca25b1e9ad3",
+  "directories": ["design-systems", "design-templates", "skills", "craft", "prompt-templates"],
+  "excludedFiles": [
+    "design-templates/html-ppt/.clawscan-allow",
+    "skills/pptx-html-fidelity-audit/scripts/.gitignore"
+  ]
+}

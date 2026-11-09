@@ -1,0 +1,140 @@
+import { useSettingsControls } from "./SettingsControlsContext";
+import { type ChangeEvent, type KeyboardEvent, useEffect, useRef, useState } from "react";
+import {
+  MESSAGE_FLOW_FONT_SIZE_RANGE,
+  clampMessageFlowFontSize,
+  type MessageFlowFontSize,
+} from "../shared/protocol";
+import { useI18n } from "./i18n";
+import { SettingsStepper } from "./ui/SettingsStepper";
+
+const { min, max, step } = MESSAGE_FLOW_FONT_SIZE_RANGE;
+
+function snapSize(value: unknown): MessageFlowFontSize {
+  const clamped = clampMessageFlowFontSize(value);
+  return Math.round(clamped / step) * step;
+}
+
+function formatSize(size: number): string {
+  return Number.isInteger(size) ? String(size) : size.toFixed(1);
+}
+
+/**
+ * Stamp --conversation-message-font-size on <html> from the chosen px
+ * value. The inline style on the document element wins over the
+ * `:root` declaration in conversation-shell.css so the change cascades
+ * through UI text and message-flow surfaces. The persisted field and IPC
+ * names remain unchanged so existing reading preferences survive upgrades. Mirrors the applyThemePreference
+ * shape — caller-friendly side-effect helper.
+ */
+export function applyMessageFlowFontSize(size: MessageFlowFontSize): void {
+  const clamped = clampMessageFlowFontSize(size);
+  try {
+    document.documentElement.style.setProperty(
+      "--conversation-message-font-size",
+      `${clamped}px`,
+    );
+    window.dispatchEvent(new Event("wuu-content-size-change"));
+  } catch {
+    // Same fall-back story as Theme.ts — losing the inline stamp only
+    // costs a one-frame flash at the default size.
+  }
+}
+
+/**
+ * Settings row body for the user-facing message-stream reading size:
+ * a compact numeric field. Reads and persists through the selected settings
+ * service and applies the choice on commit (blur / Enter), so an
+ * in-progress edit does not spam persistence or clamp mid-keystroke.
+ */
+export function MessageFlowFontSizeControl(): JSX.Element {
+  const settingsControls = useSettingsControls();
+  const { t } = useI18n();
+  const [size, setSize] = useState<MessageFlowFontSize>(() =>
+    clampMessageFlowFontSize(settingsControls.initialMessageFlowFontSize),
+  );
+  const [draft, setDraft] = useState(() => formatSize(size));
+  const draftEdited = useRef(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void settingsControls
+      .getMessageFlowFontSize?.()
+      .then((stored) => {
+        if (cancelled) {
+          return;
+        }
+        const next = clampMessageFlowFontSize(stored);
+        setSize(next);
+        if (!draftEdited.current) setDraft(formatSize(next));
+      })
+      .catch(() => {
+        // Keep the preload-provided initial value.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [settingsControls]);
+
+  function persist(next: MessageFlowFontSize): void {
+    setSize(next);
+    settingsControls.applyMessageFlowFontSize(next);
+    void settingsControls.setMessageFlowFontSize?.(next).catch(() => {
+      // Persistence failure leaves the applied size for this window;
+      // the next launch falls back to the stored value.
+    });
+  }
+
+  function commit(raw: string): void {
+    draftEdited.current = false;
+    const parsed = Number.parseFloat(raw.trim());
+    const next = snapSize(Number.isFinite(parsed) ? parsed : size);
+    setDraft(formatSize(next));
+    persist(next);
+  }
+
+  function onChange(event: ChangeEvent<HTMLInputElement>): void {
+    const raw = event.currentTarget.value;
+    draftEdited.current = true;
+    setDraft(raw);
+    const parsed = Number.parseFloat(raw.trim());
+    // Apply complete in-range values immediately so the native stepper
+    // updates the conversation without waiting for blur. Incomplete
+    // keystrokes ("1" while typing "16") and off-grid drafts stay in
+    // the field until commit.
+    if (Number.isFinite(parsed) && parsed >= min && parsed <= max && parsed === snapSize(parsed)) {
+      persist(parsed);
+    }
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
+    if (event.key === "Enter") {
+      event.currentTarget.blur();
+    }
+  }
+
+  function stepBy(direction: -1 | 1): void {
+    draftEdited.current = false;
+    const next = snapSize(size + direction * step);
+    setDraft(formatSize(next));
+    persist(next);
+  }
+
+  return (
+    <SettingsStepper onStep={stepBy} atMin={size <= min} atMax={size >= max}>
+      <input
+        className="settings-input settings-stepper-input"
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={draft}
+        onChange={onChange}
+        onBlur={(event) => commit(event.currentTarget.value)}
+        onKeyDown={onKeyDown}
+        aria-label={t("settings.uiSize")}
+        data-testid="settings-message-flow-font-size-input"
+      />
+    </SettingsStepper>
+  );
+}

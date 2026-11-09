@@ -1,0 +1,134 @@
+# Conversations and forks
+
+A conversation keeps messages, tool activity, and results together. Continue the same conversation for follow-up work; create a new one for an unrelated task or fork an earlier point to explore another approach.
+
+## Start and organize conversations
+
+Select a workspace, then start a conversation. Click the title in the conversation title bar to rename it. The name is saved immediately for an existing conversation, and a new conversation keeps it when the first message creates the session. The sidebar menu still provides rename, pin, and archive. An archived conversation is hidden from the normal list and can be restored through **Settings → Archive**.
+
+Delete is permanent: it removes saved history and cleans up associated artifacts and any worktree still bound to the conversation. Preserve outputs and changes you need before deleting. Wuu rejects deletion while the conversation, its side chat, or its child agents are active.
+
+After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
+
+The normal sidebar includes cross-workspace **Recent**. Opening the window orders running conversations first, then unread conversations, then the remaining conversations by latest update. Reading or switching conversations clears unread indicators without changing their positions, even after the pointer or keyboard focus leaves the list. Live output and title updates also preserve the order.
+
+New conversations appear at the top of Recent, including while the first message is waiting to start. Existing conversations keep their relative positions when work starts or finishes. You can drag rows to save a preferred order; later arrivals appear above them. While the pointer is over the list, keyboard focus is in it, or a row is being dragged, new entries wait until the interaction ends, except for the conversation you are creating or selecting. Status indicators still update immediately. Recent shows up to 50 conversations and can be collapsed. Older entries remain accessible through their workspace or search.
+
+These conversations remain in their workspace lists too. Pinned and archived conversations are excluded from Recent. The compose button in the Recent heading starts a conversation in the active workspace, falling back to the first available workspace when none is selected.
+
+## Dictate a message
+
+On macOS, click the microphone in any desktop composer, including Coding and Personal agent conversations, to start dictation. Allow microphone and Speech Recognition access on first use. The waveform follows microphone volume. Stop waits for the final transcription and appends it to your existing draft. Clicking Send during recording finishes transcription first, then submits through the conversation's normal send flow.
+
+Cancel or switch conversations to end dictation and keep the original draft. Recognition uses the interface language and requires on-device speech recognition support for that language on your Mac; unavailable recognition is reported in the composer.
+
+## Continue after an interruption
+
+When a Wuu task stops or fails, leave the input empty and click **Continue** (the send button), or use **Continue** in the failure notice. This starts a new turn from saved active history without repeating your question. Reopening the conversation or restarting Wuu retains this action. Typing a new instruction still sends a normal message.
+
+Completed replies, signed reasoning and confirmed tool results remain available to the model. Unfinished stream fragments can remain visible in the old turn but are excluded from subsequent model requests. If a tool may have changed something and its result is unknown, Wuu blocks continuation; inspect the affected work before sending a new instruction. It never disables the tool replay guard to resume a task.
+
+A dropped response that already completed an assistant item stops automatic payload replay and keeps that item for explicit Continue.
+
+Automatic recovery is separate: a pending network connection shows **Waiting for the network**, other recoveries show **Retrying the request**, and terminal notices distinguish exhausted recovery from unsafe replay. Stop cancels the current request and its backoff; it does not schedule another turn. Double clicks and stale requests cannot start concurrent continuations.
+
+Automatic retries retain the existing workload and shared workflow limits. A new model round receives its own operation allowance; transport changes, nested recovery, ambiguous billable submissions and waiting still share the workflow budget. Confirmed progress does not reset that shared budget. Explicit Continue starts a new workflow after the preceding turn has settled.
+
+## Choose what continues after restarting
+
+After an unexpected exit or update restart interrupts running conversations, a notice shows how many were interrupted during the previous run. You can continue using Wuu while it is visible. Click **Continue all** to continue those conversations from saved progress. If some cannot resume, the count updates to the remaining conversations so you can retry. An ordinary quit is excluded, as are previously completed, failed, or manually stopped turns and old background results.
+
+Dismiss the notice to keep those conversations paused. Opening their history or receiving another completion notification does not restart them. You can continue later from a conversation or send a new instruction. Dismissing the notice preserves saved history and pending results; it does not undo earlier effects or stop separately managed background commands. Archived conversations and plugin-private sessions are excluded.
+
+## Recover unsent text
+
+Wuu automatically restores unsent text in the same window after a reload. No setting is required. Recovery copies stay local to that window for up to 24 hours, with at most 20 drafts and 32K characters per draft. Closing the window clears them. Attachments and quoted context are not restored, and recovered text is never sent automatically.
+
+## Find a conversation
+
+Open **Search conversations** in the sidebar or press **Command + P** (**Ctrl + P** on Windows and Linux). With no query, pinned conversations appear first, followed by recently updated conversations. Type to search titles and history across projects, including archived conversations. Results show their project and, for content matches, a highlighted excerpt in the same row. Otherwise identical results also show their last-updated date and time.
+
+Use the arrow keys and Enter, or click a result. Addressable user and assistant message matches reveal and highlight the matching message, including older turns. Long messages load their full content and scroll to the matching text. Title, metadata, and tool-record matches open the conversation normally. Opening an archived result does not restore it to the sidebar. Escape closes search and returns focus to the control that opened it.
+
+## Choose where a new conversation works
+
+Below the input, new and existing conversations show their project and current Git branch. You can choose a project before starting a conversation; an existing conversation keeps its project binding. Choosing another branch checks it out in the current working tree; your editor, terminal, and other conversations using that working tree see the change. Branch switching is unavailable while a task is running there.
+
+Ask the agent to create and use a worktree when a task needs an isolated checkout. The composer has no manual worktree switch.
+
+When the right-side tool rail is collapsed, permissions, context usage, and model selection appear below the input. Browser, terminal, file, and new-page shortcuts stay hidden until you expand the rail again.
+
+## While a task is running
+
+The composer supports these keyboard actions:
+
+| Key | Action |
+|---|---|
+| Enter | Send the draft; when the engine supports steering a running task, close the visible response at that point and continue the same turn |
+| Command + Enter (Ctrl + Enter on Windows and Linux) | Send the draft when no task is running; while one runs, queue a non-empty draft for after the current turn when queuing is available |
+| Shift + Enter | Insert a new line |
+| Escape | Interrupt a running task when the composer can do so |
+
+The `/` menu handles Enter and Tab as command selection while it is open. Tab otherwise moves focus normally. The send control reflects whether the current engine can steer or only queue a message.
+
+Steering during a model response closes the visible assistant text at that point. The partial text remains as an interrupted response, the new message appears after it, and the same turn continues with the next model request instead of starting a separate turn. Steering while a tool is running waits for that tool batch to finish; it does not cancel tools that have already started. Queueing with Command + Enter (Ctrl + Enter) still waits for the next turn.
+
+In saved conversations, accepted queued messages and steering input are saved locally before acceptance is confirmed, including their attachments and document context. Edits and removals are saved too. After a core restart, input that had not reached conversation history appears as held work for you to review, edit, remove, or explicitly send. It does not run automatically. Input already admitted to history is not queued again, even if its execution was interrupted. Temporary conversations remain memory-only; this recovery does not save unsent drafts.
+
+Once the final answer is ready, Enter or the send button starts a normal follow-up, including in split view. Background cleanup and refreshing an already loaded conversation do not block sending. A submission keeps its original conversation and workspace even if you switch away while attachments are preparing. If another turn starts before your send is accepted, Wuu queues the message with its attachments and continues after that turn. You do not need to send it again; pressing Stop during this handoff keeps it as held work.
+
+For other sending failures, Wuu restores the input when that composer is still empty. If you have switched away or typed a newer draft, the failed input stays in the original conversation instead. If there is no conversation because its creation failed, the error notice lets you open the retained input as a separate draft or discard it. Failed input is not retried automatically.
+
+Use Stop to interrupt a task. Stopping does not undo commands or file edits, and separately managed background work may need its own stop action. Review the [current diff and command results](workspace-tools.md#review) before continuing.
+
+Expand the activity trail to inspect tool calls. A `run_code` row shows its description, or a short source preview when no description is provided. Expand the row to read and copy the full source, program output, and any error. Long code and output scroll within their blocks.
+
+## Quote part of a response
+
+Select displayed text in an assistant response, including while it is still streaming, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. Appended output and turn completion keep the selection and comment open while the selected text remains valid; changes to that passage dismiss the menu. Selections appear as quote cards in the attachment tray above that conversation's input, including in split view. Each quote captures the displayed text at that moment. Open a card to read the passage, edit its comment, remove the selection, or open its source. You can send a selection without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
+
+Selected passages stay with their draft when switching tabs or leaving split view. Failed sends and editing held messages restore the quotes separately from the editable prompt. **View source** highlights the exact selected passage when the original response is loaded and visible. If it is hidden, unloaded, or changed, Wuu reports that the source is unavailable rather than highlighting another occurrence. Open the source conversation and load its response before trying again.
+
+Older hosts can discard quote metadata while retaining the transmitted text; older desktop clients may not display structured quotes. Use matching current host and desktop versions to retain structured quotes through editing and history recovery. Native clients show the flattened quote and comment as text.
+
+## Attach pasted text
+
+Long pasted text appears as a `.txt` attachment above the input, alongside images, documents, and quotes. Your existing instruction stays in the input; if you paste over selected text, only that selection is removed. Click the card to put the full text back into the input for editing; it then sends as ordinary message text. Leave it attached to send it as a file. Removing one attachment leaves the others and your instruction intact. Short text pastes normally.
+
+Sending creates a UTF-8 working file in `sessions/<thread-id>/input-attachments/` under the workspace's Wuu state directory. The model receives a file reference and reads the content with its file tools when needed, rather than receiving the whole paste as inline context. Conversation history retains the exact text snapshot, including whitespace, for preview, editing, and resubmission.
+
+Text working files use the same seven-day expiry as image working files. Cleanup does not delete the history snapshot or copies saved outside the cache. Opening history does not recreate an expired file; resending the attachment creates a new working copy. Save files in the workspace when you need them beyond seven days.
+
+## Work with pasted images
+
+Paste an image or select an image file, then send the message. Wuu saves a local working file and gives the model its absolute path alongside the image for vision. You can ask the model to copy, move, or process that file using its normal file and command tools. The working file preserves the bytes received by the backend; desktop image compression still applies before sending.
+
+When context compaction omits image data, the image notes and the summary input's media index retain the working-file path. Compaction does not recreate missing files or extend their expiry.
+
+Working files live in `sessions/<thread-id>/input-images/` under the workspace's Wuu state directory. They expire after seven days. Wuu checks for expired files when the app-server starts and every six hours while it runs, so deletion may happen after the expiry time. This cleanup does not remove the image from conversation history or delete files copied or moved outside the cache. To keep an image, ask the model to save it in the workspace. If its working file has expired, send the image again.
+
+## Fork from an earlier message
+
+Choose **Fork** on a historical message, then select where the new conversation should work:
+
+| Choice | Files used by the new conversation |
+|---|---|
+| Fork locally | The same directory as the original conversation |
+| Fork to a Git worktree | A separate directory created from the source repository's current `HEAD` |
+
+A fork copies history through the selected message. It does **not** restore files to that moment. A worktree starts from committed content and does not copy uncommitted changes; review and commit any changes you want it to inherit before creating it. The dialog explains when worktree creation is unavailable.
+
+## Ask a side question
+
+Use `/side` for questions about progress, output, or alternatives without adding those messages to the main conversation. You can also select text in an assistant reply, even while it is streaming and choose **Ask in side chat**. The side composer shows the same selected-text tag; sending a question includes the passage as source context. Availability depends on the engine. For a separate task you want to develop over time, start another conversation or fork instead.
+
+## Use saved sessions from the CLI
+
+```bash
+wuu session list
+wuu session show --last
+wuu session search "keyword"
+wuu exec resume THREAD_ID "Continue this task"
+```
+
+`wuu exec --continue` resumes the latest session; `--ephemeral` runs without saving one. See [`wuu exec`](../automation/exec.md) for session selection and script options.

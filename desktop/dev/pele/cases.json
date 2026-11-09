@@ -1,0 +1,23 @@
+[
+  {"name":"flowchart-cjk","code":"flowchart LR\n  A[收到消息] --> B{语法完整？}\n  B -->|是| C[绘制图表]\n  B -->|否| D[保留上一帧]\n  C --> E[完成]"},
+  {"name":"subgraphs","code":"flowchart TB\n  subgraph Desktop[桌面应用]\n    direction LR\n    A[编辑器] --> B[会话]\n  end\n  subgraph Host[Go Host]\n    C[调度器] --> D[(持久化)]\n  end\n  B --> C\n  D --> A"},
+  {"name":"sequence","code":"sequenceDiagram\n  autonumber\n  participant U as 用户\n  participant A as Agent\n  participant T as 工具\n  U->>A: 分析问题\n  activate A\n  loop 验证\n    A->>T: 读取文件\n    T-->>A: 返回结果\n  end\n  alt 成功\n    A-->>U: 完成\n  else 失败\n    A-->>U: 说明原因\n  end\n  deactivate A"},
+  {"name":"class","code":"classDiagram\n  class Session {\n    +String id\n    +start() void\n  }\n  class Turn {\n    +String status\n  }\n  Session \"1\" *-- \"many\" Turn : owns"},
+  {"name":"state","code":"stateDiagram-v2\n  [*] --> Idle\n  Idle --> Running: start\n  Running --> Waiting: tool\n  Waiting --> Running: result\n  Running --> Done\n  Done --> [*]"},
+  {"name":"er","code":"erDiagram\n  SESSION ||--o{ TURN : contains\n  SESSION {\n    string id PK\n  }\n  TURN {\n    string id PK\n    string status\n  }"},
+  {"name":"gantt","code":"gantt\n  title 发布计划\n  dateFormat YYYY-MM-DD\n  section 验证\n  兼容检查 :a, 2026-10-01, 3d\n  性能测量 :after a, 2d"},
+  {"name":"pie","code":"pie title 任务分布\n  \"完成\" : 65\n  \"进行中\" : 25\n  \"待处理\" : 10"},
+  {"name":"mindmap","code":"mindmap\n  root((Wuu))\n    桌面\n      会话\n      工具\n    手机\n      iOS\n      Android"},
+  {"name":"git","code":"gitGraph\n  commit\n  branch feature\n  checkout feature\n  commit\n  checkout main\n  merge feature"},
+  {"name":"journey","code":"journey\n  title Review\n  section Work\n    Read: 5: User\n    Edit: 3: Agent\n    Verify: 5: User, Agent"},
+  {"name":"timeline","code":"timeline\n  title Release\n  October : Design : Build\n  November : Verify : Ship"},
+  {"name":"quadrant","code":"quadrantChart\n  title Priorities\n  x-axis Low effort --> High effort\n  y-axis Low value --> High value\n  quadrant-1 Plan\n  quadrant-2 Do\n  quadrant-3 Skip\n  quadrant-4 Reconsider\n  Renderer: [0.3, 0.8]"},
+  {"name":"xychart","code":"xychart-beta\n  title \"Render time\"\n  x-axis [A, B, C]\n  y-axis \"ms\" 0 --> 100\n  bar [20, 40, 60]\n  line [10, 30, 50]"},
+  {"name":"sankey","code":"sankey-beta\n\nInput,Agent,10\nAgent,Tools,6\nAgent,Answer,4"},
+  {"name":"block","code":"block-beta\n  columns 3\n  A B C\n  A --> B\n  B --> C"},
+  {"name":"requirement","code":"requirementDiagram\n  requirement render {\n    id: 1\n    text: render diagrams\n    risk: low\n    verifymethod: test\n  }\n  element desktop {\n    type: application\n  }\n  desktop - satisfies -> render"},
+  {"name":"packet","code":"packet-beta\n  0-15: \"Header\"\n  16-31: \"Payload length\""},
+  {"name":"frontmatter","code":"---\ntitle: Diagram title\nconfig:\n  theme: dark\n---\nflowchart LR\n  accTitle: Accessible flow\n  accDescr: Input reaches output\n  A[Input] --> B[Output]"},
+  {"name":"labels-and-style","code":"flowchart LR\n  A[\"First line<br/>Second line\"] --> B[\"**Bold** and text\"]\n  classDef important fill:#eef2f0,stroke:#667788\n  class B important"},
+  {"name":"inert-source","code":"flowchart LR\n  A[\"<img src=x onerror=alert(1)>\"] --> B[Safe]\n  click A \"https://example.com\"\n  click B callback"}
+]

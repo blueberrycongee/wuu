@@ -1,0 +1,184 @@
+# ============================================================
+# Build artifacts
+# ============================================================
+# Go build (Makefile → /bin/wuu),
+# electron-vite (→ desktop/out/, .vite/, node_modules/),
+# pnpm/npm (→ node_modules/).
+
+/bin/
+.gocache-approve-for-me/
+dist/
+node_modules/
+# Also ignore a `node_modules` symlink (worktrees sometimes link a shared
+# install): the trailing-slash rule above only matches real directories, so
+# a symlink would otherwise slip past `git add`.
+node_modules
+.vite/
+desktop/out/
+desktop/out-remote/
+# Standalone development previews; kept outside the packaged out/ tree.
+desktop/out-dev/
+# Browser PiP E2E bundles its entry here before launching Electron.
+desktop/out-e2e/
+# Desktop release packaging writes the generated Go core and installer
+# artifacts under tracked icon resources.
+desktop/build/mobile-web/
+desktop/build/bin/
+desktop/build/app-context/
+desktop/build/tools/
+desktop/build/licenses/
+desktop/build/dev-host/
+desktop/build/.icon-work/
+desktop/release/
+desktop/native/cua-mac/.build/
+desktop/native/app-context-mac/.build/
+# inspect-cua-pip.cjs writes diagnostic JSON and window screenshots here.
+/artifacts/cua-pip/
+# Local agent snapshots, screenshots, and commit-check copies.
+/artifacts/
+# electron-vite writes a timestamp marker when it re-syncs node_modules;
+# keep it out of git.
+desktop/.node_modules.synced
+/docs-site/generated-content/
+/docs-site/.generated/
+/docs-site/src/content/docs/
+/docs-site/.astro/
+/docs-site/dist/
+
+# ============================================================
+# Local runtime state (per-machine)
+# ============================================================
+# Git cannot re-include a file beneath an excluded directory,
+# so we exclude .wuu/ broadly and re-include the files we
+# DO want tracked.
+
+.wuu.json
+/.wuu-dev/
+.wuu/*
+!.wuu/settings.json
+.wuu/settings.local.json
+
+# ============================================================
+# Vendored / reference material
+# ============================================================
+
+thirdparty/
+
+# ============================================================
+# Documentation and local plans
+# ============================================================
+# Maintained public documentation is tracked. Private research and unpublished
+# plans belong outside this checkout; ignores are not a confidentiality boundary.
+
+/docs/plans/*
+
+# per-thread goal scratch
+/GOAL_*.md
+# throwaway prototype dirs
+/prototypes/
+# local benchmark runs and judgments
+/bench/
+# One-off presentations, experiments, and unpublished marketing drafts.
+/presentations/
+/experiments/
+/landing/drafts/
+
+# ============================================================
+# Local agent / shell / editor config
+# ============================================================
+
+# Keep the root project instructions public; other local instruction files stay ignored.
+AGENTS.md
+!/AGENTS.md
+CLAUDE.md
+.claude/
+.mavis/
+.opencode/
+# agent scratch notes (proposals and research stay local, never committed)
+.agents/notes/
+
+# Editors
+.vscode/
+.idea/
+
+# Worktrees (top-level only)
+.worktrees/
+
+# OS noise
+.DS_Store
+
+# MCP plugin caches
+.playwright-mcp/
+.playwright-cli/
+
+# ============================================================
+# Test / coverage artifacts
+# ============================================================
+
+coverage/
+coverage.out
+*.coverprofile
+
+# ============================================================
+# Logs
+# ============================================================
+
+*.log
+
+# ============================================================
+# Environment files
+# ============================================================
+# Per-machine secrets. Commit .env.example if a sample is needed.
+
+.env
+.env.local
+.env.*.local
+.env.*
+!.env.example
+
+# Local credential stores and key material.
+*.sqlite
+*.sqlite3
+*.db
+*.pem
+*.key
+*.p12
+*.pfx
+*.p8
+*.keychain
+*.keychain-db
+# Encrypted certificate exports and handoff archives still contain private keys.
+Wuu-signing-handoff-*.zip
+Wuu-signing-handoff-*/
+
+# ============================================================
+# Personal scratch
+# ============================================================
+
+# Personal paste-inbox for images.
+.paste/
+
+# Local third-party design references; never commit or ship.
+landing/.redesign-ref/
+
+# local CLI build artifact (use ~/go/bin/wuu via `make install`)
+/wuu
+
+# Local authoring packages are generated from the canonical bundled assets.
+/plugins/*/plugin.json
+
+# Machine-specific first-run helper; never commit local credentials.
+scripts/reset-first-run.sh
+
+# wuu app runtime state in repo root (sessions, logs, plans, scratch) — local only.
+.wuu/
+
+# Local e2e/probe scratch output.
+.tmp/
+
+# Generated assets copied by docs-site prepare-content.
+docs-site/public/site-assets/
+docs-site/public/docs-assets/
+
+# Private, unpublished articles and their illustrations.
+/landing/.private-drafts/

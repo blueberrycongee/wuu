@@ -1,0 +1,1483 @@
+import * as React from "react";
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  clampWorkspaceFileTreeWidth,
+  WORKSPACE_FILE_CONTENT_MIN_WIDTH,
+  WORKSPACE_FILE_TREE_DEFAULT_WIDTH,
+  WORKSPACE_FILE_TREE_MAX_WIDTH,
+  WORKSPACE_FILE_TREE_MIN_WIDTH,
+  WorkspaceRightPanel as PublicWorkspaceRightPanel,
+  type WorkspacePanelView,
+} from "./WorkspacePanels";
+import type { ArtifactSourceParams, RuntimeContext } from "../shared/protocol";
+import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
+import {
+  workspaceArtifactViewTab,
+  workspaceDiffViewTab,
+  workspaceFileViewTab,
+  workspaceToolViewTab,
+  workspacePluginViewTab,
+  type WorkspaceViewTab,
+} from "./WorkspaceViewTabs";
+import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
+import { confirmAction } from "./ConfirmDialog";
+import { ApplicationPreviewContent } from "./plugins/ApplicationPreviewContent";
+import { ApplicationArtifacts } from "./plugins/ApplicationArtifacts";
+import { PluginHost } from "./plugins/PluginHost";
+import { createUIComposition } from "./plugins/ApplicationShell";
+import type { HeaderSnapshotV1 } from "../shared/workbench";
+import type { UICompositionV1, UISlotProps } from "../../../packages/plugin-sdk/src/ui";
+
+vi.mock("./ConfirmDialog", () => ({ confirmAction: vi.fn() }));
+
+// Renders the cwd it received so tests can assert which context prop
+// (activeContext vs workspaceContext) actually reached the terminal panel,
+// without pulling in the real xterm/node-pty-backed component.
+vi.mock("./WorkspaceTerminalPanel", () => ({
+  preloadWorkspaceTerminalRuntime: () => undefined,
+  WorkspaceTerminalPanel: ({
+    active = true,
+    activeContext,
+  }: {
+    active?: boolean;
+    activeContext?: RuntimeContext;
+  }) => (
+    <div
+      data-testid="terminal-panel"
+      data-active={active ? "true" : "false"}
+      data-cwd={activeContext?.cwd ?? ""}
+    />
+  ),
+}));
+
+vi.mock("./WorkspaceMonacoEditor", () => ({
+  WorkspaceMonacoEditor: ({
+    initialViewState,
+    onViewStateChange,
+    path,
+    resourceID,
+    selection,
+    text,
+    onChange,
+  }: {
+    initialViewState?: { scrollTop: number } | null;
+    onViewStateChange?: (state: { scrollTop: number }) => void;
+    path: string;
+    resourceID: string;
+    selection?: { startLineNumber: number; startColumn: number };
+    text: string;
+    onChange?: (value: string) => void;
+  }) => (
+    <div
+      className="workspace-monaco-editor"
+      data-path={path}
+      data-resource-id={resourceID}
+      data-selection={selection ? `${selection.startLineNumber}:${selection.startColumn}` : ""}
+      data-text={text}
+      data-view-scroll={initialViewState?.scrollTop ?? 0}
+    >
+      <button type="button" className="mock-editor-edit" onClick={() => onChange?.(`edited ${path}`)}>
+        edit
+      </button>
+      <button
+        type="button"
+        className="mock-editor-scroll"
+        onClick={() => onViewStateChange?.({ scrollTop: 42 })}
+      >
+        scroll
+      </button>
+    </div>
+  ),
+}));
+
+let container: HTMLDivElement | null = null;
+let root: Root | null = null;
+
+beforeEach(() => {
+  window.localStorage.clear();
+  Object.defineProperty(window, "wuu", {
+    configurable: true,
+    value: {
+      listWorkspaceDirectory: vi.fn().mockResolvedValue({
+        root: "/repo/project",
+        path: "",
+        entries: [],
+        truncated: false,
+      }),
+      readWorkspaceFile: vi.fn((path: string, rootPath?: string) =>
+        Promise.resolve({
+          root: rootPath ?? "/repo/project",
+          path,
+          absolute_path: `${rootPath ?? "/repo/project"}/${path}`,
+          size_bytes: 12,
+          mtime_ms: 1000,
+          sha256: "a".repeat(64),
+          binary: false,
+          truncated: false,
+          text: `source ${path}`,
+        }),
+      ),
+      writeWorkspaceFile: vi.fn(),
+      revealWorkspaceItem: vi.fn().mockResolvedValue(undefined),
+    },
+  });
+});
+
+function mount(element: JSX.Element): void {
+  if (container) unmount();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() => {
+    root!.render(element);
+  });
+}
+
+function unmount(): void {
+  if (root) {
+    act(() => {
+      root!.unmount();
+    });
+    root = null;
+  }
+  container?.remove();
+  container = null;
+}
+
+function fileResource(tabID: string): HTMLElement | undefined {
+  return Array.from(container?.querySelectorAll<HTMLElement>(".workspace-file-resource") ?? []).find(
+    (resource) => resource.dataset.workspaceTabId === tabID,
+  );
+}
+
+afterEach(() => {
+  unhoverTooltip();
+  unmount();
+  document.documentElement.classList.remove("resizing-workspace-file-split");
+  vi.unstubAllGlobals();
+});
+
+function makeSelection(path: string): TurnFileDiffSelection {
+  return {
+    path,
+    additions: 1,
+    deletions: 1,
+    newFile: false,
+    diff: {
+      path,
+      hunks: [
+        {
+          oldStart: 1,
+          newStart: 1,
+          lines: [
+            { op: "delete", content: "old value" },
+            { op: "insert", content: "new value" },
+          ],
+        },
+      ],
+    },
+  };
+}
+
+
+type PanelFixtureProps = {
+  open: boolean;
+  covered?: boolean;
+  present: boolean;
+  prewarm?: boolean;
+  tabs: WorkspaceViewTab[];
+  activeTabID: string | undefined;
+  activeFileTabID?: string;
+  // activeContext is the pinned project/no_project context — used for the
+  // browser tab (its "current project" hint text, not a filesystem root).
+  // workspaceContext follows the active thread's own cwd (e.g. a worktree
+  // fork) when it differs from activeContext, and roots the file tree and
+  // terminal; see workspacePanelContext in AppState.ts.
+  activeContext?: RuntimeContext;
+  workspaceContext?: RuntimeContext;
+  terminalThread?: import("../shared/protocol").Thread;
+  gitStatus?: import("../shared/protocol").GitStatusResult;
+  selectedFilePath?: string;
+  onSelectTab: (id: string) => void;
+  onOpenTool: (view: WorkspacePanelView) => void;
+  onShowTools: () => void;
+  onCloseTab: (id: string) => void;
+  onDirtyFileTabsChange?: (dirty: boolean) => void;
+  onReorderTabs: (activeID: string, overID: string) => void;
+  onOpenFile: (path: string, sourceContext?: RuntimeContext) => void;
+  globalized: boolean;
+  legacyPreview?: boolean;
+  conversationTab?: { title: string; active: boolean; onSelect: () => void };
+  sideThreadContent?: React.ReactNode;
+  sideThreadRunning?: boolean;
+  // Globalize-sheet phase from App's phase machine; drives the data-sheet
+  // attribute that promotes the panel to a full-window sheet in CSS.
+  sheetPhase?: "docked" | "arming" | "open" | "exiting" | "docking";
+  onToggleGlobalize: () => void;
+  canExitGlobalized?: boolean;
+  browserActivity?: import("../shared/protocol").ActivitySession;
+  browserDockTarget?: import("../shared/protocol").BrowserDockTarget;
+  browserOverlaySuppressed?: boolean;
+  onBrowserUserInteraction?: (inputGeneration?: number) => void | Promise<void>;
+  focusedComposer?: React.ReactNode;
+  fileRefreshKey?: string;
+  runtimeControlsRef?: (element: HTMLDivElement | null) => void;
+} & { slots?: UICompositionV1 };
+function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
+  const previewContent = React.useMemo(() => new ApplicationPreviewContent(window.wuu, {
+    openFile: ({ root, path }) => {
+      const tab = props.tabs.find(tab => tab.kind === "file" && tab.context.cwd === root);
+      const context = tab?.kind === "file" ? tab.context : props.workspaceContext;
+      props.onOpenFile(path, context);
+    },
+  }), [props.onOpenFile, props.tabs, props.workspaceContext]);
+  const artifacts = React.useMemo(() => new ApplicationArtifacts(window.wuu, previewContent), [previewContent]);
+  React.useEffect(() => () => previewContent.dispose(), [previewContent]);
+  const snapshot = {
+    connection: { status: "connected" },
+    tabs: { activeTabId: "draft:one" },
+    previewWorkspace: { ownerTabId: "draft:one", tabs: props.tabs, activeTabId: props.activeTabID, activeFileTabId: props.activeFileTabID,
+      ...(!props.legacyPreview ? { conversationOpen: true } : {}),
+      conversationSelected: Boolean(props.conversationTab?.active), conversationTitle: props.conversationTab?.title ?? "Conversation",
+      activeContext: props.activeContext, workspaceContext: props.workspaceContext, threadId: props.terminalThread?.id,
+      fileRefreshKey: props.fileRefreshKey, browserActivity: props.browserActivity, browserDockTarget: props.browserDockTarget },
+    conversationWorkspace: { threads: props.terminalThread ? [props.terminalThread] : [], activePane: "primary" },
+    navigationWorkspace: { threads: [] },
+    sideConversation: { turns: [], commands: [], contextChatPending: [] },
+  };
+  const selection = { enabled: false, interactionOwnerKey: "draft:one", comments: [] };
+  const application = {
+    getSnapshot: () => snapshot, subscribe: () => () => {},
+    invoke: async (action: string, input: { tabId: string; overTabId: string; toolId: WorkspacePanelView; path: string; context: RuntimeContext }) => {
+      if (action === "preview.focus-tab") props.onSelectTab(input.tabId);
+      if (action === "preview.close-tab") props.onCloseTab(input.tabId);
+      if (action === "preview.reorder-tab") props.onReorderTabs(input.tabId, input.overTabId);
+      if (action === "preview.open-tool") props.onOpenTool(input.toolId);
+      if (action === "preview.new-tab") props.onShowTools();
+      if (action === "preview.open-file") props.onOpenFile(input.path, input.context);
+      if (action === "preview.show-conversation") props.conversationTab?.onSelect();
+    },
+    previewContent, artifacts,
+    fileSelection: { getSnapshot: () => selection, subscribe: () => () => {} },
+    catalog: { loadIcon: vi.fn() }, settingsControls: {}, environment: {}, terminals: {}, browser: {}, projects: {},
+  } as unknown as Parameters<typeof PublicWorkspaceRightPanel>[0]["application"];
+  const slots = props.slots ?? { Slot: ({name, fallback}: UISlotProps) => <>{name.endsWith("/application.composer") ? props.focusedComposer : fallback}</> };
+  return <PublicWorkspaceRightPanel application={application} slots={slots}
+    open={props.open} covered={props.covered} present={props.present} prewarm={props.prewarm}
+    globalized={props.globalized} sheetPhase={props.sheetPhase} onToggleGlobalize={props.onToggleGlobalize}
+    canExitGlobalized={props.canExitGlobalized} browserOverlaySuppressed={props.browserOverlaySuppressed}
+    onDirtyFileTabsChange={props.onDirtyFileTabsChange} conversationTabVisible={Boolean(props.conversationTab)}
+    documentComposer={Boolean(props.focusedComposer)} runtimeControlsRef={props.runtimeControlsRef} pane="primary" />;
+}
+
+function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
+  return {
+    open: true,
+    present: true,
+    tabs: [],
+    activeTabID: undefined,
+    onSelectTab: () => {},
+    onOpenTool: () => {},
+    onShowTools: () => {},
+    onCloseTab: () => {},
+    onReorderTabs: () => {},
+    onOpenFile: () => {},
+    globalized: false,
+    onToggleGlobalize: () => {},
+  };
+}
+
+vi.mock("./WorkspacePdfPreview", () => ({ WorkspacePdfPreview: () => <div>PDF preview</div> }));
+
+describe("WorkspaceRightPanel", () => {
+  it("omits a failed rail contribution while retaining diagnostics and healthy controls", async () => {
+    const host = new PluginHost({ react: React });
+    const slots = createUIComposition(host);
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    await host.activateGeneration({ pluginId: "wuu.default-preview", generation: "one", register(api) {
+      api.registerUISlot({ id: "workspace.rail", cardinality: "many" });
+    } });
+    await host.activateGeneration({ pluginId: "healthy", generation: "one", register(api) {
+      api.registerUIContribution({ id: "control", target: "wuu.default-preview/workspace.rail", render: () => <button>Healthy</button> });
+    } });
+    let broken = true;
+    const register = (api: Parameters<Parameters<PluginHost["activateGeneration"]>[0]["register"]>[0]) => {
+      api.registerUIContribution({ id: "meter", target: "wuu.default-preview/workspace.rail", render: () => {
+        if (broken) throw new Error("Synthetic rail failure");
+        return <button>Recovered</button>;
+      } });
+    };
+    try {
+      await host.activateGeneration({ pluginId: "broken", generation: "one", register });
+      mount(<WorkspaceRightPanel {...baseProps()} open={false} slots={slots} />);
+      const rail = container!.querySelector(".workspace-tool-rail-contributions")!;
+      const healthy = rail.querySelector("button");
+      expect(rail.textContent).toBe("Healthy");
+      expect(rail.children).toHaveLength(1);
+      expect(host.getGenerationDiagnostics("broken", "one")).toEqual([
+        expect.objectContaining({ kind: "render", message: expect.stringContaining("Synthetic rail failure") }),
+      ]);
+      expect(errorLog).toHaveBeenCalled();
+      broken = false;
+      await act(async () => { await host.activateGeneration({ pluginId: "broken", generation: "one", register }); });
+      expect(rail.textContent).toBe("RecoveredHealthy");
+      expect(rail.querySelectorAll("button")[1]).toBe(healthy);
+      broken = true;
+      await act(async () => { await host.activateGeneration({ pluginId: "broken", generation: "one", register }); });
+      expect(rail.textContent).toBe("Healthy");
+      act(() => host.unload("healthy"));
+      expect(rail.childElementCount).toBe(0);
+    } finally {
+      unmount();
+      for (const id of ["broken", "healthy", "wuu.default-preview"]) host.unload(id);
+      errorLog.mockRestore();
+    }
+  });
+  it("hides the tool rail while the panel is open and restores it on close", async () => {
+    mount(<WorkspaceRightPanel {...baseProps()} />);
+    expect(container!.querySelector('[data-wuu-component="workspace-tool-rail"]')).toBeNull();
+    await act(async () => root!.render(<WorkspaceRightPanel {...baseProps()} open={false} />));
+    expect(container!.querySelector('[data-wuu-component="workspace-tool-rail"]')).not.toBeNull();
+  });
+  it("keeps the expanded rail's composer controls mounted while the panel is open", async () => {
+    const runtimeControlsRef = vi.fn();
+    mount(<WorkspaceRightPanel {...baseProps()} runtimeControlsRef={runtimeControlsRef} />);
+    const hiddenTarget = container!.querySelector<HTMLElement>(".workspace-composer-controls[hidden]");
+    expect(hiddenTarget).not.toBeNull();
+    expect(runtimeControlsRef).toHaveBeenLastCalledWith(hiddenTarget);
+    await act(async () => root!.render(<WorkspaceRightPanel {...baseProps()} runtimeControlsRef={runtimeControlsRef} open={false} />));
+    expect(runtimeControlsRef).toHaveBeenLastCalledWith(
+      container!.querySelector(".workspace-tool-rail .workspace-composer-controls"),
+    );
+  });
+  it("keeps a legacy provider's conversation tab selectable without offering an unsupported close", () => {
+    mount(<WorkspaceRightPanel {...baseProps()} globalized legacyPreview
+      conversationTab={{ title: "Conversation", active: false, onSelect: vi.fn() }} />);
+    expect(container!.querySelector('.workspace-conversation-tab [role="tab"]')).not.toBeNull();
+    expect(container!.querySelector('.workspace-conversation-tab .workspace-tool-tab-close')).toBeNull();
+  });
+  it("renders an installed workspace view through the supplied public slot", () => {
+    const tab = workspacePluginViewTab({ id: "workspace", pluginId: "workspace-actions", generation: "one", view: "workspace.view", title: "Workspace view" });
+    const contexts: unknown[] = [];
+    const slots = { Slot: ({ name, context, fallback }: UISlotProps) => {
+      if (!name.endsWith("/workspace.view")) return <>{fallback}</>;
+      contexts.push(context);
+      return <div>Workspace plugin body</div>;
+    } };
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[tab]} activeTabID={tab.id} slots={slots} />);
+    expect(container!.textContent).toContain("Workspace plugin body");
+    expect(contexts.at(-1)).toEqual({ pluginId: "workspace-actions", generation: "one", viewTypeId: "workspace.view", tabId: tab.id, region: "workspace" });
+  });
+
+  it("replaces its tabbar with the public workspace header slot", () => {
+    const snapshots: HeaderSnapshotV1[] = [];
+    const slots = { Slot: ({ name, context, fallback }: UISlotProps) => {
+      if (!name.endsWith("/header.workspace")) return <>{fallback}</>;
+      snapshots.push(context!.snapshot as HeaderSnapshotV1);
+      return <div data-workspace-header>{snapshots.at(-1)!.title}</div>;
+    } };
+    const context: RuntimeContext = { kind: "project", project_id: "project-1", cwd: "/repo/project" };
+    const tab = workspaceFileViewTab({ context, path: "src/main.ts" });
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[tab]} activeTabID={tab.id} activeFileTabID={tab.id} workspaceContext={context} slots={slots} />);
+    expect(container!.querySelector(".workspace-panel-tabs")).toBeNull();
+    expect(snapshots.at(-1)).toMatchObject({ contractVersion: 1, scope: "workspace", title: "main.ts", activeTabId: tab.id,
+      tabs: [{id: tab.id, title: "main.ts", kind: "file"}] });
+    expect("context" in (snapshots.at(-1)?.tabs?.[0] ?? {})).toBe(false);
+  });
+
+  it("prewarms the hidden lightweight body during idle time", () => {
+    let idleCallback: IdleRequestCallback | undefined;
+    const cancelIdleCallback = vi.fn();
+    vi.stubGlobal(
+      "requestIdleCallback",
+      vi.fn((callback: IdleRequestCallback) => {
+        idleCallback = callback;
+        return 17;
+      }),
+    );
+    vi.stubGlobal("cancelIdleCallback", cancelIdleCallback);
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        open={false}
+        present={false}
+        prewarm
+      />,
+    );
+    expect(container?.querySelector(".workspace-panel-body")).toBeNull();
+
+    act(() => {
+      idleCallback?.({
+        didTimeout: false,
+        timeRemaining: () => 20,
+      });
+    });
+
+    const panel = container?.querySelector<HTMLElement>(".workspace-right-panel");
+    expect(panel?.hasAttribute("inert")).toBe(true);
+    expect(container?.querySelector(".workspace-panel-body")).not.toBeNull();
+
+    unmount();
+    expect(cancelIdleCallback).toHaveBeenCalledWith(17);
+  });
+
+  it("cancels hidden prewarming when the user opens the panel first", () => {
+    let idleCallback: IdleRequestCallback | undefined;
+    const cancelIdleCallback = vi.fn();
+    vi.stubGlobal(
+      "requestIdleCallback",
+      vi.fn((callback: IdleRequestCallback) => {
+        idleCallback = callback;
+        return 23;
+      }),
+    );
+    vi.stubGlobal("cancelIdleCallback", cancelIdleCallback);
+
+    const props = {
+      ...baseProps(),
+      open: false,
+      present: false,
+      prewarm: true,
+    } satisfies Parameters<typeof WorkspaceRightPanel>[0];
+    mount(<WorkspaceRightPanel {...props} />);
+
+    act(() => {
+      root?.render(<WorkspaceRightPanel {...props} open present />);
+    });
+
+    expect(cancelIdleCallback).toHaveBeenCalledWith(23);
+    expect(container?.querySelector(".workspace-panel-body")).not.toBeNull();
+    expect(idleCallback).toBeDefined();
+  });
+
+  it("does not duplicate the shell sidebar toggle in the panel tabbar", () => {
+    const props = {
+      ...baseProps(),
+      globalized: true,
+      canExitGlobalized: false,
+    } as Parameters<typeof WorkspaceRightPanel>[0];
+    mount(<WorkspaceRightPanel {...props} />);
+
+    expect(container?.querySelector(".workspace-panel-sidebar")).toBeNull();
+    expect(container?.querySelector(".workspace-panel-sidebar-hit-hole")).not.toBeNull();
+
+    const restore = container?.querySelector<HTMLButtonElement>(
+      '[aria-label="窗口过窄，无法停靠右侧栏"]',
+    );
+    expect(restore?.disabled).toBe(true);
+  });
+
+  it("presents the workspace expansion as full-panel focus mode", () => {
+    const onToggleGlobalize = vi.fn();
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        onToggleGlobalize={onToggleGlobalize}
+      />,
+    );
+
+    const expand = container?.querySelector<HTMLButtonElement>('[aria-label="展开为全面板"]');
+    expect(expand).not.toBeNull();
+    act(() => expand?.click());
+    expect(onToggleGlobalize).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          globalized
+          onToggleGlobalize={onToggleGlobalize}
+        />,
+      );
+    });
+    expect(container?.querySelector('[aria-label="退出全面板"]')).not.toBeNull();
+  });
+
+  it("makes the retained workspace inert and releases its editor while closed", async () => {
+    const fileTab = workspaceFileViewTab({
+      context: {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      },
+      path: "src/App.tsx",
+    });
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        open={false}
+        present={false}
+        tabs={[fileTab]}
+        activeTabID={fileTab.id}
+      />,
+    );
+    await act(async () => Promise.resolve());
+
+    const panel = container?.querySelector<HTMLElement>(".workspace-right-panel");
+    expect(panel?.hasAttribute("inert")).toBe(true);
+    expect(panel?.querySelector(".workspace-monaco-editor")).toBeNull();
+  });
+
+  it("pauses a retained artifact video when the panel closes without resuming on reopen", async () => {
+    const acquire = vi.fn(async ({requestId}: ArtifactSourceParams) => ({url: `wuu-artifact://lease/${requestId}`, leaseId: requestId!}));
+    const release = vi.fn(async () => {});
+    Object.assign(window.wuu, {acquireArtifactSource: acquire, releaseArtifactSource: release});
+    const fileTab = workspaceFileViewTab({
+      context: { kind: "project", project_id: "project-1", cwd: "/repo/project" },
+      path: "src/App.tsx",
+    });
+    const artifactTab = workspaceArtifactViewTab({
+      threadID: "thread-1",
+      artifact: {
+        id: "video", itemId: "delivery", index: 0, type: "file",
+        name: "clip.webm", mimeType: "video/webm", placement: "turn_end",
+        uri: `wuu-artifact://workspace/thread/snapshot/clip.webm?sha256=${"a".repeat(64)}`,
+        sha256: "a".repeat(64),
+      },
+    });
+    const pause = vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
+    const play = vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
+    const props = { ...baseProps(), tabs: [fileTab, artifactTab], activeTabID: artifactTab.id };
+    try {
+      mount(<WorkspaceRightPanel {...props} />);
+      await act(async () => Promise.resolve());
+      const video = container!.querySelector("video")!;
+      expect(video).not.toBeNull();
+      expect(acquire).toHaveBeenCalledTimes(1);
+      expect(video.getAttribute("src")).toBe(`wuu-artifact://lease/${acquire.mock.calls[0][0].requestId}`);
+      expect(pause).not.toHaveBeenCalled();
+      await act(async () => video.play());
+      play.mockClear();
+
+      await act(async () => root!.render(<WorkspaceRightPanel {...props} open={false} present={false} />));
+      expect(container!.querySelector("video")).toBe(video);
+      expect(pause).toHaveBeenCalledTimes(1);
+      expect(pause.mock.contexts[0]).toBe(video);
+
+      await act(async () => root!.render(<WorkspaceRightPanel {...props} />));
+      expect(container!.querySelector("video")).toBe(video);
+      expect(play).not.toHaveBeenCalled();
+      expect(acquire).toHaveBeenCalledTimes(1);
+      expect(release).not.toHaveBeenCalled();
+      unmount();
+      expect(release).toHaveBeenCalledExactlyOnceWith(acquire.mock.calls[0][0].requestId);
+    } finally {
+      pause.mockRestore();
+      play.mockRestore();
+    }
+  });
+
+  it("renders file content on the left and the persistent file tree on the right", async () => {
+    const context: RuntimeContext = {
+      kind: "project",
+      project_id: "project-1",
+      cwd: "/repo/project",
+    };
+    const fileTab = workspaceFileViewTab({
+      context,
+      path: "src/App.tsx",
+    });
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[fileTab]}
+        activeTabID={fileTab.id}
+        activeFileTabID={fileTab.id}
+        workspaceContext={context}
+      />,
+    );
+    await act(async () => Promise.resolve());
+
+    const panel = container?.querySelector<HTMLElement>(".workspace-right-panel.detail.files");
+    expect(panel).toBeTruthy();
+    expect(panel?.querySelector(".workspace-tool-tab.active")?.textContent).toContain("App.tsx");
+    expect(await hoverTooltipText(panel?.querySelector(".workspace-tool-tab-main") ?? null)).toBe("src/App.tsx");
+    expect(panel?.querySelector(".workspace-files-content-header")).toBeNull();
+    expect(panel?.querySelector(".workspace-file-resource.active .workspace-file-preview")).toBeTruthy();
+    const content = panel?.querySelector(".workspace-files-content");
+    const tree = panel?.querySelector(".workspace-files-tree");
+    expect(content).not.toBeNull();
+    expect(tree).not.toBeNull();
+    expect(content!.compareDocumentPosition(tree!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("resolves links in Markdown previews relative to the document", async () => {
+    const context: RuntimeContext = {
+      kind: "project",
+      project_id: "project-1",
+      cwd: "/repo/project",
+    };
+    const fileTab = workspaceFileViewTab({ context, path: "docs/guide.md" });
+    const onOpenFile = vi.fn();
+    vi.mocked(window.wuu.readWorkspaceFile).mockResolvedValueOnce({
+      root: context.cwd,
+      path: "docs/guide.md",
+      absolute_path: "/repo/project/docs/guide.md",
+      size_bytes: 40,
+      mtime_ms: 1000,
+      sha256: "b".repeat(64),
+      binary: false,
+      truncated: false,
+      text: "[Open app](../src/App.tsx#L12)",
+    });
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[fileTab]}
+        activeTabID={fileTab.id}
+        activeFileTabID={fileTab.id}
+        workspaceContext={{ kind: "no_project", cwd: "/other-root" }}
+        onOpenFile={onOpenFile}
+      />,
+    );
+    await act(async () => Promise.resolve());
+    await act(async () => Promise.resolve());
+
+    act(() => {
+      container?.querySelector<HTMLButtonElement>(".rich-file-link")?.click();
+    });
+    expect(onOpenFile).toHaveBeenCalledWith("src/App.tsx#L12", context);
+  });
+
+  it("resizes and persists the right-side file tree", async () => {
+    const context: RuntimeContext = {
+      kind: "project",
+      project_id: "project-1",
+      cwd: "/repo/project",
+    };
+    const fileTab = workspaceFileViewTab({ context, path: "src/App.tsx" });
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[fileTab]}
+        activeTabID={fileTab.id}
+        activeFileTabID={fileTab.id}
+        workspaceContext={context}
+      />,
+    );
+    await act(async () => Promise.resolve());
+
+    const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+    const separator = split.querySelector<HTMLElement>(".workspace-files-resizer")!;
+    Object.defineProperty(split, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: 1000 }),
+    });
+
+    expect(separator.getAttribute("role")).toBe("separator");
+    expect(separator.getAttribute("aria-valuemin")).toBe(String(WORKSPACE_FILE_TREE_MIN_WIDTH));
+    expect(separator.getAttribute("aria-valuemax")).toBe(String(WORKSPACE_FILE_TREE_MAX_WIDTH));
+    expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe(
+      `${WORKSPACE_FILE_TREE_DEFAULT_WIDTH}px`,
+    );
+
+    act(() => {
+      separator.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 680 }),
+      );
+    });
+    expect(document.documentElement.classList.contains("resizing-workspace-file-split")).toBe(true);
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: 600 }));
+      window.dispatchEvent(new MouseEvent("pointerup"));
+    });
+    expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("400px");
+    expect(window.localStorage.getItem("wuu.desktop.fileTreeWidth")).toBe("400");
+
+    act(() => {
+      separator.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "ArrowLeft" }));
+    });
+    expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("424px");
+
+    act(() => {
+      separator.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    });
+    expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe(
+      `${WORKSPACE_FILE_TREE_DEFAULT_WIDTH}px`,
+    );
+  });
+
+  it("drags, auto-collapses, restores, and persists the file tree layout", async () => {
+    const context: RuntimeContext = {
+      kind: "project",
+      project_id: "project-1",
+      cwd: "/repo/project",
+    };
+    const fileTab = workspaceFileViewTab({ context, path: "src/App.tsx" });
+    const panel = (
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[fileTab]}
+        activeTabID={fileTab.id}
+        activeFileTabID={fileTab.id}
+        workspaceContext={context}
+        focusedComposer={<div data-testid="focused-composer-content" />}
+      />
+    );
+    mount(panel);
+    await act(async () => Promise.resolve());
+    await act(async () => Promise.resolve());
+
+    let split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+    const tree = split.querySelector<HTMLElement>(".workspace-files-tree")!;
+    const separator = split.querySelector<HTMLElement>(".workspace-files-resizer")!;
+    const dragHandle = tree.querySelector<HTMLElement>(".workspace-file-tree-drag-handle")!;
+    const dragPreview = document.body.querySelector<HTMLElement>(".workspace-file-tree-drag-preview")!;
+
+    expect(split.dataset.treeSide).toBe("right");
+    expect(tree.hidden).toBe(false);
+    expect(container!.querySelector(".workspace-panel-file-tree-side")).toBeNull();
+    expect(container!.querySelector(".workspace-panel-file-tree-visibility")).toBeNull();
+    expect(
+      split.querySelector(".workspace-files-content > [data-testid='workspace-document-composer']"),
+    ).not.toBeNull();
+
+    Object.defineProperty(split, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ left: 0, width: 1000 }),
+    });
+    Object.defineProperty(dragPreview, "getBoundingClientRect", {
+      configurable: true,
+      value: () => ({ width: 168, height: 44 }),
+    });
+    const dataTransfer = {
+      dropEffect: "none",
+      effectAllowed: "none",
+      setData: vi.fn(),
+      setDragImage: vi.fn(),
+    };
+    function dragEvent(type: string, clientX: number): Event {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperties(event, {
+        clientX: { value: clientX },
+        dataTransfer: { value: dataTransfer },
+      });
+      return event;
+    }
+
+    act(() => dragHandle.dispatchEvent(dragEvent("dragstart", 850)));
+    expect(dataTransfer.setDragImage).toHaveBeenCalledWith(dragPreview, 84, 22);
+    act(() => split.dispatchEvent(dragEvent("dragover", 100)));
+    expect(split.dataset.treeDropSide).toBe("left");
+    act(() => split.dispatchEvent(dragEvent("drop", 100)));
+    expect(split.dataset.treeSide).toBe("left");
+    expect(window.localStorage.getItem("wuu.desktop.fileTreeSide")).toBe("left");
+
+    // The same control moves the tree across without a drag.
+    act(() => tree.querySelector<HTMLButtonElement>(".workspace-file-tree-drag-handle")!.click());
+    expect(split.dataset.treeSide).toBe("right");
+    expect(window.localStorage.getItem("wuu.desktop.fileTreeSide")).toBe("right");
+    act(() => tree.querySelector<HTMLButtonElement>(".workspace-file-tree-drag-handle")!.click());
+    expect(split.dataset.treeSide).toBe("left");
+
+    act(() => {
+      separator.dispatchEvent(
+        new MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 320 }),
+      );
+    });
+    act(() => {
+      window.dispatchEvent(new MouseEvent("pointermove", { clientX: 100 }));
+      window.dispatchEvent(new MouseEvent("pointerup"));
+    });
+    await act(async () => Promise.resolve());
+    expect(split.classList.contains("tree-hidden")).toBe(true);
+    expect(tree.hidden).toBe(true);
+    expect(separator.hidden).toBe(true);
+    expect(window.localStorage.getItem("wuu.desktop.fileTreeVisible")).toBe("false");
+
+    mount(panel);
+    await act(async () => Promise.resolve());
+    await act(async () => Promise.resolve());
+    split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+    expect(split.dataset.treeSide).toBe("left");
+    expect(split.classList.contains("tree-hidden")).toBe(true);
+    const revealButton = container!.querySelector<HTMLButtonElement>(".workspace-file-tree-reveal.left")!;
+    expect(revealButton).not.toBeNull();
+
+    await act(async () => {
+      revealButton.click();
+      await Promise.resolve();
+    });
+    await act(async () => Promise.resolve());
+    expect(split.classList.contains("tree-hidden")).toBe(false);
+    expect(window.localStorage.getItem("wuu.desktop.fileTreeVisible")).toBe("true");
+  });
+
+  it.each(["file", "artifact"] as const)("updates document clearance and releases observers when changing resources (%s)", async (kind) => {
+    const observations = new Map<Element, ResizeObserverCallback>();
+    vi.stubGlobal("ResizeObserver", class {
+      private targets: Element[] = [];
+      constructor(private callback: ResizeObserverCallback) {}
+      observe(target: Element): void {
+        this.targets.push(target);
+        observations.set(target, this.callback);
+      }
+      disconnect(): void {
+        this.targets.forEach((target) => observations.delete(target));
+      }
+    });
+    const context: RuntimeContext = { kind: "project", project_id: "project-1", cwd: "/repo/project" };
+    const makeTab = (name: string) => kind === "file" ? workspaceFileViewTab({ context, path: name }) : workspaceArtifactViewTab({
+      threadID: "thread-1", cwd: context.cwd,
+      artifact: { id: name, itemId: name, index: 0, type: "file", name, mimeType: "application/pdf",
+        placement: "turn_end", uri: `wuu-artifact://workspace/thread-1/digest/${name}` },
+    });
+    const tab = makeTab("first.pdf");
+    const props = { ...baseProps(), tabs: [tab], activeTabID: tab.id, activeFileTabID: tab.id, workspaceContext: context };
+    mount(<WorkspaceRightPanel {...props} focusedComposer={<div>Compose</div>} />);
+    await act(async () => Promise.resolve());
+    const contentSelector = kind === "file" ? ".workspace-files-content" : ".workspace-artifact-document";
+    const content = container!.querySelector<HTMLElement>(contentSelector)!;
+    const composer = container!.querySelector<HTMLElement>(".workspace-document-composer")!;
+    Object.defineProperty(composer, "getBoundingClientRect", { value: () => ({ height: 320 }) });
+    act(() => observations.get(composer)!([], {} as ResizeObserver));
+    expect(content.style.getPropertyValue("--workspace-document-composer-inset")).toBe("336px");
+    const nextTab = makeTab("second.pdf");
+    const nextProps = { ...props, tabs: [tab, nextTab], activeTabID: nextTab.id, activeFileTabID: nextTab.id };
+    await act(async () => root!.render(<WorkspaceRightPanel {...nextProps} focusedComposer={<div>Compose</div>} />));
+    const nextComposer = container!.querySelector<HTMLElement>(".workspace-document-composer")!;
+    const nextContent = container!.querySelector<HTMLElement>(contentSelector)!;
+    expect(observations.has(nextComposer)).toBe(true);
+    if (kind === "artifact") {
+      expect(nextComposer).not.toBe(composer);
+      expect(observations.has(composer)).toBe(false);
+      expect(nextContent.style.getPropertyValue("--workspace-document-composer-inset")).toBe("16px");
+    }
+    act(() => root!.render(<WorkspaceRightPanel {...nextProps} />));
+    expect(nextContent.style.getPropertyValue("--workspace-document-composer-inset")).toBe("");
+    expect(observations.has(nextComposer)).toBe(false);
+  });
+
+  it("clamps the tree width so the file content keeps usable space", () => {
+    expect(clampWorkspaceFileTreeWidth(100)).toBe(WORKSPACE_FILE_TREE_MIN_WIDTH);
+    expect(clampWorkspaceFileTreeWidth(900)).toBe(WORKSPACE_FILE_TREE_MAX_WIDTH);
+    expect(clampWorkspaceFileTreeWidth(480, 600)).toBe(240);
+  });
+
+  it("temporarily shrinks the file tree when the panel gets narrow", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
+    try {
+      window.localStorage.setItem("wuu.desktop.fileTreeWidth", "320");
+      const context: RuntimeContext = {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      };
+      const fileTab = workspaceFileViewTab({ context, path: "src/App.tsx" });
+      mount(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={[fileTab]}
+          activeTabID={fileTab.id}
+          activeFileTabID={fileTab.id}
+          workspaceContext={context}
+        />,
+      );
+      await act(async () => Promise.resolve());
+
+      const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+      let panelWidth = 420;
+      Object.defineProperty(split, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ width: panelWidth }),
+      });
+
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+      expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("180px");
+      expect(window.localStorage.getItem("wuu.desktop.fileTreeWidth")).toBe("320");
+
+      panelWidth = 700;
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+      expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe("320px");
+    } finally {
+      if (originalResizeObserver) {
+        globalThis.ResizeObserver = originalResizeObserver;
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
+  });
+
+  it("gives a file the whole panel when the panel cannot hold the tree beside it", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
+    try {
+      const context: RuntimeContext = {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      };
+      const fileTab = workspaceFileViewTab({ context, path: "src/App.tsx" });
+      const onOpenTool = vi.fn();
+      mount(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          onOpenTool={onOpenTool}
+          tabs={[fileTab]}
+          activeTabID={fileTab.id}
+          activeFileTabID={fileTab.id}
+          workspaceContext={context}
+        />,
+      );
+      await act(async () => Promise.resolve());
+
+      const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+      let panelWidth = 300;
+      Object.defineProperty(split, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ width: panelWidth }),
+      });
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+
+      const tree = container!.querySelector<HTMLElement>(".workspace-files-tree")!;
+      expect(tree.hidden).toBe(true);
+      const showTree = container!.querySelector<HTMLButtonElement>(".workspace-file-tree-reveal");
+      expect(showTree).not.toBeNull();
+      act(() => showTree!.click());
+      expect(onOpenTool).toHaveBeenCalledWith("files");
+
+      panelWidth = 600;
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+      expect(tree.hidden).toBe(false);
+      expect(container!.querySelector(".workspace-file-tree-reveal")).toBeNull();
+      expect(window.localStorage.getItem("wuu.desktop.fileTreeVisible")).not.toBe("false");
+    } finally {
+      if (originalResizeObserver) {
+        globalThis.ResizeObserver = originalResizeObserver;
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
+  });
+
+  it("fits the stored tree width when a panel that started closed opens", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    let resizeCallback: ResizeObserverCallback | undefined;
+    class MockResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        resizeCallback = callback;
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    globalThis.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
+    try {
+      window.localStorage.setItem("wuu.desktop.fileTreeWidth", "320");
+      const context: RuntimeContext = {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      };
+      const filesTab = workspaceToolViewTab("files");
+      const props = { ...baseProps(), workspaceContext: context };
+      mount(<WorkspaceRightPanel {...props} open={false} present={false} />);
+      await act(async () => Promise.resolve());
+      expect(container!.querySelector(".workspace-files-split")).toBeNull();
+
+      act(() => {
+        root!.render(
+          <WorkspaceRightPanel {...props} tabs={[filesTab]} activeTabID={filesTab.id} />,
+        );
+      });
+      await act(async () => Promise.resolve());
+
+      const split = container!.querySelector<HTMLElement>(".workspace-files-split")!;
+      Object.defineProperty(split, "getBoundingClientRect", {
+        configurable: true,
+        value: () => ({ width: 600 }),
+      });
+      act(() => resizeCallback?.([], {} as ResizeObserver));
+      expect(split.style.getPropertyValue("--workspace-file-tree-width")).toBe(
+        `${600 - WORKSPACE_FILE_CONTENT_MIN_WIDTH}px`,
+      );
+    } finally {
+      if (originalResizeObserver) {
+        globalThis.ResizeObserver = originalResizeObserver;
+      } else {
+        Reflect.deleteProperty(globalThis, "ResizeObserver");
+      }
+    }
+  });
+
+  it("keeps inactive file state without retaining inactive Monaco editors", async () => {
+    const context: RuntimeContext = {
+      kind: "project",
+      project_id: "project-1",
+      cwd: "/repo/project",
+    };
+    const fileA = workspaceFileViewTab({ context, path: "src/a.ts" });
+    const fileB = workspaceFileViewTab({ context, path: "src/b.ts" });
+    const tabs: WorkspaceViewTab[] = [fileA, fileB];
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={tabs}
+        activeTabID={fileA.id}
+        activeFileTabID={fileA.id}
+        workspaceContext={context}
+      />,
+    );
+    await act(async () => Promise.resolve());
+    act(() => {
+      fileResource(fileA.id)?.querySelector<HTMLButtonElement>(".mock-editor-scroll")?.click();
+    });
+
+    act(() => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={tabs}
+          activeTabID={fileB.id}
+          activeFileTabID={fileB.id}
+          workspaceContext={context}
+        />,
+      );
+    });
+    await act(async () => Promise.resolve());
+
+    const fileAResource = fileResource(fileA.id);
+    expect(fileAResource).toBeTruthy();
+    expect(fileAResource?.hidden).toBe(true);
+    expect(fileAResource?.querySelector(".workspace-monaco-editor")).toBeNull();
+    expect(container?.querySelectorAll(".workspace-monaco-editor")).toHaveLength(1);
+    expect(container?.querySelectorAll(".workspace-file-resource")).toHaveLength(2);
+
+    act(() => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={tabs}
+          activeTabID={fileA.id}
+          activeFileTabID={fileA.id}
+          workspaceContext={context}
+        />,
+      );
+    });
+    const restoredEditor = fileResource(fileA.id)?.querySelector(".workspace-monaco-editor");
+    expect(restoredEditor?.getAttribute("data-text")).toBe("source src/a.ts");
+    expect(restoredEditor?.getAttribute("data-view-scroll")).toBe("42");
+  });
+
+  it("gives same-path files in separate worktrees distinct Monaco resources", async () => {
+    const primary = workspaceFileViewTab({
+      context: {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      },
+      path: "src/App.tsx",
+    });
+    const worktree = workspaceFileViewTab({
+      context: {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/worktrees/feature/project",
+      },
+      path: "src/App.tsx",
+    });
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[primary, worktree]}
+        activeTabID={primary.id}
+        activeFileTabID={primary.id}
+        workspaceContext={primary.context}
+      />,
+    );
+    await act(async () => Promise.resolve());
+
+    let resourceIDs = Array.from(
+      container?.querySelectorAll<HTMLElement>(".workspace-monaco-editor") ?? [],
+    ).map((editor) => editor.dataset.resourceId);
+    expect(resourceIDs).toEqual([primary.id]);
+
+    await act(async () => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={[primary, worktree]}
+          activeTabID={worktree.id}
+          activeFileTabID={worktree.id}
+          workspaceContext={worktree.context}
+        />,
+      );
+      await Promise.resolve();
+    });
+    resourceIDs = Array.from(
+      container?.querySelectorAll<HTMLElement>(".workspace-monaco-editor") ?? [],
+    ).map((editor) => editor.dataset.resourceId);
+    expect(resourceIDs).toEqual([worktree.id]);
+  });
+
+  it("closes a readonly file without dirty-state confirmation", async () => {
+    const onCloseTab = vi.fn();
+    const onDirtyFileTabsChange = vi.fn();
+    const fileTab = workspaceFileViewTab({
+      context: {
+        kind: "project",
+        project_id: "project-1",
+        cwd: "/repo/project",
+      },
+      path: "src/dirty.ts",
+    });
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[fileTab]}
+        activeTabID={fileTab.id}
+        activeFileTabID={fileTab.id}
+        workspaceContext={fileTab.context}
+        onCloseTab={onCloseTab}
+        onDirtyFileTabsChange={onDirtyFileTabsChange}
+      />,
+    );
+    await act(async () => Promise.resolve());
+    expect(onDirtyFileTabsChange).toHaveBeenLastCalledWith(false);
+    expect(container?.querySelector(".workspace-tool-tab.active.dirty")).toBeNull();
+    expect(container?.querySelector(".workspace-tab-dirty-indicator")).toBeNull();
+    act(() => {
+      container?.querySelector<HTMLButtonElement>(".workspace-tool-tab-close")?.click();
+    });
+
+    expect(confirmAction).not.toHaveBeenCalled();
+    expect(onCloseTab).toHaveBeenCalledWith(fileTab.id);
+  });
+
+  it("renders a diff tab as a unified, closable right panel tab (folded into the tab strip)", async () => {
+    const onCloseTab = vi.fn();
+    const diffTab = workspaceDiffViewTab({
+      threadID: "thread-1",
+      path: "/tmp/a.txt",
+      selection: makeSelection("/tmp/a.txt"),
+    });
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[diffTab]}
+        activeTabID={diffTab.id}
+        onCloseTab={onCloseTab}
+      />,
+    );
+
+    const panel = container?.querySelector<HTMLElement>(".workspace-right-panel.detail.diff");
+    expect(panel).toBeTruthy();
+    expect(panel?.querySelector(".workspace-panel-body")?.textContent).toContain("/tmp/a.txt");
+    expect(panel?.querySelector(".workspace-panel-body")?.textContent).toContain("new value");
+
+    // The diff tab shows up in the unified tab strip, not as a separate
+    // pseudo-tab: it has a title (basename), a close button, and (once
+    // there's more than one tab) is reorderable just like a tool tab.
+    const tabButton = panel?.querySelector<HTMLButtonElement>(".workspace-tool-tab-main");
+    expect(tabButton?.textContent).toContain("a.txt");
+    expect(tabButton?.getAttribute("title")).toBeNull();
+    expect(await hoverTooltipText(tabButton ?? null)).toBe("/tmp/a.txt");
+
+    act(() => {
+      panel?.querySelector<HTMLButtonElement>(".turn-file-diff-close")?.click();
+    });
+    expect(onCloseTab).toHaveBeenCalledTimes(1);
+    expect(onCloseTab).toHaveBeenCalledWith(diffTab.id);
+
+    onCloseTab.mockClear();
+    act(() => {
+      panel?.querySelector<HTMLButtonElement>(".workspace-tool-tab-close")?.click();
+    });
+    expect(onCloseTab).toHaveBeenCalledTimes(1);
+    expect(onCloseTab).toHaveBeenCalledWith(diffTab.id);
+  });
+
+  it("does not repeat a workspace tab's visible label as its hover hint", async () => {
+    const newTab: WorkspaceViewTab = { kind: "new", id: "new:one" };
+    const filesTab = workspaceToolViewTab("files");
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[newTab, filesTab]}
+        activeTabID={newTab.id}
+      />,
+    );
+
+    const tabButtons = container?.querySelectorAll<HTMLButtonElement>(".workspace-tool-tab-main") ?? [];
+    expect(tabButtons).toHaveLength(2);
+    expect(await hoverTooltipText(tabButtons[0])).toBeNull();
+    expect(await hoverTooltipText(tabButtons[1])).toBeNull();
+  });
+
+  it("supports several diff tabs open side by side alongside tool tabs", () => {
+    const onSelectTab = vi.fn();
+    const filesTab = workspaceToolViewTab("files");
+    const diffA = workspaceDiffViewTab({
+      threadID: "thread-1",
+      path: "a.txt",
+      selection: makeSelection("a.txt"),
+    });
+    const diffB = workspaceDiffViewTab({
+      threadID: "thread-1",
+      path: "src/b.txt",
+      selection: makeSelection("src/b.txt"),
+    });
+    const tabs: WorkspaceViewTab[] = [filesTab, diffA, diffB];
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={tabs}
+        activeTabID={diffB.id}
+        onSelectTab={onSelectTab}
+      />,
+    );
+
+    const tabButtons = container?.querySelectorAll(".workspace-panel-tabs .workspace-tool-tab");
+    expect(tabButtons?.length).toBe(3);
+    // Reorderable once more than one tab is present, regardless of kind.
+    expect(container?.querySelectorAll(".workspace-tool-tab.can-reorder").length).toBe(3);
+
+    const diffBTab = container?.querySelector(".workspace-tool-tab.active");
+    expect(diffBTab?.textContent).toContain("b.txt");
+    expect(container?.querySelector(".workspace-panel-tabs")?.getAttribute("aria-label")).toBe(
+      "产物与工具",
+    );
+    const semanticTabs = container?.querySelectorAll<HTMLButtonElement>(".workspace-tool-tab-main");
+    expect(semanticTabs?.[0]?.getAttribute("role")).toBe("tab");
+    expect(semanticTabs?.[0]?.tabIndex).toBe(-1);
+    expect(semanticTabs?.[2]?.getAttribute("aria-selected")).toBe("true");
+    expect(semanticTabs?.[2]?.tabIndex).toBe(0);
+    semanticTabs?.[2]?.focus();
+    act(() => {
+      semanticTabs?.[2]?.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true }),
+      );
+    });
+    expect(onSelectTab).toHaveBeenCalledWith(diffA.id);
+    expect(document.activeElement).toBe(semanticTabs?.[1]);
+
+    const diffAButton = Array.from(
+      container?.querySelectorAll<HTMLButtonElement>(".workspace-tool-tab-main") ?? [],
+    ).find((button) => button.textContent?.includes("a.txt") && !button.textContent.includes("b.txt"));
+    act(() => {
+      diffAButton?.click();
+    });
+    expect(onSelectTab).toHaveBeenCalledWith(diffA.id);
+  });
+
+  it("restores keyboard focus to the next active workspace tab after close", async () => {
+    const filesTab = workspaceToolViewTab("files");
+    const terminalTab = workspaceToolViewTab("terminal");
+    const renderPanel = (tabs: WorkspaceViewTab[], activeTabID: string): void => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={tabs}
+          activeTabID={activeTabID}
+          onCloseTab={(id) => {
+            expect(id).toBe(terminalTab.id);
+            renderPanel([filesTab], filesTab.id);
+          }}
+        />,
+      );
+    };
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[filesTab, terminalTab]}
+        activeTabID={terminalTab.id}
+        onCloseTab={(id) => {
+          expect(id).toBe(terminalTab.id);
+          renderPanel([filesTab], filesTab.id);
+        }}
+      />,
+    );
+
+    await act(async () => {});
+    const activeClose = container?.querySelector<HTMLButtonElement>(
+      ".workspace-tool-tab.active .workspace-tool-tab-close",
+    );
+    activeClose?.focus();
+    act(() => activeClose?.click());
+
+    expect(document.activeElement).toBe(
+      container?.querySelector(".workspace-tool-tab.active .workspace-tool-tab-main"),
+    );
+  });
+
+  it("shows the tool picker when there is no active tab", () => {
+    const onOpenTool = vi.fn();
+    const filesTab = workspaceToolViewTab("files");
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[filesTab]}
+        activeTabID={undefined}
+        onOpenTool={onOpenTool}
+      />,
+    );
+
+    const panel = container?.querySelector<HTMLElement>(".workspace-right-panel.tools");
+    expect(panel).toBeTruthy();
+    const picker = panel?.querySelector(".workspace-tool-menu");
+    expect(picker).toBeTruthy();
+    act(() => {
+      picker?.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item")[1]?.click();
+    });
+    expect(onOpenTool).toHaveBeenCalledWith("review");
+  });
+
+  it("walks the tool picker with arrow keys, wrapping at the ends", () => {
+    mount(<WorkspaceRightPanel {...baseProps()} tabs={[]} activeTabID={undefined} />);
+
+    const items = Array.from(
+      container?.querySelectorAll<HTMLButtonElement>(".workspace-tool-menu-item") ?? [],
+    );
+    expect(items.length).toBeGreaterThan(2);
+    const press = (key: string): void => {
+      act(() => {
+        document.activeElement?.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+    };
+
+    items[0].focus();
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[1]);
+    press("End");
+    expect(document.activeElement).toBe(items.at(-1));
+    press("ArrowDown");
+    expect(document.activeElement).toBe(items[0]);
+    press("ArrowUp");
+    expect(document.activeElement).toBe(items.at(-1));
+    press("Home");
+    expect(document.activeElement).toBe(items[0]);
+  });
+});
+
+describe("WorkspaceRightPanel context routing (Bug 3: worktree-fork panel root)", () => {
+  const projectContext: RuntimeContext = {
+    kind: "project",
+    project_id: "project-1",
+    cwd: "/repo/project",
+  };
+
+  it("roots the file tree on workspaceContext, not activeContext", () => {
+    const filesTab = workspaceToolViewTab("files");
+
+    // activeContext is defined but workspaceContext is left undefined: if
+    // the file tree fell back to activeContext it would render the normal
+    // "loading" panel instead of the no-project empty state, since it would
+    // never observe workspaceRoot as absent.
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[filesTab]}
+        activeTabID={filesTab.id}
+        activeContext={projectContext}
+        workspaceContext={undefined}
+      />,
+    );
+
+    const panel = container?.querySelector<HTMLElement>(".workspace-right-panel");
+    expect(panel?.textContent).toContain("没有工作区");
+  });
+
+  it("roots the terminal on workspaceContext, not activeContext", async () => {
+    const terminalTab = workspaceToolViewTab("terminal");
+    const worktreeContext: RuntimeContext = {
+      kind: "project",
+      project_id: "project-1",
+      cwd: "/Users/me/.wuu/worktrees/fork-1/project",
+    };
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[terminalTab]}
+        activeTabID={terminalTab.id}
+        activeContext={projectContext}
+        workspaceContext={worktreeContext}
+      />,
+    );
+
+    await act(async () => {});
+    expect(container?.querySelector(".workspace-right-panel.detail.terminal")).not.toBeNull();
+    const terminalPanel = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
+    expect(terminalPanel?.getAttribute("data-cwd")).toBe(worktreeContext.cwd);
+    expect(document.querySelector(".view-switch-loading")).toBeNull();
+  });
+
+  it("keeps the terminal inside the panel when another workspace tab is selected", async () => {
+    const terminalTab = workspaceToolViewTab("terminal");
+    const filesTab = workspaceToolViewTab("files");
+
+    mount(
+      <WorkspaceRightPanel
+        {...baseProps()}
+        tabs={[terminalTab, filesTab]}
+        activeTabID={terminalTab.id}
+        workspaceContext={projectContext}
+      />,
+    );
+    await act(async () => {});
+    const terminalPanel = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
+    expect(terminalPanel?.getAttribute("data-active")).toBe("true");
+    expect(terminalPanel?.closest(".workspace-right-panel")).not.toBeNull();
+    expect(document.querySelector(".view-switch-loading")).toBeNull();
+
+    await act(async () => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={[terminalTab, filesTab]}
+          activeTabID={filesTab.id}
+          workspaceContext={projectContext}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const held = container?.querySelector<HTMLElement>('[data-testid="terminal-panel"]');
+    expect(held).toBe(terminalPanel);
+    expect(held?.getAttribute("data-active")).toBe("false");
+    expect(held?.closest(".workspace-panel-content-swap")?.hasAttribute("hidden")).toBe(true);
+
+    await act(async () => {
+      root?.render(
+        <WorkspaceRightPanel
+          {...baseProps()}
+          tabs={[filesTab]}
+          activeTabID={filesTab.id}
+          workspaceContext={projectContext}
+        />,
+      );
+      await Promise.resolve();
+    });
+    expect(container?.querySelector('[data-testid="terminal-panel"]')).toBeNull();
+  });
+});

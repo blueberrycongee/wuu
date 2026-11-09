@@ -1,0 +1,254 @@
+{
+  "version": 1,
+  "site": {
+    "title": "wuu",
+    "description": "在本地工作区中与你共同完成工作的 AI Agent",
+    "descriptions": {
+      "zh-CN": "在本地工作区中与你共同完成工作的 AI Agent",
+      "en": "An AI agent for local projects, with file changes and commands in view."
+    },
+    "home_descriptions": {
+      "zh-CN": "Wuu 文档：面向本地项目的 AI Agent 工作台。查看 Agent 读取的文件、运行的命令和修改，再在 Review 中核对结果。",
+      "en": "Wuu documentation: an AI agent workspace for local projects. Follow file changes and commands, then check the result in Review."
+    },
+    "default_locale": "zh-CN"
+  },
+  "locales": {
+    "zh-CN": {
+      "label": "简体中文",
+      "root": "zh-cn",
+      "navigation": [
+        {
+          "title": "开始使用",
+          "pages": [
+            "zh-cn/index.md",
+            "zh-cn/getting-started/index.md",
+            "zh-cn/getting-started/installation.md",
+            "zh-cn/getting-started/model-services.md",
+            "zh-cn/getting-started/external-engines.md",
+            "zh-cn/getting-started/first-task.md"
+          ]
+        },
+        {
+          "title": "桌面工作",
+          "pages": [
+            "zh-cn/desktop/workspaces.md",
+            "zh-cn/desktop/conversations.md",
+            "zh-cn/desktop/workspace-tools.md",
+            "zh-cn/desktop/execution-environments.md",
+            "zh-cn/desktop/subagents.md"
+          ]
+        },
+        {
+          "title": "扩展 Wuu",
+          "pages": [
+            "zh-cn/customize/index.md",
+            "zh-cn/customize/skills.md",
+            "zh-cn/customize/mcp.md",
+            "zh-cn/customize/hooks.md",
+            "zh-cn/customize/plugins.md",
+            "zh-cn/customize/video-input.md",
+            "zh-cn/customize/themes-settings.md"
+          ]
+        },
+        {
+          "title": "个性化",
+          "pages": [
+            "zh-cn/customize/memory.md",
+            "zh-cn/customize/generative-ui.md",
+            "zh-cn/customize/dream.md",
+            "zh-cn/customize/next-message.md"
+          ]
+        },
+        {
+          "title": "自动化与远程使用",
+          "pages": [
+            "zh-cn/automation/scheduled-tasks.md",
+            "zh-cn/automation/exec.md",
+            "zh-cn/automation/remote.md",
+            "zh-cn/automation/session-federation.md"
+          ]
+        },
+        {
+          "title": "帮助",
+          "pages": [
+            "zh-cn/help/troubleshooting.md"
+          ]
+        },
+        {
+          "title": "参考",
+          "pages": [
+            "zh-cn/reference/security-model.md",
+            "zh-cn/reference/permissions.md",
+            "zh-cn/reference/configuration.md",
+            "zh-cn/reference/cli-commands.md",
+            "zh-cn/reference/agent-command-system.md"
+          ]
+        },
+        {
+          "title": "扩展开发",
+          "pages": [
+            "zh-cn/customize/skill-authoring.md",
+            "zh-cn/customize/plugin-quickstart.md",
+            "zh-cn/customize/desktop-plugin-quickstart.md",
+            "zh-cn/customize/ui-sdk.md",
+            "zh-cn/customize/replaceable-providers.md",
+            "zh-cn/customize/session-sharing.md",
+            "zh-cn/customize/desktop-plugins.md",
+            "zh-cn/customize/plugin-recipes.md",
+            "zh-cn/customize/feishu-workspace.md",
+            "zh-cn/customize/notion-workspace.md",
+            "zh-cn/customize/plugin-command-actions.md",
+            "zh-cn/customize/plugin-development-practices.md",
+            "zh-cn/customize/plugin-authoring.md",
+            "zh-cn/reference/desktop-plugins.md",
+            "zh-cn/customize/plugin-system.md",
+            "zh-cn/customize/plugin-compatibility.md",
+            "zh-cn/customize/plugin-compositions.md",
+            "zh-cn/customize/harness-experiments.md",
+            "zh-cn/customize/theme-surface-matrix.md"
+          ]
+        },
+        {
+          "title": "API 与集成（部分英文）",
+          "pages": [
+            "zh-cn/automation/app-server.md",
+            "en/automation/jsonl-events.md",
+"en/integrations/app-server-protocol.md",
+"zh-cn/integrations/user-hosts.md",
+"zh-cn/integrations/native-personal.md",
+"zh-cn/integrations/resource-access.md"
+          ]
+        },
+        {
+          "title": "维护者文档（部分英文）",
+          "pages": [
+            "zh-cn/project/development.md",
+            "zh-cn/project/desktop-ui.md",
+            "zh-cn/project/design-system.md",
+            "zh-cn/project/technical-blog.md",
+            "en/project/release.md"
+          ]
+        }
+      ]
+    },
+    "en": {
+      "label": "English",
+      "root": "en",
+      "navigation": [
+        {
+          "title": "Start",
+          "pages": [
+            "en/index.md",
+            "en/getting-started/index.md",
+            "en/getting-started/installation.md",
+            "en/getting-started/model-services.md",
+            "en/getting-started/external-engines.md",
+            "en/getting-started/first-task.md"
+          ]
+        },
+        {
+          "title": "Desktop",
+          "pages": [
+            "en/desktop/workspaces.md",
+            "en/desktop/conversations.md",
+            "en/desktop/workspace-tools.md",
+            "en/desktop/execution-environments.md",
+            "en/desktop/subagents.md"
+          ]
+        },
+        {
+          "title": "Extend Wuu",
+          "pages": [
+            "en/customize/index.md",
+            "en/customize/skills.md",
+            "en/customize/mcp.md",
+            "en/customize/hooks.md",
+            "en/customize/plugins.md",
+            "en/customize/video-input.md",
+            "en/customize/themes-settings.md"
+          ]
+        },
+        {
+          "title": "Personalize",
+          "pages": [
+            "en/customize/memory.md",
+            "en/customize/generative-ui.md",
+            "en/customize/dream.md",
+            "en/customize/next-message.md"
+          ]
+        },
+        {
+          "title": "Automation and remote use",
+          "pages": [
+            "en/automation/scheduled-tasks.md",
+            "en/automation/exec.md",
+            "en/automation/remote.md",
+            "en/automation/session-federation.md"
+          ]
+        },
+        {
+          "title": "Help",
+          "pages": [
+            "en/help/troubleshooting.md"
+          ]
+        },
+        {
+          "title": "Reference",
+          "pages": [
+            "en/reference/security-model.md",
+            "en/reference/permissions.md",
+            "en/reference/configuration.md",
+            "en/reference/cli-commands.md",
+            "en/reference/agent-command-system.md"
+          ]
+        },
+        {
+          "title": "Extension development",
+          "pages": [
+            "en/customize/skill-authoring.md",
+            "en/customize/plugin-quickstart.md",
+            "en/customize/desktop-plugin-quickstart.md",
+            "en/customize/ui-sdk.md",
+            "en/customize/replaceable-providers.md",
+            "en/customize/session-sharing.md",
+            "en/customize/desktop-plugins.md",
+            "en/customize/plugin-recipes.md",
+            "en/customize/feishu-workspace.md",
+            "en/customize/notion-workspace.md",
+            "en/customize/plugin-command-actions.md",
+            "en/customize/plugin-development-practices.md",
+            "en/customize/plugin-authoring.md",
+            "en/reference/desktop-plugins.md",
+            "en/customize/plugin-system.md",
+            "en/customize/plugin-compatibility.md",
+            "en/customize/plugin-compositions.md",
+            "en/customize/harness-experiments.md",
+            "en/customize/theme-surface-matrix.md"
+          ]
+        },
+        {
+          "title": "APIs and integrations",
+          "pages": [
+            "en/automation/app-server.md",
+            "en/automation/jsonl-events.md",
+"en/integrations/app-server-protocol.md",
+"en/integrations/user-hosts.md",
+"en/integrations/native-personal.md",
+"en/integrations/resource-access.md"
+          ]
+        },
+        {
+          "title": "Maintainers",
+          "pages": [
+            "en/project/development.md",
+            "en/project/desktop-ui.md",
+            "en/project/design-system.md",
+            "en/project/technical-blog.md",
+            "en/project/release.md"
+          ]
+        }
+      ]
+    }
+  }
+}

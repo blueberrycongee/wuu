@@ -1,0 +1,15 @@
+{
+  "name": "demo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --hot server.ts"
+  },
+  "dependencies": {
+    "blobatar": "file:.."
+  },
+  "devDependencies": {
+    "@types/react": "^19",
+    "@types/react-dom": "^19"
+  }
+}

@@ -1,0 +1,5 @@
+body { overflow: auto; }
+#root { min-height: 100vh; }
+nav { display: flex; flex-wrap: wrap; gap: 12px; padding: 20px; }
+nav button { padding: 6px 12px; }
+.empty-home { min-height: 500px; padding: 32px; }

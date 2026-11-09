@@ -1,0 +1,14 @@
+body { margin: 0; font: 13px/1.5 system-ui, sans-serif; }
+main { min-height: 100vh; padding: 24px; box-sizing: border-box; background: Canvas; color: CanvasText; color-scheme: light; }
+main[data-theme="dark"] { color-scheme: dark; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+label { display: inline-flex; align-items: center; gap: 6px; }
+select { font: inherit; max-width: 170px; }
+.runtime-preview { display: flex; align-items: center; gap: 32px; min-height: 220px; flex-wrap: wrap; }
+.icon-preview { width: 100px; height: 100px; }
+.accessories { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 24px; }
+figure { margin: 0; display: grid; justify-items: center; gap: 12px; }
+.samples { display: flex; align-items: center; gap: 20px; padding-top: 24px; }
+figcaption { overflow-wrap: anywhere; }
+.shapes { display: flex; flex-wrap: wrap; gap: 32px; padding-top: 40px; }
+.shapes .agent-avatar-mark { width: 72px; height: 72px; }

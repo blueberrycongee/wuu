@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "id": "automation-ui",
+  "name": "Automation catalog",
+  "description": "Independent presentation for the selected automation.scheduler provider.",
+  "icon": { "path": "icon.webp" },
+  "version": "0.2.0",
+  "author": {
+    "name": "Wuu"
+  },
+  "minimumWuuVersion": "2026.10.19",
+  "desktop": {
+    "entry": "desktop.js",
+    "required_services": [
+      {
+        "name": "automation.scheduler",
+        "major_version": 1,
+        "required": false
+      }
+    ]
+  },
+  "interface": {
+    "family": {
+      "id": "wuu.automation",
+      "name": "Automations",
+      "description": "Schedule prompts and manage recurring agent work."
+    },
+    "displayName": "Automation catalog",
+    "shortDescription": "Independent presentation for the selected automation.scheduler provider.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ]
+  },
+  "contributes": {
+    "navigation": [
+      {
+        "id": "automation",
+        "title": "Automations",
+        "view": "automation.catalog",
+        "icon": "clock",
+        "order": 40
+      }
+    ]
+  }
+}

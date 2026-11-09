@@ -1,0 +1,5 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": { "types": ["node", "vite/client"], "paths": { "@wuu/plugin-sdk": ["../../../packages/plugin-sdk/src/index.ts"] } },
+  "include": ["preview.tsx", "../../src/renderer/plugins/personal-genui/**/*.tsx", "../../../plugins/personal/src/genui/**/*.ts"]
+}

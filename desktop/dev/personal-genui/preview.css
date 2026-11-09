@@ -1,0 +1,12 @@
+:root { --wuu-font-size-ui: 15px; --wuu-font-size-body: 15px; }
+body { margin: 0; overflow: auto; background: var(--paper); color: var(--ink); font-size: var(--font-ui); }
+.genui-preview { max-width: 850px; margin: auto; padding: 48px 28px; }
+.genui-preview header { margin-bottom: 40px; }
+.genui-preview h1 { font-size: 2em; font-weight: 600; margin-block: 12px; line-height: 1.4; }
+.genui-preview header p { line-height: 1.7; }
+.preview-eyebrow, .preview-byline, .preview-mode, .genui-preview footer { color: var(--ink-secondary); }
+.preview-byline { margin-bottom: 18px; }
+.preview-answer { border-top: 1px solid var(--hairline); padding-block: 28px; }
+.genui-preview footer { line-height: 1.7; margin-top: 24px; }
+:root[data-large="true"] { --wuu-font-size-ui: 20px; --wuu-font-size-body: 20px; }
+@media (max-width: 480px) { .genui-preview { padding: 24px 18px; } .genui-preview h1 { font-size: 1.6em; } }

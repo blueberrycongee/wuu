@@ -1,0 +1,44 @@
+.composer-plugin-choices {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  min-width: 0;
+}
+.composer-context-menu .composer-plugin-row { width: 100%; }
+.composer-plugin-notice {
+  margin: 0;
+  padding: 14px 12px 15px;
+  color: var(--ink-tertiary);
+  font-size: var(--font-menu);
+  line-height: var(--line-ui);
+  text-align: center;
+  white-space: normal;
+}
+
+/* One line per choice in the same anatomy as the command rows: the mark, the
+ * name that gives way first, then secondary copy pinned at the row's end. */
+.composer-context-menu .composer-plugin-row > .composer-plugin-name {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+/* Keep secondary copy readable without competing with the name. */
+.composer-context-menu .composer-plugin-row > .composer-plugin-detail {
+  flex: 0 0 auto;
+  max-width: 50%;
+  color: var(--ink-tertiary);
+  font-weight: var(--weight-regular);
+}
+.composer-plus-menu button.composer-plugin-row:disabled { opacity: 1; color: var(--ink-muted); }
+
+/* Brand marks sit bare, at the size of the menu's other icons. */
+.composer-context-menu .composer-plugin-row > .composer-plugin-mark {
+  display: grid;
+  place-items: center;
+  width: var(--icon-size-sm);
+  height: var(--icon-size-sm);
+  flex: none;
+  align-self: center;
+  overflow: visible;
+}
+.composer-context-menu .composer-plugin-row > .composer-plugin-mark > :is(.plugin-icon-asset, .plugin-icon-themed) { width: 100%; height: 100%; }
+.composer-context-menu .composer-plugin-mark span { flex: none; }

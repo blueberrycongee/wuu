@@ -1,0 +1,21 @@
+/* Fixture controls and positioning only; production CSS owns surface paint. */
+body { overflow: auto; }
+.elevation-review { max-width: 1160px; margin: 0 auto; padding: 44px 48px 72px; color: var(--ink); }
+.elevation-review h1 { font-size: 25px; margin: 0 0 8px; }
+.elevation-review header > p { color: var(--ink-muted); margin-bottom: 20px; }
+.elevation-review nav { display: flex; gap: 8px; flex-wrap: wrap; }
+.elevation-review nav button { background: var(--surface-1); color: var(--ink); border: 1px solid var(--hairline); border-radius: 8px; padding: 7px 12px; }
+.elevation-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 72px; margin-top: 48px; }
+.elevation-review h2 { font-size: 12px; font-weight: 500; color: var(--ink-muted); margin: 0 0 22px; }
+.elevation-project-slot { position: relative; height: 282px; margin-left: 20px; }
+.elevation-project-slot .composer-project-menu { position: static; }
+.elevation-input { display: block; width: 100%; height: 106px; padding: 18px; resize: none; border: 0; background: transparent; color: var(--ink); }
+.elevation-input::placeholder { color: var(--composer-textarea-placeholder); }
+.elevation-input-actions { display: flex; align-items: center; justify-content: space-between; padding: 10px 18px 18px; color: var(--ink-muted); font-size: 12px; }
+.elevation-other-examples .environment-dialog { margin-bottom: 40px; }
+.elevation-other-examples .environment-dialog p { color: var(--ink-muted); line-height: 1.7; }
+.elevation-small-surfaces { display: flex; align-items: center; gap: 24px; margin-bottom: 40px; }
+.elevation-small-surfaces .jump-to-latest-pill, .elevation-small-surfaces .tooltip-layer { position: static; transform: none; }
+.elevation-tray-stage { padding-top: 18px; }
+.elevation-tray-stage .workspace-document-turn-drawer { position: static; transform: none; width: 100%; max-height: none; padding: 18px; }
+@media (max-width: 760px) { .elevation-review { padding: 24px; } .elevation-grid { grid-template-columns: 1fr; gap: 40px; } }

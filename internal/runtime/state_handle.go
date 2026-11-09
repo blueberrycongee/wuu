@@ -1,0 +1,328 @@
+package runtime
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strings"
+	"sync"
+
+	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/config"
+	"github.com/blueberrycongee/wuu/internal/hooks"
+	"github.com/blueberrycongee/wuu/internal/persistence"
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
+	"github.com/blueberrycongee/wuu/internal/statepath"
+)
+
+// State captures one selected authority for a request or durable execution.
+// Close releases its generation after all consumers and leases finish cleanup.
+// Documents and Sessions never resolve a later published generation.
+type State struct {
+	// SystemPrompt is immutable request metadata captured with this authority.
+	SystemPrompt            string
+	models                  *StateModels
+	hookDispatcher          *hooks.Dispatcher
+	Documents               persistence.Documents
+	Sessions                *session.Store
+	Generation              *PluginGeneration
+	Host                    *pluginhost.Host
+	InferenceJournalRuntime *session.InferenceJournalRuntime
+	mu                      sync.Mutex
+	closed                  bool
+	once                    sync.Once
+	close                   func() error
+	closeErr                error
+	execution               *compositionExecutionLease
+}
+
+// DispatchHook uses this capture's hooks and journal, joining required model
+// receipts before returning. A generationless hook configuration fails closed.
+func (s *State) DispatchHook(ctx context.Context, event hooks.Event, input *hooks.Input) (*hooks.Output, error) {
+	dispatcher := s.hookDispatcher
+	if s.Generation != nil {
+		dispatcher = s.Generation.hooks
+	}
+	if dispatcher == nil || !dispatcher.HasHooks(event) {
+		return &hooks.Output{}, nil
+	}
+	if s.Generation == nil {
+		return nil, errors.Join(agent.ErrModelReceiptLifecycle, serviceError("service_unavailable", "hooks require a captured generation"))
+	}
+	if s.InferenceJournalRuntime == nil {
+		return nil, errors.Join(agent.ErrModelReceiptLifecycle, serviceError("service_unavailable", "hook inference accounting is unavailable"))
+	}
+	if input == nil {
+		input = &hooks.Input{}
+	}
+	ctx = providers.WithInferenceJournal(ctx, s.InferenceJournalRuntime.ForOwner(input.SessionID))
+	ctx, finish, err := agent.BeginModelReceipts(ctx, s.BeginModelReceipts)
+	if err != nil {
+		return nil, err
+	}
+	output, err := dispatcher.Dispatch(ctx, event, input)
+	return output, errors.Join(err, finish())
+}
+
+func (s *State) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.once.Do(func() {
+		s.mu.Lock()
+		s.closed = true
+		s.mu.Unlock()
+		if s.close != nil {
+			s.closeErr = s.close()
+		}
+		if s.execution != nil {
+			s.closeErr = errors.Join(s.closeErr, s.execution.release())
+		}
+	})
+	return s.closeErr
+}
+
+func (s *Session) RetainState() (*State, error) {
+	if s == nil {
+		return nil, errors.New("runtime is not initialized")
+	}
+	s.pluginGenerationMu.Lock()
+	defer s.pluginGenerationMu.Unlock()
+	generation := s.pluginGeneration
+	if generation == nil && s.PluginHost != nil {
+		generation = s.capturePluginGeneration()
+		s.pluginGeneration = generation
+	}
+	documents, sessions := s.Documents, s.Sessions
+	if generation != nil && generation.state != nil {
+		documents, sessions = generation.state.documents, generation.state.sessions
+	}
+	if documents == nil || sessions == nil {
+		return nil, errors.New("selected composition has no session state")
+	}
+	result := &State{Documents: documents, Sessions: sessions, Host: s.PluginHost, Generation: generation, InferenceJournalRuntime: s.InferenceJournalRuntime, models: captureSessionStateModels(s), hookDispatcher: s.HookDispatcher}
+	if s.StreamRunner != nil {
+		result.SystemPrompt = s.StreamRunner.SystemPrompt
+	}
+	if generation != nil {
+		generation.retain()
+		result.Host = generation.host
+		if generation.state != nil {
+			result.InferenceJournalRuntime = generation.state.journal
+		}
+		result.close = func() error { return s.releasePluginGeneration(generation) }
+	}
+	return result, nil
+}
+
+// StateOptions uses the same provider discovery, trust and composition as the
+// interactive runtime without requiring a model or inference credentials.
+type StateOptions struct {
+	CapacityResources            *CapacityResources
+	RootDir, HomeDir, ConfigPath string
+	// WorkspaceID uses the same stable project identity as Options.WorkspaceID.
+	// Omit it for location-anchored roots that remain keyed by RootDir.
+	WorkspaceID     string
+	Config          config.Config
+	ConfigLoadMode  ConfigLoadMode
+	NativeProviders []NativeProviderFactory
+}
+
+func OpenState(ctx context.Context, opts StateOptions) (*State, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var err error
+	opts.NativeProviders = withCapacityProviders(opts.NativeProviders, opts.CapacityResources)
+	capacityRootRelease, err := retainCapacityRoot(opts.NativeProviders)
+	if err != nil {
+		return nil, err
+	}
+	capacityTransferred := false
+	defer func() {
+		if !capacityTransferred {
+			capacityRootRelease()
+		}
+	}()
+	opts.NativeProviders, err = withCredentialProviders(opts.NativeProviders, opts.HomeDir)
+	if err != nil {
+		return nil, err
+	}
+	opts.NativeProviders = withConfigurationProvider(opts.NativeProviders, opts.ConfigPath, opts.RootDir, opts.Config, opts.ConfigLoadMode)
+	root := strings.TrimSpace(opts.RootDir)
+	if root == "" {
+		return nil, errors.New("root dir is required")
+	}
+	home, err := statepath.Home(opts.HomeDir)
+	if err != nil {
+		return nil, err
+	}
+	lease, acquired, err := session.TryAcquirePluginGenerationExecutionLease(home)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return nil, errors.New("plugin packages are being changed by another app-server")
+	}
+	defer lease.Release()
+	catalog, acquired, err := session.TryAcquirePluginCatalogReadLease(home)
+	if err != nil {
+		return nil, err
+	}
+	if !acquired {
+		return nil, errors.New("plugin catalog is being published by another process")
+	}
+	defer catalog.Release()
+	discovered := discoverPlugins(root, home)
+	plan, err := ResolvePluginActivationPlan(opts.Config, discovered, opts.NativeProviders...)
+	if err != nil {
+		return nil, err
+	}
+	plugins, roots, err := snapshotMutableExecutionPackages(plan.Plugins)
+	if err != nil {
+		return nil, err
+	}
+	owned := true
+	defer func() {
+		if owned {
+			releaseFailedSnapshots(err, roots)
+		}
+	}()
+	if err := catalog.Release(); err != nil {
+		return nil, err
+	}
+	workspaceID := strings.TrimSpace(opts.WorkspaceID)
+	workspace, err := resolveWorkspaceStateDir(home, workspaceID, root)
+	if err != nil {
+		return nil, err
+	}
+	selection := productComposition(opts.Config.Composition, false, plugins, opts.NativeProviders)
+	// An inferred product includes discovered add-ons for availability, not as
+	// required contracts. Keep the same selection provenance as Session.New so
+	// a broken optional add-on cannot prevent state access or plugin recovery.
+	host, kernel, err := buildPluginHostWithSelection(ctx, plugins, root, workspaceID, home, workspace, nil, startPluginClient, NewPluginSessionRouter(), nil, selection, opts.Config.Composition != nil, "", opts.NativeProviders...)
+	if err != nil {
+		return nil, err
+	}
+	// State-only model routes still need the selected host for physical receipts
+	// and streamed events. This does not enable session-owned inference services.
+	kernel.mu.Lock()
+	kernel.modelHost = host
+	kernel.mu.Unlock()
+	generation := &PluginGeneration{id: newPluginGenerationID(home), host: host, state: kernel.state, ownedRoots: roots, settings: opts.Config, plugins: plugins}
+	if services := kernel.selectedServices; services != nil {
+		generation.credentials, generation.configClient = services.credentials, services.config
+		generation.chatGPTManager, generation.artifactClient, generation.mcpOAuth = services.chatGPT, services.artifacts, services.oauth
+	}
+	generation.retain()
+	kernel.bindStateGeneration(generation, nil)
+	owned = false
+	graphOwned := true
+	defer func() {
+		if graphOwned {
+			generation.Release()
+		}
+	}()
+	activationErr := host.Activate(ctx)
+	// Explicit service choices remain required even without a module list.
+	// Activation can retire a selected provider through a failed dependency.
+	if bindingErr := host.ServiceRegistry().ValidateBindings(); bindingErr != nil {
+		return nil, fmt.Errorf("activate state composition: %w", errors.Join(activationErr, bindingErr))
+	}
+	if err := activationErr; err != nil {
+		if ctx.Err() != nil {
+			return nil, fmt.Errorf("activate state composition: %w", err)
+		}
+		for _, status := range host.Statuses() {
+			if kernel.requiredPlugins[status.ID] && (status.State == pluginhost.StateFailed || status.State == pluginhost.StateStopped) {
+				return nil, fmt.Errorf("activate state composition: %w", err)
+			}
+		}
+		// Optional failures remain in the host inventory; independent selected
+		// providers stay usable, including the configuration recovery path.
+		providers.DebugLogf("activate optional state plugin: %v", err)
+	}
+	if kernel.state == nil || kernel.state.Status().State != pluginhost.StateActive {
+		return nil, errors.New("selected composition has no active session state")
+	}
+	generation.revokedMu.Lock()
+	generation.active = availablePluginPackages(plugins, host)
+	generation.revokedMu.Unlock()
+	graphOwned = false
+	capacityTransferred = true
+	return &State{Documents: kernel.state.documents, Sessions: kernel.state.sessions, Host: host, Generation: generation, InferenceJournalRuntime: kernel.state.journal, close: func() error {
+		if generation.Release() {
+			capacityRootRelease()
+			return generation.closeErr
+		}
+		return nil
+	}}, nil
+}
+
+// Retain transfers a live capture without observing the publishing Session.
+// A closed handle cannot be used to resurrect an already released generation.
+func (s *State) Retain() *State {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.Generation.retain()
+	if s.execution != nil {
+		s.execution.refs.Add(1)
+	}
+	return &State{SystemPrompt: s.SystemPrompt, Documents: s.Documents, Sessions: s.Sessions, Generation: s.Generation, Host: s.Host, InferenceJournalRuntime: s.InferenceJournalRuntime, models: s.models, hookDispatcher: s.hookDispatcher, close: s.close, execution: s.execution}
+}
+
+var ErrStateGenerationChanged = errors.New("state generation changed before runtime admission")
+
+// NewThreadRuntimeForState either constructs against the admitted generation or
+// rejects before effects so its caller can retry admission with a new capture.
+func (s *Session) NewThreadRuntimeForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection) (*ThreadRuntime, error) {
+	if thread, bound, err := s.productThreadRuntime(binding, sessionID, rootDir, selected); bound {
+		return thread, err
+	}
+	shadow, err := s.cloneForThreadModel(binding)
+	if err != nil {
+		return nil, err
+	}
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
+	return shadow.NewThreadRuntimeForRootModel(sessionID, rootDir, selected)
+}
+
+func (s *Session) NewThreadCapabilityRuntimeForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection) (*ThreadRuntime, error) {
+	if thread, bound, err := s.productThreadRuntime(binding, sessionID, rootDir, selected, true); bound {
+		return thread, err
+	}
+	shadow, err := s.cloneForThreadModel(binding)
+	if err != nil {
+		return nil, err
+	}
+	defer s.releasePluginGeneration(shadow.pluginGeneration)
+	return shadow.NewThreadCapabilityRuntime(sessionID, rootDir, selected)
+}
+
+// NewSideThreadRunnerForState uses a retained execution chosen at admission.
+// The caller owns binding until the runner and its finalizers finish.
+func (s *Session) NewSideThreadRunnerForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection, prompt string, parentSession ...string) (*agent.StreamRunner, error) {
+	owner := s
+	if binding.Generation != nil && binding.Generation.composition.scope != nil {
+		owner = binding.Generation.composition.scope.runtime
+	}
+	shadow, err := owner.cloneForThreadModel(binding)
+	if err != nil {
+		return nil, err
+	}
+	defer owner.releasePluginGeneration(shadow.pluginGeneration)
+	if owner != s {
+		selected.Provider, selected.Model = shadow.ProviderName, shadow.Model
+		selected.Variant, selected.Effort = shadow.StreamRunner.Variant, shadow.StreamRunner.Effort
+		shadow.StateDir, shadow.SessionDir, shadow.WuuHome = s.StateDir, s.SessionDir, s.WuuHome
+	}
+	return shadow.newSideThreadRunner(sessionID, rootDir, selected, prompt, parentSession...)
+}

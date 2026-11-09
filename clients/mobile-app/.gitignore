@@ -1,0 +1,10 @@
+node_modules/
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+.env*
+artifacts/
+google-services.json
+*.p8
+service-account*.json

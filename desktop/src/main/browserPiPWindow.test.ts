@@ -1,0 +1,1223 @@
+import { EventEmitter } from "node:events";
+import type { Rectangle } from "electron";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ActivitySession } from "../shared/protocol";
+import type { BrowserInteractionHint } from "./browserHostWindows";
+import {
+  BrowserPiPSurface,
+  browserPiPOverlayHTML,
+  pipContainRect,
+  pipHostname,
+  type BrowserPiPOverlayHandle,
+  type BrowserPiPTabHost,
+  type BrowserPiPWindowHandle,
+} from "./browserPiPWindow";
+import type { ObservationPiPEventSink } from "./cuaActivityWindows";
+import { ActivityPiPSurface } from "./activityPiPWindow";
+import type { ActivityPiPContentContext } from "./activityPiPContent";
+
+const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+// Cards animate in and out on timers; assertions about resting state run once
+// the motion has finished.
+const finishMotion = (): void => { vi.advanceTimersByTime(1_000); };
+
+describe("browser PiP pure helpers", () => {
+  it("extracts the host for the surface chrome", () => {
+    expect(pipHostname("https://docs.example.com/path?q=1")).toBe("docs.example.com");
+    expect(pipHostname("not a url")).toBe("not a url");
+    expect(pipHostname("")).toBe("about:blank");
+  });
+
+  it("fits the viewport into the window with letterboxing and a zoom scale", () => {
+    const rect = pipContainRect(1000, 500, 260, 170);
+    expect(rect.scale).toBeCloseTo(0.26);
+    expect(rect.width).toBeCloseTo(260);
+    expect(rect.height).toBeCloseTo(130);
+    expect(rect.x).toBeCloseTo(0);
+    expect(rect.y).toBeCloseTo(20);
+    expect(pipContainRect(0, 500, 260, 170).scale).toBe(0);
+    const larger = pipContainRect(100, 80, 400, 400);
+    expect(larger.scale).toBe(1);
+    expect(larger.width).toBe(100);
+    expect(larger.height).toBe(80);
+  });
+});
+
+class FakePipWindow {
+  bounds: Rectangle;
+  destroyed = false;
+  visible = false;
+  readonly added: unknown[] = [];
+  readonly removed: unknown[] = [];
+  private readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  constructor(bounds: Rectangle) {
+    this.bounds = bounds;
+  }
+
+  readonly contentView = {
+    addChildView: (view: unknown): void => {
+      this.added.push(view);
+    },
+    removeChildView: (view: unknown): void => {
+      this.removed.push(view);
+    },
+  };
+
+  opacity = 1;
+  ignoringMouse = false;
+  parent: unknown = null;
+  alwaysOnTop: { flag: boolean; level?: string } = { flag: false };
+  setAlwaysOnTop(flag: boolean, level?: string): void {
+    this.alwaysOnTop = { flag, level };
+  }
+  setParentWindow(parent: unknown): void {
+    this.parent = parent;
+  }
+  moveAbove(): void {}
+  setVisibleOnAllWorkspaces(): void {}
+  setOpacity(opacity: number): void {
+    this.opacity = opacity;
+  }
+  setIgnoreMouseEvents(ignore: boolean): void {
+    this.ignoringMouse = ignore;
+  }
+  showInactive(): void {
+    if (this.destroyed) throw new Error("Object has been destroyed");
+    this.visible = true;
+  }
+  hide(): void {
+    if (this.destroyed) throw new Error("Object has been destroyed");
+    this.visible = false;
+  }
+  isDestroyed(): boolean {
+    return this.destroyed;
+  }
+  isVisible(): boolean {
+    return this.visible;
+  }
+  getBounds(): Rectangle {
+    return this.bounds;
+  }
+  setBounds(bounds: Rectangle): void {
+    this.bounds = bounds;
+  }
+  on(event: string, listener: (...args: unknown[]) => void): void {
+    const list = this.listeners.get(event) ?? [];
+    list.push(listener);
+    this.listeners.set(event, list);
+  }
+  emit(event: string, ...args: unknown[]): void {
+    for (const listener of this.listeners.get(event) ?? []) listener(...args);
+  }
+  destroy(): void {
+    this.destroyed = true;
+    this.emit("closed");
+  }
+
+  asHandle(): BrowserPiPWindowHandle {
+    return this as unknown as BrowserPiPWindowHandle;
+  }
+}
+
+class FakeOverlay {
+  readonly executed: string[] = [];
+  readonly boundsSet: Rectangle[] = [];
+  loadedURL = "";
+  destroyed = false;
+  private navigateListener: ((event: unknown, url: string) => void) | undefined;
+
+  readonly webContents = {
+    loadURL: async (url: string) => {
+      this.loadedURL = url;
+    },
+    executeJavaScript: async (code: string) => {
+      this.executed.push(code);
+      return undefined;
+    },
+    setWindowOpenHandler: () => undefined,
+    on: (_event: string, listener: (event: unknown, url: string) => void) => {
+      this.navigateListener = listener;
+    },
+    isDestroyed: () => this.destroyed,
+  };
+
+  setBounds(bounds: Rectangle): void {
+    this.boundsSet.push(bounds);
+  }
+
+  navigate(url: string): void {
+    this.navigateListener?.({ preventDefault: vi.fn() }, url);
+  }
+
+  asHandle(): BrowserPiPOverlayHandle {
+    return this as unknown as BrowserPiPOverlayHandle;
+  }
+}
+
+class FakeHost {
+  bounds: Rectangle | undefined = { x: 0, y: 0, width: 1000, height: 500 };
+  meta = { url: "https://example.com/page", title: "Example" };
+  readonly mounts: Array<{ rect: Rectangle; zoom: number }> = [];
+  readonly unmounts: Array<{ restore: Rectangle }> = [];
+  readonly relayouts: Array<{ rect: Rectangle; zoom: number }> = [];
+  private readonly listeners = {
+    closed: new Set<(workdir: string, tabID: string) => void>(),
+    interaction: new Set<(workdir: string, tabID: string, hint: BrowserInteractionHint) => void>(),
+    navigate: new Set<(workdir: string, tabID: string, url: string) => void>(),
+    reparented: new Set<(workdir: string, tabID: string, parent: unknown) => void>(),
+  };
+
+  tabBounds(): Rectangle | undefined {
+    return this.bounds;
+  }
+  tabSurfaceMeta(): { url: string; title: string } | undefined {
+    return this.meta;
+  }
+  mountTabOnWindow(_w: string, _t: string, _p: unknown, rect: Rectangle, zoom: number): Rectangle | undefined {
+    if (!this.bounds) return undefined;
+    this.mounts.push({ rect, zoom });
+    return this.bounds;
+  }
+  unmountTabIfOwner(_w: string, _t: string, _o: unknown, restore: Rectangle): void {
+    this.unmounts.push({ restore });
+  }
+  relayoutMountedTab(_w: string, _t: string, _o: unknown, rect: Rectangle, zoom: number): void {
+    this.relayouts.push({ rect, zoom });
+  }
+  async captureMountedTab(): Promise<string | undefined> {
+    return undefined;
+  }
+  addTabClosedListener(listener: (workdir: string, tabID: string) => void): () => void {
+    this.listeners.closed.add(listener);
+    return () => this.listeners.closed.delete(listener);
+  }
+  addInteractionListener(
+    listener: (workdir: string, tabID: string, hint: BrowserInteractionHint) => void,
+  ): () => void {
+    this.listeners.interaction.add(listener);
+    return () => this.listeners.interaction.delete(listener);
+  }
+  addNavigateListener(listener: (workdir: string, tabID: string, url: string) => void): () => void {
+    this.listeners.navigate.add(listener);
+    return () => this.listeners.navigate.delete(listener);
+  }
+  addTabReparentedListener(
+    listener: (workdir: string, tabID: string, parent: unknown) => void,
+  ): () => void {
+    this.listeners.reparented.add(listener);
+    return () => this.listeners.reparented.delete(listener);
+  }
+
+  emitClosed(tabID = "t1"): void {
+    for (const listener of this.listeners.closed) listener("/repo", tabID);
+  }
+  emitInteraction(hint: BrowserInteractionHint): void {
+    for (const listener of this.listeners.interaction) listener("/repo", "t1", hint);
+  }
+  emitNavigate(url: string): void {
+    for (const listener of this.listeners.navigate) listener("/repo", "t1", url);
+  }
+  emitReparented(parent: unknown): void {
+    for (const listener of this.listeners.reparented) listener("/repo", "t1", parent);
+  }
+
+  asHost(): BrowserPiPTabHost {
+    return this as unknown as BrowserPiPTabHost;
+  }
+}
+
+function makeActivity(): ActivitySession {
+  return {
+    id: "a1",
+    thread_id: "th1",
+    kind: "browser",
+    plugin_id: "browser",
+    target: "t1",
+    workdir: "/repo",
+    state: "active",
+    controller: "agent",
+    created_at: "2026-07-17T00:00:00Z",
+    updated_at: "2026-07-17T00:00:00Z",
+  } as ActivitySession;
+}
+
+function makeSink(): ObservationPiPEventSink & {
+  events: Array<{ event: string }>;
+  gone: number;
+  failures: string[];
+} {
+  const sink = {
+    events: [] as Array<{ event: string }>,
+    gone: 0,
+    failures: [] as string[],
+    onEvent(event: { event: string }): void {
+      this.events.push(event);
+    },
+    onFailure(message: string): void {
+      this.failures.push(message);
+    },
+    onGone(): void {
+      this.gone += 1;
+    },
+  };
+  return sink as unknown as ObservationPiPEventSink & {
+    events: Array<{ event: string }>;
+    gone: number;
+    failures: string[];
+  };
+}
+
+function makeCuaSurface(opts?: {
+  bounds?: Rectangle;
+  desktopFrame?: Rectangle | ((bounds: Rectangle) => Rectangle);
+  snapshot?: () => Promise<string | undefined>;
+  onStop?: () => void;
+  onContext?: (context: ActivityPiPContentContext) => void;
+}): {
+  surface: ActivityPiPSurface;
+  win: FakePipWindow;
+  overlay: FakeOverlay;
+  sink: ReturnType<typeof makeSink>;
+  viewport: (width: number, height: number) => void;
+} {
+  const sink = makeSink();
+  const bounds = opts?.bounds ?? { x: 100, y: 100, width: 260, height: 170 };
+  const win = new FakePipWindow(bounds);
+  const overlay = new FakeOverlay();
+  let contentContext: ActivityPiPContentContext;
+  const surface = new ActivityPiPSurface({
+    activity: {
+      ...makeActivity(), kind: "cua", plugin_id: "cua-mac", target: "com.apple.TextEdit",
+      process_id: 42, window_id: 99,
+    },
+    bounds,
+    sink,
+    isPackaged: false,
+    createWindow: () => win.asHandle(),
+    createOverlay: () => overlay.asHandle(),
+    reducedMotion: () => true,
+    cursorPosition: () => ({ x: -1000, y: -1000 }),
+    desktopFrame: (bounds) => typeof opts?.desktopFrame === "function"
+      ? opts.desktopFrame(bounds)
+      : opts?.desktopFrame ?? { x: 0, y: 0, width: 1440, height: 900 },
+    createContent: (_activity, context) => {
+      contentContext = context;
+      opts?.onContext?.(context);
+      context.setViewport({ width: 800, height: 600 });
+      context.setMounted(true);
+      return {
+        start: () => undefined,
+        setVisible: () => undefined,
+        layout: () => undefined,
+        snapshot: opts?.snapshot,
+        stop: (onStopped: () => void) => { opts?.onStop?.(); onStopped(); },
+      };
+    },
+  });
+  return { surface, win, overlay, sink, viewport: (width, height) => contentContext.setViewport({ width, height }) };
+}
+
+function makeSurface(opts?: {
+  host?: FakeHost; bounds?: Rectangle; cursorPosition?: () => { x: number; y: number }; reducedMotion?: boolean;
+}): {
+  surface: BrowserPiPSurface;
+  win: FakePipWindow;
+  overlay: FakeOverlay;
+  host: FakeHost;
+  sink: ReturnType<typeof makeSink>;
+} {
+  const host = opts?.host ?? new FakeHost();
+  const sink = makeSink();
+  const bounds = opts?.bounds ?? { x: 100, y: 100, width: 260, height: 170 };
+  const win = new FakePipWindow(bounds);
+  const overlay = new FakeOverlay();
+  const surface = new BrowserPiPSurface({
+    activity: makeActivity(),
+    bounds,
+    sink,
+    host: host.asHost(),
+    workdir: "/repo",
+    tabID: "t1",
+    isPackaged: false,
+    createWindow: () => win.asHandle(),
+    createOverlay: () => overlay.asHandle(),
+    reducedMotion: () => opts?.reducedMotion ?? false,
+    cursorPosition: opts?.cursorPosition ?? (() => ({ x: -1000, y: -1000 })),
+  });
+  return { surface, win, overlay, host, sink };
+}
+
+describe("ActivityPiPSurface desktop docking", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("floats a native preview at a display corner and docks it back into the column", async () => {
+    const { surface, win, overlay, sink } = makeCuaSurface();
+    let visible = true;
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      isVisible: () => visible,
+      isMinimized: () => false,
+      isFocused: () => false,
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+      getMediaSourceId: () => "window:123:0",
+      webContents: { getZoomFactor: () => 1 },
+    });
+    surface.start();
+    surface.setHostParent(parent);
+    surface.setHostLayout({
+      host: { x: 200, y: 100, width: 800, height: 700 },
+      obstacles: [],
+      visibleFrame: { x: 0, y: 0, width: 1440, height: 900 },
+    });
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    expect(win.isVisible()).toBe(true);
+    expect(win.getBounds()).toEqual({ x: 656, y: 536, width: 320, height: 240 });
+
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    expect(win.parent).toBeNull();
+    expect(win.alwaysOnTop).toEqual({ flag: true, level: "floating" });
+    expect(win.getBounds()).toEqual({ x: 1096, y: 636, width: 320, height: 240 });
+    expect(sink.events).toContainEqual({ event: "desktop_dock", desktop: true });
+
+    // The detached card no longer follows the Wuu window's visibility.
+    visible = false;
+    parent.emit("hide");
+    expect(win.isVisible()).toBe(true);
+    visible = true;
+    parent.emit("show");
+
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    expect(win.parent).toBe(parent);
+    expect(win.alwaysOnTop.flag).toBe(false);
+    expect(win.getBounds()).toEqual({ x: 656, y: 536, width: 320, height: 240 });
+    expect(sink.events).toContainEqual({ event: "desktop_dock", desktop: false });
+
+    visible = false;
+    parent.emit("hide");
+    expect(win.isVisible()).toBe(false);
+    surface.stop();
+    expect(parent.eventNames()).toEqual([]);
+  });
+
+  it("does not detach a browser preview", async () => {
+    const { surface, win, overlay, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    expect(win.alwaysOnTop.flag).toBe(false);
+    expect(sink.events).not.toContainEqual({ event: "desktop_dock", desktop: true });
+    surface.stop();
+  });
+
+  it.each(["top-left", "top-right", "bottom-left", "bottom-right"] as const)("follows native viewport aspect at the %s corner, including trailing cards", (alignment) => {
+    const layout = { host: { x: 0, y: 0, width: 800, height: 600 }, obstacles: [], visibleFrame: { x: 0, y: 0, width: 1200, height: 800 } };
+    const lead = makeCuaSurface();
+    const tail = makeCuaSurface();
+    for (const item of [lead, tail]) { item.surface.start(); item.surface.setHostLayout(layout); }
+    lead.surface.setStackPosition(0, { frame: lead.win.bounds, alignment, dragging: false });
+    tail.surface.setStackPosition(1, lead.surface.stackLead());
+    const before = { ...lead.win.bounds };
+    lead.viewport(600, 800);
+    const after = lead.win.bounds;
+    expect(after.width).toBe(240);
+    expect(after.height).toBe(320);
+    expect(after.x + (alignment.endsWith("right") ? after.width : 0)).toBe(before.x + (alignment.endsWith("right") ? before.width : 0));
+    expect(after.y + (alignment.startsWith("bottom") ? after.height : 0)).toBe(before.y + (alignment.startsWith("bottom") ? before.height : 0));
+    tail.surface.setStackPosition(1, lead.surface.stackLead());
+    expect(tail.win.bounds.width / tail.win.bounds.height).toBeCloseTo(.75);
+    const tailBefore = { ...tail.win.bounds };
+    tail.viewport(600, 800);
+    expect(tail.win.bounds.width / tail.win.bounds.height).toBeCloseTo(.75);
+    expect(Math.max(tail.win.bounds.width, tail.win.bounds.height)).toBe(320);
+    expect(tail.win.bounds.x + (alignment.endsWith("right") ? tail.win.bounds.width : 0)).toBe(tailBefore.x + (alignment.endsWith("right") ? tailBefore.width : 0));
+    expect(tail.win.bounds.y + (alignment.startsWith("bottom") ? tail.win.bounds.height : 0)).toBe(tailBefore.y + (alignment.startsWith("bottom") ? tailBefore.height : 0));
+    tail.surface.setStackPosition(1, lead.surface.stackLead());
+    expect(tail.win.bounds.width / tail.win.bounds.height).toBeCloseTo(.75);
+    const stable = { ...lead.win.bounds };
+    lead.viewport(603, 800);
+    expect(lead.win.bounds).toEqual(stable);
+    lead.surface.stop(); tail.surface.stop();
+  });
+
+  it.each(["drag", "resize"])("defers native aspect changes until an active %s ends", (gesture) => {
+    const { surface, win, overlay, viewport } = makeCuaSurface();
+    surface.start();
+    surface.setHostLayout({ host: { x: 0, y: 0, width: 800, height: 600 }, obstacles: [], visibleFrame: { x: 0, y: 0, width: 1200, height: 800 } });
+    const before = { ...win.bounds };
+    const query = gesture === "resize" ? "&edge=nw" : "&vx=0&vy=0";
+    overlay.navigate(`wuu-pip://${gesture}?phase=start&x=0&y=0${query}`);
+    viewport(600, 800);
+    viewport(800, 800);
+    surface.setStackPosition(1, { frame: { x: 24, y: 24, width: 200, height: 200 }, alignment: "top-left", dragging: false });
+    expect(win.bounds).toEqual(before);
+    overlay.navigate(`wuu-pip://${gesture}?phase=end&x=0&y=0${query}`);
+    finishMotion();
+    expect(win.bounds.width).toBe(win.bounds.height);
+    viewport(800, 600);
+    expect(win.bounds.width / win.bounds.height).toBeCloseTo(4 / 3);
+    surface.stop();
+  });
+
+  it("reshapes a desktop-docked native card at its display corner", async () => {
+    const { surface, win, overlay, viewport } = makeCuaSurface();
+    surface.start(); surface.setVisible(true); await settle(); finishMotion();
+    overlay.navigate("wuu-pip://desktop"); finishMotion();
+    const before = { ...win.bounds };
+    viewport(600, 800);
+    expect(win.bounds).toEqual({ x: before.x + before.width - 240, y: before.y + before.height - 320, width: 240, height: 320 });
+    surface.stop();
+  });
+
+  it("captures the unavailable frame before tearing content down", async () => {
+    let resolve!: (src: string) => void;
+    const onStop = vi.fn();
+    const snapshot = vi.fn(() => new Promise<string>(done => { resolve = done; }));
+    const { surface, overlay } = makeCuaSurface({ snapshot, onStop });
+    surface.start();
+    surface.suspendContent("Capture failed");
+    expect(snapshot).toHaveBeenCalledOnce();
+    expect(onStop).not.toHaveBeenCalled();
+    resolve("data:image/png;base64,last-frame");
+    await settle();
+    expect(overlay.executed).toContain('window.wuuPipFrost?.("data:image/png;base64,last-frame")');
+    expect(onStop).toHaveBeenCalledOnce();
+    surface.stop();
+  });
+
+  it.each(["missing", "rejected", "stalled"])("still retires unavailable content when its snapshot is %s", async (failure) => {
+    const onStop = vi.fn();
+    const snapshot = failure === "missing" ? undefined : failure === "rejected"
+      ? () => Promise.reject(new Error("Capture closed")) : () => new Promise<string>(() => undefined);
+    const { surface, overlay } = makeCuaSurface({ snapshot, onStop });
+    surface.start();
+    surface.suspendContent("Capture failed");
+    vi.advanceTimersByTime(150);
+    await settle();
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(overlay.executed.filter(code => code.startsWith("window.wuuPipFrost?.(") && !code.endsWith("(null)"))).toEqual([]);
+    surface.stop();
+  });
+
+  it.each(["retarget", "healthy", "mounted"])("does not restore a stale frosted frame or stop a preview recovered via %s", async (recovery) => {
+    let resolve!: (src: string) => void;
+    let context!: ActivityPiPContentContext;
+    const onStop = vi.fn();
+    const { surface, overlay, sink } = makeCuaSurface({
+      snapshot: () => new Promise<string>(done => { resolve = done; }), onStop,
+      onContext: value => { context = value; },
+    });
+    surface.start();
+    surface.suspendContent("Capture failed");
+    if (recovery === "retarget") surface.retarget({ ...makeActivity(), kind: "cua", target: "replacement" }, sink);
+    if (recovery === "healthy") context.onEvent({ event: "capture_status", status: "healthy" });
+    if (recovery === "mounted") context.setMounted(true);
+    surface.setVisible(true);
+    const stops = onStop.mock.calls.length;
+    resolve("data:image/png;base64,stale-frame");
+    await settle();
+    expect(overlay.executed).not.toContain('window.wuuPipFrost?.("data:image/png;base64,stale-frame")');
+    expect(onStop).toHaveBeenCalledTimes(stops);
+    surface.stop();
+  });
+
+  it("fits an oversized card when it is moved to a smaller display", async () => {
+    const large = { x: 0, y: 0, width: 2000, height: 1200 };
+    const small = { x: -1366, y: 0, width: 1366, height: 768 };
+    const { surface, win, overlay } = makeCuaSurface({
+      desktopFrame: (bounds) => bounds.x < 0 ? small : large,
+    });
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    overlay.navigate("wuu-pip://desktop");
+    finishMotion();
+    expect(win.getBounds()).toEqual({ x: 1656, y: 936, width: 320, height: 240 });
+
+    overlay.navigate("wuu-pip://resize?phase=start&edge=nw&x=1656&y=936");
+    overlay.navigate("wuu-pip://resize?phase=end&edge=nw&x=376&y=176");
+    finishMotion();
+    expect(win.getBounds().width).toBe(1536);
+    expect(win.getBounds().height).toBe(1152);
+
+    overlay.navigate("wuu-pip://drag?phase=start&x=500&y=500&vx=0&vy=0");
+    overlay.navigate("wuu-pip://drag?phase=move&x=-500&y=300&vx=0&vy=0");
+    overlay.navigate("wuu-pip://drag?phase=end&x=-500&y=300&vx=0&vy=0");
+    finishMotion();
+    const bounds = win.getBounds();
+    expect(bounds).toMatchObject({ width: 960, height: 720 });
+    expect(bounds.x).toBeGreaterThanOrEqual(small.x);
+    expect(bounds.y).toBeGreaterThanOrEqual(small.y);
+    expect(bounds.x + bounds.width).toBeLessThanOrEqual(small.x + small.width);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(small.y + small.height);
+    surface.stop();
+  });
+});
+
+describe("BrowserPiPSurface", () => {
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] }); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+
+  it.each(["user", "error"] as const)("keeps the completion deadline through repeated %s snapshots and presentation churn", async (mode) => {
+    const { surface, win, overlay, host, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    const activity = { ...makeActivity(), ...(mode === "user" ? { controller: "user" as const } : { state: "error" as const }) };
+    surface.updateActivity(activity);
+    surface.setTurnCompleted(true);
+    const layout = { host: { x: 0, y: 0, width: 800, height: 600 }, obstacles: [], visibleFrame: { x: 0, y: 0, width: 1000, height: 800 } };
+    // Streaming/status notifications produce fresh snapshot objects, layout
+    // reports and visibility calls, without any new work or user action.
+    for (let tick = 0; tick < 29; tick++) {
+      vi.advanceTimersByTime(1_000);
+      surface.updateActivity({ ...activity, updated_at: new Date().toISOString() });
+      surface.setHostLayout({ ...layout });
+      surface.setAppearance(tick % 2 === 0);
+      surface.setVisible(true);
+      win.emit("ready-to-show");
+      surface.setTurnCompleted(true);
+      expect(win.isVisible()).toBe(true);
+    }
+    vi.advanceTimersByTime(1_500);
+    expect(win.isVisible()).toBe(false);
+    expect(sink.events.filter(event => event.event === "completion_expired")).toHaveLength(1);
+    const completedPushes = overlay.executed.filter(code => code === "window.wuuPipCompleted?.(true)").length;
+    surface.updateActivity({ ...activity });
+    surface.setTurnCompleted(true);
+    surface.setVisible(true);
+    finishMotion();
+    expect(win.isVisible()).toBe(false);
+    expect(overlay.executed.filter(code => code === "window.wuuPipCompleted?.(true)")).toHaveLength(completedPushes);
+    expect(host.unmounts).toHaveLength(1);
+    surface.stop();
+  });
+
+  it("retains a completed card's deadline when the same target's content reconnects", async () => {
+    const { surface, win, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    surface.setTurnCompleted(true);
+    vi.advanceTimersByTime(20_000);
+    surface.suspendContent("Transient capture failure");
+    surface.retarget({ ...makeActivity() }, sink);
+    surface.setVisible(true);
+    surface.setTurnCompleted(true);
+    vi.advanceTimersByTime(10_500);
+    expect(win.isVisible()).toBe(false);
+    expect(sink.events.filter(event => event.event === "completion_expired")).toHaveLength(1);
+    surface.stop();
+  });
+
+  it("cancels an old deadline for new activity identity and retires timers on stop", async () => {
+    const { surface, win, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    surface.setTurnCompleted(true);
+    vi.advanceTimersByTime(29_000);
+    surface.updateActivity({ ...makeActivity(), id: "replacement-activity" });
+    vi.advanceTimersByTime(2_000);
+    expect(win.isVisible()).toBe(true);
+    expect(sink.events.filter(event => event.event === "completion_expired")).toHaveLength(0);
+    surface.setTurnCompleted(true);
+    surface.stop();
+    vi.advanceTimersByTime(31_000);
+    expect(win.isDestroyed()).toBe(true);
+    expect(sink.events.filter(event => event.event === "completion_expired")).toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("starts with an unfocused visible host and follows host visibility without taking focus", () => {
+    let visible = false;
+    let minimized = false;
+    let focused = false;
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      isVisible: () => visible,
+      isMinimized: () => minimized,
+      isFocused: () => focused,
+      getMediaSourceId: () => "window:123:0",
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+      webContents: { getZoomFactor: () => 1 },
+    });
+    const { surface, win, host } = makeSurface();
+    const show = vi.spyOn(win, "showInactive");
+    const hide = vi.spyOn(win, "hide");
+    surface.start();
+    surface.setHostParent(parent);
+    surface.setVisible(true);
+    win.emit("ready-to-show");
+    expect(win.isVisible()).toBe(false);
+
+    visible = true;
+    parent.emit("show");
+    win.emit("ready-to-show");
+    surface.setVisible(true);
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(host.mounts).toHaveLength(1);
+
+    focused = true;
+    parent.emit("focus");
+    expect(win.isVisible()).toBe(true);
+    expect(show).toHaveBeenCalledTimes(1);
+    const mountCount = host.mounts.length;
+    hide.mockClear();
+    focused = false;
+    parent.emit("blur");
+    surface.setVisible(true);
+    win.emit("ready-to-show");
+    expect(win.isVisible()).toBe(true);
+    expect(hide).not.toHaveBeenCalled();
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(host.mounts).toHaveLength(mountCount);
+
+    visible = false;
+    parent.emit("hide");
+    surface.setVisible(true);
+    expect(win.isVisible()).toBe(false);
+    visible = true;
+    parent.emit("show");
+    expect(win.isVisible()).toBe(true);
+    focused = true;
+    parent.emit("focus");
+    expect(win.isVisible()).toBe(true);
+    minimized = true;
+    parent.emit("minimize");
+    win.emit("ready-to-show");
+    expect(win.isVisible()).toBe(false);
+    minimized = false;
+    parent.emit("restore");
+    expect(win.isVisible()).toBe(true);
+
+    surface.stop();
+    expect(parent.eventNames()).toEqual([]);
+  });
+
+  it.each(["darwin", "linux"] as const)("presents a %s child without changing its host's native ordering", async (platform) => {
+    vi.spyOn(process, "platform", "get").mockReturnValue(platform);
+    let visible = true;
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false, isVisible: () => visible,
+      isMinimized: () => false, isFocused: () => false,
+      getContentBounds: () => ({ x: 0, y: 0, width: 1000, height: 800 }),
+      getMediaSourceId: () => "window:123:0", webContents: { getZoomFactor: () => 1 },
+    });
+    const { surface, win, sink, overlay } = makeSurface({ reducedMotion: true });
+    const calls: string[] = [];
+    Object.assign(win, {
+      setParentWindow: (owner: unknown) => calls.push(owner ? "attach" : "detach"),
+      moveAbove: (id: string) => calls.push(`above:${id}`),
+    });
+    const show = win.showInactive.bind(win);
+    vi.spyOn(win, "showInactive").mockImplementation(() => { calls.push("show"); show(); });
+    surface.start(); surface.setHostParent(parent);
+    calls.length = 0;
+    surface.setVisible(true);
+    await settle(); finishMotion();
+    const presentation = platform === "darwin" ? ["detach", "show", "above:window:123:0", "attach"] : ["show"];
+    expect(calls).toEqual(presentation);
+    expect(win.isVisible()).toBe(true);
+    calls.length = 0;
+    surface.updateActivity({ ...makeActivity(), state: "background_controlled" });
+    win.emit("ready-to-show");
+    expect(calls).toEqual([]);
+    visible = false; parent.emit("hide");
+    expect(win.isVisible()).toBe(false);
+    visible = true; parent.emit("show");
+    await settle(); finishMotion();
+    expect(calls).toEqual(presentation);
+    expect(win.isVisible()).toBe(true);
+    overlay.navigate("wuu-pip://expand");
+    expect(sink.events).toContainEqual({ event: "expand" });
+    if (platform === "darwin") {
+      visible = false; parent.emit("hide");
+      calls.length = 0;
+      Object.assign(win, {
+        moveAbove: () => { calls.push("order-failed"); throw new Error("Target window disappeared"); },
+        setParentWindow: (owner: unknown) => {
+          if (owner) expect(win.isVisible()).toBe(false);
+          calls.push(owner ? "attach" : "detach");
+        },
+      });
+      const shown = sink.events.filter(event => event.event === "shown").length;
+      visible = true;
+      expect(() => parent.emit("show")).not.toThrow();
+      expect(win.isVisible()).toBe(false);
+      expect(calls.length).toBeGreaterThan(0);
+      for (let index = 0; index < calls.length; index += 4) {
+        expect(calls.slice(index, index + 4)).toEqual(["detach", "show", "order-failed", "attach"]);
+      }
+      expect(sink.failures).toContain("Could not present activity preview: Target window disappeared");
+      expect(sink.events.filter(event => event.event === "shown")).toHaveLength(shown);
+    }
+    surface.stop();
+    expect(parent.eventNames()).toEqual([]);
+  });
+
+  it("tracks pointer entry without focus and releases tracking when hidden or closed", async () => {
+    try {
+      const cursor = { x: 10, y: 10 };
+      // Without scaling, the card rests at its full frame as soon as it shows.
+      const { surface, overlay } = makeSurface({ cursorPosition: () => cursor, reducedMotion: true });
+      surface.start();
+      surface.setVisible(true);
+      await settle();
+      finishMotion();
+      overlay.executed.length = 0;
+      cursor.x = 120;
+      cursor.y = 120;
+      vi.advanceTimersByTime(100);
+      expect(overlay.executed).toContain('window.wuuPipHover?.({"x":20,"y":20})');
+      overlay.executed.length = 0;
+      vi.advanceTimersByTime(200);
+      expect(overlay.executed).toEqual([]);
+      cursor.x = 10;
+      vi.advanceTimersByTime(100);
+      expect(overlay.executed).toContain("window.wuuPipHover?.(null)");
+      surface.setHostLayout(null);
+      finishMotion();
+      expect(vi.getTimerCount()).toBe(0);
+      surface.setHostLayout({ host: { x: 0, y: 0, width: 900, height: 700 }, obstacles: [], visibleFrame: { x: 0, y: 0, width: 900, height: 700 } });
+      finishMotion();
+      expect(vi.getTimerCount()).toBe(1);
+      surface.setVisible(false);
+      finishMotion();
+      expect(vi.getTimerCount()).toBe(0);
+      surface.setVisible(true);
+      surface.stop();
+      finishMotion();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("mounts the real tab zoom-fitted on show and restores it on hide", async () => {
+    const { surface, win, overlay, host, sink } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+
+    // 1000×500 page zoomed into the 260×170 card: scale 0.26, letterboxed.
+    expect(host.mounts).toHaveLength(1);
+    expect(host.mounts[0].zoom).toBeCloseTo(0.26);
+    expect(host.mounts[0].rect.width).toBeCloseTo(260);
+    expect(host.mounts[0].rect.height).toBeCloseTo(130);
+    expect(host.mounts[0].rect.y).toBeCloseTo(20);
+    expect(win.visible).toBe(true);
+    expect(sink.events.some((e) => e.event === "ready")).toBe(true);
+    expect(overlay.executed.some((code) => code.includes('"mounted":true'))).toBe(true);
+
+    surface.setVisible(false);
+    expect(win.visible).toBe(true);
+    finishMotion();
+    expect(host.unmounts).toEqual([{ restore: { x: 0, y: 0, width: 1000, height: 500 } }]);
+    expect(win.visible).toBe(false);
+    surface.stop();
+  });
+
+  it("reports a missing tab as gone instead of mounting", () => {
+    const host = new FakeHost();
+    host.bounds = undefined;
+    const { surface, sink } = makeSurface({ host });
+    surface.start();
+    surface.setVisible(true);
+    expect(host.mounts).toHaveLength(0);
+    expect(sink.gone).toBe(1);
+    surface.stop();
+  });
+
+  it("waits for a starting browser tab to become mountable", () => {
+    const host = new FakeHost();
+    host.bounds = undefined;
+    const { surface, win, sink } = makeSurface({ host });
+    surface.updateActivity({ ...makeActivity(), state: "starting" });
+    surface.start();
+    surface.setVisible(true);
+
+    // Fast captures paint before the delayed loading state is exposed.
+    expect(sink.gone).toBe(0);
+    expect(win.opacity).toBe(0);
+    expect(win.ignoringMouse).toBe(true);
+    expect(host.mounts).toHaveLength(0);
+
+    host.bounds = { x: 0, y: 0, width: 1000, height: 500 };
+    surface.updateActivity({ ...makeActivity(), state: "background_controlled" });
+    surface.setVisible(true);
+
+    expect(host.mounts).toHaveLength(1);
+    finishMotion();
+    expect(win.visible).toBe(true);
+    expect(win.opacity).toBe(1);
+    expect(win.ignoringMouse).toBe(false);
+    expect(sink.gone).toBe(0);
+    surface.stop();
+  });
+
+  it("does not reuse a window synchronously destroyed by a gone callback", () => {
+    const host = new FakeHost();
+    host.bounds = undefined;
+    const { surface, win, sink } = makeSurface({ host });
+    const countGone = sink.onGone.bind(sink);
+    sink.onGone = () => {
+      countGone();
+      surface.stop();
+    };
+    surface.start();
+
+    expect(() => surface.setVisible(true)).not.toThrow();
+    expect(sink.gone).toBe(1);
+    expect(win.destroyed).toBe(true);
+  });
+
+  it("shows the placeholder again when a takeover adopts the mounted tab", async () => {
+    const { surface, overlay, host } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    overlay.executed.length = 0;
+
+    host.emitReparented({ foreign: true });
+    expect(overlay.executed.some((code) => code.includes('"mounted":false'))).toBe(true);
+
+    // Hiding afterwards must not yank the adopted tab back.
+    surface.setVisible(false);
+    expect(host.unmounts).toHaveLength(0);
+    surface.stop();
+  });
+
+  it("refits the overlay and the mounted tab when the window resizes", async () => {
+    const { surface, win, overlay, host } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    host.relayouts.length = 0;
+
+    win.bounds = { ...win.bounds, width: 520, height: 340 };
+    const detached = win.removed.length;
+    win.emit("resize");
+    // The input view must remain attached throughout a pointer gesture.
+    expect(win.removed).toHaveLength(detached);
+    expect(overlay.boundsSet.at(-1)).toEqual({ x: 0, y: 0, width: 520, height: 340 });
+    expect(host.relayouts).toHaveLength(1);
+    expect(host.relayouts[0].zoom).toBeCloseTo(0.52);
+    expect(host.relayouts[0].rect.width).toBeCloseTo(520);
+    expect(host.relayouts[0].rect.height).toBeCloseTo(260);
+    surface.stop();
+  });
+
+  it("passes page coordinates with the preview viewport transform", async () => {
+    const { surface, overlay, host } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    finishMotion();
+    const viewport = [...overlay.executed].reverse().find((code) => code.includes("wuuPipViewport"));
+    expect(viewport).toContain('"scale":0.26');
+    expect(viewport).toContain('"y":20');
+
+    host.emitInteraction({ kind: "click", x: 500, y: 250 });
+    const push = overlay.executed.find((code) => code.includes("wuuPipInteract"));
+    expect(push).toBeDefined();
+    // The shared runtime maps coordinates and keeps the pointer size constant.
+    expect(push).toContain('"x":500');
+    expect(push).toContain('"y":250');
+    surface.stop();
+  });
+
+  it("reports close navigation as user_close and geometry on move", async () => {
+    const { surface, win, overlay, sink } = makeSurface();
+    surface.start();
+    await settle();
+
+    overlay.navigate("wuu-pip://close");
+    expect(sink.events.some((e) => e.event === "user_close")).toBe(true);
+
+    win.emit("moved");
+    const geometry = sink.events.find((e) => e.event === "geometry");
+    expect(geometry).toMatchObject({ x: 100, y: 100, width: 260, height: 170 });
+    surface.stop();
+  });
+
+  it("hides an externally closed preview and parks its tab without destroying the host", () => {
+    const { surface, win, host } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    const preventDefault = vi.fn();
+    win.emit("close", { preventDefault });
+    finishMotion();
+    expect(preventDefault).toHaveBeenCalledOnce();
+    expect(win.destroyed).toBe(false);
+    expect(host.unmounts).toEqual([{ restore: { x: 0, y: 0, width: 1000, height: 500 } }]);
+    surface.stop();
+  });
+
+  it("reports a closed tab as gone", () => {
+    const { surface, host, sink } = makeSurface();
+    surface.start();
+    host.emitClosed();
+    expect(sink.gone).toBe(1);
+    surface.stop();
+  });
+
+  it("updates the chrome label when the tab navigates", async () => {
+    const { surface, overlay, host } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    await settle();
+    overlay.executed.length = 0;
+
+    host.meta = { url: "https://next.test/path", title: "Next" };
+    host.emitNavigate("https://next.test/path");
+    expect(host.relayouts.at(-1)?.zoom).toBeCloseTo(0.26);
+    expect(
+      overlay.executed.some((code) => code.includes("wuuPipHost") && code.includes("next.test")),
+    ).toBe(true);
+    surface.stop();
+  });
+
+  it("never leaks third-party product names into the overlay page", () => {
+    const html = browserPiPOverlayHTML("example.com");
+    expect(html).not.toMatch(/chatgpt|openai|claude|anthropic/i);
+    expect(html).not.toContain("-webkit-app-region:drag");
+    expect(html).toContain('data-resize="se"');
+  });
+
+  it("grows the card from a corner and lays the page out at the new size", () => {
+    const { surface, win, overlay, host } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    surface.setHostLayout({
+      host: { x: 0, y: 0, width: 800, height: 600 },
+      obstacles: [],
+      visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+    });
+    host.relayouts.length = 0;
+    overlay.navigate("wuu-pip://resize?phase=start&edge=nw&x=0&y=0");
+    overlay.navigate("wuu-pip://resize?phase=end&edge=nw&x=-40&y=-30");
+    expect(win.bounds).toMatchObject({ x: 396, y: 386, width: 380, height: 190 });
+    expect(host.relayouts.at(-1)?.zoom).toBeCloseTo(0.38);
+    expect(host.relayouts.at(-1)?.rect.width).toBeCloseTo(380);
+    expect(host.relayouts.at(-1)?.rect.height).toBeCloseTo(190);
+    expect(win.added.at(-1)).toBe(overlay);
+    surface.setHostLayout({
+      host: { x: 0, y: 0, width: 800, height: 600 },
+      obstacles: [],
+      visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+    });
+    expect(win.bounds).toMatchObject({ width: 380, height: 190 });
+    surface.stop();
+  });
+
+  it.each([true, false])("keeps the card size after panel use (layout before mount: %s)", (layoutBeforeMount) => {
+    const { surface, win, host } = makeSurface();
+    surface.start();
+    const layout = {
+      host: { x: 0, y: 0, width: 300, height: 600 },
+      obstacles: [],
+      visibleFrame: { x: 0, y: 0, width: 1200, height: 800 },
+    };
+    if (layoutBeforeMount) surface.setHostLayout(layout);
+    surface.setVisible(true);
+    if (!layoutBeforeMount) surface.setHostLayout(layout);
+    finishMotion();
+    const placed = { ...win.bounds };
+    expect(win.bounds.width / win.bounds.height).toBeCloseTo(2);
+
+    try {
+      for (const viewport of [{ width: 600, height: 800 }, { width: 400, height: 1000 }]) {
+        // The panel takes ownership before the coordinator hides the card.
+        host.emitReparented({});
+        surface.setVisible(false);
+        finishMotion();
+        host.bounds = { x: 0, y: 0, ...viewport };
+        surface.setVisible(true);
+        surface.setHostLayout(layout);
+        finishMotion();
+        expect(win.bounds).toEqual(placed);
+        const mounted = host.mounts.at(-1)!;
+        expect(mounted.zoom).toBeCloseTo(placed.height / viewport.height);
+        expect(mounted.rect.width / mounted.zoom).toBeCloseTo(viewport.width);
+        expect(mounted.rect.height / mounted.zoom).toBeCloseTo(viewport.height);
+        expect(mounted.rect.x).toBeCloseTo((placed.width - mounted.rect.width) / 2);
+      }
+      // A temporary narrow column must not become the preferred card size.
+      surface.setHostLayout({ ...layout, host: { ...layout.host, width: 800 } });
+      expect(win.bounds).toMatchObject({ width: 320, height: 160 });
+      surface.setHostLayout(layout);
+      expect(win.bounds).toEqual(placed);
+    } finally {
+      surface.stop();
+    }
+  });
+
+  it("keeps the visible window, chosen corner and size while switching to a different page aspect", () => {
+    vi.useFakeTimers();
+    try {
+      const { surface, win, overlay, host, sink } = makeSurface();
+      surface.start();
+      surface.setVisible(true);
+      const layout = {
+        host: { x: 0, y: 0, width: 800, height: 600 },
+        obstacles: [],
+        visibleFrame: { x: 0, y: 0, width: 1200, height: 800 },
+      };
+      surface.setHostLayout(layout);
+      overlay.navigate(`wuu-pip://drag?phase=start&x=${win.bounds.x + 20}&y=${win.bounds.y + 20}&vx=0&vy=0`);
+      overlay.navigate("wuu-pip://drag?phase=end&x=44&y=44&vx=0&vy=0");
+      vi.advanceTimersByTime(300);
+      overlay.navigate("wuu-pip://resize?phase=start&edge=se&x=0&y=0");
+      overlay.navigate("wuu-pip://resize?phase=end&edge=se&x=40&y=30");
+      const placed = { ...win.bounds };
+      const hide = vi.spyOn(win, "hide");
+      const destroy = vi.spyOn(win, "destroy");
+      const nextSink = makeSink();
+      const next = { ...makeActivity(), id: "a2", target: "t2", state: "starting" as const };
+      surface.retarget(next, nextSink);
+      host.bounds = undefined;
+      surface.setVisible(true);
+      expect(win.visible).toBe(true);
+      expect(nextSink.gone).toBe(0);
+      // The tab becomes available after the starting activity notification.
+      host.bounds = { x: 0, y: 0, width: 600, height: 1000 };
+      surface.updateActivity({ ...next, state: "background_controlled" });
+      surface.setVisible(true);
+      surface.setHostLayout(layout);
+      expect(win.bounds).toEqual(placed);
+      expect(hide).not.toHaveBeenCalled();
+      expect(destroy).not.toHaveBeenCalled();
+      expect(host.unmounts).toHaveLength(1);
+      expect(host.mounts).toHaveLength(2);
+      expect(host.mounts[1].rect.width / host.mounts[1].rect.height).toBeCloseTo(0.6);
+      host.emitClosed();
+      expect(sink.gone).toBe(0);
+      expect(nextSink.gone).toBe(0);
+      host.emitClosed("t2");
+      expect(nextSink.gone).toBe(1);
+      surface.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not mount a retargeted page until the coordinator applies visibility", () => {
+    const { surface, host } = makeSurface();
+    surface.start();
+    surface.setVisible(true);
+    surface.retarget({ ...makeActivity(), id: "a2", target: "t2" }, makeSink());
+    surface.setVisible(false);
+    expect(host.mounts).toHaveLength(1);
+    surface.setVisible(true);
+    expect(host.mounts).toHaveLength(2);
+    surface.stop();
+  });
+
+  it("starts a new front card at the corner the stack already rests in", () => {
+    const layout = {
+      host: { x: 0, y: 0, width: 800, height: 600 },
+      obstacles: [],
+      visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+    };
+    const first = makeSurface();
+    first.surface.start();
+    first.surface.setHostLayout(layout);
+    first.overlay.navigate("wuu-pip://drag?phase=start&x=476&y=356&vx=0&vy=0");
+    first.overlay.navigate("wuu-pip://drag?phase=end&x=140&y=120&vx=0&vy=0");
+    finishMotion();
+    expect(first.win.bounds).toMatchObject({ x: 24, y: 24 });
+
+    const second = makeSurface();
+    second.surface.start();
+    second.surface.setHostLayout(layout);
+    second.surface.setStackPosition(0, first.surface.stackLead());
+    finishMotion();
+    expect(second.win.bounds).toMatchObject({ x: 24, y: 24 });
+    first.surface.stop();
+    second.surface.stop();
+  });
+
+  it("moves trailing cards with the conversation window instead of springing after it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    try {
+      const layout = {
+        host: { x: 0, y: 0, width: 800, height: 600 },
+        obstacles: [],
+        visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+      };
+      const lead = makeSurface();
+      const trailing = makeSurface();
+      for (const card of [lead, trailing]) {
+        card.surface.start();
+        card.surface.setHostLayout(layout);
+        card.surface.setVisible(true);
+      }
+      await settle();
+      finishMotion();
+      lead.surface.setStackPosition(0);
+      trailing.surface.setStackPosition(1, lead.surface.stackLead());
+      vi.advanceTimersByTime(2000);
+      const rest = { ...trailing.win.bounds };
+
+      // The column keeps its size while the window moves; a trailing card
+      // that is mid-spring keeps its offset instead of jumping back.
+      trailing.surface.setStackPosition(1, { ...lead.surface.stackLead()!, frame: { ...lead.surface.stackLead()!.frame, x: lead.win.bounds.x - 40 } });
+      vi.advanceTimersByTime(16);
+      const midSpring = { ...trailing.win.bounds };
+      for (const card of [lead, trailing]) card.surface.setHostLayout({ ...layout, host: { ...layout.host, x: 120, y: 60 } });
+      trailing.surface.setStackPosition(1, lead.surface.stackLead());
+      expect(trailing.win.bounds).toMatchObject({ x: midSpring.x + 120, y: midSpring.y + 60 });
+      vi.advanceTimersByTime(2000);
+      expect(trailing.win.bounds).toMatchObject({ x: rest.x + 120, y: rest.y + 60 });
+
+      // A resting trailing card lands on its new place on the same move.
+      for (const card of [lead, trailing]) card.surface.setHostLayout({ ...layout, host: { ...layout.host, x: 200, y: 100 } });
+      trailing.surface.setStackPosition(1, lead.surface.stackLead());
+      expect(trailing.win.bounds).toMatchObject({ x: rest.x + 200, y: rest.y + 100 });
+      lead.surface.stop();
+      trailing.surface.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("snaps a drag to the nearest corner of the conversation column", () => {
+    vi.useFakeTimers();
+    try {
+      const { surface, win, overlay } = makeSurface();
+      surface.start();
+      surface.setHostLayout({
+        host: { x: 0, y: 0, width: 800, height: 600 },
+        obstacles: [],
+        visibleFrame: { x: -2000, y: -2000, width: 6000, height: 6000 },
+      });
+      expect(win.bounds).toMatchObject({ x: 456, y: 336, width: 320, height: 240 });
+
+      overlay.navigate("wuu-pip://drag?phase=start&x=476&y=356&vx=0&vy=0");
+      overlay.navigate("wuu-pip://drag?phase=end&x=140&y=120&vx=-600&vy=-200");
+      vi.advanceTimersByTime(32);
+      expect(win.bounds.x).toBeLessThan(120);
+      expect(win.bounds.x).toBeGreaterThan(24);
+      vi.advanceTimersByTime(1500);
+      expect(win.bounds).toMatchObject({ x: 24, y: 24, width: 320, height: 240 });
+      surface.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

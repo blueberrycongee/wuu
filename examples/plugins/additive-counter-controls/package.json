@@ -1,0 +1,11 @@
+{
+  "name": "@wuu-example/additive-counter-controls",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "tsc" },
+  "devDependencies": {
+    "@wuu/plugin-sdk": "file:../../../packages/plugin-sdk",
+    "@wuu-example/additive-counter": "file:../additive-counter"
+  }
+}

@@ -1,0 +1,77 @@
+import type { CodexModelSummary, InitializeResult, DesktopProject } from "../shared/protocol";
+import { resolveLocalizedText } from "./i18n";
+
+export const COMPOSER_PROJECT_MENU_WIDTH = 256;
+// The plus and slash menus share one compact card, drawn at this width for the
+// default UI size.
+export const COMPOSER_COMMAND_MENU_WIDTH = 304;
+
+export type CodexModelLoadState = {
+  provider?: string;
+  loading: boolean;
+  error: string;
+  models: CodexModelSummary[];
+};
+
+// The runtime picker opens directly into the model panel (search + provider
+// groups + reasoning-effort pills). There is deliberately no intermediate
+// "main" menu anymore: the two orthogonal controls users reach for most —
+// which model, and how hard it should reason — live on one screen.
+export type CodexRuntimeMenu = "model" | null;
+export type ComposerVariant = "dock" | "document" | "hero";
+export type FloatingMenuOwner =
+  | "web-workspace-address"
+  | "web-workspace-downloads"
+  | "web-workspace-options"
+  | "sidebar-account"
+  | "sidebar-workspace"
+  | "conversation-actions"
+  | "conversation-workspace"
+  | "conversation-status"
+  | "conversation-todo"
+  | "composer-handoff"
+  | "composer-runtime"
+  | "composer-access"
+  | "composer-context-meter"
+  | "composer-focus"
+  | "composer-plus"
+  | "composer-attach"
+  | "composer-plugin-tools"
+  | "plugin-command-actions"
+  | "composer-slash"
+  | "codex-runtime"
+  | "composer-query-history"
+  | "project-sessions"
+  | "select-menu";
+export type FloatingMenuPlacement = "above" | "below" | "middle";
+export type FloatingMenuAlign = "left" | "center" | "right";
+export type PermissionMode =
+  | "standard"
+  | "read_only"
+  | "unconfined";
+
+const HIDDEN_COMPOSER_STATUSES = new Set([
+  "ready",
+  "connecting",
+  "no-runtime",
+  "正在发送请求",
+  "Sending request",
+]);
+
+export function composerStatusText(status: string): string {
+  const resolved = resolveLocalizedText(status);
+  return HIDDEN_COMPOSER_STATUSES.has(resolved) ? "" : resolved;
+}
+
+/** Starting a new conversation in its own Git worktree, and where from. */
+export type ComposerWorktreeControl = {
+  enabled: boolean;
+  /** Branch the worktree starts from; empty starts from the project's HEAD. */
+  startBranch: string;
+  onSelectStartBranch: (branch: string) => void;
+};
+
+/** Only presentation fields consumed by the editor and its runtime menus. */
+export type ComposerConfiguration = Pick<InitializeResult, "provider" | "model" | "effort" | "variant" | "speed" | "providers" | "permissions" | "features" | "extension_inventory" | "extension_trust" | "runtime_host" | "advanced_settings">;
+
+export type ComposerWorkspace = Pick<DesktopProject, "id" | "name" | "path" | "missing">;

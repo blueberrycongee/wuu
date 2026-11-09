@@ -1,0 +1,198 @@
+/* The account shell owns the top safe area; nested renderer chrome must not
+   reserve it again. Keep these rules after the shared renderer styles. */
+.account-workbench {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.account-workbench-content {
+  --phone-navigation-safe-top: 0px;
+  padding-inline: env(safe-area-inset-left) env(safe-area-inset-right);
+}
+
+.workspace-file-with-export { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.workspace-file-export-preview { flex: 1; min-height: 0; overflow: hidden; }
+.workspace-file-export-actions { flex: none; padding: 4px 8px; overflow-wrap: anywhere; }
+.workspace-file-export-actions button { min-height: 44px; color: var(--ink); padding: 4px 12px; }
+
+.account-workbench-content .app-shell.compact-navigation .conversation-pane {
+  grid-template-rows: 56px minmax(0, 1fr);
+  /* The floating composer already reserves the bottom safe area. */
+  padding-bottom: 0;
+  --conversation-flow-top-gap: 12px;
+}
+
+.account-workbench-content .app-shell.compact-navigation .conversation-pane[data-composer-navigation="true"] {
+  grid-template-rows: 0 minmax(0, 1fr);
+}
+
+.account-workbench-content .app-shell.compact-navigation .titlebar {
+  padding-top: 0;
+}
+
+/* The phone shell owns the top safe area, including the session drawer. */
+:root[data-host-kind="web"] .account-workbench-content .app-shell.compact-navigation.sidebar-collapsed .sidebar {
+  padding-top: 0;
+}
+
+:root[data-host-kind="web"] .account-workbench-content .app-shell.compact-navigation .traffic-spacer {
+  height: 0;
+}
+
+@media (pointer: coarse), (max-width: 700px) {
+  .workspace-terminal-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .workspace-terminal-navigation {
+    grid-column: 1;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--hairline-soft);
+  }
+  .workspace-terminal-new { position: static; width: 44px; height: 44px; }
+  .workspace-terminal-run-list { display: flex; min-width: 0; overflow-x: auto; }
+  .workspace-terminal-resource-item { flex: 0 0 auto; }
+  .workspace-terminal-resource { min-height: 44px; white-space: nowrap; }
+  .workspace-terminal-resource-item .workspace-terminal-resource,
+  .workspace-terminal-resource-item.first .workspace-terminal-resource { padding-right: 44px; }
+  .workspace-terminal-resource-close,
+  .workspace-terminal-resource-item.first .workspace-terminal-resource-close {
+    right: 0; width: 44px; height: 44px; opacity: 1; pointer-events: auto;
+  }
+  .workspace-terminal-resizer { display: none; }
+  .workspace-terminal-content { grid-column: 1; }
+  .workspace-terminal-workspace.standalone-agent-run { grid-template-rows: minmax(0, 1fr); }
+  .workspace-terminal-panel { grid-template-rows: minmax(0, 1fr) auto; }
+}
+
+/* A landscape IME can leave less than 150px. Preserve a readable input line
+   and touch controls while editing. */
+@media (pointer: coarse) and (max-height: 300px) {
+  .account-workbench .dock-composer-wrap { padding-block: 4px; }
+  .account-workbench .composer {
+    --composer-expanded-min-height: 88px;
+  }
+  .account-workbench .composer textarea {
+    height: 40px;
+    min-height: 40px;
+    max-height: max(40px, calc(var(--web-viewport-height) - 80px));
+    padding-block: 8px;
+  }
+  .account-workbench .composer-editor,
+  .account-workbench .composer-bar { min-height: 48px; }
+  .account-workbench .composer-editor button,
+  .account-workbench .composer-bar button { min-height: 44px; min-width: 44px; }
+}
+
+/* Native dialog owns modality and focus; the sheet follows the visible viewport,
+   never the moving composer anchor. No second height animation races the IME. */
+.composer-mobile-sheet {
+  position: fixed;
+  inset: 0 auto auto 0;
+  width: 100%;
+  max-width: none;
+  height: var(--web-viewport-height, 100dvh);
+  max-height: none;
+  margin: 0;
+  padding: max(8px, env(safe-area-inset-top)) env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  overflow: hidden;
+}
+.composer-mobile-sheet[open] { display: flex; align-items: flex-end; justify-content: center; }
+.composer-mobile-sheet::backdrop { background: var(--modal-backdrop-bg); }
+.composer-mobile-sheet-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(100%, 560px);
+  max-height: 100%;
+  min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom);
+  border-radius: 24px 24px 0 0;
+  background: var(--paper);
+  overflow: hidden;
+}
+.composer-mobile-sheet[data-ready="false"] .composer-mobile-sheet-panel { visibility: hidden; }
+.composer-mobile-sheet-panel > header { display: flex; flex: none; align-items: center; gap: 12px; padding: 4px 12px 4px 20px; min-height: 56px; }
+.composer-mobile-sheet-panel > header > span { flex: 1; min-width: 0; font-weight: 600; }
+.composer-mobile-sheet-panel > header > button { display: grid; place-items: center; width: 48px; height: 48px; border: 0; background: transparent; color: inherit; }
+.composer-mobile-sheet-content { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.composer-mobile-sheet-content > :is(.codex-runtime-menu, .composer-project-menu, .composer-context-menu) {
+  position: static;
+  width: 100%;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  border: 0;
+  box-shadow: none;
+  border-radius: 0;
+  animation: none;
+  transition: none;
+}
+.composer-mobile-sheet .codex-model-menu.runtime-panel { height: auto; max-height: none; }
+.composer-mobile-sheet .runtime-panel-page { position: static; overflow: visible; animation: none; will-change: auto; }
+.composer-mobile-sheet .runtime-panel-summary { height: auto; }
+.composer-mobile-sheet :is(.runtime-panel-context, .runtime-panel-header) { height: auto; min-height: 48px; }
+.composer-mobile-sheet :is(.runtime-panel-list, .codex-model-groups, .project-picker-list) { overflow: visible; max-height: none; flex: none; }
+.composer-mobile-sheet :is(.runtime-engine-options, .runtime-provider-options) { grid-auto-rows: minmax(48px, auto); }
+.composer-mobile-sheet :is(.codex-runtime-menu, .composer-project-menu, .composer-context-menu) button {
+  min-height: 48px;
+  height: auto;
+  font-size: 16px;
+  touch-action: manipulation;
+}
+.composer-mobile-sheet input:not([type="range"]) { min-height: 48px; font-size: 16px; }
+.composer-mobile-sheet .runtime-panel-back { position: static; }
+
+.account-workbench .empty-home h2 { font-family: inherit; font-size: 26px; font-weight: 600; line-height: 1.4; letter-spacing: -.025em; }
+.account-workbench .app-shell.compact-navigation .title-block h1 { font-size: 15px; color: var(--ink); }
+
+/* Phone settings keep compact labels beside simple controls, with room for a thumb. */
+@media (pointer: coarse), (max-width: 700px) {
+  .account-workbench .settings-row { padding-block: 12px; gap: 12px; }
+  .account-workbench .settings-row:has(.settings-switch, .settings-input-num) {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+  .account-workbench :is(.settings-input, .settings-select, .settings-select-trigger, .settings-button) {
+    min-height: 48px;
+    height: auto;
+    font-size: 16px;
+  }
+  .account-workbench :is(.settings-input, .settings-select, .settings-select-trigger) {
+    border-color: transparent;
+    border-radius: 12px;
+    background: var(--surface-1);
+  }
+  .account-workbench .settings-row-label-title { font-size: 15px; }
+  .account-workbench .settings-row .settings-select-trigger { min-width: 0; max-width: 100%; border-color: transparent; }
+  .account-workbench :is(.settings-nav-item, .settings-back-button) { min-height: 48px; }
+  .account-workbench .settings-switch { width: 48px; height: 48px; background: transparent; box-shadow: none; }
+  .account-workbench .settings-switch::before {
+    content: '';
+    position: absolute;
+    inset: 10px 0;
+    border-radius: 14px;
+    background: var(--ink-muted);
+  }
+  .account-workbench .settings-switch[aria-checked="true"]::before { background: var(--ink); }
+  .account-workbench .settings-switch-thumb { width: 20px; height: 20px; top: 14px; left: 4px; }
+  .account-workbench .settings-switch[aria-checked="true"] .settings-switch-thumb { transform: translateX(20px); }
+}
+
+.account-workbench .settings-phone-back {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  -webkit-app-region: no-drag;
+}

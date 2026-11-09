@@ -1,0 +1,583 @@
+package tools
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"testing"
+	"time"
+
+	proc "github.com/blueberrycongee/wuu/internal/process"
+	"github.com/blueberrycongee/wuu/internal/providers"
+)
+
+func TestBashRunRecordsFullLogSHA256(t *testing.T) {
+	root := t.TempDir()
+	kit := newShellTestToolkit(t, root)
+	kit.SetSessionDir(t.TempDir())
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"printf 'hello-log'"}`,
+	})
+	if err != nil {
+		t.Fatalf("bash: %v", err)
+	}
+	var parsed shellExecutionResult
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse bash result: %v\n%s", err, resp)
+	}
+	if parsed.FullLogRef == "" || parsed.FullLogSHA256 == "" {
+		t.Fatalf("bash run must record a snapshot-bound full log: ref=%q sha=%q", parsed.FullLogRef, parsed.FullLogSHA256)
+	}
+	data, err := os.ReadFile(parsed.FullLogRef)
+	if err != nil {
+		t.Fatalf("read full log: %v", err)
+	}
+	if got := sha256Hex(data); got != parsed.FullLogSHA256 {
+		t.Fatalf("full_log_sha256 = %q, file hash %q", parsed.FullLogSHA256, got)
+	}
+}
+
+func TestBashRunAddsVerificationSummary(t *testing.T) {
+	root := t.TempDir()
+	// Login shells can reset PATH; use the toolchain running this test without
+	// changing the go test command whose verification classification is checked.
+	goBinary := filepath.Join(runtime.GOROOT(), "bin", "go")
+	if runtime.GOOS == "windows" {
+		goBinary += ".exe"
+	}
+	bashEnv := filepath.Join(t.TempDir(), "bash_env")
+	mustWriteFile(t, bashEnv, "go() { '"+strings.ReplaceAll(filepath.ToSlash(goBinary), "'", "'\"'\"'")+"' \"$@\"; }\n")
+	t.Setenv("BASH_ENV", filepath.ToSlash(bashEnv))
+	mustWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/bashverify\n\ngo 1.22\n")
+	mustWriteFile(t, filepath.Join(root, "fail_test.go"), `package bashverify
+
+import "testing"
+
+func TestBashVerificationFailure(t *testing.T) {
+	t.Fatalf("expected green")
+}
+`)
+
+	kit := newShellTestToolkit(t, root)
+	kit.SetSessionDir(t.TempDir())
+
+	call := providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"go test ./...","scope":"targeted","purpose":"verify bash summary"}`,
+	}
+	for i := 0; i < 3; i++ {
+		resp, err := executeEnvelope(kit, context.Background(), call)
+		if err != nil {
+			t.Fatalf("bash verification run %d: %v", i+1, err)
+		}
+		var parsed shellExecutionResult
+		if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+			t.Fatalf("parse bash result: %v\n%s", err, resp)
+		}
+		if parsed.Verification == nil {
+			t.Fatalf("bash verification metadata missing: %s", resp)
+		}
+		if parsed.Verification.Passed {
+			t.Fatalf("failing go test should not pass: %+v", parsed.Verification)
+		}
+		if !parsed.Verification.FailureSummary.Failed || !containsString(parsed.Verification.FailureSummary.FailingTests, "TestBashVerificationFailure") {
+			t.Fatalf("failure summary did not identify failing test: %+v\n%s", parsed.Verification.FailureSummary, resp)
+		}
+	}
+}
+
+func TestBashRunResolvesLocalNpxVerificationRunner(t *testing.T) {
+	root := t.TempDir()
+	runnerPath := filepath.Join(root, "node_modules", ".bin", "vitest")
+	mustWriteFile(t, runnerPath, "#!/usr/bin/env bash\nprintf 'local vitest %s\\n' \"$*\"\n")
+	if err := os.Chmod(runnerPath, 0o755); err != nil {
+		t.Fatalf("chmod runner: %v", err)
+	}
+
+	kit := newShellTestToolkit(t, root)
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"npx vitest --run","scope":"targeted"}`,
+	})
+	if err != nil {
+		t.Fatalf("bash npx vitest: %v", err)
+	}
+	var parsed shellExecutionResult
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse bash result: %v\n%s", err, resp)
+	}
+	if parsed.RequestedCommand != "npx vitest --run" {
+		t.Fatalf("requested command not preserved: %+v", parsed)
+	}
+	if parsed.Command != "./node_modules/.bin/vitest --run" || parsed.ResolvedCommand != parsed.Command {
+		t.Fatalf("npx command was not resolved to local runner: %+v", parsed)
+	}
+	if parsed.Verification == nil || !parsed.Verification.Passed {
+		t.Fatalf("local vitest verification should pass: %+v", parsed.Verification)
+	}
+}
+
+func TestBashRunResolvesLocalNpxTypecheckRunner(t *testing.T) {
+	root := t.TempDir()
+	runnerPath := filepath.Join(root, "desktop", "node_modules", ".bin", "tsc")
+	mustWriteFile(t, runnerPath, "#!/usr/bin/env bash\nprintf 'local tsc %s\\n' \"$*\"\n")
+	if err := os.Chmod(runnerPath, 0o755); err != nil {
+		t.Fatalf("chmod runner: %v", err)
+	}
+
+	kit := newShellTestToolkit(t, root)
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"cd desktop && npx tsc --noEmit","scope":"targeted"}`,
+	})
+	if err != nil {
+		t.Fatalf("bash npx tsc: %v", err)
+	}
+	var parsed shellExecutionResult
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse bash result: %v\n%s", err, resp)
+	}
+	if parsed.RequestedCommand != "cd desktop && npx tsc --noEmit" {
+		t.Fatalf("requested command not preserved: %+v", parsed)
+	}
+	if parsed.Command != "cd desktop && ./node_modules/.bin/tsc --noEmit" || parsed.ResolvedCommand != parsed.Command {
+		t.Fatalf("npx tsc command was not resolved to local runner: %+v", parsed)
+	}
+	if parsed.Verification == nil || !parsed.Verification.Passed {
+		t.Fatalf("local tsc verification should pass: %+v", parsed.Verification)
+	}
+	if !strings.Contains(parsed.StdoutTail, "local tsc --noEmit") {
+		t.Fatalf("local tsc output missing: %+v", parsed)
+	}
+}
+
+func TestBashRunResolvesLocalNpxTypecheckRunnerWithProjectOptionOrder(t *testing.T) {
+	root := t.TempDir()
+	runnerPath := filepath.Join(root, "desktop", "node_modules", ".bin", "tsc")
+	mustWriteFile(t, runnerPath, "#!/usr/bin/env bash\nprintf 'local tsc %s\\n' \"$*\"\n")
+	if err := os.Chmod(runnerPath, 0o755); err != nil {
+		t.Fatalf("chmod runner: %v", err)
+	}
+
+	kit := newShellTestToolkit(t, root)
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"cd desktop && npx tsc -p tsconfig.json --noEmit","scope":"targeted"}`,
+	})
+	if err != nil {
+		t.Fatalf("bash npx tsc project noEmit: %v", err)
+	}
+	var parsed shellExecutionResult
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse bash result: %v\n%s", err, resp)
+	}
+	if parsed.RequestedCommand != "cd desktop && npx tsc -p tsconfig.json --noEmit" {
+		t.Fatalf("requested command not preserved: %+v", parsed)
+	}
+	if parsed.Command != "cd desktop && ./node_modules/.bin/tsc -p tsconfig.json --noEmit" || parsed.ResolvedCommand != parsed.Command {
+		t.Fatalf("npx tsc command was not resolved to local runner: %+v", parsed)
+	}
+	if parsed.Verification == nil || !parsed.Verification.Passed {
+		t.Fatalf("local tsc verification should pass: %+v", parsed.Verification)
+	}
+	if !strings.Contains(parsed.StdoutTail, "local tsc -p tsconfig.json --noEmit") {
+		t.Fatalf("local tsc output missing: %+v", parsed)
+	}
+}
+
+func TestBashDoesNotTreatMutatingNpxTscCommandsAsVerification(t *testing.T) {
+	for _, command := range []string{
+		"cd desktop && npx tsc --init",
+		"cd desktop && npx tsc --noEmit --init",
+		"cd desktop && npx tsc --build",
+		"cd desktop && npx tsc --noEmit --build",
+		"cd desktop && npx tsc",
+	} {
+		if testCommandLooksLikeLocalRunnerVerification(command) {
+			t.Fatalf("mutating tsc command classified as verification: %q", command)
+		}
+	}
+}
+
+func TestBashRunResolvesWrappedLocalNpxVerificationRunner(t *testing.T) {
+	root := t.TempDir()
+	runnerPath := filepath.Join(root, "node_modules", ".bin", "vitest")
+	mustWriteFile(t, runnerPath, "#!/usr/bin/env bash\nprintf 'wrapped local vitest %s\\n' \"$*\"\n")
+	if err := os.Chmod(runnerPath, 0o755); err != nil {
+		t.Fatalf("chmod runner: %v", err)
+	}
+
+	kit := newShellTestToolkit(t, root)
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"nice npx vitest --run","scope":"targeted"}`,
+	})
+	if err != nil {
+		t.Fatalf("bash wrapped npx vitest: %v", err)
+	}
+	var parsed shellExecutionResult
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse bash result: %v\n%s", err, resp)
+	}
+	if parsed.RequestedCommand != "nice npx vitest --run" {
+		t.Fatalf("requested command not preserved: %+v", parsed)
+	}
+	if parsed.Command != "nice ./node_modules/.bin/vitest --run" || parsed.ResolvedCommand != parsed.Command {
+		t.Fatalf("wrapped npx command was not resolved to local runner: %+v", parsed)
+	}
+	if parsed.Verification == nil || !parsed.Verification.Passed {
+		t.Fatalf("wrapped local vitest verification should pass: %+v", parsed.Verification)
+	}
+	if !strings.Contains(parsed.StdoutTail, "wrapped local vitest --run") {
+		t.Fatalf("wrapped local vitest output missing: %+v", parsed)
+	}
+}
+
+func TestBashRunUsesCWD(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "root-only.txt"), "root\n")
+	subdir := filepath.Join(root, "desktop")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+	kit := newShellTestToolkit(t, root)
+	expectedRevision := workspaceRevision(context.Background(), kit.env.RootDir, kit.env.RuntimeHome)
+
+	tests := []struct {
+		name       string
+		includeCWD bool
+		cwd        string
+		want       string
+	}{
+		{name: "default root", want: kit.env.RootDir},
+		{name: "relative cwd", includeCWD: true, cwd: "desktop", want: filepath.Join(kit.env.RootDir, "desktop")},
+		{name: "absolute cwd", includeCWD: true, cwd: filepath.Join(kit.env.RootDir, "desktop"), want: filepath.Join(kit.env.RootDir, "desktop")},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := map[string]any{"command": "pwd -P"}
+			if tc.includeCWD {
+				args["cwd"] = tc.cwd
+			}
+			argsJSON, err := json.Marshal(args)
+			if err != nil {
+				t.Fatalf("marshal args: %v", err)
+			}
+			resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+				Name:      "bash",
+				Arguments: string(argsJSON),
+			})
+			if err != nil {
+				t.Fatalf("bash pwd: %v", err)
+			}
+			var parsed shellExecutionResult
+			if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+				t.Fatalf("parse bash result: %v\n%s", err, resp)
+			}
+			got := filepath.Clean(strings.TrimSpace(parsed.StdoutTail))
+			want := filepath.Clean(tc.want)
+			if got != want {
+				t.Fatalf("pwd = %q, want %q; full result: %+v", got, want, parsed)
+			}
+			if parsed.WorkspaceRevision != expectedRevision {
+				t.Fatalf("workspace revision = %q, want root revision %q", parsed.WorkspaceRevision, expectedRevision)
+			}
+		})
+	}
+}
+
+func TestBashRunRejectsInvalidCWD(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "not-a-dir"), "file\n")
+	outside := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	_, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"pwd","cwd":"missing"}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "working directory") || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("expected missing cwd error, got %v", err)
+	}
+
+	_, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"pwd","cwd":"not-a-dir"}`,
+	})
+	if err == nil || !strings.Contains(err.Error(), "working directory") || !strings.Contains(err.Error(), "not a directory") {
+		t.Fatalf("expected file cwd error, got %v", err)
+	}
+
+	argsJSON, err := json.Marshal(map[string]any{"command": "pwd", "cwd": outside})
+	if err != nil {
+		t.Fatalf("marshal outside cwd args: %v", err)
+	}
+	_, err = executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: string(argsJSON),
+	})
+	if err == nil || !strings.Contains(err.Error(), "escapes workspace") {
+		t.Fatalf("expected outside cwd rejection, got %v", err)
+	}
+}
+
+func TestBashRunWithCWDResolvesLocalNpxVerificationRunner(t *testing.T) {
+	root := t.TempDir()
+	runnerPath := filepath.Join(root, "desktop", "node_modules", ".bin", "vitest")
+	mustWriteFile(t, runnerPath, "#!/usr/bin/env bash\nprintf 'desktop vitest %s\\n' \"$*\"\n")
+	if err := os.Chmod(runnerPath, 0o755); err != nil {
+		t.Fatalf("chmod runner: %v", err)
+	}
+
+	kit := newShellTestToolkit(t, root)
+	resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"command":"npx vitest --run","cwd":"desktop","scope":"targeted"}`,
+	})
+	if err != nil {
+		t.Fatalf("bash npx vitest from cwd: %v", err)
+	}
+	var parsed shellExecutionResult
+	if err := json.Unmarshal([]byte(resp), &parsed); err != nil {
+		t.Fatalf("parse bash result: %v\n%s", err, resp)
+	}
+	if parsed.Command != "./node_modules/.bin/vitest --run" || parsed.ResolvedCommand != parsed.Command {
+		t.Fatalf("npx command was not resolved relative to cwd: %+v", parsed)
+	}
+	if !strings.Contains(parsed.StdoutTail, "desktop vitest --run") {
+		t.Fatalf("cwd-local vitest output missing: %+v", parsed)
+	}
+	if parsed.Verification == nil || !parsed.Verification.Passed {
+		t.Fatalf("cwd-local vitest verification should pass: %+v", parsed.Verification)
+	}
+}
+
+func TestBashBackgroundModeUsesManagedProcessBackend(t *testing.T) {
+	root := t.TempDir()
+	kit := newShellTestToolkit(t, root)
+	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	defer func() { _ = manager.CleanupSession() }()
+	kit.SetProcessManager(manager)
+	kit.SetSessionID("thread-bash-background")
+
+	started := startBackgroundForTest(t, kit, map[string]any{"command": "printf 'ready\n'; sleep 5"})
+	if started.Action != bashResultActionStart || !started.TTY {
+		t.Fatalf("unexpected start response: %+v", started)
+	}
+	waitProcessOutputForTest(t, kit, started.ID, "ready")
+
+	listResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"action":"list"}`,
+	})
+	if err != nil {
+		t.Fatalf("list background: %v", err)
+	}
+	if !strings.Contains(listResp, started.ID) || !strings.Contains(listResp, processActionList) {
+		t.Fatalf("list response missing process metadata: %s", listResp)
+	}
+
+	readResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"action":"read","process_id":"` + started.ID + `","offset_bytes":0,"max_bytes":4096}`,
+	})
+	if err != nil {
+		t.Fatalf("read background: %v", err)
+	}
+	if !strings.Contains(readResp, processActionRead) || !strings.Contains(readResp, `"process"`) {
+		t.Fatalf("read response missing managed process metadata: %s", readResp)
+	}
+
+	stopResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"action":"stop","process_id":"` + started.ID + `"}`,
+	})
+	if err != nil {
+		t.Fatalf("stop background: %v", err)
+	}
+	if !strings.Contains(stopResp, processActionStop) {
+		t.Fatalf("stop response should use bash background action: %s", stopResp)
+	}
+}
+
+func TestBashReadBackgroundConsumesCompletionWhenTerminalResultIsReturned(t *testing.T) {
+	root := t.TempDir()
+	kit := newShellTestToolkit(t, root)
+	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	kit.SetProcessManager(manager)
+	kit.SetSessionID("thread-bash-completion")
+
+	started := startBackgroundForTest(t, kit, map[string]any{"command": "printf 'done\\n'; sleep 0.2"})
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		pending, pendingErr := manager.CompletionPending(started.ID)
+		if pendingErr != nil {
+			t.Fatal(pendingErr)
+		}
+		if pending {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("process did not reach a natural terminal state")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	readResp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+		Name:      "bash",
+		Arguments: `{"action":"read","process_id":"` + started.ID + `","offset_bytes":0,"max_bytes":4096}`,
+	})
+	if err != nil {
+		t.Fatalf("read background: %v", err)
+	}
+	var read struct {
+		Output  string       `json:"output"`
+		Status  proc.Status  `json:"status"`
+		Process proc.Process `json:"process"`
+	}
+	if err := json.Unmarshal([]byte(readResp), &read); err != nil {
+		t.Fatalf("parse read background: %v\n%s", err, readResp)
+	}
+	if read.Status != proc.StatusStopped || read.Process.Status != proc.StatusStopped || !strings.Contains(read.Output, "done") {
+		t.Fatalf("terminal process result was not returned: %+v", read)
+	}
+	pending, err := manager.CompletionPending(started.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending {
+		t.Fatal("terminal result returned by process read should suppress a redundant model wakeup")
+	}
+	processes, err := manager.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored proc.Process
+	for _, candidate := range processes {
+		if candidate.ID == started.ID {
+			stored = candidate
+			break
+		}
+	}
+	if stored.ID == "" {
+		t.Fatalf("process %q not found", started.ID)
+	}
+	if stored.CompletionConsumedBy != "process_result" {
+		t.Fatalf("completion consumer = %q, want process_result", stored.CompletionConsumedBy)
+	}
+}
+
+func TestBashReadBackgroundPagesForwardFromExplicitOffset(t *testing.T) {
+	root := t.TempDir()
+	kit, err := New(root)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	defer func() { _ = manager.CleanupSession() }()
+	kit.SetProcessManager(manager)
+
+	started, err := manager.Start(context.Background(), proc.StartOptions{
+		Command:   "printf '0123456789abcdef'; sleep 1",
+		OwnerKind: proc.OwnerMainAgent,
+		OwnerID:   "main",
+		Lifecycle: proc.LifecycleSession,
+	})
+	if err != nil {
+		t.Fatalf("start background: %v", err)
+	}
+	zero := int64(0)
+	if _, err := manager.ReadOutputSnapshot(context.Background(), started.ID, proc.OutputReadOptions{
+		OffsetBytes: &zero,
+		Wait:        2 * time.Second,
+	}); err != nil {
+		t.Fatalf("wait for output: %v", err)
+	}
+
+	type pageResponse struct {
+		Output      string `json:"output"`
+		Truncated   bool   `json:"truncated"`
+		StartOffset int64  `json:"start_offset"`
+		EndOffset   int64  `json:"end_offset"`
+		TotalBytes  int64  `json:"total_bytes"`
+	}
+	readPage := func(offset int64) pageResponse {
+		t.Helper()
+		resp, err := executeEnvelope(kit, context.Background(), providers.ToolCall{
+			Name:      "bash",
+			Arguments: fmt.Sprintf(`{"action":"read","process_id":%q,"offset_bytes":%d,"max_bytes":5}`, started.ID, offset),
+		})
+		if err != nil {
+			t.Fatalf("read background page at %d: %v", offset, err)
+		}
+		var page pageResponse
+		if err := json.Unmarshal([]byte(resp), &page); err != nil {
+			t.Fatalf("parse page at %d: %v\n%s", offset, err, resp)
+		}
+		return page
+	}
+
+	first := readPage(4)
+	if first.Output != "45678" || !first.Truncated || first.StartOffset != 4 || first.EndOffset != 9 || first.TotalBytes != 16 {
+		t.Fatalf("unexpected first page: %+v", first)
+	}
+	second := readPage(first.EndOffset)
+	if second.Output != "9abcd" || !second.Truncated || second.StartOffset != 9 || second.EndOffset != 14 || second.TotalBytes != 16 {
+		t.Fatalf("unexpected second page: %+v", second)
+	}
+	last := readPage(second.EndOffset)
+	if last.Output != "ef" || last.Truncated || last.StartOffset != 14 || last.EndOffset != 16 || last.TotalBytes != 16 {
+		t.Fatalf("unexpected final page: %+v", last)
+	}
+}
+
+func TestBashBackgroundUsesCWD(t *testing.T) {
+	root := t.TempDir()
+	subdir := filepath.Join(root, "server")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir subdir: %v", err)
+	}
+	kit := newShellTestToolkit(t, root)
+	manager, err := proc.NewManager(root, filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	defer func() { _ = manager.CleanupSession() }()
+	kit.SetProcessManager(manager)
+	kit.SetSessionID("thread-bash-background-cwd")
+
+	started := startBackgroundForTest(t, kit, map[string]any{"command": "pwd -P; sleep 5", "cwd": "server"})
+	defer func() {
+		_, _ = executeEnvelope(kit, context.Background(), providers.ToolCall{Name: "bash", Arguments: `{"action":"stop","process_id":"` + started.ID + `"}`})
+	}()
+	want := canonicalTestPath(t, subdir)
+	got := canonicalTestPath(t, started.CWD)
+	if got != want {
+		t.Fatalf("background cwd = %q, want %q", got, want)
+	}
+	waitProcessOutputForTest(t, kit, started.ID, want)
+}
+
+func canonicalTestPath(t *testing.T, path string) string {
+	t.Helper()
+	if evaluated, err := filepath.EvalSymlinks(path); err == nil {
+		path = evaluated
+	}
+	return filepath.Clean(path)
+}

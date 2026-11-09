@@ -1,0 +1,19 @@
+{
+  "name": "@wuu/subagent-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node ../../scripts/build-bundled-plugins.mjs --plugin=subagent"
+  },
+  "wuu": {
+    "dev": {
+      "watch": [
+        "../../packages/plugin-sdk/src",
+        "../../scripts/build-bundled-plugins.mjs",
+        "../../internal/plugin/bundled/subagent/plugin.json",
+        "../../internal/plugin/bundled/subagent/desktop.js"
+      ]
+    }
+  }
+}

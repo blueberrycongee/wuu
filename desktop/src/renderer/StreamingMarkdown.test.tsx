@@ -1,0 +1,668 @@
+/**
+ * Tests for StreamingMarkdown.
+ *
+ * Contract: render the markdown progressively, show a 1px cursor at
+ * the end during streaming, and fade the cursor out after settle
+ * without removing or remounting the Markdown tail.
+ */
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, useLayoutEffect } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import {
+  containsMermaidFence,
+  StreamingMarkdown,
+  splitIntoStableBlocks,
+} from "./StreamingMarkdown";
+import {
+  STREAM_TEXT_NOTIFY_INTERVAL_MS,
+  streamTextKey,
+  streamTextStore,
+} from "./StreamText";
+import { ImagePreviewProvider } from "./ImagePreview";
+import { ConversationRenderActivityProvider } from "./ConversationRenderActivity";
+
+// jsdom doesn't implement layout. Stub getBoundingClientRect so React
+// doesn't crash on layout queries.
+beforeAll(() => {
+  Element.prototype.getBoundingClientRect = function (): DOMRect {
+    return {
+      x: 0, y: 0, top: 0, left: 0, right: 0, bottom: 0,
+      width: 0, height: 0,
+      toJSON() { return this; }
+    } as DOMRect;
+  };
+});
+
+let container: HTMLDivElement | null = null;
+let root: Root | null = null;
+
+function mount(props: Parameters<typeof StreamingMarkdown>[0]): void {
+  if (container) unmount();
+  container = document.createElement("div");
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() => {
+    root!.render(<ImagePreviewProvider><StreamingMarkdown {...props} /></ImagePreviewProvider>);
+  });
+}
+
+function rerender(props: Parameters<typeof StreamingMarkdown>[0]): void {
+  act(() => {
+    root!.render(<ImagePreviewProvider><StreamingMarkdown {...props} /></ImagePreviewProvider>);
+  });
+}
+
+function unmount(): void {
+  if (root) {
+    act(() => {
+      root!.unmount();
+    });
+    root = null;
+  }
+  if (container) {
+    container.remove();
+    container = null;
+  }
+}
+
+beforeEach(() => {
+  // Keep performance.now monotonic across tests: the shared stream store
+  // retains its last notification timestamp between mounts.
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "requestAnimationFrame", "cancelAnimationFrame"],
+  });
+});
+
+afterEach(async () => {
+  unmount();
+  for (const itemID of ["s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "s12", "s13", "s-words"]) {
+    streamTextStore.clearItem("turn", itemID);
+  }
+  await vi.runOnlyPendingTimersAsync();
+  vi.useRealTimers();
+});
+
+describe("StreamingMarkdown", () => {
+  it("resolves references across stable blocks as definitions arrive and settle", async () => {
+    const key = streamTextKey("turn", "s1", "text");
+    const props = { streamKey: key, initialText: "", isLive: true, phase: "final_answer" as const };
+    streamTextStore.seed(key, "[Read][guide] and ![Diagram][image].\n\nTail");
+    mount(props);
+    const firstBlock = container!.querySelector(".streaming-markdown-block");
+    expect(firstBlock?.querySelector("a")).toBeNull();
+    await act(async () => {
+      streamTextStore.append(key, '\n\n[guide]: https://example.com/guide "Guide"\n[image]: https://example.com/image.png\n\n');
+      await vi.advanceTimersByTimeAsync(STREAM_TEXT_NOTIFY_INTERVAL_MS);
+    });
+    expect(firstBlock?.querySelector("a")?.getAttribute("href")).toBe("https://example.com/guide");
+    expect(firstBlock?.querySelector("img.rich-image")?.getAttribute("src")).toBe("https://example.com/image.png");
+    rerender({ ...props, isLive: false });
+    expect(container!.querySelector(".streaming-markdown-block")).toBe(firstBlock);
+    expect(firstBlock?.querySelector("a")?.getAttribute("href")).toBe("https://example.com/guide");
+  });
+
+  it("uses the first message definition and discards definitions when a message is replaced", () => {
+    const key = streamTextKey("turn", "s2", "text");
+    const props = { streamKey: key, isLive: false, phase: "final_answer" as const };
+    mount({ ...props, initialText: "[guide]: https://example.com/first\n\n[Read][guide]\n\n[guide]: https://example.com/second\n" });
+    expect(container!.querySelector("a")?.getAttribute("href")).toBe("https://example.com/first");
+    rerender({ ...props, initialText: "[Read][guide]\n\n[guide]: https://example.com/replaced\n" });
+    expect(container!.querySelector("a")?.getAttribute("href")).toBe("https://example.com/replaced");
+    rerender({ ...props, streamKey: streamTextKey("turn", "s3", "text"), initialText: "[Read][guide]\n\nNo definition" });
+    expect(container!.querySelector("a")).toBeNull();
+    expect(container!.textContent).toContain("[Read][guide]");
+  });
+
+  it("keeps message-wide heading anchors unique through streaming and settle", () => {
+    const props = {
+      streamKey: streamTextKey("turn", "s4", "text"),
+      initialText: "# Topic\n\n# Topic\n\n# Topic-1\n\n# Topic",
+      isLive: true,
+      phase: "final_answer" as const,
+    };
+    mount(props);
+    const headings = Array.from(container!.querySelectorAll(".rich-heading"));
+    expect(headings.map(heading => heading.id)).toEqual(["topic", "topic-1", "topic-1-1", "topic-2"]);
+    rerender({ ...props, isLive: false });
+    expect(Array.from(container!.querySelectorAll(".rich-heading"))).toEqual(headings);
+    expect(headings.map(heading => heading.id)).toEqual(["topic", "topic-1", "topic-1-1", "topic-2"]);
+  });
+
+  it("renders strong markers next to Chinese prose and opening punctuation", async () => {
+    const key = streamTextKey("turn", "s1", "text");
+    const text = "但**「多想的意愿」来自 RL 训练，「预算」是工程兜底**——所以不是换了一句话。";
+    streamTextStore.seed(key, text);
+    mount({ streamKey: key, initialText: text, isLive: false, phase: "final_answer" });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const paragraph = document.querySelector(".rich-paragraph");
+    const strong = paragraph?.querySelector("strong");
+    expect(paragraph?.textContent).toBe("但「多想的意愿」来自 RL 训练，「预算」是工程兜底——所以不是换了一句话。");
+    expect(strong?.textContent).toBe("「多想的意愿」来自 RL 训练，「预算」是工程兜底");
+    expect(paragraph?.textContent).not.toContain("**");
+  });
+
+  it("keeps bold CJK prose with inline code parsed after the stream settles", async () => {
+    const key = streamTextKey("turn", "s2", "text");
+    const text =
+      "**不是让 `apply_patch` 模仿现有 `edit_file` 的裁剪行为，而是让整个 edit 工具族一起采用 Codex 式分轨结果设计。**";
+    streamTextStore.seed(key, text);
+    mount({ streamKey: key, initialText: text, isLive: false, phase: "final_answer" });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
+    const paragraph = surface.querySelector(".rich-paragraph");
+    const strong = paragraph?.querySelector("strong");
+    expect(paragraph?.textContent).toBe(
+      "不是让 apply_patch 模仿现有 edit_file 的裁剪行为，而是让整个 edit 工具族一起采用 Codex 式分轨结果设计。",
+    );
+    expect(strong?.textContent).toBe(paragraph?.textContent);
+    expect(Array.from(strong?.querySelectorAll("code") ?? []).map((code) => code.textContent)).toEqual([
+      "apply_patch",
+      "edit_file",
+    ]);
+  });
+
+  it.each(["", "\n", "\n \t", "\n\n"])("keeps a terminal fenced code block closed with trailing whitespace %j", (trailing) => {
+    const key = streamTextKey("turn", "s10", "text");
+    const text = "重启开发环境：\n\n```bash\ncd desktop\nnpm run dev\n```" + trailing;
+    streamTextStore.seed(key, text);
+    mount({ streamKey: key, initialText: text, isLive: false, phase: "final_answer" });
+
+    const code = document.querySelector(".rich-code-block code");
+    expect(code?.textContent).toBe("cd desktop\nnpm run dev");
+    expect(code?.textContent).not.toContain("```");
+    expect(document.querySelector(".streaming-markdown")?.textContent).not.toContain("\uE000");
+  });
+
+  it.each(["```typescript", "  ```javascript", "```text", "```", "~~~python", "  ~~~text", "~~~"])(
+    "copies and selects an unfinished %s fence without adding cursor text", async (opener) => {
+      const key = streamTextKey("turn", "s10", "text");
+      // A real private-use character belongs to the code and must survive.
+      const sourceCode = 'const marker = "\uE000";\n// growing  ';
+      const text = `${opener}\n${sourceCode}`;
+      const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+      try {
+        streamTextStore.seed(key, text);
+        const props = { streamKey: key, initialText: text, isLive: true, phase: "final_answer" as const };
+        mount(props);
+        for (const isLive of [true, false]) {
+          rerender({ ...props, isLive });
+          const surface = container!.querySelector(".streaming-markdown")!;
+          const code = surface.querySelector(".rich-code-block code")!;
+          expect(code.textContent).toBe(sourceCode);
+          const range = document.createRange();
+          range.selectNodeContents(code);
+          expect(range.toString()).toBe(sourceCode);
+          const copyButton = surface.querySelector<HTMLButtonElement>(".rich-code-copy")!;
+          await act(async () => { copyButton.click(); });
+          expect(copy).toHaveBeenLastCalledWith(sourceCode);
+          expect(surface.querySelectorAll(".stream-cursor")).toHaveLength(1);
+          expect(code.querySelector(".stream-cursor")).toBeNull();
+          // The cursor follows the last code line, inside the code surface.
+          expect(code.nextElementSibling?.classList.contains("stream-cursor")).toBe(true);
+        }
+      } finally {
+        copy.mockRestore();
+      }
+    },
+  );
+
+  it("leaves no trailing cursor paragraph under a fence-final message after settle", () => {
+    const key = streamTextKey("turn", "s11", "text");
+    const text = "```text\n请使用 web-shader-extractor skill\n```";
+    streamTextStore.seed(key, text);
+    mount({ streamKey: key, initialText: text, isLive: false, phase: "final_answer" });
+
+    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
+    // The fence is the only markdown block: no stray trailing paragraph may
+    // survive between the card and the message action bar.
+    expect(surface.querySelector(".rich-code-block")).toBeTruthy();
+    expect(surface.querySelector(".rich-paragraph")).toBeNull();
+    expect(surface.textContent).not.toContain("\uE000");
+    // The cursor keeps its settle-stable DOM slot after the last code line.
+    const cursor = surface.querySelector(".stream-cursor") as HTMLElement | null;
+    expect(cursor).not.toBeNull();
+    expect(cursor?.classList.contains("stream-cursor-block-tail")).toBe(false);
+    expect(cursor?.previousElementSibling?.tagName).toBe("CODE");
+    expect(cursor?.parentElement?.closest(".rich-code-block")).toBeTruthy();
+  });
+
+  it("keeps the code cursor out of the markdown source while live", async () => {
+    const key = streamTextKey("turn", "s12", "text");
+    streamTextStore.seed(key, "```bash\nnpm run dev\n```");
+    mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
+    const code = surface.querySelector(".rich-code-block code");
+    expect(code?.textContent).toBe("npm run dev");
+    expect(surface.querySelector(".rich-paragraph")).toBeNull();
+    const cursor = surface.querySelector(".stream-cursor") as HTMLElement | null;
+    expect(cursor?.previousElementSibling).toBe(code);
+  });
+
+  it("keeps the block-tail cursor sibling for a streaming diagram", () => {
+    const key = streamTextKey("turn", "s12-mermaid", "text");
+    const text = "```mermaid\ngraph TD\nA --> B";
+    streamTextStore.seed(key, text);
+    mount({ streamKey: key, initialText: text, isLive: true, phase: "final_answer" });
+
+    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
+    const cursors = surface.querySelectorAll(".stream-cursor");
+    expect(cursors).toHaveLength(1);
+    expect(cursors[0].classList.contains("stream-cursor-block-tail")).toBe(true);
+    expect(cursors[0].parentElement).toBe(surface);
+  });
+
+  it.each(["\n", "\r\n", "\n\n", "\n\n\n", "\n\n\n\n\n"])("keeps the cursor on visible prose with trailing blank lines %j", (ending) => {
+    const key = streamTextKey("turn", "s13", "text");
+    const text = `好的，当前在 \`main\` 分支。我现在启动 dev 环境。${ending}`;
+    streamTextStore.seed(key, text);
+    mount({ streamKey: key, initialText: text, isLive: false, phase: "commentary" });
+
+    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
+    const paragraphs = surface.querySelectorAll(".rich-paragraph");
+    expect(paragraphs).toHaveLength(1);
+    expect(paragraphs[0].textContent).toBe("好的，当前在 main 分支。我现在启动 dev 环境。");
+
+    const cursor = surface.querySelector(".stream-cursor") as HTMLElement | null;
+    expect(cursor?.classList.contains("stream-cursor-block-tail")).toBe(false);
+    expect(cursor?.closest(".rich-paragraph")).toBe(paragraphs[0]);
+    expect(Array.from(surface.children).filter((child) => !child.textContent?.trim())).toHaveLength(0);
+  });
+
+  it("does not add empty paragraphs as blank lines arrive between streamed updates", () => {
+    const props = {
+      streamKey: streamTextKey("turn", "blank-line-updates", "text"),
+      initialText: "第一组验证通过。\n\n",
+      isLive: true,
+      phase: "commentary" as const,
+    };
+    mount(props);
+    for (const initialText of [
+      "第一组验证通过。\n\n\n\n",
+      "第一组验证通过。\n\n\n\n正在检查桌面接入。\n\n\n",
+    ]) {
+      rerender({ ...props, initialText });
+      const surface = container!.querySelector(".streaming-markdown")!;
+      expect(surface.querySelector(".rich-paragraph")?.textContent).toBe("第一组验证通过。");
+      expect(Array.from(surface.children).every((child) => Boolean(child.textContent?.trim()))).toBe(true);
+      const paragraphs = surface.querySelectorAll(".rich-paragraph");
+      expect(surface.querySelector(".stream-cursor")?.closest(".rich-paragraph")).toBe(paragraphs[paragraphs.length - 1]);
+    }
+  });
+
+  it("renders the visible text as markdown during streaming", async () => {
+    const key = streamTextKey("turn", "s1", "text");
+    streamTextStore.seed(key, "");
+    mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
+
+    await act(async () => {
+      streamTextStore.append(key, "**hi**");
+      // Flush the stream store notification without waiting on wall time.
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
+    expect(surface).toBeTruthy();
+    const strong = surface.querySelector("strong");
+    expect(strong?.textContent).toBe("hi");
+  });
+
+  it("keeps a loose list's paragraphs and numbering together across streamed blank lines", async () => {
+    const key = streamTextKey("turn", "s13", "text");
+    const prefix = "9. 第一项\n\n";
+    const continuation = "   同一项的第二段。\n\n10. 第二项\n\n## 下一节\n\n正文";
+    streamTextStore.seed(key, prefix);
+    mount({ streamKey: key, initialText: prefix, isLive: true, phase: "final_answer" });
+    await act(async () => {
+      streamTextStore.append(key, continuation);
+      await vi.advanceTimersByTimeAsync(STREAM_TEXT_NOTIFY_INTERVAL_MS + 30);
+    });
+    const list = container!.querySelector("ol")!;
+    expect(container!.querySelectorAll("ol")).toHaveLength(1);
+    expect(list.getAttribute("start")).toBe("9");
+    expect(list.children).toHaveLength(2);
+    expect(list.children[0].querySelectorAll("p")).toHaveLength(2);
+    expect(list.children[0].textContent).toContain("同一项的第二段。");
+    const paragraphs = Array.from(list.children[0].querySelectorAll("p"));
+    rerender({ streamKey: key, initialText: prefix + continuation, isLive: false, phase: "final_answer" });
+    expect(container!.querySelector("ol")).toBe(list);
+    expect(Array.from(list.children[0].querySelectorAll("p"))).toEqual(paragraphs);
+  });
+
+  it("keeps existing text stable when an inline Markdown delimiter closes", async () => {
+    const key = streamTextKey("turn", "s2", "text");
+    streamTextStore.seed(key, "**bold");
+    mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(40);
+      streamTextStore.append(key, "**");
+      await vi.advanceTimersByTimeAsync(STREAM_TEXT_NOTIFY_INTERVAL_MS + 20);
+    });
+
+    expect(document.querySelector("strong")).not.toBeNull();
+  });
+
+  it("notifies a frame when non-live text snaps to its final length", async () => {
+    const key = streamTextKey("turn", "s4", "text");
+    streamTextStore.seed(key, "Hello world after completion");
+    let frameCount = 0;
+    mount({
+      streamKey: key,
+      initialText: "",
+      isLive: false,
+      phase: "final_answer",
+      onFrame: () => {
+        frameCount += 1;
+      },
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(frameCount).toBeGreaterThan(0);
+  });
+
+  it("notifies once when isLive flips off and the cursor is caught up", async () => {
+    const key = streamTextKey("turn", "s6", "text");
+    streamTextStore.set(key, "Done");
+    let settledCount = 0;
+    mount({
+      streamKey: key,
+      initialText: "",
+      isLive: false,
+      phase: "final_answer",
+      onSettled: () => {
+        settledCount += 1;
+      }
+    });
+
+    // isLive=false immediately calls syncImmediate + trySettle, so the
+    // settled callback fires synchronously in the mount's commit pass.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(50);
+    });
+
+    expect(settledCount).toBe(1);
+  });
+
+  it("keeps completed visible text when the stream cache is released before an older parent snapshot updates", async () => {
+    const key = streamTextKey("turn", "s9", "text");
+    streamTextStore.set(key, "Complete answer text");
+    mount({ streamKey: key, initialText: "Complete", isLive: false, phase: "final_answer" });
+
+    expect(document.querySelector(".streaming-markdown")?.textContent).toContain(
+      "Complete answer text",
+    );
+
+    streamTextStore.clearItem("turn", "s9");
+    rerender({ streamKey: key, initialText: "Complete", isLive: false, phase: "final_answer" });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(document.querySelector(".streaming-markdown")?.textContent).toContain(
+      "Complete answer text",
+    );
+  });
+
+  it("accepts shorter text when the replacement comes from the stream store", async () => {
+    const key = streamTextKey("turn", "s10", "text");
+    streamTextStore.set(key, "stale partial answer");
+    mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    expect(document.querySelector(".streaming-markdown")?.textContent).toContain(
+      "stale partial answer",
+    );
+
+    await act(async () => {
+      streamTextStore.replace(key, "");
+      streamTextStore.append(key, "fresh");
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    expect(document.querySelector(".streaming-markdown")?.textContent).toContain(
+      "fresh",
+    );
+    expect(document.querySelector(".streaming-markdown")?.textContent).not.toContain(
+      "stale partial answer",
+    );
+  });
+
+  it("keeps the cursor inside a streaming list item", async () => {
+    const key = streamTextKey("turn", "s7", "text");
+    streamTextStore.seed(key, "- first item");
+    mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
+    const cursor = surface.querySelector(".stream-cursor") as HTMLElement | null;
+    expect(surface.textContent).not.toContain("\uE000");
+    expect(cursor?.closest("li")).toBeTruthy();
+  });
+
+  it("commits complete streamed text even without the optional paint API", async () => {
+    const key = streamTextKey("turn", "s-words", "text");
+    streamTextStore.seed(key, "");
+    mount({ streamKey: key, initialText: "", isLive: true, phase: "final_answer" });
+
+    await act(async () => {
+      streamTextStore.append(key, "你好 world");
+      await vi.advanceTimersByTimeAsync(300);
+    });
+
+    const surface = document.querySelector(".streaming-markdown") as HTMLElement;
+    // Full text is committed immediately, including without paint API support.
+    expect(surface.textContent).toContain("你好 world");
+
+    rerender({ streamKey: key, initialText: "", isLive: false, phase: "final_answer" });
+    expect(surface.textContent).toContain("你好 world");
+  });
+});
+
+describe("containsMermaidFence", () => {
+  it("matches only Mermaid fenced code blocks", () => {
+    expect(containsMermaidFence("```mermaid\ngraph TD\n```")).toBe(true);
+    expect(containsMermaidFence("intro\n\n``` mermaid \ngraph TD\n```")).toBe(true);
+    expect(containsMermaidFence("```ts\nconst mermaid = true;\n```")).toBe(false);
+    expect(containsMermaidFence("plain text mentioning mermaid")).toBe(false);
+    for (const fence of ["~~~mermaid", "````mermaid", "   ```mermaid", "```mermaid title=Flow", "> ```mermaid", "- ```mermaid"]) {
+      expect(containsMermaidFence(`${fence}\ngraph TD\nA --> B`)).toBe(true);
+    }
+    expect(containsMermaidFence("````text\n```mermaid\ngraph TD\n```\n````")).toBe(false);
+    expect(containsMermaidFence("    ```mermaid\n    graph TD")).toBe(false);
+  });
+});
+
+describe("splitIntoStableBlocks", () => {
+  it.each(["\n", "\r\n"])("defers list boundaries through indented paragraphs and nested lists (%j)", newline => {
+    const list = ["- first", "", "  second paragraph", "", "  - nested", "", "    nested continuation", "- next", "", ""].join(newline);
+    const text = `intro${newline}${newline}${list}## after${newline}tail`;
+    const result = splitIntoStableBlocks(text);
+    expect(result.blocks).toEqual([`intro${newline}${newline}`, list]);
+    expect(result.tail).toBe(`## after${newline}tail`);
+    expect(result.blocks.join("") + result.tail).toBe(text);
+  });
+
+  it("does not freeze a list when a continuation may still arrive", () => {
+    const text = "- first\n\n  \n";
+    expect(splitIntoStableBlocks(text)).toEqual({ blocks: [], tail: text });
+  });
+
+  it("preserves loose numbered items separated by blank lines", () => {
+    const list = "9. first\n\n   continuation\n\n10. next\n\n";
+    expect(splitIntoStableBlocks(list + "after\n")).toEqual({ blocks: [list], tail: "after\n" });
+  });
+
+  it("uses tab stops when checking list continuation indentation", () => {
+    const list = "-\tfirst\n\n\tcontinuation\n\n";
+    expect(splitIntoStableBlocks(list + "after\n")).toEqual({ blocks: [list], tail: "after\n" });
+  });
+
+  it("keeps a fenced code block inside its list item", () => {
+    const list = "- example\n\n  ```ts\n  const a = 1;\n\n  const b = 2;\n  ```\n\n- next\n\n";
+    expect(splitIntoStableBlocks(list + "after\n")).toEqual({ blocks: [list], tail: "after\n" });
+  });
+
+  it("returns the whole text as tail when there are no blank lines", () => {
+    const result = splitIntoStableBlocks("a single paragraph still typing");
+    expect(result.blocks).toEqual([]);
+    expect(result.tail).toBe("a single paragraph still typing");
+  });
+
+  it("splits each `\\n\\n`-separated paragraph into its own block", () => {
+    const text = "first paragraph\n\nsecond paragraph\n\nthird in progress";
+    const result = splitIntoStableBlocks(text);
+    expect(result.blocks).toEqual([
+      "first paragraph\n\n",
+      "second paragraph\n\n"
+    ]);
+    expect(result.tail).toBe("third in progress");
+  });
+
+  it("keeps an unclosed fenced code block in the tail", () => {
+    // A `\n\n` inside an open ``` fence must NOT be a boundary —
+    // the block isn't yet stable.
+    const text =
+      "intro paragraph\n\n```ts\nconst a = 1;\n\nconst b = 2;\nstill typing";
+    const result = splitIntoStableBlocks(text);
+    expect(result.blocks).toEqual(["intro paragraph\n\n"]);
+    expect(result.tail).toBe(
+      "```ts\nconst a = 1;\n\nconst b = 2;\nstill typing"
+    );
+  });
+
+  it.each([
+    ["~~~text", "```", "~~~"],
+    ["```text", "~~~", "```"],
+    ["````text", "```", "````"],
+    ["~~~~text", "~~~", "~~~~"],
+    ["  ~~~text", "  ```", "  ~~~"],
+  ])("keeps %s open across mismatched delimiter %s", (opener, mismatched, closer) => {
+    const open = `${opener}\nvalue\n${mismatched}\n\nmore code\n`;
+    expect(splitIntoStableBlocks(open)).toEqual({ blocks: [], tail: open });
+    const closed = `${open}${closer}\n\n`;
+    expect(splitIntoStableBlocks(closed + "after")).toEqual({ blocks: [closed], tail: "after" });
+  });
+
+  it("treats a closed fenced code block as a single stable block", () => {
+    const text =
+      "intro\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nafter";
+    const result = splitIntoStableBlocks(text);
+    expect(result.blocks).toEqual([
+      "intro\n\n",
+      "```ts\nconst a = 1;\n\nconst b = 2;\n```\n\n"
+    ]);
+    expect(result.tail).toBe("after");
+  });
+
+  it("ignores backticks that aren't at the start of a line", () => {
+    // A ``` mid-line is part of inline content (or a heading), not a
+    // fence opener.
+    const text = "use the ```triple backtick``` syntax\n\ntail";
+    const result = splitIntoStableBlocks(text);
+    expect(result.blocks).toEqual(["use the ```triple backtick``` syntax\n\n"]);
+    expect(result.tail).toBe("tail");
+  });
+
+  it("preserves the concatenation invariant: blocks + tail === text", () => {
+    const text =
+      "# heading\n\nparagraph one\n\n```ts\nfn()\n```\n\n- list item\n- another\n\ntail";
+    const result = splitIntoStableBlocks(text);
+    expect(result.blocks.join("") + result.tail).toBe(text);
+  });
+
+  it("does not split a fence when a body line starts with 3 backticks followed by other text", () => {
+    // Per CommonMark a closing code fence is just backticks and trailing
+    // whitespace. A line like ```other inside an already-open fence is
+    // body content, not a closer — treating it as one would flip
+    // inFence to false and let a later blank line split the fence in two.
+    const text = "```ts\n```other\n\ncode\n```";
+    const result = splitIntoStableBlocks(text);
+    expect(result.blocks).toEqual([]);
+    expect(result.tail).toBe(text);
+  });
+});
+
+describe("StreamingMarkdown session reveal", () => {
+  it("exposes caught-up text to the parent's first reveal layout measurement", () => {
+    const key = streamTextKey("turn", "s-words", "text");
+    const measurements: string[] = [];
+    function Pane({ active }: { active: boolean }) {
+      useLayoutEffect(() => {
+        if (active) measurements.push(container?.textContent ?? "");
+      }, [active]);
+      return <ConversationRenderActivityProvider active={active}>
+        <StreamingMarkdown streamKey={key} initialText="partial" isLive phase="final_answer" />
+      </ConversationRenderActivityProvider>;
+    }
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => root!.render(<Pane active={false} />));
+    streamTextStore.set(key, "partial and more");
+    act(() => root!.render(<Pane active />));
+    expect(measurements).toHaveLength(1);
+    expect(measurements[0]).toContain("partial and more");
+  });
+
+  it("does not fire a stream frame just because a cached conversation became visible", () => {
+    const key = streamTextKey("turn", "s-words", "text");
+    streamTextStore.seed(key, "partial");
+    const onFrame = vi.fn();
+    if (container) unmount();
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active={false}>
+          <StreamingMarkdown
+            streamKey={key}
+            initialText="partial"
+            isLive
+            phase="final_answer"
+            onFrame={onFrame}
+          />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    streamTextStore.set(key, "partial and more");
+    onFrame.mockClear();
+    act(() => {
+      root!.render(
+        <ConversationRenderActivityProvider active>
+          <StreamingMarkdown
+            streamKey={key}
+            initialText="partial"
+            isLive
+            phase="final_answer"
+            onFrame={onFrame}
+          />
+        </ConversationRenderActivityProvider>,
+      );
+    });
+    expect(container?.textContent).toContain("partial and more");
+    expect(onFrame).not.toHaveBeenCalled();
+  });
+});

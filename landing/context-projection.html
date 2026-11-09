@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+        <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f0eee6" />
+    <title>How much should the first read return? — Wuu</title>
+    <meta
+      name="description"
+      content="How Wuu moved from limiting tool output to reading more only when needed."
+    />
+    <link rel="icon" href="assets/brand/wuu.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="styles.css" />
+    <script type="module" src="mascot-motion.mjs"></script>
+    <script type="module" src="site-nav.mjs"></script>
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <div class="site-header-shell">
+      <header class="site-header wrap">
+        <a class="wordmark" href="./" aria-label="Wuu home"
+          ><img
+            src="assets/brand/wuu.svg"
+            width="36"
+            height="36"
+            alt=""
+          />wuu</a
+        >
+        <nav aria-label="Main navigation">
+          <a
+            class="language-switch"
+            href="zh-context-projection.html"
+            lang="zh-CN"
+            hreflang="zh-CN"
+            aria-label="切换到当前页面的中文版"
+            >中文</a
+          >
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="product"
+          >
+            <summary>Product</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">Wuu</span>
+                  <p>
+                    A workspace for turning your ideas into working code with
+                    AI.
+                  </p>
+                </div>
+                <div class="nav-destinations">
+                  <a class="nav-featured" href="features.html"
+                    >Explore Wuu <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="blog">
+            <summary>Blog</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a class="nav-featured" href="blog.html"
+                    >The Wuu blog <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a href="context-projection.html"
+                    >How much should the first read return?</a
+                  ><a href="note-compaction.html"
+                    >A fresh window, the same work</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details class="nav-menu" name="site-navigation" data-section="docs">
+            <summary>Docs</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <a
+                    class="nav-featured"
+                    href="https://blueberrycongee.github.io/wuu/en/"
+                    >Documentation <span>↗</span></a
+                  >
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    href="https://blueberrycongee.github.io/wuu/en/getting-started/first-task/"
+                    >Start your first task</a
+                  ><a
+                    href="https://blueberrycongee.github.io/wuu/en/getting-started/model-services/"
+                    >Connect a model</a
+                  ><a href="https://blueberrycongee.github.io/wuu/en/customize/"
+                    >Extend Wuu</a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+          <details
+            class="nav-menu"
+            name="site-navigation"
+            data-section="download"
+          >
+            <summary class="button">Download</summary>
+            <div class="nav-panel">
+              <div class="nav-panel-inner wrap">
+                <div class="nav-intro">
+                  <span class="nav-label">Desktop app</span>
+                  <p>Wuu for Mac</p>
+                </div>
+                <div class="nav-destinations">
+                  <a
+                    class="nav-featured"
+                    href="https://github.com/blueberrycongee/wuu/releases/latest"
+                    >Download for Mac <span>↗</span></a
+                  >
+                </div>
+              </div>
+            </div>
+          </details>
+        </nav>
+      </header>
+      <div class="nav-backdrop" aria-hidden="true"></div>
+    </div>
+    <main id="main" class="wrap">
+      <article class="editorial">
+        <a class="text-link" href="blog.html">← Blog</a>
+        <h1>How much should the first read return?</h1>
+        <p class="article-lead">
+          How Wuu moved from limiting tool output to reading more only when needed.
+        </p>
+        <img
+          class="article-image"
+          src="assets/brand/shore.webp"
+          width="1086"
+          height="477"
+          alt="Steps leading toward the sea"
+        />
+        <div class="article-body">
+<p>Wuu’s projection lets a model read a smaller result first and retrieve more of the source when needed. We want subsequent requests to carry less old output while giving the agent access to the details that determine its next action.</p>
+<p>The design began with a size limit on reading tools. A huge file or a growing log can fill the context window in a single call. A hard cutoff—say, 50 KB—protects against that kind of overflow.</p>
+<p>While exploring this in Wuu, we began to wonder whether 50 KB was still too much. Often, a small part of the result was enough for the model to continue.</p>
+<p>A size limit still matters. Even a well-chosen read can encounter generated code, a long configuration, or an unexpectedly large object. The tool needs to handle those cases. Once that protection is in place, we can ask how much of the remaining result needs to reach the model immediately.</p><h2>The read already contains a question</h2>
+<p>Choosing a file and a range tells us something about what the model wants to know. Suppose it suspects a configuration setting is being ignored and opens the configuration file. Confirming the value might be enough to decide where to look next.</p>
+<p>Reinforcement learning for tool use drew our attention to that intent. When the model requests a read, it is often already checking an idea. The result supplies the evidence it is missing.</p>
+<p>We began experimenting with smaller responses.</p>
+<h2>Try a smaller first response</h2>
+<p>We reviewed collected conversation histories, compared tool outputs of different lengths, and settled on a default projection budget of roughly 2k tokens.</p>
+<p>A smaller response has a direct benefit: less material enters context and travels with subsequent requests. We also wanted the evidence relevant to the next decision to be easier to find.</p>
+<p>Fitting inside a window does not ensure that a model can use everything in it effectively. Anthropic’s discussion of <a href="https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents">context rot</a> describes how accurate recall can decline as context grows. A read may stay below the hard limit, while several large results together bury the question the agent is trying to answer.</p>
+<figure class="essay-figure"><div class="context-trace"><div class="trace-row"><span>First request</span><div class="trace-track"><b>Task</b><i>File output</i><em>Next step</em></div></div><div class="trace-row"><span>Next request</span><div class="trace-track"><b>Task</b><i>File output</i><i>Test output</i><em>Next step</em></div></div><div class="trace-row"><span>Following request</span><div class="trace-track"><b>Task</b><i>File output</i><i>Test output</i><i>More output</i><em>Next step</em></div></div></div></figure><p>A tool result also has a life beyond the call that produced it. While it remains in active history, later requests continue to carry it. The model may have found the cause in a log and moved on to editing and testing, while that log still occupies input.</p><p>We therefore looked beyond individual calls to whole conversations. Several ordinary results can accumulate until old output competes with new evidence. A smaller first response reduces how much material starts that journey.</p><h2>A smaller read needs a way to continue</h2>
+<p>Some tasks did need more. Understanding a function may require its callers. Investigating a log may require the full sequence around an error. Repetition and surrounding detail can be necessary to establish what happened.</p>
+<p>Replacing 50 KB with a smaller hard cutoff would simply move the problem. The agent might receive less noise, but also lose access to something it needs.</p>
+<p>That led us to projection. Wuu saves the complete tool result, returns a smaller view first, and supplies a way to read what was omitted. File projections preserve whole lines. Command results retain exit status and important error evidence. When the first view is insufficient, the agent can follow a continuation or read the saved source.</p>
+<p>In the configuration example, a value that explains the problem lets the agent move on. A reference to another file gives it somewhere to investigate. If the crucial detail was omitted, it can recover that range. </p>
+<figure class="essay-figure"><div class="projection-demo"><div class="saved-source"><span class="diagram-label">Complete result saved</span><div class="source-sheet" aria-hidden="true"><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span><span></span></div><strong>config.ts</strong></div><span class="diagram-arrow" aria-hidden="true">→</span><div class="reading-view"><span class="diagram-label">The first model-facing view</span><div class="code-sample"><code>export const config = {<br>  service: "api",<br>  retries: 3,</code><details class="read-continuation"><summary>Read the omitted section <span>＋</span></summary><code>  timeout: 30_000,<br>  cache: {<br>    enabled: true,<br>    ttl: 60,<br>  },<br>  logging: "errors",</code></details><code>  endpoint: process.env.API_URL,<br>};</code></div></div></div></figure><h2>Start with tools we understand</h2>
+<p>Once we decided to return less, we had to choose where to apply it. We started with frequently used tools. Reading files, listing directories, and running commands recur throughout coding tasks. Smaller results from those operations leave less old output in subsequent requests.</p>
+<p>Those tools also have a structure we understand and ways to retrieve what was omitted. Files have lines, directories have entries, and commands have logs. Wuu can return a smaller view along those boundaries and still lead the agent back to the remainder.</p>
+<p>The treatment depends on the tool. A directory entry should keep a complete path. A file read should retain complete lines. Command results need a different ordering of priorities: whether the process exited, timed out, or failed a check directly affects the next action. We shorten ordinary output before error output, while retaining execution and verification evidence.</p>
+<p>Reading a conversation presents another problem. Taking only the latest text can separate recent progress from the task it belongs to. Conversation projections combine a task anchor with recent turns and provide a way to read older history. The agent can establish what the work is about before interpreting its latest developments.</p>
+<p>Each tool needs a projection suited to its structure and a corresponding recovery path. Together, these let us reduce a result while preserving the material needed to continue.</p>
+<h2>Make continuation actionable</h2>
+<p>A truncation notice leaves the agent guessing a new range. A small guess may miss the relevant detail; a large one may hit the same limit again. The response should give the model enough information to continue from the omission.</p>
+<p>For file reads, Wuu retains whole lines at both ends, identifies the omitted middle, and supplies continuation arguments. Command output can lead back to a saved log. If saving the source fails, projection leaves its input unchanged. Reducing the first view comes after establishing a way to recover the rest.</p>
+<p>Recovery must also avoid a loop in which every call returns the same preview. The continuation should address material that has not been shown, so the next read advances. Otherwise, a smaller response merely causes the agent to spend more calls without learning anything new.</p>
+<p>Recovery also needs to account for changes. If the agent edits a file between reads, the same line numbers may refer to different content. Some continuations check a content revision to prevent fragments from different versions being silently joined. The agent needs to know which version it is using.</p>
+<h2>Why MCP needs a different treatment</h2>
+<p>MCP connects Wuu to external tools whose providers design their results. A long response might contain search hits, a complete report, or confirmation of an external action. Wuu needs to understand the result before deciding which parts can wait.</p>
+<p>The external tool may also have no continuation operation. Our file reader can return to a known range. A report tool might only offer “generate a report.” Asking it again could generate a new report with different content and a different timestamp.</p>
+<p>At that point, omission changes behavior. An agent trying to inspect a detail might repeat a query, generate new material, or perform an external action again. Recovering an old result needs to remain distinct from executing its producer.</p>
+<p>Wuu uses general handling for oversized MCP text: Wuu saves the returned text, provides a preview, and supplies a way to read that saved result. The agent can read that record in sections even when the service only supports returning a complete result.</p>
+<p>A similar concern applies to editing and coordination tools. Their responses can establish whether work completed, who is responsible for it, or what must happen next. Wuu archives oversized text from these tools and supplies a preview. More selective projection would require understanding which details affect subsequent actions and how to recover them.</p>
+<h2>Keep the image when shortening the text</h2>
+<p>A screenshot changes what it means for a result to be large. One response may contain an image, a description, and machine-readable data. If the user wants an agent to check button alignment, the visual relationship in the screenshot may matter more than all the accompanying text.</p>
+<p>Flattening everything into text and trimming it can preserve the description while removing the evidence. Replacing an image with a sentence saying that a screenshot exists does not let the model inspect it.</p>
+<p>Results containing media therefore take a separate path. Wuu reduces oversized textual content while retaining the attachments. When preparing the model input, it organizes the tool’s text and images separately: the text carries the result of the operation, and the images follow as observations for a model able to process them. A long explanation can shrink while the screenshot remains available to see.</p>
+<p>Audio and files remain attachments. Provider adaptation determines how to submit them. When content cannot be attached directly, the result identifies an accessible location or reports that it could not be attached, so the agent knows which material it received.</p>
+<p>Separating media also requires preserving its relationship to the operation. An image should follow the corresponding tool results. The agent needs to connect what the operation returned with what the image shows in order to continue the task.</p>
+<h2>Avoid sending the same information twice</h2>
+<p>Rich results expose another kind of duplication. A tool may return a readable account and a complete machine-readable representation of the same material. A page description, for example, can arrive alongside extensive structured data about that page. Sending both in full quickly enlarges the input.</p>
+<p>Wuu retains the full structured result. When readable content is already present, it supplements that content with a bounded index conveying shape, identity, and representative information. The model can tell what else exists without receiving every detail immediately.</p>
+<p>Structured-only tools are different. Their data carries the tool’s answer. That data is supplied as text, with particularly large results saved for reading in sections. Tools that return only structured data therefore also provide a readable result with a recovery path.</p>
+<h2>Project before the result enters history</h2>
+<p>Wuu creates the projection when the tool returns, before the result enters history. Subsequent requests use that version, keeping the representation stable.</p>
+<p>If one request contains the full output, the next removes its middle, and another removes still more, the historical prefix keeps changing. Creating the projection once reduces the amount entering history and avoids repeated rewrites by this layer.</p>
+<p>The task still determines how much reading is useful. Some questions need one value; others require several pieces of code side by side. The latter introduce recovery calls. Evaluating the approach means following the agent through the task and looking at total input and reading, across the task.</p>
+<h2>Leave room for better models</h2>
+<p>Different model capabilities will call for different response sizes. Some models may decide from a few clues; others may benefit from comparing larger amounts of material. Their reading and recovery behavior in actual tasks can guide budget changes.</p>
+<p>Keeping the source gives us room to make those changes. A model can retrieve more of an existing result or move on as soon as it has enough information. Today’s first-response budget leaves that choice available.</p>
+<p>Further evaluation will follow how those reads advance the task: whether the agent retrieves a crucial omitted passage, whether continuation adds new information, and whether the agent resumes its original work after finding the detail.</p>
+
+          <a class="article-next" href="note-compaction.html"
+            >Read next<strong>A fresh window, the same work ↗</strong></a
+          >
+        </div>
+      </article>
+    </main>
+    <footer class="site-footer wrap">
+      <a class="wordmark" href="./"
+        ><img src="assets/brand/wuu.svg" width="32" height="32" alt="" />wuu</a
+      >
+      <nav aria-label="Footer">
+        <a href="features.html">Product</a><a href="blog.html">Blog</a
+        ><a href="https://github.com/blueberrycongee/wuu">GitHub ↗</a>
+      </nav>
+    </footer>
+  </body>
+</html>

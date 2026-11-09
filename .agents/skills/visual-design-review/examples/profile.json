@@ -1,0 +1,22 @@
+{
+  "version": "synthetic-demo-v1",
+  "description": "Synthetic scoring example only. Thresholds are not product acceptance criteria.",
+  "guards": ["readable", "no_clipping", "operable"],
+  "dimensions": [
+    {"id": "alignment", "weight": 25, "metrics": [
+      {"id": "alignment_error", "weight": 1, "good": 0.01, "bad": 0.1}
+    ]},
+    {"id": "spacing", "weight": 25, "metrics": [
+      {"id": "spacing_error", "weight": 1, "good": 0.02, "bad": 0.2}
+    ]},
+    {"id": "weight", "weight": 20, "metrics": [
+      {"id": "weight_error", "weight": 1, "good": 0.03, "bad": 0.3}
+    ]},
+    {"id": "whitespace", "weight": 20, "metrics": [
+      {"id": "whitespace_error", "weight": 1, "good": 0.03, "bad": 0.3}
+    ]},
+    {"id": "effects", "weight": 10, "metrics": [
+      {"id": "effects_error", "weight": 1, "good": 0.03, "bad": 0.3}
+    ]}
+  ]
+}

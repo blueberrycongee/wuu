@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="background_sync_channel">后台同步</string>
+    <string name="background_sync_title">Wuu 正在同步消息</string>
+    <string name="background_sync_body">保持与电脑连接，点击打开 Wuu。</string>
+</resources>

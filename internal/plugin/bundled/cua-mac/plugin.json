@@ -1,0 +1,35 @@
+{
+  "id": "cua-mac",
+  "name": "cua-mac",
+  "version": "0.2.0",
+  "description": "Control macOS apps through Accessibility, ScreenCaptureKit, and native input.",
+  "icon": { "path": "icon.webp" },
+  "author": {
+    "name": "Wuu"
+  },
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Computer Use for Mac",
+    "shortDescription": "Observe and operate Mac apps with native mouse and keyboard control.",
+    "longDescription": "Uses macOS Accessibility for semantic control, ScreenCaptureKit for observation, and CGEvent for automatic mouse and keyboard fallback.",
+    "developerName": "Wuu",
+    "category": "Productivity",
+    "capabilities": ["Interactive", "Write"]
+  },
+  "platforms": ["darwin"],
+  "requestedPermissions": [
+    "accessibility.read",
+    "accessibility.control",
+    "screen.capture",
+    "app.activate",
+    "input.synthesize"
+  ],
+  "activityKinds": ["cua"],
+  "officialNativeHelper": {
+    "id": "cua-mac",
+    "environment": "WUU_CUA_MAC_HELPER",
+    "executable": "wuu-cua-mac"
+  },
+  "minimumWuuVersion": "0.1.0"
+}
