@@ -786,6 +786,11 @@ function WorkspacePanelContent({
         </> : null}
       </nav>
     ) : null}
+    {/* The panel covers an expanded rail, so keep its composer target mounted
+      * while the rail is hidden and preserve the compact input layout. */}
+    {!covered && toolsVisible && open && !toolRailCollapsed ? (
+      <div className="workspace-composer-controls" ref={runtimeControlsRef} hidden />
+    ) : null}
     <aside
       ref={panelRef}
       className={`workspace-right-panel${showingPicker ? " tools" : " detail"}${activeTab?.kind === "review" ? " review" : ""}${activeTab?.kind === "diff" ? " diff" : ""}${activeTab?.kind === "files" || activeTab?.kind === "file" ? " files" : ""}${activeTab?.kind === "terminal" ? " terminal" : ""}${activeTab?.kind === "browser" ? " browser" : ""}${focusedComposer ? " document-focus" : ""}`}
