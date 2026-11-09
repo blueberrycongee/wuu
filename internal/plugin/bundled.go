@@ -36,6 +36,10 @@ const EnableCUALinuxEnv = "WUU_ENABLE_CUA_LINUX"
 // workflows are still under development.
 var personalProductBuild = "1"
 
+// designModeProductBuild is cleared by release builds. The Design Mode plugin
+// remains available in source builds while it stays under development.
+var designModeProductBuild = "1"
+
 type DiscoverOptions struct {
 	ExcludeDev bool
 	GOOS       string
@@ -109,6 +113,8 @@ func bundledPluginEnabled(item Plugin, lookupEnv func(string) (string, bool)) bo
 	switch item.ID {
 	case "personal":
 		return personalProductBuild != "0"
+	case "design-mode":
+		return designModeProductBuild != "0"
 	case "cua-mac":
 		key = EnableCUAMacEnv
 	case "cua-linux":

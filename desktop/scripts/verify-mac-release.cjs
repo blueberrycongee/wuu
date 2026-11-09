@@ -30,7 +30,7 @@ if (release) {
     }));
     const ids = new Set(plugins.map(plugin => plugin.id));
     if (!ids.has("side")) throw new Error("Packaged core did not discover bundled plugins");
-    for (const id of ["personal"]) {
+    for (const id of ["personal", "design-mode"]) {
       if (ids.has(id)) throw new Error(`Packaged core must not include ${id}`);
     }
   } finally {
