@@ -1527,6 +1527,35 @@ func TestACPCatalogPublishesLargeCatalogWithoutProbing(t *testing.T) {
 	}
 }
 
+// The catalog publishes advertised membership only; a live session that
+// applies a model teaches the catalog that model's dependent capabilities.
+func TestACPCatalogLearnsDependentCapabilitiesFromSessions(t *testing.T) {
+	engine := testEngine(t, "grok")
+	binding := testBinding()
+	binding.Model = "grok-4.5"
+	session, err := engine.SessionForThread(context.Background(), binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.Background())
+	if _, err := session.RunTurn(context.Background(), testInput(), nil); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := engine.DiscoverCatalog(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var grok45 *DiscoveredModel
+	for i := range catalog.Models {
+		if catalog.Models[i].ID == "grok-4.5" {
+			grok45 = &catalog.Models[i]
+		}
+	}
+	if grok45 == nil || len(grok45.SupportedEfforts) != 3 {
+		t.Fatalf("grok-4.5 dependent capabilities not learned: %+v", catalog.Models)
+	}
+}
+
 func TestACPSpeedResetRestoresModelDefaultAfterResume(t *testing.T) {
 	for _, defaultSpeed := range []string{"on", "off"} {
 		t.Run(defaultSpeed, func(t *testing.T) {

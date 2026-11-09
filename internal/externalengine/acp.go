@@ -157,8 +157,12 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 	// catalogs (Devin advertises over a hundred) cannot fit the discovery
 	// budget. Dependent options are captured for the agent's current model;
 	// other models resolve theirs when a selection actually applies them.
+	models := modelsFromACPSession(session)
+	if key, ok := e.discoveryContextKey(cwd); ok {
+		mergeLearnedModelCaps(key, models)
+	}
 	return DiscoveredCatalog{
-		Models: modelsFromACPSession(session),
+		Models: models,
 		Modes:  permissionModesFromACPSession(session),
 	}, nil
 }
@@ -658,6 +662,9 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, init acpInitial
 				return err
 			}
 		}
+	}
+	if key, ok := s.engine.discoveryContextKey(s.binding.RootDir); ok {
+		recordSessionModelCapabilities(key, selected)
 	}
 	if resumed {
 		trackLoaded := trackACPConfiguration(r, &loaded, ref)
