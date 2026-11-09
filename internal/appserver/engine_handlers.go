@@ -117,7 +117,7 @@ func (s *Server) engineInventoryAt(root string, refreshModels bool) []EngineInfo
 }
 
 func (s *Server) engineInventoryForState(binding *runtime.State, root string, refreshModels, includeModels bool) []EngineInfo {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	descriptors := binding.EngineDescriptors(ctx)
 	out := make([]EngineInfo, len(descriptors))
@@ -125,10 +125,13 @@ func (s *Server) engineInventoryForState(binding *runtime.State, root string, re
 	for i, descriptor := range descriptors {
 		wg.Go(func() {
 			info := EngineInfo{ID: string(descriptor.ID), Version: descriptor.Version, Capabilities: append([]string(nil), descriptor.Capabilities...), RequiresHostModel: descriptor.RequiresHostModel, Enabled: true}
-			ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			// describe and models each get their own budget: a slow binary
+			// check must not eat the catalog deadline, and the catalog call
+			// needs room for its own internal discovery timeout.
+			engineCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 			defer cancel()
 			var description pluginprotocol.EngineDescription
-			if err := binding.CallEngine(ctx, descriptor.ID, "describe", struct{}{}, &description); err != nil {
+			if err := binding.CallEngine(engineCtx, descriptor.ID, "describe", struct{}{}, &description); err != nil {
 				info.Error = err.Error()
 			} else {
 				info.DisplayName, info.Protocol, info.InstallURL, info.UpdateURL = description.DisplayName, description.Protocol, description.InstallURL, description.UpdateURL
@@ -142,8 +145,10 @@ func (s *Server) engineInventoryForState(binding *runtime.State, root string, re
 				info.ModelsStatus = "deferred"
 			}
 			if includeModels && info.Enabled && info.BinaryOK {
+				modelsCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
+				defer cancel()
 				var models pluginprotocol.EngineModelsResult
-				if err := binding.CallEngine(ctx, descriptor.ID, "models", pluginprotocol.EngineModelsRequest{CWD: root, Refresh: refreshModels}, &models); err != nil {
+				if err := binding.CallEngine(modelsCtx, descriptor.ID, "models", pluginprotocol.EngineModelsRequest{CWD: root, Refresh: refreshModels}, &models); err != nil {
 					info.ModelsStatus, info.ModelsError = "error", err.Error()
 				} else {
 					info.Models, info.ModelsStatus, info.ModelsError = models.Models, models.Status, models.Error
