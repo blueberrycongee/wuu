@@ -148,7 +148,7 @@ async function run() {
   win.setContentSize(1280, 900); win.show(); win.focus(); win.webContents.setBackgroundThrottling(false);
   await click(composer); await win.webContents.insertText('Start the synthetic running task');
   await until(() => evaluate(selector => document.querySelector(selector)?.value === 'Start the synthetic running task', composer), 'prompt entered');
-  await click('[data-main-conversation-composer] .composer-action-button');
+  await click('[data-main-conversation-composer] .composer-send-button');
   await until(() => response && evaluate(() => Boolean(document.querySelector('.rich-file-link'))), 'running response with file link');
   const listed = await evaluate(() => window.wuu.listAllThreads());
   targetThread = listed.threads.find(thread => thread.status === 'in_progress')?.id;
