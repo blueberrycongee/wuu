@@ -203,6 +203,10 @@ func RunToolLoop(
 		// Used to detect and log when model, tools, or system prompt changes
 		// between rounds, which would break cache reuse.
 		prevCacheFingerprint string
+		// Receipt tool-surface hash keyed to the stable-prefix fingerprint so
+		// identical tool surfaces are hashed once per turn, not per model step.
+		receiptToolHash            string
+		receiptToolHashFingerprint string
 		// Compaction is a nested inference flow. Its final operation becomes the
 		// parent of the first agent round that consumes the rewritten history.
 		lastAgentOperationID  string
@@ -884,7 +888,11 @@ func RunToolLoop(
 			}
 		}
 		if cfg.ModelInputReceiptStore != nil {
-			receipt := modelInputReceipt(req, requestInfo.ToolSurfaceHash,
+			if receiptToolHashFingerprint != currentFingerprint {
+				receiptToolHash = hashToolsForRequestShape(req.Tools)
+				receiptToolHashFingerprint = currentFingerprint
+			}
+			receipt := modelInputReceipt(req, receiptToolHash,
 				loopdriver.ExecutionContext{SessionID: cfg.SessionID, ExecutionID: cfg.ExecutionID},
 				loopdriver.Descriptor{ID: cfg.DriverID, Version: cfg.DriverVersion}, cfg.SystemPromptSections, historyRewritten)
 			if err := cfg.ModelInputReceiptStore.SaveModelInputReceipt(ctx, receipt); err != nil {
