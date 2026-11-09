@@ -1,2 +1,0 @@
-.app-context-dialog { width: min(680px, calc(100vw - var(--space-6))); }
-.app-context-error { color: var(--danger); }

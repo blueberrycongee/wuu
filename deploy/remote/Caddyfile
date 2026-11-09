@@ -1,3 +1,0 @@
-{$WUU_DOMAIN} {
-    reverse_proxy accounts:8787
-}
