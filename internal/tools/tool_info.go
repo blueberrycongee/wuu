@@ -245,5 +245,3 @@ func isDeferredByDefault(name string) bool {
 		return false
 	}
 }
-
-
