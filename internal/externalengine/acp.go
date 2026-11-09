@@ -33,15 +33,10 @@ var (
 	acpInitializeTimeout = 30 * time.Second
 	acpSessionTimeout    = 120 * time.Second
 	acpCloseTimeout      = 10 * time.Second
-	// Each advertised model's option probe gets a bounded slice of the
-	// discovery budget: a slow or wedged selection only strips that model's
-	// metadata instead of starving the rest of the catalog.
-	acpModelProbeTimeout = 15 * time.Second
-	// Probing stops once the remaining budget cannot fit another probe.
-	// Large advertised catalogs (Devin's fused models exceed a hundred) must
-	// still publish: membership is authoritative even when some models are
-	// listed without their option metadata.
-	acpCatalogProbeReserve = 1 * time.Second
+	// Agents that publish configuration asynchronously may still be preparing
+	// the first config_option_update when session/new returns. Discovery waits
+	// this long for that push before declaring the catalog unsupported.
+	acpConfigGraceTimeout = 5 * time.Second
 )
 
 // ACP v1's prompt response owns completion for standard agents. Grok also
@@ -146,68 +141,26 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 	restore := trackACPConfiguration(r, &session, session.ID)
 	defer restore()
 
+	if session.Models == nil && session.ConfigOptions == nil {
+		// The agent may publish its configuration only through a
+		// config_option_update notification after session/new. Wait briefly for
+		// that push before deciding the catalog is unsupported.
+		waitCtx, cancel := context.WithTimeout(ctx, acpConfigGraceTimeout)
+		defer cancel()
+		_ = r.wait(waitCtx, func() bool { return session.ConfigOptions != nil })
+	}
 	if session.Models == nil && session.modelConfigOption() == nil {
 		return DiscoveredCatalog{Modes: permissionModesFromACPSession(session)}, enginecatalog.ErrCatalogUnsupported
 	}
-	models := modelsFromACPSession(session)
-	modes := permissionModesFromACPSession(session)
-	defaultID := ""
-	known := make(map[string]DiscoveredModel)
-	for _, model := range models {
-		if model.IsDefault {
-			defaultID = model.ID
-			known[model.ID] = model
-		}
-	}
-	for i := 0; i < len(models); i++ {
-		id := models[i].ID
-		if _, ok := known[id]; ok {
-			continue
-		}
-		probeTimeout := acpModelProbeTimeout
-		if deadline, ok := ctx.Deadline(); ok {
-			if remaining := time.Until(deadline) - acpCatalogProbeReserve; remaining < probeTimeout {
-				probeTimeout = remaining
-			}
-		}
-		if probeTimeout <= 0 {
-			break
-		}
-		probeCtx, probeCancel := context.WithTimeout(ctx, probeTimeout)
-		err := session.selectModel(probeCtx, r, session.ID, id)
-		probeCancel()
-		if err != nil {
-			// A probe that only outlived its own slice leaves the advertised
-			// model listed without its option metadata; the rest of the
-			// catalog still gets probed. A refused switch is the agent's own
-			// answer, and an exhausted discovery budget must not let a
-			// capability-depleted catalog cache as ready.
-			if ctx.Err() == nil && errors.Is(err, context.DeadlineExceeded) {
-				continue
-			}
-			return DiscoveredCatalog{Models: models, Modes: modes}, fmt.Errorf("discover model %q: %w", id, err)
-		}
-		updated := modelsFromACPSession(session)
-		for _, model := range updated {
-			if model.ID == id {
-				known[id] = model
-			}
-		}
-		if _, ok := known[id]; !ok {
-			return DiscoveredCatalog{Models: models, Modes: modes}, fmt.Errorf("model %q disappeared during discovery", id)
-		}
-		// Configuration updates may add or remove models. Preserve probed
-		// capabilities by ID while rebuilding membership from the live list.
-		models = updated
-		for j := range models {
-			if model, ok := known[models[j].ID]; ok {
-				models[j] = model
-			}
-			models[j].IsDefault = models[j].ID == defaultID
-		}
-		i = -1
-	}
-	return DiscoveredCatalog{Models: models, Modes: modes}, nil
+	// Membership comes from the advertisement alone: probing each model through
+	// a real selection would mutate the session once per entry, and fused
+	// catalogs (Devin advertises over a hundred) cannot fit the discovery
+	// budget. Dependent options are captured for the agent's current model;
+	// other models resolve theirs when a selection actually applies them.
+	return DiscoveredCatalog{
+		Models: modelsFromACPSession(session),
+		Modes:  permissionModesFromACPSession(session),
+	}, nil
 }
 
 func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *turn) (err error) {

@@ -914,10 +914,6 @@ func TestACPHelper(t *testing.T) {
 				result = grokACPSessionResult()
 				break
 			}
-			if scenario == "catalog-probe-stall" {
-				result = probeStallSessionResult("model-a")
-				break
-			}
 			if scenario == "large-catalog" {
 				var choices []any
 				for i := 0; i < 60; i++ {
@@ -992,7 +988,10 @@ func TestACPHelper(t *testing.T) {
 				}
 				_ = json.Unmarshal(msg.Params, &params)
 				if params.ConfigID == "model" {
-					time.Sleep(100 * time.Millisecond)
+					// Discovery must never reach this handler: each switch is a
+					// session mutation, and fused catalogs hold a hundred
+					// entries. Record the call so the test can fail on it.
+					_ = os.WriteFile("model-switches", []byte(params.Value), 0o600)
 					var choices []any
 					for i := 0; i < 60; i++ {
 						choices = append(choices, map[string]string{"value": fmt.Sprintf("model-%02d", i), "name": fmt.Sprintf("Model %02d", i)})
@@ -1001,22 +1000,6 @@ func TestACPHelper(t *testing.T) {
 						map[string]any{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": params.Value, "options": choices},
 						map[string]any{"id": "reasoning_effort", "category": "thought_level", "type": "select", "currentValue": "high", "options": []any{map[string]string{"value": "low"}, map[string]string{"value": "high"}}},
 					}}
-					break
-				}
-			}
-			if scenario == "catalog-probe-stall" {
-				var params struct {
-					ConfigID string `json:"configId"`
-					Value    string `json:"value"`
-				}
-				_ = json.Unmarshal(msg.Params, &params)
-				if params.ConfigID == "model" && params.Value == "model-b" {
-					// A wedged selection never replies; the probe must give up
-					// on its own slice instead of the whole catalog.
-					continue
-				}
-				if params.ConfigID == "model" {
-					result = probeStallSessionResult(params.Value)
 					break
 				}
 			}
@@ -1048,9 +1031,6 @@ func TestACPHelper(t *testing.T) {
 					selectedSpeed = params.Value
 				}
 				result = speedACPSessionResult(selectedModel, "fast_mode", selectedSpeed)
-				if scenario == "speed-catalog" && selectedModel == "model-b" {
-					result.(map[string]any)["configOptions"] = result.(map[string]any)["configOptions"].([]any)[:1]
-				}
 				break
 			}
 			var params struct {
@@ -1346,30 +1326,6 @@ func grokACPSessionResult() map[string]any {
 	}
 }
 
-func probeStallSessionResult(current string) map[string]any {
-	efforts := map[string][]any{
-		"model-a": {map[string]string{"value": "low"}, map[string]string{"value": "high"}},
-		"model-c": {map[string]string{"value": "turbo"}},
-	}
-	return map[string]any{
-		"sessionId": "native-session",
-		"configOptions": []any{
-			map[string]any{
-				"id": "model", "category": "model", "type": "select", "currentValue": current,
-				"options": []any{
-					map[string]string{"value": "model-a", "name": "Model A"},
-					map[string]string{"value": "model-b", "name": "Model B"},
-					map[string]string{"value": "model-c", "name": "Model C"},
-				},
-			},
-			map[string]any{
-				"id": "reasoning_effort", "category": "thought_level", "type": "select", "currentValue": efforts[current][0].(map[string]string)["value"],
-				"options": efforts[current],
-			},
-		},
-	}
-}
-
 func TestACPGrokPromptCompleteSettlesHungPrompt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -1538,58 +1494,36 @@ func TestACPRejectsUnadvertisedSpeed(t *testing.T) {
 	}
 }
 
-func TestACPCatalogReportsSpeedPerModel(t *testing.T) {
+// Dependent capabilities belong to the agent's current model: discovery reads
+// the advertised configuration without switching models, so only the default
+// entry carries speed and effort metadata.
+func TestACPCatalogReportsSpeedForCurrentModel(t *testing.T) {
 	catalog, err := testEngine(t, "speed-catalog").DiscoverCatalog(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(catalog.Models) != 2 || !catalog.Models[0].FastMode || catalog.Models[1].FastMode {
-		t.Fatalf("wrong per-model speed capabilities: %+v", catalog.Models)
+		t.Fatalf("wrong model speed capabilities: %+v", catalog.Models)
 	}
 }
 
-func TestACPCatalogKeepsProbingPastAStalledModel(t *testing.T) {
-	previous := acpModelProbeTimeout
-	acpModelProbeTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { acpModelProbeTimeout = previous })
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	catalog, err := testEngine(t, "catalog-probe-stall").DiscoverCatalog(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(catalog.Models) != 3 {
-		t.Fatalf("stalled probe changed catalog membership: %+v", catalog.Models)
-	}
-	if catalog.Models[1].ID != "model-b" || len(catalog.Models[1].SupportedEfforts) != 0 {
-		t.Fatalf("stalled model lost its listing or was enriched: %+v", catalog.Models[1])
-	}
-	if catalog.Models[2].ID != "model-c" || len(catalog.Models[2].SupportedEfforts) != 1 || catalog.Models[2].SupportedEfforts[0] != "turbo" {
-		t.Fatalf("probe after the stall did not run: %+v", catalog.Models[2])
-	}
-}
-
-// A catalog larger than the discovery budget still publishes every advertised
-// model; the probes that no longer fit leave those models without option
-// metadata instead of failing the whole catalog.
-func TestACPCatalogKeepsUnprobedModelsWhenBudgetRunsOut(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), acpCatalogProbeReserve+450*time.Millisecond)
-	defer cancel()
-	catalog, err := testEngine(t, "large-catalog").DiscoverCatalog(ctx)
+// The advertised membership is the whole contract: a large catalog publishes
+// from session/new alone, without one selection RPC per entry. The helper
+// records any model switch it receives, so a probing regression fails here.
+func TestACPCatalogPublishesLargeCatalogWithoutProbing(t *testing.T) {
+	engine := testEngine(t, "large-catalog")
+	catalog, err := engine.DiscoverCatalog(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(catalog.Models) != 60 {
-		t.Fatalf("budget-exhausted discovery dropped models: %d listed", len(catalog.Models))
+		t.Fatalf("discovery dropped models: %d listed", len(catalog.Models))
 	}
-	probed := 0
-	for _, model := range catalog.Models {
-		if len(model.SupportedEfforts) > 0 {
-			probed++
-		}
+	if !catalog.Models[0].IsDefault || catalog.Models[0].ID != "model-00" {
+		t.Fatalf("default model = %+v", catalog.Models[0])
 	}
-	if probed == 0 || probed >= 59 {
-		t.Fatalf("expected a bounded number of probes, got %d of 59", probed)
+	if _, err := os.Stat(filepath.Join(engine.root, "model-switches")); !os.IsNotExist(err) {
+		t.Fatalf("discovery switched models to probe them: %v", err)
 	}
 }
 
