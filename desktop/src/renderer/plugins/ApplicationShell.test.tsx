@@ -217,7 +217,7 @@ describe("application shell assembly", () => {
       await act(async () => window.dispatchEvent(new Event("blur")));
       expect(container.querySelector('[role="alert"]')).toBeNull();
       await act(async () => render(next.controls));
-      expect(next.source.observeAppliedTheme).toHaveBeenCalledTimes(2);
+      expect(next.source.observeAppliedTheme).toHaveBeenCalledTimes(1);
       expect(next.observeContentThemeSelection).toHaveBeenCalledTimes(2);
       expect(old.observeContentThemeSelection).toHaveBeenCalledTimes(2);
       for (const subscription of old.observeContentThemeSelection.mock.results) expect(subscription.value).toHaveBeenCalledOnce();
