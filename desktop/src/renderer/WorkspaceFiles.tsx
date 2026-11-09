@@ -1,4 +1,4 @@
-import { showActionErrorToast } from "./Toast";
+import { showActionErrorToast, showErrorToast } from "./Toast";
 import { workspacePdfRevision } from "./PdfSelection";
 import { ThreadContextMenu, copyToClipboard } from "./ThreadContextMenu";
 import { usePreviewContent } from "./PreviewContentContext";
@@ -258,8 +258,12 @@ export function WorkspaceFileTree({
               setDirectories((current) => ({ ...current, [path]: result }));
             }
           }).catch((nextError) => {
+            // A subdirectory that fails to expand must not collapse the whole
+            // panel: the shared error state renders the empty-page retry, which
+            // only reloads the root. Toast the failure; collapse and re-expand
+            // retries the load.
             if (directoryGenerationRef.current === generation) {
-              setError(desktopApiErrorMessage(nextError, translateCurrent("workspace.files.readDirectoryFailed")));
+              showErrorToast(nextError, translateCurrent("workspace.files.readDirectoryFailed"));
             }
           }).finally(() => pending.delete(path));
         }}
