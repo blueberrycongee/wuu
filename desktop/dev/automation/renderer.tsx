@@ -42,6 +42,7 @@ if (params.has("active") && !params.has("empty")) {
   for (const [id, title, status] of [["running", "检查发布分支", "running"], ["queued", "整理评审意见", "queued"], ["starting", "准备每日汇总", "starting"]]) {
     runs.push({ id: `run-${id}`, task_id: id, status, triggered_at: "2026-09-15T09:00:00Z", task: { id, title, prompt: "检查项目并整理结果。", cron: "0 17 15 9 *", timezone: "Asia/Shanghai", mode: "new_thread", recurring: false, paused: false, workspace_mode: "shared" } });
   }
+  runs.push({ id: "run-failed-once", task_id: "failed-once", status: "failed", triggered_at: "2026-09-15T08:30:00Z", completed_at: "2026-09-15T08:32:00Z", error: "Provider rate limit reached", task: { id: "failed-once", title: "失败的发布检查", prompt: "检查发布分支并汇总失败原因。", cron: "0 17 14 9 *", timezone: "Asia/Shanghai", mode: "new_thread", recurring: false, paused: false, workspace_mode: "shared" } });
 }
 if (params.has("many") && tasks.length) {
   tasks.push(...Array.from({ length: 30 }, (_, index) => ({ ...tasks[0], id: `extra-${index}`, title: `项目检查 ${index + 1}`, next_run_at: new Date(Date.UTC(2026, 8, 17 + index, 1)).toISOString() })));

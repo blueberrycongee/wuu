@@ -43,7 +43,7 @@ The sidebar follows the workspace selected on the page. **Running now** shows st
 
 Scheduled tasks are listed by next run. The switch on a task's row, or **Enabled** in its editor, pauses and resumes future triggers; a paused task keeps its place. Delete removes the schedule, not conversations it already created, and does not stop work already running. Stop that work from its conversation. Closing the editor or selecting another task discards unsaved edits.
 
-The detail panel shows recent runs and their errors, and a task whose last run failed is marked in the list. The **Completed** section after the scheduled tasks shows retained snapshots of successful one-shot tasks; a successful recurring run does not complete its schedule. A workspace retains up to 100 tasks and 500 run records.
+The detail panel shows recent runs and their errors, and a task whose last run failed is marked in the list. A one-shot run remains in the catalog after it leaves the schedule: **Recent runs** lists retained snapshots that are still starting, queued, running, failed, interrupted, or uncertain, and **Completed** lists successful ones. A successful recurring run does not complete its schedule. A workspace retains up to 100 tasks and 500 run records.
 
 If a run is missing, check that Wuu was awake and running, the plugin was enabled, the task was active, and the selected workspace and target chat still exist. Then check its timezone, next run, and errors. Provider access, quotas, network failures, and permissions can all prevent execution.
 
