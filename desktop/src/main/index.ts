@@ -6,6 +6,7 @@ import { RegisteredSessionTransport, REGISTERED_SESSION_REVERSE_METHODS } from "
 import { resolveUserHostContext } from "./userHost";
 import { PresentationFrameCapture } from "./presentationFrame";
 import { createDesktopRecovery } from "./desktopRecovery";
+import { installSingleInstanceGuard } from "./singleInstance";
 import { randomUUID } from "node:crypto";
 import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 import { AppContextCapture } from "./appContextCapture";
@@ -296,6 +297,10 @@ function embeddedBrowserSession() {
 if (process.argv.includes("--safe-mode")) {
   process.env.WUU_SAFE_MODE = "1";
 }
+// A second normal instance must exit before any startup side effects: it
+// would spawn duplicate app-servers for the same workspaces and contend for
+// the shared ~/.wuu state while the first instance's renderer is using it.
+installSingleInstanceGuard(revealMainWindow);
 // Electron forwards fetch/CORS privileges through one set of child-process
 // switches; a second registration would replace the first set.
 protocol.registerSchemesAsPrivileged([...renderableFileSchemes, pluginModuleScheme, chromeOverlayScheme]);
