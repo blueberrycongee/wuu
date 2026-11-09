@@ -180,6 +180,10 @@
   .workspace-document-turn-dock { --document-dock-duration: 0ms; }
 }
 
+@container style(--motion-reduced: 1) {
+  .workspace-document-turn-dock { --document-dock-duration: 0ms; }
+}
+
 /* This whole surface is already bottom anchored. Let real input/accessory
    heights participate in its footprint instead of translating over the result. */
 .workspace-document-turn-composer .composer-stack { --composer-expanded-offset: 0px; }

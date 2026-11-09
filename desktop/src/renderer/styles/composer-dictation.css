@@ -24,7 +24,8 @@
   gap: var(--space-3);
   min-width: 0;
   min-height: var(--composer-input-min-height);
-  animation: dictation-appear 180ms ease-out;
+  --enter-y: 3px;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 .composer-dictation-status { display: flex; align-items: center; gap: var(--space-2); white-space: nowrap; color: var(--ink-muted); font-size: var(--font-body); }
 .composer-dictation-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink); flex-shrink: 0; }
@@ -34,6 +35,6 @@
 .composer-dictation-stop svg { width: 14px; height: 14px; fill: currentColor; }
 .composer-dictation-stop svg.is-spinning { fill: none; }
 .composer-dictation-recording[data-phase="finalizing"] .composer-dictation-dot { opacity: .4; }
-@keyframes dictation-appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
-@media (prefers-reduced-motion: reduce) { .composer-dictation-recording { animation: none; } .composer-dictation-wave > span { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .composer-dictation-wave > span { transition: none; } }
+@container style(--motion-reduced: 1) { .composer-dictation-wave > span { transition: none; } }
 @container (max-width: 440px) { .composer-dictation-status-label { display: none; } .composer-dictation-recording { gap: var(--space-2); } }

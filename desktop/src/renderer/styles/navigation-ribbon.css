@@ -499,8 +499,7 @@
   object-fit: contain;
 }
 
-@keyframes sidebar-ribbon-tab-spin { to { transform: rotate(360deg); } }
-.sidebar-ribbon-tab-loading { animation: sidebar-ribbon-tab-spin 1s linear infinite; }
+.sidebar-ribbon-tab-loading { animation: wuu-spin var(--motion-spin) linear infinite; }
 @container style(--motion-reduced: 1) {
   .sidebar-ribbon-tab-loading { animation: none; }
 }

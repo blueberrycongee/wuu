@@ -884,7 +884,7 @@
 }
 .plugin-conversation-message[data-bubble][data-role] .bubble-message-body > .bubble-message-content { max-width: 100%; }
 .plugin-conversation-message[data-bubble][data-role] .bubble-message-body > .plugin-conversation-attachments { max-width: 100%; }
-.plugin-message-reply { position: absolute; left: calc(100% + 9px); top: calc(50% - 14px); display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink-muted); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 120ms; }
+.plugin-message-reply { position: absolute; left: calc(100% + 9px); top: calc(50% - 14px); display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink-muted); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity var(--motion-fast); }
 .plugin-message-reply svg { width: 16px; height: 16px; }
 .plugin-conversation-message[data-role="user"] .plugin-message-reply { left: auto; right: calc(100% + 9px); }
 .plugin-conversation-message:hover .plugin-message-reply, .plugin-conversation-message:focus-within .plugin-message-reply { opacity: 1; pointer-events: auto; }
@@ -901,8 +901,6 @@
 .plugin-composer-reply-context p { margin: var(--space-1) 0 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-composer-reply-context > button { flex: none; }
 @media (hover: none), (pointer: coarse) { .plugin-message-reply { opacity: 1; pointer-events: auto; } }
-@media (prefers-reduced-motion: reduce) { .plugin-message-reply { transition: none; } }
-
 /* Explicit reaction props opt messages into this compact messaging treatment. */
 .bubble-message-body[data-has-reaction] { margin-top: 18px; }
 .conversation-reaction-badge { position:absolute;z-index:2;top:-18px;left:-12px;display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:30px;padding:0 3px;box-sizing:border-box;border:1px solid var(--hairline);border-radius:999px;background:var(--paper);font-size:20px;line-height:1;color:var(--ink); }

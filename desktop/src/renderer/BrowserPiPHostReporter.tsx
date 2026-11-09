@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import type { ActivityPreviewAppearance } from "../shared/activityPreview";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../shared/protocol";
 import { useI18n } from "./i18n";
+import { prefersReducedMotion, subscribeReducedMotion } from "./motion";
 
 // Tells the main process where the conversation column and its obstacles are,
 // in viewport pixels. The card snaps to a corner of that column.
@@ -37,12 +38,11 @@ export function BrowserPiPHostReporter(): null {
       ?.reportActivityPreviewAppearance;
     if (!report) return;
     const root = document.documentElement;
-    const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     let previous = "";
     const update = (): void => {
       const style = getComputedStyle(root);
       const appearance: ActivityPreviewAppearance = {
-        reducedMotion: root.dataset.appearanceMotion === "reduce" || motion.matches,
+        reducedMotion: prefersReducedMotion(),
         fontSize: Number.parseFloat(style.getPropertyValue("--conversation-message-font-size")) || MESSAGE_FLOW_FONT_SIZE_RANGE.default,
         fontFamily: style.getPropertyValue("--appearance-ui-font").trim() || style.fontFamily,
         locale,
@@ -57,9 +57,9 @@ export function BrowserPiPHostReporter(): null {
     };
     const observer = new MutationObserver(update);
     observer.observe(root, { attributes: true, attributeFilter: ["style", "data-theme", "data-appearance-motion"] });
-    motion.addEventListener("change", update);
+    const stopMotionWatch = subscribeReducedMotion(update);
     update();
-    return () => { observer.disconnect(); motion.removeEventListener("change", update); };
+    return () => { observer.disconnect(); stopMotionWatch(); };
   }, [locale]);
   useEffect(() => {
     const report = (window.wuu as { reportBrowserPiPHostLayout?: HostLayoutReporter } | undefined)

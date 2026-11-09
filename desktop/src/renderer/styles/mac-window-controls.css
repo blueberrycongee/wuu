@@ -20,8 +20,8 @@
   visibility: hidden;
   opacity: 0;
   transform: translateY(calc(-6px / var(--desktop-page-zoom, 1)));
-  transition: transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 140ms ease-out, visibility 0s linear 180ms;
+  transition: transform var(--motion-base) var(--ease-out),
+    opacity var(--motion-fast) ease-out, visibility 0s linear var(--motion-base);
   pointer-events: none;
   -webkit-app-region: drag;
 }
@@ -85,6 +85,13 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .mac-window-controls {
+    transition: none;
+    transform: none;
+  }
+}
+
+@container style(--motion-reduced: 1) {
   .mac-window-controls {
     transition: none;
     transform: none;
