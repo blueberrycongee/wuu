@@ -35,16 +35,19 @@ export interface DefaultComposerLayout {
 
 /** A selected composer receives geometry only; every operation retains its public draft owner. */
 export function DefaultComposerSurface({ application, slots, ...layout }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element | null {
-  const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  // Field subscriptions keep the composer off stream-frame publications.
+  const tabs = useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs);
+  const sideConversation = useSyncExternalStore(application.subscribe, () => application.getSnapshot().sideConversation);
+  const drafts = useSyncExternalStore(application.subscribe, () => application.getSnapshot().drafts);
   if (layout.side) {
     const parentThreadId = layout.side.parentThreadId;
-    const ownerTabId = view.tabs.items.find(tab => tab.threadId === parentThreadId)?.id;
-    if (!ownerTabId || view.sideConversation.parentThreadId !== parentThreadId || !view.sideConversation.entry) return null;
+    const ownerTabId = tabs.items.find(tab => tab.threadId === parentThreadId)?.id;
+    if (!ownerTabId || sideConversation.parentThreadId !== parentThreadId || !sideConversation.entry) return null;
     return <OwnedSideComposer application={application} slots={slots} ownerTabId={ownerTabId} parentThreadId={parentThreadId} variant={layout.variant} />;
   }
   const pane = layout.pane ?? "primary";
-  const ownerTabId = layout.ownerTabId ?? view.drafts[pane].ownerTabId;
-  if (!ownerTabId || view.drafts[pane].ownerTabId !== ownerTabId) return null;
+  const ownerTabId = layout.ownerTabId ?? drafts[pane].ownerTabId;
+  if (!ownerTabId || drafts[pane].ownerTabId !== ownerTabId) return null;
   return <OwnedComposer key={pane} application={application} slots={slots} {...layout} pane={pane} ownerTabId={ownerTabId} />;
 }
 
@@ -58,16 +61,17 @@ async function openComposerPlugins(application: ApplicationServiceV1, pluginId?:
 function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, variant }: {
   application: ApplicationServiceV1; slots: UICompositionV1; ownerTabId: string; parentThreadId: string; variant?: ComposerVariant;
 }): JSX.Element | null {
-  const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  const composerRuntime = useSyncExternalStore(application.subscribe, () => application.getSnapshot().composerRuntime);
+  const sideConversation = useSyncExternalStore(application.subscribe, () => application.getSnapshot().sideConversation);
   const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
   const presentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
   const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls,
-    conversationPluginsSupported: view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
+    conversationPluginsSupported: composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
     openPlugins: (pluginId?: string) => openComposerPlugins(application, pluginId),
-  }), [application, slots, ownerTabId, presentation, view.composerRuntime.owners]);
-  if (view.sideConversation.parentThreadId !== parentThreadId) return null;
+  }), [application, slots, ownerTabId, presentation, composerRuntime.owners]);
+  if (sideConversation.parentThreadId !== parentThreadId) return null;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}>
-    <ApplicationSideThreadComposer snapshot={view.sideConversation} invoke={application.invoke} variant={variant}
+    <ApplicationSideThreadComposer snapshot={sideConversation} invoke={application.invoke} variant={variant}
       onOpenFile={path => { void application.fileSelection.openFile({ target: { ownerTabId }, path }).catch(showApplicationActionError); }} />
   </ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }
@@ -75,12 +79,16 @@ function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, var
 function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId, containerRef, registerFocusTarget, runtimeControlsTarget, visible = true }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
   const { t } = useI18n();
   const presentNavigation = usePresentedNavigation();
+  // The composer also reads conversationWorkspace (thread continuation), which
+  // carries live stream text, so a whole-snapshot subscription is honest here.
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  const composerRuntime = view.composerRuntime;
+  const tabs = view.tabs;
   const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
   const livePresentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
   const liveEnvironment = useSyncExternalStore(application.environment.subscribe, application.environment.getSnapshot);
-  const liveRuntime = view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId);
-  const switching = Boolean(view.tabs.pending);
+  const liveRuntime = composerRuntime.owners.find(row => row.ownerTabId === ownerTabId);
+  const switching = Boolean(tabs.pending);
   // Only data survives the pending destination. The controls below always bind
   // the current application/owner, and their interaction gate stays closed.
   const settledVisual = useRef({ presentation: livePresentation, environment: liveEnvironment, runtime: liveRuntime });
@@ -100,13 +108,13 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   // branch control for a known non-repository or an as-yet unknown target.
   const branchPickerPending = environmentPending && liveEnvironment.status?.is_repo !== false && Boolean(liveEnvironment.root)
     && Boolean(liveEnvironment.status?.is_repo || settledVisual.current.environment.status?.is_repo);
-  const tab = view.tabs.items.find(row => row.id === ownerTabId);
+  const tab = tabs.items.find(row => row.id === ownerTabId);
   const textOwner = JSON.stringify([pane, ownerTabId, tab?.workspaceId, tab?.workspaceRoot]);
   const controls = useMemo(() => createComposerControls(application, { ownerTabId, pane }), [application, ownerTabId, pane]);
   const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls,
-    conversationPluginsSupported: view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (view.composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
+    conversationPluginsSupported: composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
     openPlugins: (pluginId?: string) => openComposerPlugins(application, pluginId),
-  }), [application, slots, ownerTabId, presentation, view.composerRuntime.owners]);
+  }), [application, slots, ownerTabId, presentation, composerRuntime.owners]);
   const [, redraw] = useReducer(value => value + 1, 0);
   const attachments = useMemo(() => createApplicationComposerAttachments(application, () => redraw()), [application]);
   useEffect(() => { attachments.resume(); return () => attachments.dispose(); }, [attachments]);
