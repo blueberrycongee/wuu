@@ -141,7 +141,6 @@ describe("CUA native picture-in-picture", () => {
     sink?: ObservationPiPEventSink;
     setVisible: ReturnType<typeof vi.fn>;
     setStackPosition: ReturnType<typeof vi.fn>;
-    setDesktopAlignment: ReturnType<typeof vi.fn>;
     stop: ReturnType<typeof vi.fn>;
     stackLead: () => {
       frame: { x: number; y: number; width: number; height: number };
@@ -174,13 +173,9 @@ describe("CUA native picture-in-picture", () => {
           sink,
           setVisible: vi.fn(),
           setStackPosition: vi.fn(),
-          setDesktopAlignment: vi.fn(),
           stop: vi.fn(),
           stackLead: () => ({ frame: dockFrame(card.alignment), alignment: card.alignment, dragging: false }),
         };
-        card.setDesktopAlignment.mockImplementation((alignment: DockTestCard["alignment"]) => {
-          card.alignment = alignment;
-        });
         card.stop.mockImplementation((onStopped?: () => void) => onStopped?.());
         cards.push(card);
         return {
@@ -190,7 +185,6 @@ describe("CUA native picture-in-picture", () => {
           setStackPosition: card.setStackPosition,
           stackLead: card.stackLead,
           isDesktopDocked: () => card.docked,
-          setDesktopAlignment: card.setDesktopAlignment,
           stop: card.stop,
         };
       },
@@ -216,7 +210,7 @@ describe("CUA native picture-in-picture", () => {
     void coordinator.shutdown();
   });
 
-  it("places a second floated preview in a free screen corner", () => {
+  it("stacks a second floated preview behind the first at the same corner", () => {
     const { coordinator, cards } = makeDockCoordinator();
     coordinator.setActiveThread("thread-1");
     coordinator.update(activity({ target: "app-a" }));
@@ -227,7 +221,12 @@ describe("CUA native picture-in-picture", () => {
     cards[1].docked = true;
     cards[1].sink?.onEvent({ event: "desktop_dock", desktop: true });
 
-    expect(cards[1].setDesktopAlignment).toHaveBeenCalledWith("top-left");
+    expect(cards[0].setStackPosition).toHaveBeenLastCalledWith(0, undefined);
+    expect(cards[1].setStackPosition).toHaveBeenLastCalledWith(1, {
+      frame: dockFrame("bottom-right"),
+      alignment: "bottom-right",
+      dragging: false,
+    });
     void coordinator.shutdown();
   });
 
