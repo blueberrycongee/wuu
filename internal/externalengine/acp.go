@@ -332,8 +332,10 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 		return err
 	}
 	blocks := make([]map[string]string, 0, 2)
-	if s.binding.Instructions != "" {
-		blocks = append(blocks, map[string]string{"type": "text", "text": "Session instructions supplied by the host:\n" + s.binding.Instructions})
+	instructions := strings.TrimSpace(s.binding.Instructions)
+	deliver := instructions != "" && s.engine.acpInstructionsDue(ref, instructions, resumed)
+	if deliver {
+		blocks = append(blocks, map[string]string{"type": "text", "text": "Session instructions supplied by the host:\n" + instructions})
 	}
 	if text != "" {
 		blocks = append(blocks, map[string]string{"type": "text", "text": text})
@@ -356,6 +358,11 @@ func (s *Session) runACP(ctx context.Context, message providers.ChatMessage, t *
 	}
 	err = r.call(promptCtx, "session/prompt", promptParams, &response)
 	t.flushACPDiagnostics()
+	if err == nil && deliver {
+		// A settled RPC means the block reached the agent's transcript, even if
+		// the stop reason is cancelled or refusal — record before checking ctx.
+		s.engine.acpInstructionsDelivered(ref, instructions)
+	}
 	if ctx.Err() != nil {
 		cancelCtx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -418,6 +425,7 @@ func writeACPImageFiles(threadID string, images []providers.InputImage) ([]strin
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("write image attachments: %w", err)
 	}
+	sweepACPImages(filepath.Dir(dir))
 	paths := make([]string, 0, len(images))
 	for i, image := range images {
 		raw, err := base64.StdEncoding.DecodeString(image.Data)
@@ -438,6 +446,24 @@ func writeACPImageFiles(threadID string, images []providers.InputImage) ([]strin
 		paths = append(paths, abs)
 	}
 	return paths, nil
+}
+
+// acpImageMaxAge bounds staged prompt images left in TMPDIR by turns that
+// never came back. Files younger than this stay readable for agents that
+// re-open an earlier attachment in a later turn.
+const acpImageMaxAge = 24 * time.Hour
+
+func sweepACPImages(root string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	cutoff := time.Now().Add(-acpImageMaxAge)
+	for _, entry := range entries {
+		if info, err := entry.Info(); err == nil && info.ModTime().Before(cutoff) {
+			_ = os.RemoveAll(filepath.Join(root, entry.Name()))
+		}
+	}
 }
 
 func acpImageDir(threadID string) string {
