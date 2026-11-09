@@ -82,9 +82,9 @@
 
 /* Docked right-panel open/close: like the sidebar, the grid commits in one
  * frame and the panel slides as a promoted overlay on the compositor instead
- * of relaying out the shell every frame. Sheet states (data-sheet) keep their
- * own fixed positioning and win over this overlay via source order. */
-.app-shell.right-panel-animating .workspace-right-panel {
+ * of relaying out the shell every frame. Sheet states are excluded: they
+ * carry their own fixed positioning and parked transform endpoints. */
+.app-shell.right-panel-animating .workspace-right-panel:not([data-sheet]) {
   position: absolute;
   inset: 0 var(--conversation-pane-inset) 0 auto;
   z-index: 140;
@@ -93,12 +93,12 @@
   will-change: transform;
 }
 
-.app-shell.right-panel-animating.right-panel-open .workspace-right-panel {
+.app-shell.right-panel-animating.right-panel-open .workspace-right-panel:not([data-sheet]) {
   transform: translate3d(0, 0, 0);
   transition: transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
 }
 
-.app-shell.right-panel-animating:not(.right-panel-open) .workspace-right-panel {
+.app-shell.right-panel-animating:not(.right-panel-open) .workspace-right-panel:not([data-sheet]) {
   transform: translate3d(100%, 0, 0);
   transition: transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
 }
