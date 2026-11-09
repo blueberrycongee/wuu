@@ -73,6 +73,21 @@ describe("application settings operations", () => {
   });
 });
 
+it("publishes an engine settings edit without waiting for model discovery", async () => {
+  const h = fixture();
+  let resolveList!: (value: unknown) => void;
+  window.wuu = {
+    updateEngines: vi.fn().mockResolvedValue({ engines: [{ id: "wuu", enabled: true, binary_ok: true, models_status: "deferred" }], settings: { default_engine: "wuu" } }),
+    listEngines: vi.fn(() => new Promise(done => { resolveList = done; })),
+  } as unknown as typeof window.wuu;
+  const result = await h.settings.invoke("settings.update-engine", { default_engine: "wuu" });
+  expect(result?.engines[0].models_status).toBe("deferred");
+  expect(h.settings.getSnapshot().engineInventory?.engines[0].models_status).toBe("deferred");
+  expect(window.wuu.listEngines).toHaveBeenCalledOnce();
+  resolveList({ engines: [{ id: "wuu", enabled: true, binary_ok: true, models_status: "ready", models: [{ id: "m" }] }] });
+  await vi.waitFor(() => expect(h.settings.getSnapshot().engineInventory?.engines[0].models_status).toBe("ready"));
+});
+
 it("invalidates shared engine metadata when the provider generation changes", async () => {
   const h = fixture();
   window.wuu = { listEngines: vi.fn().mockResolvedValue({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: false }] }) } as unknown as typeof window.wuu;

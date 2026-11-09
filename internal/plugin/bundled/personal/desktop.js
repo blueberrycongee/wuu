@@ -1165,8 +1165,8 @@ var personalDesktop = (() => {
       }
     };
     api.registerStyle({ id: "personal", css: `
-    .mosaic { --mosaic-message-accent:#3566f0;--mosaic-message-tail-space:max(var(--conversation-turn-boundary-gap), calc(var(--font-sm) * 1.3 + 4px));position:relative;height:100%;min-height:0;display:flex;color:var(--ink); }
-    .mosaic-main { container:personal-conversation / inline-size;flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
+    .mosaic { container:personal-conversation / inline-size;--mosaic-conversation-width:640px;--mosaic-message-accent:#3566f0;--mosaic-message-tail-space:max(var(--conversation-turn-boundary-gap), calc(var(--font-sm) * 1.3 + 4px));position:relative;height:100%;min-height:0;display:flex;color:var(--ink); }
+    .mosaic-main { flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden; }
     .mosaic-panel-layer { position:absolute;inset:0;z-index:30;pointer-events:none;overflow:hidden; }
     .mosaic-panel-layer[data-panel-phase="open"] { overflow:visible; }
     .mosaic-sidebar { position:absolute;right:8px;top:60px;width:min(300px, calc(100% - 16px));max-height:calc(100% - 68px);min-height:0;display:flex;flex-direction:column;overflow:hidden;border:0;border-radius:16px;background:var(--paper);box-shadow:0 0 0 .5px #00000026,0 3px 7.5px #0000000a,0 0 20px #0000000d;pointer-events:auto;opacity:0;transform:translateX(100%);transition:transform var(--mosaic-profile-motion-duration,300ms) cubic-bezier(.16,1,.3,1),opacity var(--mosaic-profile-motion-duration,300ms) cubic-bezier(.16,1,.3,1); }
@@ -1191,7 +1191,8 @@ var personalDesktop = (() => {
     .mosaic-profile-name-button { border:0;background:transparent;padding:0;text-align:left;color:inherit;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
     ${avatarDialogStyles}
     .mosaic-name-backdrop { position:absolute;inset:0;z-index:60;display:grid;place-items:center;background:#00000026;padding:16px; }
-    .mosaic-replies { display:flex;flex-direction:column;position:absolute;z-index:40;inset:auto 8px 8px;box-sizing:border-box;max-height:min(52%,480px);border:1px solid var(--hairline);border-radius:28px;background:var(--paper);box-shadow:0 12px 28px -8px rgb(0 0 0 / .16);overflow:hidden;-webkit-app-region:no-drag; }
+    .mosaic-replies-backdrop { position:absolute;inset:0;z-index:39;-webkit-app-region:no-drag; }
+    .mosaic-replies { display:flex;flex-direction:column;position:absolute;z-index:40;inset:auto 0 8px;margin-inline:auto;width:min(calc(100% - 16px),calc(var(--mosaic-conversation-width) + var(--session-outer-padding-inline) * 2));box-sizing:border-box;max-height:min(52%,480px);border:1px solid var(--hairline);border-radius:28px;background:var(--paper);box-shadow:0 12px 28px -8px rgb(0 0 0 / .16);overflow:hidden;-webkit-app-region:no-drag; }
     .mosaic .mosaic-replies .plugin-conversation { display:flex;flex-direction:column;height:auto;min-height:0;flex:1 1 auto;max-height:none;overflow:hidden; }
     .mosaic .mosaic-replies .plugin-conversation-titlebar { display:none; }
     .mosaic-replies .title-block { display:none; }
@@ -1227,8 +1228,8 @@ var personalDesktop = (() => {
     .mosaic .plugin-conversation-titlebar .mosaic-identity { pointer-events:auto; }
     .mosaic-main > .plugin-conversation > .plugin-conversation-scroll { animation-name:none,scroll-fade-bottom; }
     .mosaic .plugin-conversation-titlebar .title-block { visibility:hidden; }
-    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:640px;--session-outer-width:calc(var(--session-composer-width) + var(--session-outer-padding-inline) * 2); }
-    @container personal-conversation (min-width:1024px) { .mosaic-main > .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:768px; } }
+    .mosaic .plugin-conversation[data-presentation="bubbles"] { --session-composer-width:var(--mosaic-conversation-width);--session-outer-width:calc(var(--session-composer-width) + var(--session-outer-padding-inline) * 2); }
+    @container personal-conversation (min-width:1024px) { .mosaic-main > .plugin-conversation[data-presentation="bubbles"], .mosaic-replies { --mosaic-conversation-width:768px; } }
     .mosaic .plugin-conversation-message[data-bubble] { --bubble-time-gutter:max(73px, calc(var(--conversation-message-font-size) * 4.5625)); }
     .mosaic .plugin-conversation-message[data-bubble][data-role="user"] { --bubble-time-gutter:max(80px, calc(var(--conversation-message-font-size) * 5)); }
     .mosaic .plugin-conversation-message[data-bubble] .agent-text, .mosaic .plugin-conversation-message[data-bubble] .user-message { text-wrap:pretty;overflow-wrap:anywhere; }
@@ -1596,6 +1597,23 @@ var personalDesktop = (() => {
     const recoveryPrefix = `wuu.personal.draftRecovery.v1:${route.userSpaceId}:`;
     const recoveryAge = 24 * 60 * 60 * 1e3, recoveryLimit = 64 * 1024;
     const conversations = /* @__PURE__ */ new Map(), draftListeners = /* @__PURE__ */ new Set();
+    const streamBurstMethod = /item\/(?:agentMessage|toolCall)\/(?:delta|replace)$/;
+    let streamFlushTimer;
+    const flushDrafts = () => draftListeners.forEach((listener) => listener());
+    const notifyDrafts = (streamed) => {
+      if (!streamed) {
+        if (streamFlushTimer !== void 0) {
+          clearTimeout(streamFlushTimer);
+          streamFlushTimer = void 0;
+        }
+        flushDrafts();
+        return;
+      }
+      streamFlushTimer ??= setTimeout(() => {
+        streamFlushTimer = void 0;
+        flushDrafts();
+      }, 100);
+    };
     const genuiDrafts = /* @__PURE__ */ new Map(), rendererDrafts = /* @__PURE__ */ new Map();
     const recoveryKey = (id) => recoveryPrefix + encodeURIComponent(id);
     const readRecovery = (raw) => {
@@ -1687,6 +1705,7 @@ var personalDesktop = (() => {
       draftListeners.forEach((listener) => listener());
     };
     const streams = /* @__PURE__ */ new Map();
+    let timelineOrder = 0;
     let mainSessionID = "";
     const streamFor = (id) => {
       if (!streams.has(id)) streams.set(id, { items: /* @__PURE__ */ new Map(), tools: /* @__PURE__ */ new Map(), completedItems: /* @__PURE__ */ new Set(), completedTurns: /* @__PURE__ */ new Set(), verifiedToolTurns: /* @__PURE__ */ new Set(), version: 0, running: false });
@@ -1703,7 +1722,7 @@ var personalDesktop = (() => {
           tool.status = "interrupted";
           stream2.verifiedToolTurns.add(tool.turn_id);
         }
-        draftListeners.forEach((listener) => listener());
+        notifyDrafts(false);
         return;
       }
       if (event.kind !== "notification") return;
@@ -1766,7 +1785,7 @@ var personalDesktop = (() => {
             if (oldest) stream.tools.delete(oldest[0]);
           }
           const text = typeof item.arguments === "string" && item.arguments ? item.arguments : stream.tools.get(itemKey)?.argumentsText || "";
-          if ((stream.tools.size < 32 || stream.tools.has(itemKey)) && new TextEncoder().encode(text).length <= 131072) stream.tools.set(itemKey, { id: item.id, call_id: item.source_id, turn_id: params.turn_id, capability: item.display.capability, argumentsText: text, status: "in_progress" });
+          if ((stream.tools.size < 32 || stream.tools.has(itemKey)) && new TextEncoder().encode(text).length <= 131072) stream.tools.set(itemKey, { id: item.id, call_id: item.source_id, turn_id: params.turn_id, capability: item.display.capability, argumentsText: text, status: "in_progress", order: stream.tools.get(itemKey)?.order ?? ++timelineOrder });
         }
         if (method === "item/toolCall/delta") {
           const tool = stream.tools.get(itemKey);
@@ -1786,7 +1805,7 @@ var personalDesktop = (() => {
       }
       if (["item/agentMessage/delta", "item/agentMessage/replace"].includes(method)) {
         if (!itemID || stream.completedItems.has(itemKey) || stream.completedTurns.has(params.turn_id)) return;
-        const previous = stream.items.get(itemKey) || { id: itemID, turn_id: params.turn_id, content: "" };
+        const previous = stream.items.get(itemKey) || { id: itemID, turn_id: params.turn_id, content: "", order: ++timelineOrder };
         const content = method.endsWith("replace") ? params.text ?? params.delta ?? "" : previous.content + (params.delta || "");
         stream.items.set(itemKey, { ...previous, content, streaming: true });
         stream.running = true;
@@ -1797,9 +1816,9 @@ var personalDesktop = (() => {
         if (stream.completedItems.has(itemKey) && method === "item/started") return;
         const previous = stream.items.get(itemKey);
         if (method === "item/completed") stream.completedItems.add(itemKey);
-        stream.items.set(itemKey, { id: itemID, turn_id: params.turn_id, seq: item.seq, relation: item.relation, source_id: item.source_id, content: method === "item/started" && previous ? previous.content : item.text ?? previous?.content ?? "", streaming: method !== "item/completed" });
+        stream.items.set(itemKey, { id: itemID, turn_id: params.turn_id, seq: item.seq, relation: item.relation, source_id: item.source_id, order: previous?.order ?? ++timelineOrder, content: method === "item/started" && previous ? previous.content : item.text ?? previous?.content ?? "", streaming: method !== "item/completed" });
       }
-      draftListeners.forEach((listener) => listener());
+      notifyDrafts(streamBurstMethod.test(event.message.method));
     });
     function PersonalPreferences({ locale, host }) {
       const t = (key) => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
@@ -1833,7 +1852,7 @@ var personalDesktop = (() => {
         } catch (cause) {
           setSelectedModel(modelKey(model));
           const message = String(cause);
-          setModelError(message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message);
+          api.showNotice({ message: message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message, tone: "error", key: `personal-model-${Date.now()}` });
         } finally {
           setModelSaving(false);
         }
@@ -2161,7 +2180,7 @@ var personalDesktop = (() => {
         if (previous?.receipt && previous.receipt.receipt_id !== receipt.receipt_id) return false;
         if (previous && detail.inHistory) previous.inHistory = true;
         if (previous?.receipt && previous.receipt.revision > receipt.revision) return true;
-        receiptStates.current.set(receipt.request_id, { ...previous, ...detail, receipt, state: receipt.execution_state, retryFiles: void 0, retryInput: void 0 });
+        receiptStates.current.set(receipt.request_id, { ...previous, ...detail, order: previous?.order ?? ++timelineOrder, receipt, state: receipt.execution_state, retryFiles: void 0, retryInput: void 0 });
         if (mounted.current) setDraftVersion((value) => value + 1);
         return true;
       };
@@ -2441,7 +2460,7 @@ var personalDesktop = (() => {
             const pending = saved.pending, editVersion = saved.editVersion;
             if (!pending?.uncertain || saved.submitting) continue;
             const detail = { requestID: pending.requestID, prompt: pending.prompt, ...saved.replyTarget?.relation ? { relation: saved.replyTarget.relation } : {}, sessionID: identity.main_session_id, draftID };
-            if (!receiptStates.current.has(pending.requestID)) receiptStates.current.set(pending.requestID, { ...detail, state: "unknown" });
+            if (!receiptStates.current.has(pending.requestID)) receiptStates.current.set(pending.requestID, { ...detail, order: ++timelineOrder, state: "unknown" });
             const status = await readReceiptStatus(pending.requestID);
             if (!current()) return;
             if (acceptReceipt(status.receipt, detail) && saved.pending?.requestID === pending.requestID) updateDraft(draftID, { pending: null, ...saved.editVersion === editVersion && saved.prompt === pending.prompt && (saved.attachmentsMissing || JSON.stringify(saved.files.map(({ sha256, filename, media_type }) => ({ sha256, filename, media_type }))) === pending.fileKey) ? { prompt: "", files: [], attachmentsMissing: false } : {}, error: "" });
@@ -2636,7 +2655,7 @@ var personalDesktop = (() => {
         }
         replyClosing.current = false;
         if (!replySelection || !panel?.animate || reducePanelMotion()) return;
-        const motion = panel.animate([{ transform: "translateY(calc(100% + 8px))", opacity: 0 }, { transform: "translateY(0)", opacity: 1 }], { duration: 360, easing: "cubic-bezier(.16,1,.3,1)", fill: "both" });
+        const motion = panel.animate([{ transform: "translateY(16px)", opacity: 0 }, { transform: "translateY(0)", opacity: 1 }], { duration: 220, easing: "cubic-bezier(.2,0,.2,1)", fill: "both" });
         replyMotion.current = motion;
         const reduced2 = () => {
           if (reducePanelMotion()) motion.finish();
@@ -2743,7 +2762,8 @@ var personalDesktop = (() => {
         updateDraft(id, { submitting: true, error: "" });
         if (id === conversationID) setError("");
         const detail = { requestID, prompt: text, relation: sentTarget?.relation, attachments: references, sessionID: conversationID, draftID: id, retryFiles: sentFiles, retryInput: { ...state.pending } };
-        receiptStates.current.set(requestID, { ...receiptStates.current.get(requestID), ...detail, state: "sending" });
+        const existingReceipt = receiptStates.current.get(requestID);
+        receiptStates.current.set(requestID, { ...existingReceipt, ...detail, order: existingReceipt?.order ?? ++timelineOrder, state: "sending" });
         const recover = async () => {
           const status = await call("agents.messages.status", { agent_id: agent.agent_id, request_id: requestID });
           return acceptReceipt(status.receipt, detail) ? { receipt: status.receipt, state: status.receipt.execution_state, queue_id: status.receipt.queue_id, turn_id: status.receipt.hostturn_id } : null;
@@ -2780,7 +2800,7 @@ var personalDesktop = (() => {
             const current = draftFor(id);
             if (current.pending?.requestID === requestID) current.pending.uncertain = true;
             const detailError = cause instanceof Error ? cause.message : String(cause);
-            receiptStates.current.set(requestID, { ...detail, state: /request_id_conflict/.test(detailError) ? "rejected" : "unknown" });
+            receiptStates.current.set(requestID, { ...receiptStates.current.get(requestID), ...detail, state: /request_id_conflict/.test(detailError) ? "rejected" : "unknown" });
             updateDraft(id, { error: "" });
             return false;
           }
@@ -3085,6 +3105,40 @@ var personalDesktop = (() => {
         if (entry.draftID === replySelection.key) return true;
         return entry.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(entry.relation.reply_to.seq);
       }) : [];
+      const transientTimeline = (messages, pending, tools = []) => [
+        ...messages.map((message) => ({ kind: "message", order: message.order, seq: message.seq, value: message })),
+        ...pending.map((entry) => ({ kind: "pending", order: entry[1].order, seq: entry[1].receipt?.message_seq, value: entry })),
+        ...tools.map((tool) => ({ kind: "tool", order: tool.order, value: tool }))
+      ].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      const mergeTimeline = (history, transient) => {
+        let nextSeq = Infinity;
+        const live = transient.map((item) => ({ ...item })).reverse().map((item) => {
+          if (Number.isSafeInteger(item.seq) && item.seq > 0) nextSeq = item.seq;
+          return { ...item, position: nextSeq };
+        }).reverse();
+        return [...history.map((record) => ({ kind: "history", value: record, position: record.seq })), ...live].sort((a, b) => a.position - b.position || (a.order ?? -1) - (b.order ?? -1));
+      };
+      const replyTimeline = mergeTimeline(replyRecords.filter((record) => replyPersisted.includes(record)), transientTimeline(replyRecords.filter((record) => !replyPersisted.includes(record)), replyPending));
+      const renderTimelineHistory = (record) => h(ConversationMessage, {
+        className: sendMotion.className(record.receipt?.request_id),
+        interactive: interactiveFor(record),
+        resources: resourcesFor(record),
+        footer: receiptFooter(record.receipt),
+        reaction: reactionFor(record),
+        replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : void 0,
+        onReply: record.role === "assistant" && !record.ui_parts?.length && !record.ui_resources?.length && !record.ui_fallback && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : void 0,
+        replyLabel: t("replyMessage"),
+        key: record.seq,
+        id: `${conversationID}:${record.seq}`,
+        timestamp: record.at,
+        role: record.role,
+        latest: record === records.findLast((item) => item.role === "assistant"),
+        content: record.ui_parts?.length || record.ui_resources?.length ? record.ui_text || "" : record.display_content || record.content || "",
+        linkPolicy: "external-only",
+        attachments: record.attachments?.length > 0 ? h(React.Fragment, null, record.attachments.map((attachment) => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.kind}:${attachment.index}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t }))) : null
+      });
+      const renderTimelineTool = (tool) => h(ConversationMessage, { key: `tool-preview:${tool.turn_id}:${tool.id}`, id: `tool-preview:${conversationID}:${tool.turn_id}:${tool.id}`, role: "assistant", content: "", linkPolicy: "external-only", resources: [{ sessionId: conversationID, rendererScope: route, itemId: tool.call_id, partIndex: 0, part: { type: "resource" }, fallbackText: "", running: true, preview: { capability: tool.capability, turnId: tool.turn_id, argumentsText: tool.argumentsText, status: tool.status } }] });
+      const renderTimelineMessage = (message) => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : void 0, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" });
       const sendRefreshNotice = sendRefreshError && h("div", { className: "mosaic-error", role: "alert", "data-send-refresh-error": true }, h("span", null, t("sendRefreshFailed"), " ", sendRefreshError), h(Button, { onClick: refreshAcceptedSend }, t("refreshHistory")));
       const draftNotice = (id, state) => (state.storageError || state.attachmentsMissing) && h(
         "div",
@@ -3122,8 +3176,7 @@ var personalDesktop = (() => {
           composer: h(React.Fragment, null, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), draftNotice(replySelection.key, replyDraft), h(ConversationComposer, { ...commandProps, sessionScope: route, conversationId: replySelection.key, prompt: replyDraft.prompt, placeholder: t("placeholder"), running: false, submitting: replyDraft.submitting, disabled: loading, sendDisabled: replyDraft.submitting || readingFiles || replyDraft.attachmentsMissing, attachments: replyDraft.files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: (value) => updateDraft(replySelection.key, { prompt: value }), onAddAttachments: (files2) => selectFiles(files2, replySelection.key), onRemoveAttachment: (id) => updateDraft(replySelection.key, { files: replyDraft.files.filter((_, index) => String(index) !== id) }), onSend: (text, contentParts) => send(text, replySelection.key, void 0, contentParts), onStop: stopReply }))
         },
         replyDraft.error && h("p", { role: "alert", className: "mosaic-reply-status" }, replyDraft.error),
-        replyRecords.map((record) => renderReplyMessage(record)),
-        replyPending.map((entry) => renderPendingReceipt(entry, replySelection.key))
+        replyTimeline.map((item) => item.kind === "pending" ? renderPendingReceipt(item.value, replySelection.key) : renderReplyMessage(item.value))
       ));
       return h(AttachmentOpenContext.Provider, { value: () => closePanel(false) }, h("div", { ref: rootRef, className: "mosaic", "data-wuu-personal": true, "data-panel-open": panelOpen }, h(
         "main",
@@ -3152,7 +3205,7 @@ var personalDesktop = (() => {
             showJumpToLatest: !replySelection,
             searchLabel: t("historySearch"),
             searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
-            composer: h("div", { hidden: Boolean(replySelection) }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, {
+            composer: h("div", { style: { visibility: replySelection ? "hidden" : void 0 } }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, {
               ...commandProps,
               sessionScope: route,
               conversationId: conversationID,
@@ -3172,31 +3225,11 @@ var personalDesktop = (() => {
               onStop: stopReply
             }))
           },
-          records.filter((record) => (record.ui_parts?.length || record.ui_resources?.length || !liveMessages.some((message) => message.seq === record.seq || message.source_id && message.source_id === record.provider_item_id)) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)).map((record) => h(ConversationMessage, {
-            className: sendMotion.className(record.receipt?.request_id),
-            interactive: interactiveFor(record),
-            resources: resourcesFor(record),
-            footer: receiptFooter(record.receipt),
-            reaction: reactionFor(record),
-            replyPreview: record.role === "user" && record.relation?.reply_to ? h(ReplyReference, { reference: record.relation.reply_to, records, sessionID: conversationID, agentID: agent.agent_id, t, onOpen: replyMessage }) : void 0,
-            onReply: record.role === "assistant" && !record.ui_parts?.length && !record.ui_resources?.length && !record.ui_fallback && Number.isSafeInteger(record.seq) && record.seq > 0 ? () => replyMessage(record) : void 0,
-            replyLabel: t("replyMessage"),
-            key: record.seq,
-            id: `${conversationID}:${record.seq}`,
-            timestamp: record.at,
-            role: record.role,
-            latest: record === records.findLast((item) => item.role === "assistant"),
-            content: record.ui_parts?.length || record.ui_resources?.length ? record.ui_text || "" : record.display_content || record.content || "",
-            linkPolicy: "external-only",
-            attachments: record.attachments?.length > 0 ? h(React.Fragment, null, record.attachments.map((attachment) => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.kind}:${attachment.index}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t }))) : null
-          })),
-          liveTools.filter((tool) => !records.some((record) => record.ui_resources?.some((resource) => resource.tool_call_id === tool.call_id))).map((tool) => h(ConversationMessage, { key: `tool-preview:${tool.turn_id}:${tool.id}`, id: `tool-preview:${conversationID}:${tool.turn_id}:${tool.id}`, role: "assistant", content: "", linkPolicy: "external-only", resources: [{ sessionId: conversationID, rendererScope: route, itemId: tool.call_id, partIndex: 0, part: { type: "resource" }, fallbackText: "", running: true, preview: { capability: tool.capability, turnId: tool.turn_id, argumentsText: tool.argumentsText, status: tool.status } }] })),
-          pendingReceipts.map((entry) => renderPendingReceipt(entry, conversationID)),
-          liveMessages.filter((message) => !records.some((record) => (record.ui_parts?.length || record.ui_resources?.length) && (message.seq === record.seq || message.source_id && message.source_id === record.provider_item_id))).map((message) => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : void 0, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" })),
+          mergeTimeline(records.filter((record) => (record.ui_parts?.length || record.ui_resources?.length || !liveMessages.some((message) => message.seq === record.seq || message.source_id && message.source_id === record.provider_item_id)) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)), transientTimeline(liveMessages.filter((message) => !records.some((record) => (record.ui_parts?.length || record.ui_resources?.length) && (message.seq === record.seq || message.source_id && message.source_id === record.provider_item_id))), pendingReceipts, liveTools.filter((tool) => !records.some((record) => record.ui_resources?.some((resource) => resource.tool_call_id === tool.call_id))))).map((item) => item.kind === "history" ? renderTimelineHistory(item.value) : item.kind === "pending" ? renderPendingReceipt(item.value, conversationID) : item.kind === "tool" ? renderTimelineTool(item.value) : renderTimelineMessage(item.value)),
           !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
           h(settingsPanels.ReviewConversation, { locale })
         )
-      ), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(selectedRoutine) || void 0, "data-panel-phase": panelPhase }, sidebar), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: (item) => {
+      ), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(selectedRoutine) || void 0, "data-panel-phase": panelPhase }, sidebar), replySelection && h("div", { className: "mosaic-replies-backdrop", "aria-hidden": true, onPointerDown: closeReplies }), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: (item) => {
         setTasks((current) => current.some((value) => value.task_id === item.task_id) ? current : [...current, item]);
         setRoutineID(null);
         detailTrigger.current = `[data-routine-id="${selectedRoutine.routine_id}"]`;

@@ -136,7 +136,7 @@ export function collapsedComposerPromptTitle(text: string): string {
 // as a filename. The card stays square like image and video thumbnails.
 const COLLAPSED_PROMPT_PREVIEW_LINE_COUNT = 8;
 
-function collapsedComposerPromptPreviewLines(text: string): string[] {
+export function collapsedComposerPromptPreviewLines(text: string): string[] {
   return text.trimStart().split(/\r\n|\r|\n/).slice(0, COLLAPSED_PROMPT_PREVIEW_LINE_COUNT);
 }
 

@@ -58,19 +58,6 @@ func (r *readFileState) record(absPath string, entry ReadFileEntry) {
 	r.state[absPath] = entry
 }
 
-func (r *readFileState) delete(absPath string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	delete(r.state, absPath)
-}
-
-func (r *readFileState) hasBeenRead(absPath string) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	_, ok := r.state[absPath]
-	return ok
-}
-
 func (r *readFileState) snapshot() map[string]ReadFileEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -385,18 +372,6 @@ func (e *Env) RecordWriteState(absPath string, content []byte) {
 		entry.Size = info.Size()
 	}
 	e.RecordRead(absPath, entry)
-}
-
-func (e *Env) ForgetRead(absPath string) {
-	if e == nil {
-		return
-	}
-	e.readState.delete(absPath)
-}
-
-// HasBeenRead reports whether a file has been read via read_file.
-func (e *Env) HasBeenRead(absPath string) bool {
-	return e.readState.hasBeenRead(absPath)
 }
 
 func (e *Env) ReadEntries() map[string]ReadFileEntry {

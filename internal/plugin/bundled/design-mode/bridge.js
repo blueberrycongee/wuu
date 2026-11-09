@@ -7,6 +7,11 @@
   window.__wuuDesignBridge = true;
 
   const MARKER = "data-wuu-design-ui";
+  // Mode cursor lives in a marked <style> so serialize() strips it — mutating
+  // documentElement.style would leak "cursor: crosshair" into saved files.
+  const modeStyle = document.createElement("style");
+  modeStyle.setAttribute(MARKER, "");
+  (document.head ?? document.documentElement).append(modeStyle);
   const state = {
     nonce: null,
     mode: "off",
@@ -66,8 +71,10 @@
     node.style.display = "block";
   }
   function paint() {
-    if (state.hover && state.hover !== state.selected && state.mode === "edit") place(hoverBox, state.hover.getBoundingClientRect());
-    else hoverBox.style.display = "none";
+    if (state.hover && state.hover !== state.selected && state.mode !== "off") {
+      hoverBox.style.outlineColor = state.mode === "comment" ? "#f59e0b" : state.accent;
+      place(hoverBox, state.hover.getBoundingClientRect());
+    } else hoverBox.style.display = "none";
     if (state.selected) {
       const rect = state.selected.getBoundingClientRect();
       place(selectBox, rect);
@@ -83,15 +90,18 @@
     for (const pin of pinLayer.children) {
       const comment = state.comments.find((item) => item.id === pin.dataset.id);
       const el = comment && document.querySelector(comment.selector);
-      if (!comment || !el) { pin.style.display = "none"; continue; }
+      if (!comment || !el || state.mode === "off") { pin.style.display = "none"; continue; }
       const rect = el.getBoundingClientRect();
       pin.style.display = "grid";
+      pin.style.opacity = state.mode === "comment" ? "1" : "0.55";
+      const clampX = (v) => Math.max(12, Math.min(innerWidth - 12, v));
+      const clampY = (v) => Math.max(12, Math.min(innerHeight - 12, v));
       if (comment.anchor === "tr") {
-        pin.style.left = `${Math.min(rect.right, innerWidth - 12) + (comment.offset?.x ?? 0)}px`;
-        pin.style.top = `${rect.top + (comment.offset?.y ?? 0)}px`;
+        pin.style.left = `${clampX(rect.right + (comment.offset?.x ?? 0))}px`;
+        pin.style.top = `${clampY(rect.top + (comment.offset?.y ?? 0))}px`;
       } else {
-        pin.style.left = `${rect.left + (comment.offset?.x ?? 8)}px`;
-        pin.style.top = `${rect.top + (comment.offset?.y ?? -10)}px`;
+        pin.style.left = `${clampX(rect.left + (comment.offset?.x ?? 8))}px`;
+        pin.style.top = `${clampY(rect.top + (comment.offset?.y ?? -10))}px`;
       }
     }
   }
@@ -139,19 +149,33 @@
     return {
       selector: selectorFor(el),
       tag: tagName(el),
-      text: (el.innerText ?? el.textContent ?? "").trim().slice(0, 400),
+      text: (el.innerText ?? el.textContent ?? "").trim(),
       rect: { x: Math.round(rect.left), y: Math.round(rect.top), w: Math.round(rect.width), h: Math.round(rect.height) },
       styles: {
         color: style.color,
         backgroundColor: style.backgroundColor,
+        fontFamily: style.fontFamily,
         fontSize: style.fontSize,
         fontWeight: style.fontWeight,
         lineHeight: style.lineHeight,
+        letterSpacing: style.letterSpacing,
+        textAlign: style.textAlign,
         padding: `${px(style.paddingTop)} ${px(style.paddingRight)} ${px(style.paddingBottom)} ${px(style.paddingLeft)}`,
+        paddingTop: `${px(style.paddingTop)}`,
+        paddingRight: `${px(style.paddingRight)}`,
+        paddingBottom: `${px(style.paddingBottom)}`,
+        paddingLeft: `${px(style.paddingLeft)}`,
         margin: `${px(style.marginTop)} ${px(style.marginRight)} ${px(style.marginBottom)} ${px(style.marginLeft)}`,
+        marginTop: `${px(style.marginTop)}`,
+        marginRight: `${px(style.marginRight)}`,
+        marginBottom: `${px(style.marginBottom)}`,
+        marginLeft: `${px(style.marginLeft)}`,
         width: style.width,
         height: style.height,
         borderRadius: style.borderRadius,
+        borderWidth: style.borderTopWidth,
+        borderColor: style.borderTopColor,
+        borderStyle: style.borderTopStyle,
         opacity: style.opacity,
       },
     };
@@ -166,6 +190,9 @@
 
   // ---- modes ---------------------------------------------------------------
   function isOurs(el) { return el instanceof Element && Boolean(el.closest?.(`[${MARKER}]`)); }
+  function applyModeCursor() {
+    modeStyle.textContent = state.mode === "comment" ? "html, html * { cursor: crosshair !important; }" : "";
+  }
   function deselect() {
     state.selected = null;
     endTextEdit(false);
@@ -262,12 +289,14 @@
     drag.el.style.transform = drag.base ? `${drag.base} ${translate}` : translate;
     schedulePaint();
   }, true);
-  document.addEventListener("pointerup", () => {
+  function endDrag() {
     const drag = state.drag;
     state.drag = null;
     if (!drag?.moved) return;
     emitOp({ kind: "style", selector: selectorFor(drag.el), prop: "transform", value: drag.el.style.transform });
-  }, true);
+  }
+  document.addEventListener("pointerup", endDrag, true);
+  document.addEventListener("pointercancel", endDrag, true);
 
   // ---- comments --------------------------------------------------------------
   function pinElement(comment) {
@@ -311,13 +340,16 @@
     }
     schedulePaint();
   }
+  // Restores pins in list order and returns the ids whose selector no longer
+  // resolves, so the sheet can mark them as orphaned instead of diverging.
   function restoreComments(comments) {
     state.comments = [];
     pinLayer.replaceChildren();
-    for (const item of comments ?? []) {
+    const missing = [];
+    (comments ?? []).forEach((item, i) => {
       const comment = {
         id: item.id ?? `c${++state.seq}`,
-        index: state.comments.length + 1,
+        index: i + 1,
         selector: item.selector,
         tag: item.tag,
         snippet: item.snippet,
@@ -325,13 +357,14 @@
         anchor: item.anchor,
         offset: item.offset ?? (item.anchor === "tr" ? { x: -2, y: -2 } : { x: 8, y: -10 }),
       };
-      if (!comment.selector || !document.querySelector(comment.selector)) continue;
-      state.comments.push(comment);
-      pinElement(comment);
       const numeric = /^c(\d+)$/.exec(comment.id ?? "");
       if (numeric) state.seq = Math.max(state.seq, Number(numeric[1]));
-    }
+      if (!comment.selector || !document.querySelector(comment.selector)) { missing.push(comment.id); return; }
+      state.comments.push(comment);
+      pinElement(comment);
+    });
     schedulePaint();
+    return missing;
   }
 
   // ---- ops + serialize --------------------------------------------------------
@@ -347,9 +380,6 @@
         break;
       case "text":
         el.innerText = String(op.text ?? "");
-        break;
-      case "html":
-        el.innerHTML = String(op.html ?? "");
         break;
       default:
         return { ok: false, error: `unknown op ${op.kind}` };
@@ -377,6 +407,7 @@
       state.nonce = message.nonce;
       if (typeof message.accent === "string" && message.accent) { state.accent = message.accent; paintAccent(); }
       state.mode = message.mode === "comment" ? "comment" : message.mode === "off" ? "off" : "edit";
+      applyModeCursor();
       post({ type: "ready", url: location.pathname, title: document.title });
       schedulePaint();
       return;
@@ -386,6 +417,7 @@
       case "set-mode":
         state.mode = message.mode === "comment" ? "comment" : message.mode === "off" ? "off" : "edit";
         if (state.mode !== "edit") { state.hover = null; endTextEdit(state.mode !== "off"); }
+        applyModeCursor();
         schedulePaint();
         break;
       case "apply":
@@ -394,14 +426,14 @@
       case "serialize":
         post({ type: "serialized", id: message.id, html: serialize() });
         break;
-      case "select": {
+      case "scroll-to": {
         const el = document.querySelector(message.selector ?? "");
-        if (el) select(el);
+        if (el) { el.scrollIntoView({ block: "center", behavior: "smooth" }); schedulePaint(); }
         break;
       }
       case "deselect": deselect(); break;
       case "comment-remove": removeComment(message.id); break;
-      case "comments-restore": restoreComments(message.comments); break;
+      case "comments-restore": post({ type: "restored", id: message.id, missing: restoreComments(message.comments) }); break;
       case "comment-focus":
         for (const pin of pinLayer.children) {
           const focused = pin.dataset.id === message.id;

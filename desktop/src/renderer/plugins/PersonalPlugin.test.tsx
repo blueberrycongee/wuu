@@ -101,6 +101,15 @@ it("ignores an older source lookup after the displayed reply reference changes",
   expect(ui.container.querySelector('[data-reply-reference]')?.textContent).toBe("Current source");
   expect(ui.container.textContent).not.toContain("Stale source");
 });
+it("dismisses a reply from the backdrop and retains its draft", async () => {
+  const ui = await mount(undefined, main, [{ seq: 7, role: "assistant", content: "First result" }]);
+  await ui.click('[data-action="reply-message"]');
+  await ui.edit("Unsent reply");
+  await act(async () => ui.container.querySelector<HTMLElement>('.mosaic-replies-backdrop')!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })));
+  expect(ui.container.querySelector('.mosaic-replies')).toBeNull();
+  await ui.click('[data-action="reply-message"]');
+  expect(ui.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')!.value).toBe("Unsent reply");
+});
 it("keeps independent reply targets retryable with their drafts and files across close and reopen", async () => {
   attachmentBrowser();
   const link = { task_id: "t1", requirements_revision: 1, execution_session_id: "execution-one" };
@@ -1525,7 +1534,7 @@ it("streams only scoped tool previews and replaces them with the durable interac
   expect(ui.container.querySelector('[data-preview="true"]')).toBeNull();
   await emit("item/started", { thread_id: "s-private", turn_id: "turn-1", item: tool });
   await emit("item/toolCall/delta", { thread_id: "s-private", turn_id: "turn-1", item_id: "item-1", delta: "{partial" });
-  expect(ui.container.querySelector('[data-preview="true"]')?.textContent).toBe("{partial");
+  await vi.waitFor(() => expect(ui.container.querySelector('[data-preview="true"]')?.textContent).toBe("{partial"));
   const part = { type: "resource", mime_type: "application/vnd.wuu.ui+json", name: "Question", resource: { mimeType: "application/vnd.wuu.ui+json", text: "final" }, artifact: { placement: "inline", ref: "artifact-1", sha256: "a".repeat(64), size_bytes: 5 } };
   rows = [{ seq: 15, role: "assistant", content: "Fallback", ui_text: "", ui_resources: [{ part, part_index: 1, tool_call_id: "call-1", fallback_text: "Fallback" }] }];
   await emit("turn/completed", { thread_id: "s-private", turn: { id: "turn-1", status: "completed", items_view: "full", items: [{ ...tool, status: "completed" }] } });
@@ -1566,4 +1575,26 @@ it("hydrates navigation avatars after activation and retains prior artwork durin
   await install("three");
   await act(async () => { fail(new Error("temporarily offline")); await response.catch(() => {}); });
   expect(host.getNavigationEntries()[0].avatarKey).toBe("mascot-v1:capsule:beanie:288");
+});
+
+it("preserves visual order while queuing a message", async () => {
+  const ui = await mount(async (method,input) => method === "agents.send" ? { state:"queued", queue_id:"queue-one", receipt:{request_id:input.request_id, host_request_id:"host", receipt_id:"receipt", client_id:"client", queue_id:"queue-one", session_id:"s-private", plugin_id:"personal", receipt_state:"accepted", execution_state:"queued", accepted_at:new Date().toISOString(), revision:2} } : {}, main, []);
+  await act(async () => ui.publish({kind:"notification",message:{method:"item/agentMessage/delta",params:{thread_id:"s-private",turn_id:"turn-one",item_id:"answer",delta:"Earlier live answer"}}}));
+  await ui.edit("Later queued request"); await ui.click(".composer-send-button");
+  const rows = [...ui.container.querySelectorAll(".mosaic-main [data-role]")].map(node=>node.textContent);
+  expect(rows.findIndex(text=>text?.includes("Earlier live answer"))).toBeLessThan(rows.findIndex(text=>text?.includes("Later queued request")));
+});
+it("places a sequenced live reply before later persisted messages", async () => {
+  const ui = await mount(undefined, main, [{ seq: 20, role: "user", content: "Later persisted message" }]);
+  await act(async () => ui.publish({ kind: "notification", message: { method: "item/completed", params: { thread_id: "s-private", turn_id: "earlier", item: { id: "answer", type: "agent_message", seq: 10, text: "Earlier sequenced reply" } } } }));
+  const rows = [...ui.container.querySelectorAll('.mosaic-main [data-role]')].map(node => node.textContent);
+  expect(rows.findIndex(text => text?.includes("Earlier sequenced reply"))).toBeLessThan(rows.findIndex(text => text?.includes("Later persisted message")));
+});
+it("preserves reply order while the user message is pending", async () => {
+ const ref={reply_to:{session_id:'s-private',seq:1}};
+ const ui=await mount(async(method,input)=>method==='agents.send'?{state:'queued',queue_id:'q',receipt:{request_id:input.request_id,host_request_id:'h',receipt_id:'r',client_id:'c',queue_id:'q',session_id:'s-private',plugin_id:'personal',receipt_state:'accepted',execution_state:'queued',accepted_at:new Date().toISOString(),revision:2}}:{},main,[{seq:1,role:'assistant',content:'Root message'}]);
+ await ui.click('[data-action="reply-message"]'); await ui.edit('My pending reply'); await ui.click('.composer-send-button');
+ await act(async()=>ui.publish({kind:'notification',message:{method:'item/started',params:{thread_id:'s-private',turn_id:'r1',item:{id:'answer',type:'agent_message',text:'Response to my reply',relation:ref}}}}));
+ const rows=[...ui.container.querySelectorAll('.mosaic-replies [data-role]')].map(n=>n.textContent);
+ expect(rows.findIndex(t=>t?.includes('My pending reply'))).toBeLessThan(rows.findIndex(t=>t?.includes('Response to my reply')));
 });

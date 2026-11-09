@@ -76,8 +76,17 @@ func (s *Server) handleEngineUpdate(req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	s.releaseEngineScopes()
+	binding, stateErr := s.rt.RetainState()
+	if stateErr != nil {
+		return s.writeResponse(req.ID, nil, stateErr)
+	}
+	defer binding.Close()
 	return s.writeResponse(req.ID, EngineListResult{
-		Engines:  s.engineInventory(),
+		// Availability (enabled, binary_ok) reflects the edit immediately.
+		// Model catalogs stay deferred: probing external CLIs spawns agent
+		// processes and can take tens of seconds, and this handler runs on
+		// the serial dispatch loop. engine/list owns catalog loading.
+		Engines:  s.engineInventoryForState(binding, s.rt.RootDir, false, false),
 		Settings: s.engineSettingsFromConfig(),
 	}, nil)
 }

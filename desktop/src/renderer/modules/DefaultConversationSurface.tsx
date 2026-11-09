@@ -22,6 +22,7 @@ import type { ContextCompositionEntry } from "../ContextCompositionCard";
 import type { InstructionFilesEntry } from "../InstructionFilesCard";
 import type { TurnFileDiffSelection } from "../TurnFileDiffTypes";
 import { usePresentedNavigation, reportPresentedNavigationError } from "../ConversationPresentationTransition";
+import { sameSnapshotValue } from "../plugins/ImmutableSnapshot";
 import { showApplicationActionError } from "../ApplicationActionError";
 import { greetingFor, useCurrentHour } from "../greetings";
 import { useI18n } from "../i18n";
@@ -63,17 +64,34 @@ function ConversationSurface({ application, slots, ...layout }: DefaultConversat
   const cache = useRef<{ ids: string[]; threads: ReadonlyMap<string, Thread> }>({ ids: [], threads: new Map() });
   const open = new Set(cache.current.ids); if (primary) open.add(primary.id);
   const available = new Map([...cache.current.threads, ...current]);
-  const ids = selectCachedConversationPaneIDs({ activeThreadID: primary?.id, previousThreadIDs: cache.current.ids, openThreadIDs: open, threadsByID: available });
-  const cached = retainCachedConversationPaneThreads({ threadIDs: ids, currentThreadsByID: current, previousThreadsByID: cache.current.threads });
+  const nextIDs = selectCachedConversationPaneIDs({ activeThreadID: primary?.id, previousThreadIDs: cache.current.ids, openThreadIDs: open, threadsByID: available });
+  const nextThreads = retainCachedConversationPaneThreads({ threadIDs: nextIDs, currentThreadsByID: current, previousThreadsByID: cache.current.threads });
+  // Reuse the previous selection by content so unchanged publications still
+  // bail at the CachedConversationPanes memo instead of defeating it on identity.
+  const previousPanes = cache.current;
+  const ids = nextIDs.length === previousPanes.ids.length && nextIDs.every((id, index) => id === previousPanes.ids[index]) ? previousPanes.ids : nextIDs;
+  let cached: ReadonlyMap<string, Thread> = nextThreads;
+  if (nextThreads.size === previousPanes.threads.size) {
+    let unchanged = true;
+    for (const [id, thread] of nextThreads) {
+      if (previousPanes.threads.get(id) !== thread) { unchanged = false; break; }
+    }
+    if (unchanged) cached = previousPanes.threads;
+  }
   cache.current = { ids, threads: cached };
   const details = useMemo(() => structuredClone(view.conversationDetails), [view.conversationDetails]);
-  const contexts = details.filter(entry => entry.kind === "context") as ContextCompositionEntry[];
-  const instructions = details.filter(entry => entry.kind === "instructions") as InstructionFilesEntry[];
+  const contexts = useMemo(() => details.filter(entry => entry.kind === "context") as ContextCompositionEntry[], [details]);
+  const instructions = useMemo(() => details.filter(entry => entry.kind === "instructions") as InstructionFilesEntry[], [details]);
   const editing = view.conversationActions.editing;
   const editState = editing ? { threadID: editing.threadId, turnID: editing.turnId, itemID: editing.itemId, pane: editing.pane, submitting: editing.submitting } : undefined;
+  const retainedEditState = useRef(editState);
+  if (!sameSnapshotValue(retainedEditState.current, editState)) retainedEditState.current = editState;
   const questions = useMemo(() => structuredClone(view.conversationActions.questions) as UserQuestionRequest[], [view.conversationActions.questions]);
   const pending = view.submission.pendingCreations.find(row => row.ownerTabId === view.tabs.activeTabId
     && !view.submission.operations.some(operation => operation.operationID === row.operationID && operation.draftPending));
+  const pendingUserQuestion = questions.find(question => question.thread_id === primary?.id && question.mode !== "offer");
+  const retainedQuestion = useRef(pendingUserQuestion);
+  if (!sameSnapshotValue(retainedQuestion.current, pendingUserQuestion)) retainedQuestion.current = pendingUserQuestion;
   const split = Boolean(primary && secondary);
   const empty = !pending && !primary?.turns.length && !details.some(entry => entry.threadID === primary?.id);
   const switching = Boolean(view.tabs.pending && !view.tabs.pending.contentReady);
@@ -171,10 +189,10 @@ function ConversationSurface({ application, slots, ...layout }: DefaultConversat
           : empty ? layout.visible === false ? null : <slots.Slot name="wuu.default-conversation/welcome" context={welcome}
             fallback={<EmptyConversationHome title={title} mascot={mascot} heading={greetingPart}>{usage}</EmptyConversationHome>} />
           : <CachedConversationPanes threadIDs={ids} threadsByID={cached} activeThreadID={primary?.id} restoring={layout.restoring} activeContextCwd={view.workspaces.activeRoot}
-            contextCompositionEntries={contexts} instructionFilesEntries={instructions} historyMessageEdit={editState} onStreamFrame={onStreamFrame} onCollapseComplete={onCollapseComplete}
+            contextCompositionEntries={contexts} instructionFilesEntries={instructions} historyMessageEdit={retainedEditState.current} onStreamFrame={onStreamFrame} onCollapseComplete={onCollapseComplete}
             onDismissContextComposition={dismiss} onDismissInstructions={dismiss} canEditThreadMessage={canEdit} onForkMessage={fork} onOpenFile={openFile} onOpenURL={openURL} onOpenAgent={openAgent}
             onEditMessage={edit} onCancelEditMessage={cancelEdit} onSubmitEditMessage={submitEdit} turnStreamStatus={view.conversationWorkspace.turnStreamStatus} onOpenFileDiff={openDiff}
-            pendingUserQuestion={questions.find(question => question.thread_id === primary?.id && question.mode !== "offer")} onAnswerUserQuestion={answer} onCancelUserQuestion={cancelQuestion} />}
+            pendingUserQuestion={retainedQuestion.current} onAnswerUserQuestion={answer} onCancelUserQuestion={cancelQuestion} />}
       </div>
     </div>
     {view.conversationActions.pendingFork ? <ConversationForkDialog worktreeDisabledReason={view.conversationActions.pendingFork.worktreeDisabledReason} onCancel={() => run(application.invoke("history.cancel-fork", {}))} onChoose={mode => application.invoke("history.choose-fork", { mode })} /> : null}
@@ -195,11 +213,14 @@ function SplitConversation({ pane, thread, application, registerComposerFocusTar
 }): JSX.Element {
   const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const editing = view.conversationActions.editing?.threadId === thread.id ? view.conversationActions.editing : undefined;
+  // Keep the object identity stable so the per-turn memo boundary in
+  // ConversationSplitPane is not defeated by a fresh wrapper each render.
+  const editingMessage = useMemo(() => editing ? { turnID: editing.turnId, itemID: editing.itemId, submitting: editing.submitting } : undefined, [editing]);
   const question = view.conversationActions.questions.find(row => row.thread_id === thread.id && row.mode !== "offer");
   return <><ConversationSplitPane pane={pane} thread={thread} active={view.conversationWorkspace.activePane === pane}
     registerComposerFocusTarget={registerComposerFocusTarget} ownerTabId={view.drafts[pane].ownerTabId} activeContextCwd={view.workspaces.activeRoot}
     streamStatus={view.conversationWorkspace.turnStreamStatus[thread.turns.at(-1)?.id ?? ""]}
-    editingMessage={editing ? { turnID: editing.turnId, itemID: editing.itemId, submitting: editing.submitting } : undefined}
+    editingMessage={editingMessage}
     onActivate={() => { if (application.getSnapshot().conversationWorkspace.activePane !== pane) void application.invoke("conversation.activate-pane", { pane }).catch(showApplicationActionError); }}
     onClose={() => { void application.invoke("conversation.close-pane", { pane }).catch(showApplicationActionError); }} onBodyRef={onBodyRef} onScroll={onScroll ?? noop}
     onForkMessage={(turnId, itemId) => fork(thread, turnId, itemId)} onOpenFile={path => openFile(thread, path)} onOpenURL={openURL} onOpenAgent={id => openAgent({ id })}

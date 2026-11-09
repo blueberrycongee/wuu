@@ -9,6 +9,7 @@ import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { Switch } from "./ui/Switch";
 import { SegmentedControl } from "./ui/SegmentedControl";
 import { SettingsStepper } from "./ui/SettingsStepper";
+import { showActionErrorToast } from "./Toast";
 
 export function AppearanceTypography({ section = "text" }: { section?: "text" | "motion" }): JSX.Element {
   const controls = useSettingsControls();
@@ -17,7 +18,6 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
   const [preferences, setPreferences] = useState(readAppearance);
   const [sizeDraft, setSizeDraft] = useState(() => String(readAppearance().codeSize));
   useEffect(() => setSizeDraft(String(preferences.codeSize)), [preferences.codeSize]);
-  const [error, setError] = useState(false);
   const [localFonts, setLocalFonts] = useState<string[]>([]);
   const [monoFonts, setMonoFonts] = useState<string[]>([]);
   const [fontStatus, setFontStatus] = useState<"idle" | "loading" | "ready" | "error">("idle");
@@ -38,8 +38,7 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
   function update(patch: Partial<AppearancePreferences>) {
     try {
       saveAppearance({ ...readAppearance(), ...patch });
-      setError(false);
-    } catch { setError(true); }
+    } catch (reason) { showActionErrorToast(reason, t("settings.saveFailed")); }
   }
   function commitSize(raw: string) {
     const parsed = raw.trim() ? Number(raw) : NaN;
@@ -47,7 +46,6 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
     setSizeDraft(String(next));
     update({ codeSize: next });
   }
-  const saveError = error ? <p className="settings-error" role="alert">{t("settings.saveFailed")}</p> : null;
   if (section === "motion") {
     const reduce = preferences.motion === "reduce";
     return <SettingsSection title={t("settings.sectionMotion")} testID="settings-motion">
@@ -57,7 +55,6 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
             onClick={() => update({ motion: reduce ? "system" : "reduce" })} />
         </SettingsRow>
       </SettingsGroup>
-      {saveError}
     </SettingsSection>;
   }
   const fontPicker = (key: "uiFont" | "codeFont"): JSX.Element => {
@@ -122,6 +119,5 @@ export function AppearanceTypography({ section = "text" }: { section?: "text" | 
       )}
     </SettingsGroup>
     {(fontStatus === "loading" || fontStatus === "error") && <p className="settings-section-note" role="status">{t(fontStatus === "error" ? "settings.fontLoadFailed" : "settings.fontLoading")}</p>}
-    {saveError}
   </SettingsSection>;
 }

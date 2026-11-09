@@ -3,8 +3,11 @@ import {
   isThreadExecuting,
   isThreadUnread,
   sidebarThreadSortTime,
+  threadBelongsToWorkspace,
   type ThreadSummary,
 } from "./AppState";
+import type { DesktopProject } from "../shared/protocol";
+import { recentViewFilters, type RecentView } from "./SidebarRecentViewMenu";
 import { readFocusModality } from "./FocusModality";
 import {
   moveThreadInOrder,
@@ -37,16 +40,24 @@ function persistRecentOrder(order: ThreadArrivalOrder): void {
 // late historical pages follow them without changing their existing positions.
 const ACTIVITY_RANK = { running: 0, attention: 1, history: 2 } as const;
 
-/** Preserve Recent order across activity updates, delayed catalogs, and reloads. */
+/**
+ * Preserve Recent order across activity updates, delayed catalogs, and reloads.
+ * The view sorts and filters the remembered order without rewriting it, so
+ * hidden conversations keep their places when a filter is cleared.
+ */
 export function useSidebarConversationActivity(
   threads: ThreadSummary[],
   activeThreadID: string | undefined,
   pendingThreadID: string | undefined,
   lastViewedTurnByThreadID: Readonly<Record<string, string>>,
+  view: RecentView,
+  workspace: DesktopProject | undefined,
+  folderByThreadID: Readonly<Record<string, string>>,
 ): {
   threads: ThreadSummary[];
   interactionProps: ComponentPropsWithRef<"div">;
-  onReorder: (activeThreadID: string, overThreadID: string, position: ThreadDropPosition) => void;
+  /** Absent while the view sorts by time, where a dropped row could not stay put. */
+  onReorder?: (activeThreadID: string, overThreadID: string, position: ThreadDropPosition) => void;
 } {
   const [arrivalOrder, setArrivalOrder] = useState(readRecentOrder);
   const reconciledArrivalOrder = useMemo(() => {
@@ -81,9 +92,24 @@ export function useSidebarConversationActivity(
   }, [arrivalOrder, reconciledArrivalOrder]);
   const ordered = useMemo(() => {
     const byID = new Map(threads.map((thread) => [thread.id, thread]));
+    const sorted = view.sort === "manual"
+      ? reconciledOrder.map((id) => byID.get(id)!)
+      : threads.map((thread) => ({
+        thread,
+        time: view.sort === "created" ? sidebarThreadSortTime(thread, true) : sidebarThreadSortTime(thread, false),
+      })).sort((left, right) => right.time - left.time || left.thread.id.localeCompare(right.thread.id))
+        .map((row) => row.thread);
+    // The open conversation stays listed under a status filter so reading it
+    // does not pull the row out from under the pointer.
+    const matches = (thread: ThreadSummary) => (view.includeFoldered || !folderByThreadID[thread.id])
+      && (!workspace || threadBelongsToWorkspace(thread, workspace))
+      && (view.status === "all" || thread.id === activeThreadID || thread.id === pendingThreadID
+        || (view.status === "running"
+          ? isThreadExecuting(thread)
+          : isThreadUnread(thread, lastViewedTurnByThreadID[thread.id])));
     // Apply the cap after inserting arrivals so a full list still shows them.
-    return reconciledOrder.slice(0, RECENT_THREAD_LIMIT).map((id) => byID.get(id)!);
-  }, [reconciledOrder, threads]);
+    return sorted.filter(matches).slice(0, RECENT_THREAD_LIMIT);
+  }, [activeThreadID, folderByThreadID, lastViewedTurnByThreadID, pendingThreadID, reconciledOrder, threads, view, workspace]);
   const [heldOrder, setHeldOrder] = useState<ThreadSummary[]>();
   const interaction = useRef({ pointer: false, keyboard: false, dragging: false });
   const listRef = useRef<HTMLDivElement>(null);
@@ -129,14 +155,28 @@ export function useSidebarConversationActivity(
     if (visibleThreads.some(thread => !heldIDs.has(thread.id))) setHeldOrder(visibleThreads);
   }, [heldOrder, visibleThreads]);
 
+  // A view change is deliberate, so it applies even while the pointer holds
+  // the list (the options menu opens from inside it).
+  const heldView = useRef(view);
+  useLayoutEffect(() => {
+    if (heldView.current === view) return;
+    heldView.current = view;
+    setHeldOrder((held) => held && ordered);
+  }, [ordered, view]);
+
   return {
     threads: visibleThreads,
-    onReorder: (activeThreadID, overThreadID, position) => {
+    onReorder: view.sort !== "manual" ? undefined : (activeThreadID, overThreadID, position) => {
       const current = visibleThreads.map((thread) => thread.id);
       const next = moveThreadInOrder(current, activeThreadID, overThreadID, position);
       if (next === current) return;
       const visibleIDs = new Set(next);
-      const fullOrder = [...next, ...reconciledArrivalOrder.ids.filter((id) => !visibleIDs.has(id))];
+      const remaining = [...next];
+      // Under a filter, refill the visible rows' slots in their new sequence so
+      // the conversations it hides keep their positions.
+      const fullOrder = recentViewFilters(view)
+        ? [...reconciledArrivalOrder.ids.map((id) => visibleIDs.has(id) ? remaining.shift()! : id), ...remaining]
+        : [...next, ...reconciledArrivalOrder.ids.filter((id) => !visibleIDs.has(id))];
       const manualOrder = { ...reconciledArrivalOrder, ids: fullOrder };
       setArrivalOrder(manualOrder);
       persistRecentOrder(manualOrder);

@@ -2,7 +2,10 @@
 
 These instructions apply throughout the repository. Read applicable instructions
 in subdirectories before changing their files. Keep personal preferences and
-machine-specific setup in user-level configuration.
+machine-specific setup in user-level configuration. This is the only tracked
+agent-instruction file: directory-level `AGENTS.md`, `CLAUDE.md`, tool configs,
+and `.agents/notes/` stay untracked, so shared project norms belong here and
+reusable agent workflows belong under `.agents/skills/`.
 
 ## Scope and authorization
 
@@ -51,11 +54,20 @@ machine-specific setup in user-level configuration.
 - Follow the language's own visibility, error handling, and control flow. Go
   returns early on errors. Match the surrounding file's types, imports, and
   logging.
+- Derive renderer context provider values only from their inputs so they stay
+  referentially stable across unrelated re-renders; memoized subtrees require
+  value-compared or identity-stable props.
+- Read each resource's freshness from one shared store or subscription and
+  retain unchanged snapshot fields structurally; do not rebuild them on every
+  publication.
 - Judge public APIs from the caller's perspective: discoverability, misuse
   resistance, error semantics, configuration, compatibility, and evolution.
 - Base repository claims on inspected code, tests, configuration, and history.
   For third-party behavior, prefer official sources matching the relevant version.
   Identify uncertainty and conflicts rather than presenting assumptions as facts.
+- Bound probes, discovery scans, and catalog refreshes, and dispose of their
+  temporary sessions, so a slow or stalled provider cannot hold up unrelated
+  work or block admission.
 - Review the relevant scope systematically. Report concrete bugs, security issues,
   and logic errors with their impact and evidence. Do not invent findings or
   substitute cosmetic suggestions for defects. Say "no issues found" when appropriate.
@@ -76,7 +88,10 @@ machine-specific setup in user-level configuration.
 - Prefer end-to-end tests as the primary testing mechanism. Use them to verify
   complex features work end to end. At the end of an E2E run, produce a
   verifiable and repeatable artifact (logs, screenshots, recordings, or other
-  evidence a reviewer can re-check).
+  evidence a reviewer can re-check). Binary-level verification evidence must
+  identify the tested build — record the binary hash and source commit with the
+  artifact. A check that did not run, a skipped case, or a run against a
+  different build is not a pass.
 - Never write unit tests after the implementation. If a system must be tested in
   isolation, first enumerate the ways it could fail, then write the code against
   those failure cases.
@@ -96,6 +111,12 @@ machine-specific setup in user-level configuration.
   lists, snapshot generated theme matrices, or assert prompt/i18n wording. Run
   `make test-policy-check` when changing tests; existing stylesheet-read
   exceptions do not authorize new ones.
+- Regenerate derived files with their Make target in the same change rather
+  than editing generated output: `make generate-theme-contract` and
+  `make build-plugins` are enforced (`repository-check` and `check-plugins`
+  reject stale output). `make generate-theme-surface-matrix` refreshes the
+  tracked surface matrix, coverage baseline, and docs pages when theme CSS
+  changes.
 - Comments explain rationale, invariants, safety constraints, or external quirks.
   Public API documentation describes observable contracts, not incidental internals.
 - For long tasks, preserve the overall objective and report material progress.
@@ -105,9 +126,16 @@ machine-specific setup in user-level configuration.
 ## UI design and visual acceptance
 
 - Use the [design system](docs/en/project/design-system.md) for color, type,
-  spacing, radius, and elevation roles. Use
+  spacing, radius, and elevation roles; the
+  [desktop UI maintenance](docs/en/project/desktop-ui.md) guide for surface,
+  interaction, and motion contracts; and
   [desktop i18n maintenance](desktop/src/renderer/i18n/README.md) for UI copy,
   locale formatting, and voice.
+- Add a user-facing string in every shipped locale in the same change: the same
+  `domain.camelCase` key and position in `zh-CN.ts` and `en-US.ts`, with
+  identical placeholders. Render through `useI18n().t`, `translateCurrent`, or
+  `localizedText` and the i18n number/date helpers — never `toLocaleString` or
+  literal copy in components.
 - Use shared components and design variables for equivalent controls. Preserve
   consistent typography, icon treatment, spacing, corners, and interaction states.
 - Use one UI font-size baseline for sidebars, prose, menus, settings, and controls.
@@ -140,6 +168,10 @@ machine-specific setup in user-level configuration.
 - Include only text that helps users understand, decide, or act. Avoid repeating a
   label in a subtitle or hint. Retain explanations for non-obvious consequences
   and restrictions. Remove redundant copy, wrappers, and decoration before handoff.
+- Route hover hints through the shared Tooltip component; keep native `title`
+  only at embedded-browser and native-chrome boundaries where renderer portals
+  cannot composite. A tooltip names an otherwise-unlabeled control and never
+  carries information that is not otherwise reachable.
 - For UI copy, write the target locale directly instead of translating English
   word order, and use one verb for the same action across the product. Keep
   labels neutral rather than promotional.
@@ -147,11 +179,16 @@ machine-specific setup in user-level configuration.
   view and user input. Plugins use public `api.showNotice` rather than custom
   error notifications or private renderer imports. Keep field validation next to
   the field, page-load failures in place with a retry control, and conversation
-  or task failures in their history with appropriate recovery actions. A temporary
-  toast does not replace a persistent failure state. Avoid duplicate notifications
-  for the same failure. Follow the [error feedback contract](docs/en/customize/ui-sdk.md#error-feedback).
+  or task failures in their history with appropriate recovery actions. Settings
+  surfaces are an exception: keep a blocking settings failure beside its controls
+  with diagnostics on demand (`SettingsFailure`), rather than a temporary toast.
+  A temporary toast does not replace a persistent failure state. Avoid duplicate
+  notifications for the same failure. Follow the [error feedback contract](docs/en/customize/ui-sdk.md#error-feedback).
 - Motion explains changes and provides feedback. Keep frequent actions responsive,
   avoid layout jumps and moving click targets, and respect reduced-motion settings.
+- Reopening or refreshing a rendered view restores its settled state —
+  reading position, folds, and follow mode — without replayed entrances,
+  placeholder flicker, or a cleared-and-reloaded list.
 - Before declaring a UI change complete, walk the primary task as a first-time
   user, using only what the interface shows. Fix blockers, unclear next steps,
   and broken handoffs between screens; add a hint only where the interface
@@ -162,6 +199,10 @@ machine-specific setup in user-level configuration.
   readability, clipping, truncation, overlap, and focus visibility.
 - Tests do not replace visual acceptance. State precisely what was inspected and
   what remains unverified; do not claim full coverage from one screenshot.
+- Gate unreleased or developer-only UI behind the shared feature flags
+  (`FeatureFlags.ts`, `import.meta.env.DEV && VITE_ENABLE_*`) so production
+  builds never expose it; debug controls stay behind the development-only
+  Settings switch.
 
 ## Product versioning
 
@@ -176,6 +217,15 @@ machine-specific setup in user-level configuration.
 - Use `make release-prepare` for the next UTC CalVer, or pass
   `RELEASE_VERSION=YYYY.MMDD.P`. Run `make version-check` before tagging.
   Release tags are `vYYYY.MMDD.P`; product releases do not use SemVer bump rules.
+- For a maintainer-requested release, follow
+  [release-check](.agents/skills/release-check/SKILL.md) and the
+  [release guide](docs/en/project/release.md): write
+  `docs/releases/<version>.md` before `make release-prepare` (it requires the
+  notes file), land through a release PR, and tag the merged commit with
+  `make tag-release`. Push only the tag.
+- Ordinary changes do not update `CHANGELOG.md` or add release-note files;
+  maintainers collect `docs/releases/<version>.md` in the release PR. Describe
+  user-visible impact and migration requirements in the PR body instead.
 - Product versions express release recency. Check and document Extension API,
   protocol, storage, and migration compatibility separately. `minimum_wuu_version`
   accepts the same CalVer values as the product version.
@@ -237,11 +287,19 @@ machine-specific setup in user-level configuration.
 ## Documentation and communication
 
 - Public product, development, protocol, and design documentation belongs in
-  `docs/`; follow [docs/README.md](docs/README.md). Keep English and Chinese public
-  pages aligned. Only pages registered in `docs/site.json` appear on the docs site.
+  `docs/`; follow [docs/README.md](docs/README.md). Update both locales,
+  `docs/site.json` navigation, and affected links in the same change.
+  `make docs-policy-check` is a required PR gate: every tracked `docs/**/*.md`
+  must be registered in `docs/site.json` (except `docs/README.md` and
+  `docs/releases/<version>.md`), local links must resolve to tracked files, and
+  one-off or private material stays outside the repository. Pre-declare
+  unstaged pages with `make docs-policy-check DOCS_NEW_FILES="..."`.
 - Keep sensitive research, private reference material, and unpublished plans out
   of tracked public files. Use the maintainer-designated private documentation
   location when available; public contributors must not depend on that checkout.
+- Quote no evaluation or benchmark result in docs, release notes, or READMEs
+  unless the supporting record is committed under `evals/results/` and passes
+  `make eval-check`. Keep exploratory runs in the ignored `bench/` directory.
 - Write plainly and lead with the result or main point. Give each paragraph one
   purpose; use lists and tables for genuinely parallel or comparative information.
   Explain necessary technical terms and avoid filler, repeated conclusions, and

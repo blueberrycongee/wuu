@@ -58,6 +58,9 @@ type acpInitialize struct {
 			Resume *struct{} `json:"resume"`
 			Close  *struct{} `json:"close"`
 			Delete *struct{} `json:"delete"`
+			// Fork is the unstable ACP sessionCapabilities.fork advertisement:
+			// when present the agent accepts session/fork to copy a session.
+			Fork *struct{} `json:"fork"`
 		} `json:"sessionCapabilities"`
 		Prompt struct {
 			Image bool `json:"image"`
@@ -132,7 +135,9 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 		cwd, _ = os.Getwd()
 	}
 	session := acpSession{asyncConfiguration: e.entry.ID == "devin"}
-	defer func() { err = errors.Join(err, r.closeACPSession(init, session.ID), r.deleteACPSession(init, session.ID)) }()
+	defer func() {
+		err = errors.Join(err, r.closeACPSession(init, session.ID), r.deleteACPSession(init, session.ID))
+	}()
 	if err := r.session(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &session); err != nil {
 		// Settings surfaces this as the engine's model error, which is where a
 		// user discovers that the agent needs configuration of its own.
@@ -642,7 +647,9 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, init acpInitial
 		// Loaded sessions retain previous overrides. A fresh, unprompted session
 		// supplies native defaults, including options dependent on the model.
 		selected = acpSession{asyncConfiguration: s.engine.entry.ID == "devin"}
-		defer func() { err = errors.Join(err, r.closeACPSession(init, selected.ID), r.deleteACPSession(init, selected.ID)) }()
+		defer func() {
+			err = errors.Join(err, r.closeACPSession(init, selected.ID), r.deleteACPSession(init, selected.ID))
+		}()
 		if err := r.session(ctx, "session/new", map[string]any{"cwd": s.binding.RootDir, "mcpServers": []any{}}, &selected); err != nil {
 			return fmt.Errorf("read configured model defaults: %w", err)
 		}
@@ -1232,7 +1239,12 @@ func (r *rpc) session(ctx context.Context, method string, params map[string]any,
 	if method == "session/load" || method == "session/resume" {
 		session.ID, _ = params["sessionId"].(string)
 	}
-	if session.asyncConfiguration {
+	if session.asyncConfiguration && session.ConfigOptions == nil {
+		// Older Devin CLI publishes its model configuration only through a
+		// config_option_update notification after session/new; current builds
+		// inline configOptions in the response and only re-send the
+		// notification when the configuration later changes. Waiting
+		// unconditionally would stall every turn for the full timeout.
 		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if err := r.wait(waitCtx, func() bool { _, ok := updates[session.ID]; return ok }); err != nil {

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "../i18n";
 import { SettingsRow } from "../SettingsRow";
 import { useBackground } from "./useBackground";
-import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
+import { dismissToast, showActionErrorToast } from "../Toast";
 
 /** canvasSkin names the selected canvas skin that paints the picture; otherwise it decorates the frame. */
 export function BackgroundSettings({ canvasSkin }: { canvasSkin?: string } = {}): JSX.Element {
@@ -11,22 +11,25 @@ export function BackgroundSettings({ canvasSkin }: { canvasSkin?: string } = {})
   const { t } = useI18n();
   const { preferences, error: readError, loading } = useBackground(controls);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<"image" | "save" | null>(null);
-  const operations = useMemo(() => ({ active: true, importer: null as AbortController | null }), [controls]);
+  const operations = useMemo(() => ({ active: true, importer: null as AbortController | null, toastID: undefined as number | undefined }), [controls]);
   useEffect(() => {
     operations.active = true;
     setBusy(false);
-    setError(null);
     return () => {
       operations.active = false;
       operations.importer?.abort();
     };
   }, [operations]);
+  function dismissErrorNotice() {
+    if (operations.toastID === undefined) return;
+    dismissToast(operations.toastID);
+    operations.toastID = undefined;
+  }
   async function save(action: () => Promise<void>) {
     if (!operations.active) return;
-    setBusy(true); setError(null);
+    setBusy(true); dismissErrorNotice();
     try { await action(); } catch (reason) {
-      if (operations.active && !isPluginLifecycleCancellation(reason)) setError("save");
+      if (operations.active) operations.toastID = showActionErrorToast(reason, t("settings.saveFailed"));
     } finally { if (operations.active) setBusy(false); }
   }
   async function importImage(file: File) {
@@ -35,7 +38,7 @@ export function BackgroundSettings({ canvasSkin }: { canvasSkin?: string } = {})
     const controller = new AbortController();
     operations.importer = controller;
     const { signal } = controller;
-    setBusy(true); setError(null);
+    setBusy(true); dismissErrorNotice();
     let stage: "image" | "save" = "image";
     try {
       const image = await controls.processBackground(file, "import", signal);
@@ -47,7 +50,7 @@ export function BackgroundSettings({ canvasSkin }: { canvasSkin?: string } = {})
         return { image, imageID: crypto.randomUUID(), name: file.name };
       });
     } catch (reason) {
-      if (!signal.aborted && !isPluginLifecycleCancellation(reason)) setError(stage);
+      if (!signal.aborted && operations.active) operations.toastID = showActionErrorToast(reason, t(stage === "image" ? "settings.backgroundInvalid" : "settings.saveFailed"));
     } finally {
       if (operations.importer === controller) {
         operations.importer = null;
@@ -64,6 +67,6 @@ export function BackgroundSettings({ canvasSkin }: { canvasSkin?: string } = {})
       </label>
       {preferences && <button type="button" className="settings-button" disabled={busy} onClick={() => void save(() => controls.updateBackground(() => null))}>{t("settings.backgroundRemove")}</button>}
     </SettingsRow>
-    {(error || readError) && <p role="alert">{t(error === "image" ? "settings.backgroundInvalid" : "settings.saveFailed")}</p>}
+    {readError && <p role="alert">{t("settings.saveFailed")}</p>}
   </>;
 }

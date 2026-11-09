@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "id": "artworks",
+  "name": "Artworks",
+  "description": "Public-domain classical paintings as window skins, each with paired light and dark treatment.",
+  "icon": { "path": "icon.webp" },
+  "version": "1.0.0",
+  "defaultEnabled": true,
+  "author": { "name": "Wuu" },
+  "interface": {
+    "displayName": "Artworks",
+    "shortDescription": "Classical public-domain paintings as window skins.",
+    "developerName": "Wuu",
+    "category": "Appearance"
+  },
+  "contributes": {
+    "skins": [
+      {
+        "id": "nihonbashi-snow",
+        "name": "Nihonbashi Snow · 雪晴",
+        "light": { "background": "#ac9d86", "foreground": "#26303b", "image": "nihonbashi-snow.webp", "hover": "#0000000f", "active": "#0000001f" },
+        "dark": { "background": "#14161c", "foreground": "#ece7d8", "image": "nihonbashi-snow.webp", "overlay": "#12151bcc", "hover": "#ffffff14", "active": "#ffffff24" }
+      },
+      {
+        "id": "hira-evening-snow",
+        "name": "Hira Snow · 比良暮雪",
+        "light": { "background": "#d2c2aa", "foreground": "#2c2e33", "image": "hira-evening-snow.webp", "hover": "#0000000f", "active": "#0000001f" },
+        "dark": { "background": "#15161a", "foreground": "#ece7d8", "image": "hira-evening-snow.webp", "overlay": "#12151bcc", "hover": "#ffffff14", "active": "#ffffff24" }
+      },
+      {
+        "id": "cherry-branch",
+        "name": "Cherry Branch · 樱枝",
+        "light": { "background": "#b5ac97", "foreground": "#2a2e35", "image": "cherry-branch-tits.webp", "position": "top", "hover": "#0000000f", "active": "#0000001f" },
+        "dark": { "background": "#131519", "foreground": "#e9e6db", "image": "cherry-branch-tits.webp", "position": "top", "overlay": "#11141bcc", "hover": "#ffffff14", "active": "#ffffff24" }
+      },
+      {
+        "id": "snowy-sparrows",
+        "name": "Snowy Sparrows · 雪雀",
+        "light": { "background": "#b8b49d", "foreground": "#2b2f30", "image": "snowy-currant-sparrows.webp", "hover": "#0000000f", "active": "#0000001f" },
+        "dark": { "background": "#14161a", "foreground": "#e9e6db", "image": "snowy-currant-sparrows.webp", "overlay": "#11141bcc", "hover": "#ffffff14", "active": "#ffffff24" }
+      },
+      {
+        "id": "starry-night",
+        "name": "Starry Night · 星夜",
+        "light": { "background": "#1c2a33", "foreground": "#f0e7cf", "image": "starry-night-rhone.webp", "hover": "#ffffff18", "active": "#ffffff2e" },
+        "dark": { "background": "#101a22", "foreground": "#f0e7cf", "image": "starry-night-rhone.webp", "overlay": "#070b1640", "hover": "#ffffff18", "active": "#ffffff2e" }
+      },
+      {
+        "id": "moonlit-street",
+        "name": "Moonlit Street · 月下街",
+        "light": { "background": "#26271c", "foreground": "#eae6d3", "image": "moonlit-street.webp", "hover": "#ffffff16", "active": "#ffffff2a" },
+        "dark": { "background": "#14150f", "foreground": "#eae6d3", "image": "moonlit-street.webp", "overlay": "#06080559", "hover": "#ffffff16", "active": "#ffffff2a" }
+      },
+      {
+        "id": "crimea-sea",
+        "name": "Crimean Sea · 月夜海",
+        "light": { "background": "#292826", "foreground": "#ece7dc", "image": "crimea-moonlit-sea.webp", "hover": "#ffffff16", "active": "#ffffff2a" },
+        "dark": { "background": "#151517", "foreground": "#ece7dc", "image": "crimea-moonlit-sea.webp", "overlay": "#05070d66", "hover": "#ffffff16", "active": "#ffffff2a" }
+      },
+      {
+        "id": "glasgow-docks",
+        "name": "Glasgow Docks · 暮港",
+        "light": { "background": "#2e2516", "foreground": "#f1e8d2", "image": "glasgow-docks.webp", "hover": "#ffffff16", "active": "#ffffff2a" },
+        "dark": { "background": "#171209", "foreground": "#f1e8d2", "image": "glasgow-docks.webp", "overlay": "#08060a4d", "hover": "#ffffff16", "active": "#ffffff2a" }
+      }
+    ]
+  }
+}

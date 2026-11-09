@@ -49,7 +49,6 @@ const (
 )
 
 var contextWindowToolNames = []string{newContextToolName}
-var historyRecoveryToolNames = []string{historyReadToolName, historySearchToolName}
 
 // Toolkit executes local coding tools for the agent. It satisfies
 // agent.ToolExecutor via Definitions() + Execute().
@@ -601,8 +600,6 @@ func (t *Toolkit) nativeDeferredToolDiscoveryEnabled() bool {
 	defer t.exposureMu.RUnlock()
 	return t.nativeDeferredDiscovery
 }
-
-func (t *Toolkit) toolSearchCanLoadDeferredTool(string) bool { return true }
 
 // SetProcessManager attaches the process manager.
 func (t *Toolkit) SetProcessManager(m *proc.Manager) {

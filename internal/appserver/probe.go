@@ -12,6 +12,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 )
 
 // loadProbeConfig mirrors the app-server config resolution order: try the
@@ -159,7 +160,11 @@ func printProbeHeader(out io.Writer, opts ProbeTitleOptions, threadID string, sy
 	fmt.Fprintf(out, "  sessionDir: %s\n", rt.SessionDir)
 	fmt.Fprintf(out, "  provider:   %s\n", firstNonEmpty(opts.ProviderName, rt.ProviderName))
 	fmt.Fprintf(out, "  model:      %s\n", firstNonEmpty(opts.ModelOverride, rt.Model))
-	fmt.Fprintf(out, "  thread:     %s%s\n", threadID, ifThen(synthetic, " (synthetic)", ""))
+	threadLabel := threadID
+	if synthetic {
+		threadLabel += " (synthetic)"
+	}
+	fmt.Fprintf(out, "  thread:     %s\n", threadLabel)
 	fmt.Fprintf(out, "  mode:       %s\n", mode)
 	fmt.Fprintf(out, "  verbose:    %v\n\n", opts.Verbose)
 }
@@ -173,9 +178,9 @@ func printProbeResult(out io.Writer, r TitleGenerationResult, verbose bool) {
 		fmt.Fprintf(out, "  temperature:      omitted  (model pins it)\n")
 	}
 	fmt.Fprintf(out, "  request messages: %d\n", r.RequestMessages)
-	fmt.Fprintf(out, "  first user msg:   %d chars  %q\n", len(r.FirstUserPrompt), truncate(r.FirstUserPrompt, 80))
+	fmt.Fprintf(out, "  first user msg:   %d chars  %q\n", len(r.FirstUserPrompt), stringutil.Truncate(r.FirstUserPrompt, 80, "…"))
 	fmt.Fprintf(out, "  content deltas:   %d\n", len(r.ContentDeltas))
-	fmt.Fprintf(out, "  aggregated text:  %d chars  %q\n", len(r.AggregatedText), truncate(r.AggregatedText, 80))
+	fmt.Fprintf(out, "  aggregated text:  %d chars  %q\n", len(r.AggregatedText), stringutil.Truncate(r.AggregatedText, 80, "…"))
 	fmt.Fprintf(out, "  cleaned title:    %q\n", r.CleanedTitle)
 	fmt.Fprintf(out, "  persisted:        %v\n", r.Persisted)
 	if r.Persisted {
@@ -197,18 +202,4 @@ func printProbeResult(out io.Writer, r TitleGenerationResult, verbose bool) {
 	if verbose && r.StreamErr != nil {
 		fmt.Fprintf(out, "\n── stream error ──\n  %v\n", r.StreamErr)
 	}
-}
-
-func truncate(s string, max int) string {
-	if len(s) <= max {
-		return s
-	}
-	return s[:max] + "…"
-}
-
-func ifThen(cond bool, a, b string) string {
-	if cond {
-		return a
-	}
-	return b
 }

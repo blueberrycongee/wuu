@@ -44,6 +44,10 @@ type ConversationTurnListProps = {
   renderAfterMissingTurn?: ReactNode;
   forcedFullTurnIDs?: Iterable<string>;
   autoLoadEarlier?: boolean;
+  // Bumped by the caller whenever an input captured by renderTurn/renderAfterTurn
+  // changes. The callbacks stay identity-stable across renders, so the entry memo
+  // needs this version to know their captured scope moved.
+  renderScopeVersion?: number;
 };
 
 export const TURN_LIST_INITIAL_TAIL_TURNS = TURN_LIST_RECENT_FULL_TURNS;
@@ -133,6 +137,7 @@ export function ConversationTurnList({
   renderAfterMissingTurn,
   forcedFullTurnIDs,
   autoLoadEarlier = true,
+  renderScopeVersion = 0,
 }: ConversationTurnListProps): JSX.Element {
   const { application } = useConversationControls();
   const { t, formatNumber } = useI18n();
@@ -378,6 +383,7 @@ export function ConversationTurnList({
             onExpand={expandTurn}
             renderTurn={renderTurn}
             renderAfterTurn={renderAfterTurn}
+            scopeVersion={renderScopeVersion}
           />
         );
       })}
@@ -399,6 +405,7 @@ const TurnListEntry = memo(function TurnListEntry({
   onExpand: (turnID: string) => void;
   renderTurn: (turn: Turn) => ReactNode;
   renderAfterTurn?: (turn: Turn) => ReactNode;
+  scopeVersion: number;
 }): JSX.Element {
   // CollapsedTurnView is memoized on turn identity; the expand callback must be
   // equally stable or it defeats that memo on every list render.

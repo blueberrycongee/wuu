@@ -275,7 +275,7 @@ app.whenReady().then(async () => {
     await key("Tab");
     assert.equal(await value(), "/rev", "a suffix inside a folded draft is not a slash command");
     assert.equal(await evaluate((selector) => document.activeElement === document.querySelector(selector), inputSelector), false);
-    await evaluate(() => document.querySelector('[data-main-conversation-composer] .composer-collapsed-prompt-card .composer-document-card-main').click());
+    await evaluate(() => document.querySelector('[data-main-conversation-composer] .composer-collapsed-prompt-card .composer-collapsed-prompt-main').click());
     await until(({ selector, expected }) => document.querySelector(selector)?.value === expected, { selector: inputSelector, expected: `/rev${pasted}` }, "folded content remains intact after Tab");
     await draft("");
   });

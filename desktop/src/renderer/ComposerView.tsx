@@ -1263,7 +1263,7 @@ export function Composer({
             anchorRef={workspacePillRef}
             owner="composer-runtime"
             onDismiss={onToggleMenu}
-            placement={controlsInRail ? "below" : "above"}
+            placement={controlsInRail ? "middle" : "above"}
             align={controlsInRail ? "right" : "left"}
             crossAxisOffset={controlsInRail ? -(workspacePillRef.current?.offsetWidth ?? 0) - 8 : 0}
             flip
@@ -1329,7 +1329,7 @@ export function Composer({
           anchorRef={accessMenuRef}
           owner="composer-access"
           onDismiss={onToggleAccessMenu}
-          placement={controlsInRail ? "below" : "above"}
+          placement={controlsInRail ? "middle" : "above"}
           align={controlsInRail ? "right" : "left"}
           crossAxisOffset={controlsInRail ? -(accessMenuRef.current?.offsetWidth ?? 0) - 8 : 0}
           flip

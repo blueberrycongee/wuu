@@ -69,6 +69,7 @@ import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isAppLocale,
   isLanguagePreference,
+  isMessageFlowFontSize,
   type DesktopPreferences,
 } from "../shared/protocol";
 import type {
@@ -2847,9 +2848,8 @@ app.whenReady().then(async () => {
     if (event.sender !== mainWindow?.webContents || !value || typeof value !== "object") return;
     const appearance = value as ActivityPreviewAppearance;
     if (typeof appearance.reducedMotion !== "boolean" ||
-      typeof appearance.fontSize !== "number" || !Number.isFinite(appearance.fontSize) ||
-      appearance.fontSize < MESSAGE_FLOW_FONT_SIZE_RANGE.min || appearance.fontSize > MESSAGE_FLOW_FONT_SIZE_RANGE.max ||
-      (appearance.locale !== "en-US" && appearance.locale !== "zh-CN") ||
+      !isMessageFlowFontSize(appearance.fontSize) ||
+      !isAppLocale(appearance.locale) ||
       [appearance.fontFamily, appearance.surface, appearance.text, appearance.muted]
         .some(field => typeof field !== "string" || field.length > 512)) return;
     observationCoordinator.setAppearance(resolvedThemeIsDark(), appearance);
@@ -2931,15 +2931,10 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "wuu:message-flow-font-size-set",
     (_event, fontSize: unknown) => {
-      // Mirror the renderer's clamp: keep the IPC boundary honest about
-      // the same 13-20 window so a corrupted renderer can't widen it.
-      const valid =
-        typeof fontSize === "number" &&
-        Number.isFinite(fontSize) &&
-        fontSize >= MESSAGE_FLOW_FONT_SIZE_RANGE.min &&
-        fontSize <= MESSAGE_FLOW_FONT_SIZE_RANGE.max;
-      const next: MessageFlowFontSize = valid
-        ? (fontSize as MessageFlowFontSize)
+      // Keep the IPC boundary honest about the same 13-20 window so a
+      // corrupted renderer can't widen it.
+      const next: MessageFlowFontSize = isMessageFlowFontSize(fontSize)
+        ? fontSize
         : MESSAGE_FLOW_FONT_SIZE_RANGE.default;
       setMessageFlowFontSize(next);
       systemPermissions.refreshAppearance(resolvedThemeIsDark());

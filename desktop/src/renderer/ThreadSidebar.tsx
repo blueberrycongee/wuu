@@ -32,6 +32,7 @@ import {
 import { resolveLocalizedText, useI18n } from "./i18n";
 import { useHoverReveal } from "./HoverReveal";
 import { motionDurationMs, useReducedMotion } from "./motion";
+import { TruncatedText } from "./TruncatedText";
 import {
   SidebarHoverCardLayer,
   ThreadHoverCardContent,
@@ -1179,5 +1180,18 @@ export function ThreadRowTitle({ title }: { title: string }): JSX.Element {
   }, [title, reducedMotion]);
 
   // Each parent button exposes the complete title, without announcing every typing frame.
-  return <span ref={elementRef} className="thread-row-title" aria-hidden="true">{displayed}</span>;
+  return (
+    <TruncatedText
+      text={title}
+      className="thread-row-title"
+      measureKey={displayed}
+      measureRef={(element) => {
+        elementRef.current = element as HTMLSpanElement | null;
+      }}
+      fade
+      aria-hidden="true"
+    >
+      {displayed}
+    </TruncatedText>
+  );
 }

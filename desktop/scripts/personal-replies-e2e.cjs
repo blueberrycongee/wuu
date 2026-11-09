@@ -25,6 +25,21 @@ app.whenReady().then(async () => {
   await until(() => document.querySelector('[data-wuu-plugin="personal"]'));
   await evaluate(() => document.querySelector('[data-wuu-plugin="personal"]').click());
   await until(() => document.querySelector('.mosaic-main [data-action="reply-message"]'));
+  const mainGeometry = () => evaluate(() => {
+    const scroll = document.querySelector('.mosaic-main .plugin-conversation-scroll');
+    const message = scroll.querySelector('[data-role]');
+    return { height: scroll.clientHeight, top: scroll.scrollTop, messageTop: message.getBoundingClientRect().top };
+  });
+  const beforeReply = await mainGeometry();
+  await evaluate(() => document.querySelector('.mosaic-main [data-action="reply-message"]').click());
+  await until(() => document.querySelector('.mosaic-replies [data-role]'));
+  await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.deepEqual(await mainGeometry(), beforeReply, 'opening replies must preserve the main viewport and message position');
+  await evaluate(() => document.querySelector('[data-action="close-replies"]').click());
+  await until(() => !document.querySelector('.mosaic-replies'));
+  await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.deepEqual(await mainGeometry(), beforeReply, 'closing replies must preserve the main viewport and message position');
+  report.cases.push('Opening and closing replies preserves the main conversation position');
   await evaluate(() => document.querySelector('.mosaic-main [data-action="reply-message"]').click());
   await until(() => document.querySelector('.mosaic-replies [data-role]'));
   assert.equal(await evaluate(() => document.querySelector('.mosaic-replies [data-action="reply-message"]') !== null), false);

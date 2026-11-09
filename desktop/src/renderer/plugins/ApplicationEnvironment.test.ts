@@ -64,6 +64,24 @@ describe("ApplicationEnvironment", () => {
     h.retire();
   });
 
+  it("re-reads busy state on server exit and ignores the superseded response", async () => {
+    const h = fixture();
+    const first = deferred<boolean>(), second = deferred<boolean>();
+    h.api.gitActionBusy.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
+    expect(h.service.getSnapshot().actionBusy).toBe(true);
+    await Promise.resolve();
+    expect(h.api.gitActionBusy).toHaveBeenCalledExactlyOnceWith("/one");
+    h.service.receive({ kind: "server-exit", workdir: "/one", code: 1, message: "crashed" });
+    expect(h.service.getSnapshot().actionBusy).toBe(true);
+    await Promise.resolve();
+    expect(h.api.gitActionBusy).toHaveBeenCalledTimes(2);
+    second.resolve(false); await Promise.resolve(); await Promise.resolve();
+    expect(h.service.getSnapshot().actionBusy).toBe(false);
+    first.resolve(true); await Promise.resolve(); await Promise.resolve();
+    expect(h.service.getSnapshot().actionBusy).toBe(false);
+    h.retire();
+  });
+
   it("cancels a retired caller refresh without cancelling its successor", async () => {
     vi.useFakeTimers(); const h = fixture();
     const old = new AbortController(), next = new AbortController();

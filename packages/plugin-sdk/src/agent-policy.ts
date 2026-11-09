@@ -1,4 +1,4 @@
-import type { ServiceDescriptor, ServiceRequirement, RuntimeHost } from "./index.js";
+import type { ServiceDescriptor, RuntimeHost } from "./index.js";
 import type { DriverFailure } from "./driver.js";
 import type { ModelToolCallV1 } from "./model.js";
 
@@ -73,9 +73,6 @@ export function composeAgentPolicies(strategies: readonly AgentPolicyStrategy[])
 }
 export function agentPolicyServiceDescriptor(): ServiceDescriptor {
  return {name:AGENT_POLICY_SERVICE,version:"1.0.0",methods:[{name:"evaluate",input_schema:"agent.policy.input.v1",output_schema:"agent.policy.decision.v1"}]};
-}
-export function requireAgentPolicyService(): ServiceRequirement {
- return {name:AGENT_POLICY_SERVICE,major_version:1,required:true};
 }
 export function agentPolicy(host: RuntimeHost) {
  return {evaluate:async(input:AgentPolicyInput):Promise<AgentPolicyDecision>=>{

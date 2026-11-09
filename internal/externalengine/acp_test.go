@@ -772,7 +772,10 @@ func TestACPHelper(t *testing.T) {
 			if scenario == "version" {
 				version = 2
 			}
-			caps := map[string]any{"loadSession": scenario != "no-load"}
+			caps := map[string]any{"loadSession": scenario != "no-load" && scenario != "fork-no-load"}
+			if scenario == "fork" || scenario == "fork-no-load" {
+				caps["sessionCapabilities"] = map[string]any{"fork": map[string]any{}, "close": map[string]any{}}
+			}
 			if scenario == "host-mcp-http" {
 				caps["mcpCapabilities"] = map[string]bool{"http": true}
 			}
@@ -801,6 +804,17 @@ func TestACPHelper(t *testing.T) {
 			}
 			if scenario == "boolean-options" {
 				result = booleanSession()
+				break
+			}
+			if scenario == "devin-inline-config" {
+				// Current Devin CLI inlines configOptions in session/new and
+				// only re-sends config_option_update when configuration changes.
+				result = map[string]any{
+					"sessionId": "native-session",
+					"configOptions": []any{
+						map[string]any{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "model-a", "options": []any{map[string]string{"value": "model-a", "name": "Model A"}}},
+					},
+				}
 				break
 			}
 			if scenario == "speed" || scenario == "speed-catalog" {
@@ -976,6 +990,16 @@ func TestACPHelper(t *testing.T) {
 				}
 				result = configuration
 			}
+		case "session/fork":
+			var params struct {
+				SessionID string `json:"sessionId"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			if params.SessionID != "native-session" {
+				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32602, "message": "unknown source session"}})
+				continue
+			}
+			result = map[string]any{"sessionId": "native-fork"}
 		case "session/load":
 			if scenario == "load-error" {
 				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32000, "message": "session not found"}})
@@ -1181,6 +1205,25 @@ func TestACPChildInheritsParentEnvironment(t *testing.T) {
 				t.Fatalf("ACP child environment = %q, want %q", result.Result.Content, tc.want)
 			}
 		})
+	}
+}
+
+// Current Devin CLI inlines configOptions in the session/new response and
+// does not follow it with a config_option_update notification. The turn must
+// not wait for one that never arrives.
+func TestACPDevinInlineConfigurationDoesNotWaitForNotification(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngineID(t, "devin", "devin-inline-config").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.Content != "Hello world" {
+		t.Fatalf("result=%+v", result.Result)
 	}
 }
 
