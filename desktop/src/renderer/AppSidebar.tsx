@@ -106,7 +106,6 @@ import { SidebarBrand } from "./SidebarBrand";
 import { moveMenuFocus } from "./MenuKeyboardNavigation";
 import { composerMenuWidth, FloatingMenuPortal, useFloatingMenuFocus } from "./ComposerFloatingMenu";
 import { useI18n } from "./i18n";
-import { loadRecentView, persistRecentView, recentViewFilters, SidebarRecentViewMenu, type RecentView } from "./SidebarRecentViewMenu";
 import {
   desktopPluginHost,
 } from "./plugins/DesktopPluginRuntime";
@@ -619,7 +618,6 @@ export function AppSidebar({
   const [collapsedFunctionalGroupIDs, setCollapsedFunctionalGroupIDs] =
     useState<Set<SidebarFunctionalGroupID>>(loadCollapsedSidebarFunctionalGroups);
   const [recentsCollapsed, setRecentsCollapsed] = useState(loadSidebarRecentsCollapsed);
-  const [recentView, setRecentView] = useState(loadRecentView);
   const draftEntries = useTabExitRetention(draftConversations, draft => draft.id)
     .filter(entry => !entry.closing || !entry.tab.pending);
   // Consume entrance eligibility even when the fold is closed. Its children
@@ -1186,7 +1184,6 @@ export function AppSidebar({
     (id) => (id !== "pinned" || hasPinnedRows)
       && (id !== "folders" || visibleFolderSortableIDs.length > 0),
   ), [functionalGroupOrder, hasPinnedRows, visibleFolderSortableIDs.length]);
-  const recentWorkspace = sidebarWorkspaces.find((project) => project.id === recentView.workspaceID);
   const conversationCandidates = useMemo(() => allSidebarThreads
     .filter((thread) => !thread.archived && !thread.pinned),
   [allSidebarThreads]);
@@ -1196,7 +1193,6 @@ export function AppSidebar({
     onReorder: reorderRecentConversations,
   } = useSidebarConversationActivity(
     conversationCandidates, activeThreadID, pendingThreadID, lastViewedTurnByThreadID,
-    recentView, recentWorkspace, organization.folderByThreadID,
   );
   const visibleWorkspaceThreadsByWorkspaceID = useMemo(() => {
     const next: Record<string, ThreadSummary[]> = {};
@@ -2103,7 +2099,7 @@ export function AppSidebar({
                 </SortableFunctionalGroup>
               ))}
             </SortableContext>
-            {conversationCandidates.length > 0 || draftEntries.length > 0 ? (
+            {recentConversations.length > 0 || draftEntries.length > 0 ? (
               <div className="sidebar-conversation-activity" {...conversationInteractionProps}>
                 <section
                   className="sidebar-functional-group"
@@ -2141,16 +2137,6 @@ export function AppSidebar({
                       />
                     </button>
                     <div className="sidebar-functional-heading-action">
-                      <SidebarRecentViewMenu
-                        view={recentView}
-                        workspaces={sidebarWorkspaces}
-                        onChange={(view) => {
-                          setRecentView(view);
-                          persistRecentView(view);
-                          setRecentsCollapsed(false);
-                          persistSidebarRecentsCollapsed(false);
-                        }}
-                      />
                       <button
                         className="sidebar-row-icon-button sidebar-recents-new-thread"
                         type="button"
@@ -2201,9 +2187,6 @@ export function AppSidebar({
                         onDelete={onDeleteThread}
                         onRename={onRenameThread}
                       />
-                      {recentConversations.length === 0 && recentViewFilters(recentView) ? (
-                        <p className="sidebar-unread-empty" role="status">{t("sidebar.recentFilterEmpty")}</p>
-                      ) : null}
                     </div>
                   </SidebarCollapseBody>
                 </section>

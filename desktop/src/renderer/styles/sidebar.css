@@ -1403,7 +1403,7 @@ html[data-focus-modality="keyboard"] :is(
 
 /* Match the new-conversation button inside a workspace row: a row-sized hit
  * target, the shared action icon size, and no hover box. */
-.sidebar-recents-heading :is(.sidebar-recents-new-thread, .sidebar-recents-view-trigger) {
+.sidebar-recents-heading .sidebar-recents-new-thread {
   --sidebar-row-icon-hover-bg: transparent;
   --sidebar-row-icon-focus-shadow: inset 0 0 0 2px var(--sidebar-nav-item-focus-shadow);
   transition:
@@ -1414,7 +1414,7 @@ html[data-focus-modality="keyboard"] :is(
 }
 
 @media (hover: hover) {
-  .sidebar-recents-heading:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) :is(.sidebar-recents-new-thread, .sidebar-recents-view-trigger:not([aria-expanded="true"], [data-filtered])) {
+  .sidebar-recents-heading:not(:hover):not(html[data-focus-modality="keyboard"] :focus-within) .sidebar-recents-new-thread {
     opacity: 0;
   }
 }
@@ -2927,152 +2927,4 @@ html[data-focus-modality="keyboard"] .thread-row-context-menu:focus-visible {
 .sidebar-hover-card-fact[data-tone="warning"],
 .sidebar-hover-card-fact[data-tone="warning"] .sidebar-hover-card-fact-icon {
   color: var(--warning);
-}
-
-/* Recent view options: a row per option with its current value, choices in a
- * flyout beside the row. A view that hides rows keeps its trigger visible. */
-.sidebar-recents-view-trigger[data-filtered] {
-  color: var(--ink);
-}
-
-.sidebar-view-menu {
-  position: relative;
-  font-size: var(--font-menu);
-}
-
-.sidebar-view-menu-panel,
-.sidebar-view-submenu {
-  display: grid;
-  gap: 1px;
-  border: 1px solid var(--menu-border);
-  border-radius: var(--menu-shell-radius);
-  background: var(--menu-bg);
-  backdrop-filter: var(--surface-blur);
-  box-shadow: var(--menu-shadow);
-  padding: var(--menu-inset);
-  --menu-enter-y: 0;
-  animation: menu-enter var(--menu-enter-duration) var(--menu-enter-easing) both;
-}
-
-.sidebar-view-menu-panel {
-  width: var(--floating-menu-available-width);
-  max-height: var(--floating-menu-available-height);
-  overflow-y: auto;
-  transform-origin: top left;
-  --menu-enter-x: 0;
-}
-
-.sidebar-view-submenu {
-  position: absolute;
-  left: calc(100% + 4px);
-  width: max-content;
-  min-width: 184px;
-  max-width: 280px;
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
-  transform-origin: top left;
-  --menu-enter-x: -4px;
-}
-
-.sidebar-view-submenu[data-side="left"] {
-  right: calc(100% + 4px);
-  left: auto;
-  transform-origin: top right;
-  --menu-enter-x: 4px;
-}
-
-.sidebar-view-menu-row {
-  display: flex;
-  width: 100%;
-  min-width: 0;
-  min-height: var(--control-row-height);
-  align-items: center;
-  gap: var(--menu-item-gap);
-  padding: var(--menu-item-padding-block) var(--menu-item-padding-inline);
-  border: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-  font-weight: var(--weight-regular);
-  line-height: var(--line-ui);
-  text-align: left;
-  cursor: pointer;
-}
-
-.sidebar-view-menu-row:hover,
-.sidebar-view-menu-row[aria-expanded="true"] {
-  background: var(--menu-hover);
-}
-
-html[data-focus-modality="keyboard"] .sidebar-view-menu-row:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: -2px;
-  background: var(--menu-hover);
-}
-
-.sidebar-view-menu-row > svg {
-  width: var(--icon-size);
-  height: var(--icon-size);
-  flex: 0 0 auto;
-  color: var(--ink-soft);
-}
-
-.sidebar-view-menu-label {
-  min-width: 0;
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-view-menu-value {
-  min-width: 0;
-  max-width: 50%;
-  flex: 0 1 auto;
-  overflow: hidden;
-  color: var(--ink-tertiary);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-view-menu-row > .sidebar-view-menu-chevron {
-  width: var(--icon-size-sm);
-  height: var(--icon-size-sm);
-  margin-inline-start: -4px;
-  color: var(--ink-tertiary);
-}
-
-.sidebar-view-menu-row > .sidebar-view-menu-check {
-  visibility: hidden;
-}
-
-.sidebar-view-menu-row[aria-checked="true"] > .sidebar-view-menu-check {
-  visibility: visible;
-}
-
-.sidebar-view-menu-separator {
-  height: 1px;
-  margin: 4px var(--menu-item-padding-inline);
-  background: var(--menu-border);
-}
-
-.sidebar-view-menu-row > .sidebar-view-menu-switch {
-  height: var(--switch-track-height);
-  margin-inline-start: auto;
-  pointer-events: none;
-}
-
-.sidebar-view-menu-switch[data-checked] {
-  --switch-track-color: var(--switch-track-on);
-  --switch-thumb-color: var(--switch-thumb-on);
-  --switch-thumb-shadow: none;
-}
-
-.sidebar-view-menu-switch[data-checked] .settings-switch-thumb {
-  transform: translateX(calc(var(--switch-track-width) - var(--switch-thumb-size) - var(--switch-thumb-inset) * 2));
-}
-
-.sidebar-view-menu-reset {
-  color: var(--ink-soft);
 }
