@@ -491,12 +491,6 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     this.applyVisibility();
   }
 
-  setDesktopAlignment(alignment: PipAlignment): void {
-    if (!this.desktopDocked || this.alignment === alignment) return;
-    this.alignment = alignment;
-    this.placeCommitted(true);
-  }
-
   isDesktopDocked(): boolean {
     return this.desktopDocked;
   }
@@ -1335,11 +1329,8 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   setStackPosition(index: number, lead?: PiPStackLead): void {
     const win = this.win;
     if (!win || win.isDestroyed() || this.dragging || this.resizing) return;
-    // Detached cards own their screen corner and never join the column stack.
-    if (this.desktopDocked) {
-      this.stackIndex = 0;
-      return;
-    }
+    // A trailing detached card follows its lead onto that card's display.
+    if (this.desktopDocked && index > 0 && lead) this.refreshDesktopFrame(lead.frame);
     const hostShifted = this.hostShifted;
     this.hostShifted = false;
     const wasLead = this.stackIndex === 0;
