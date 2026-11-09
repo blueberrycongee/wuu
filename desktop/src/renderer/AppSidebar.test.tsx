@@ -27,6 +27,7 @@ beforeEach(() => {
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
   window.localStorage.removeItem("wuu.desktop.recentThreadArrivalOrder.v1");
   window.localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
+  window.localStorage.removeItem("wuu.desktop.sidebarRecentView.v1");
   unreadViewOpen = false;
   attentionStickyIDs = new Set();
   container = document.createElement("div");
@@ -37,6 +38,7 @@ afterEach(() => {
   window.localStorage.removeItem("wuu.desktop.sidebarFunctionalGroupOrder");
   window.localStorage.removeItem("wuu.desktop.recentThreadArrivalOrder.v1");
   window.localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
+  window.localStorage.removeItem("wuu.desktop.sidebarRecentView.v1");
   act(() => root?.unmount());
   desktopPluginHost.unload("test:app-sidebar-navigation");
   desktopPluginHost.unload("test:app-sidebar-view");
@@ -258,6 +260,7 @@ describe("AppSidebar layout", () => {
 
   it.each(["reload", "late catalog"])("keeps newly created Recent conversations reachable after %s with more than 50 older rows", (refresh) => {
     window.localStorage.removeItem("wuu.desktop.sidebarThreadOrderByWorkspace");
+  window.localStorage.removeItem("wuu.desktop.sidebarRecentView.v1");
     const old = Array.from({ length: 60 }, (_, index): ThreadSummary => ({
       id: `old-${index}`, title: `Older conversation ${index}`, cwd: "/repo/wuu", workspace_id: "project-1",
       status: "in_progress", created_at: "2026-08-01T00:00:00Z", updated_at: "2026-08-01T00:00:00Z",
@@ -378,6 +381,42 @@ describe("AppSidebar layout", () => {
     renderSidebar({ ...options, onFocusWorkspace: () => {} });
     expect(selected()).toHaveLength(1);
     expect(selected()[0].classList.contains('project-row')).toBe(true);
+  });
+
+  it("sorts and filters Recent without losing its remembered order", () => {
+    const thread = (id: string, workspace: string, created: string, updated: string): ThreadSummary => ({
+      id, title: id, cwd: `/repo/${workspace === "project-1" ? "wuu" : "interview"}`, workspace_id: workspace,
+      status: "idle", created_at: `2026-08-0${created}T00:00:00Z`, updated_at: `2026-09-0${updated}T00:00:00Z`,
+      preview: "", model_provider: "test", model: "test", turns: [], turn_count: 0,
+    });
+    const rows = { "project-1": [thread("alpha", "project-1", "1", "3"), thread("gamma", "project-1", "3", "2")],
+      "project-2": [thread("beta", "project-2", "2", "1")] };
+    window.localStorage.setItem("wuu.desktop.sidebarThreadOrderByWorkspace", JSON.stringify({ __wuu_recent_threads__: ["beta", "alpha", "gamma"] }));
+    const render = () => renderSidebar({ workspaceThreadsByWorkspaceID: rows });
+    const titles = () => [...container.querySelectorAll('[data-sidebar-recents] .thread-row-title')].map(row => row.textContent);
+    const trigger = () => container.querySelector<HTMLButtonElement>(".sidebar-recents-view-trigger")!;
+    const choose = (submenu: string, value: string) => {
+      if (trigger().getAttribute("aria-expanded") !== "true") act(() => trigger().click());
+      act(() => document.querySelector<HTMLButtonElement>(`[data-submenu="${submenu}"]`)!.click());
+      act(() => document.querySelector<HTMLButtonElement>(`.sidebar-view-submenu [role="menuitemradio"][data-value="${value}"]`)!.click());
+    };
+    render();
+    expect(titles()).toEqual(["beta", "alpha", "gamma"]);
+
+    choose("sort", "created");
+    expect(titles()).toEqual(["gamma", "beta", "alpha"]);
+    choose("workspace", "project-1");
+    choose("sort", "manual");
+    expect(titles()).toEqual(["alpha", "gamma"]);
+
+    act(() => root?.unmount()); root = null;
+    render();
+    expect(titles()).toEqual(["alpha", "gamma"]);
+    expect(trigger().dataset.filtered).toBeDefined();
+    act(() => trigger().click());
+    act(() => document.querySelector<HTMLButtonElement>(".sidebar-view-menu-reset")!.click());
+    expect(titles()).toEqual(["beta", "alpha", "gamma"]);
+    expect(trigger().dataset.filtered).toBeUndefined();
   });
 
   it("orders running and unread conversations at the top of Recent", () => {
