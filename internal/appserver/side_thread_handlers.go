@@ -449,9 +449,10 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 		return nil, errors.New("plugin generation changed during side conversation admission")
 	}
 
-	s.sideTurnMu.Lock()
-	_, locallyRunning := s.sideTurns[mainID]
-	s.sideTurnMu.Unlock()
+	sched := s.schedulerFor(mainID)
+	sched.sideMu.Lock()
+	locallyRunning := sched.sideTurn != nil
+	sched.sideMu.Unlock()
 	if locallyRunning {
 		return nil, errSideThreadExecutionBusy
 	}
@@ -555,26 +556,26 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 
 	ctx, cancel := context.WithCancel(context.Background())
 	turn := &sideThreadTurn{store: store, cancel: cancel, lease: lease, commandID: command.PublicID, fingerprint: owner.Fingerprint, pluginID: owner.ID, generation: generation, state: generationState, execution: execution}
-	s.sideTurnMu.Lock()
+	sched.sideMu.Lock()
 	if s.closed.Load() {
-		s.sideTurnMu.Unlock()
+		sched.sideMu.Unlock()
 		cancel()
 		return nil, s.abortAcceptedSideThread(store, mainID, userMessageID, assistantMessageID, errServerClosed)
 	}
-	if _, exists := s.sideTurns[mainID]; exists {
-		s.sideTurnMu.Unlock()
+	if sched.sideTurn != nil {
+		sched.sideMu.Unlock()
 		cancel()
 		return nil, s.abortAcceptedSideThread(store, mainID, userMessageID, assistantMessageID, errSideThreadExecutionBusy)
 	}
-	s.sideTurns[mainID] = turn
-	s.sideTurnMu.Unlock()
+	sched.sideTurn = turn
+	sched.sideMu.Unlock()
 
 	if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
 		s.runSideThreadTurn(binding, ctx, start, mainID, st, assistantMessageID, turn, runner, history)
 	}) {
-		s.sideTurnMu.Lock()
-		delete(s.sideTurns, mainID)
-		s.sideTurnMu.Unlock()
+		sched.sideMu.Lock()
+		sched.sideTurn = nil
+		sched.sideMu.Unlock()
 		turn.cancel()
 		return nil, s.abortAcceptedSideThread(store, mainID, userMessageID, assistantMessageID, errServerClosed)
 	}
@@ -675,11 +676,12 @@ func (s *Server) runSideThreadTurn(binding *runtime.State, ctx context.Context,
 ) {
 	defer func() {
 		turn.cancel()
-		s.sideTurnMu.Lock()
-		if s.sideTurns[mainID] == turn {
-			delete(s.sideTurns, mainID)
+		sched := s.schedulerFor(mainID)
+		sched.sideMu.Lock()
+		if sched.sideTurn == turn {
+			sched.sideTurn = nil
 		}
-		s.sideTurnMu.Unlock()
+		sched.sideMu.Unlock()
 		releaseSideThreadExecutionLease(mainID, turn.lease)
 		_ = turn.execution.Close()
 		_ = turn.state.Close()
@@ -909,15 +911,16 @@ func (s *Server) interruptSideThread(binding *runtime.State, mainID string) (*Si
 	if mainID == "" || s == nil || binding == nil || binding.Documents == nil {
 		return &SideThreadInterruptResult{Ok: false}, nil
 	}
-	s.sideTurnMu.Lock()
-	turn := s.sideTurns[mainID]
+	sched := s.schedulerFor(mainID)
+	sched.sideMu.Lock()
+	turn := sched.sideTurn
 	if turn != nil {
 		binding = turn.state.Retain()
 		defer binding.Close()
 		turn.interrupted.Store(true)
 		turn.cancel()
 	}
-	s.sideTurnMu.Unlock()
+	sched.sideMu.Unlock()
 	store := sidethread.NewStore(context.Background(), binding.Documents)
 	st, changed, err := store.Interrupt(mainID)
 	if errors.Is(err, sidethread.ErrNotFound) {
@@ -963,14 +966,15 @@ func (s *Server) resetSideThread(binding *runtime.State, mainID string) (*SideTh
 	// Stop an in-flight reply before deleting: the interrupted flag keeps its
 	// remaining deltas from re-populating the cleared panel, and its finish
 	// settles as ErrNotFound on the removed record.
-	s.sideTurnMu.Lock()
-	if turn := s.sideTurns[mainID]; turn != nil {
+	sched := s.schedulerFor(mainID)
+	sched.sideMu.Lock()
+	if turn := sched.sideTurn; turn != nil {
 		binding = turn.state.Retain()
 		defer binding.Close()
 		turn.interrupted.Store(true)
 		turn.cancel()
 	}
-	s.sideTurnMu.Unlock()
+	sched.sideMu.Unlock()
 	store := sidethread.NewStore(context.Background(), binding.Documents)
 	st, err := store.Load(mainID)
 	if errors.Is(err, sidethread.ErrNotFound) {
@@ -1427,14 +1431,16 @@ func (s *Server) cancelSideThreads() {
 	if s == nil {
 		return
 	}
-	s.sideTurnMu.Lock()
-	turns := make(map[string]*runtime.State, len(s.sideTurns))
-	for mainID, turn := range s.sideTurns {
-		turn.interrupted.Store(true)
-		turn.cancel()
-		turns[mainID] = turn.state.Retain()
+	turns := make(map[string]*runtime.State)
+	for mainID, sched := range s.schedulersSnapshot() {
+		sched.sideMu.Lock()
+		if turn := sched.sideTurn; turn != nil {
+			turn.interrupted.Store(true)
+			turn.cancel()
+			turns[mainID] = turn.state.Retain()
+		}
+		sched.sideMu.Unlock()
 	}
-	s.sideTurnMu.Unlock()
 	for mainID, binding := range turns {
 		_, _, err := sidethread.NewStore(context.Background(), binding.Documents).Interrupt(mainID)
 		if err != nil && !errors.Is(err, sidethread.ErrNotFound) {

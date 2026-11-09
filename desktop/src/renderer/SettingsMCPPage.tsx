@@ -239,17 +239,9 @@ export function SettingsMCPPage({ initialized, running, onGeneralSave, onStatusC
     new Set([...currentServers.map((server) => server.name), ...Object.keys(mcpEnabledDraft), ...Object.keys(mcpActionErrors)]),
   ).sort((a, b) => a.localeCompare(b));
 
-  // Servers are defined only in the user configuration; the page says where,
-  // since it cannot add one itself.
-  const configLocation = { file: "~/.wuu/config.json", key: "mcp_servers" } as const;
-  const description = t("settings.mcpDescription").split(/(\{\w+\})/).map((part, index) => {
-    const name = /^\{(\w+)\}$/.exec(part)?.[1] as keyof typeof configLocation | undefined;
-    return name && name in configLocation ? <code key={index}>{configLocation[name]}</code> : part;
-  });
-
   return (
     <>
-      <SettingsPageHeader title={t("settings.mcpServers")} description={description} />
+      <SettingsPageHeader title={t("settings.mcpServers")} />
       <SettingsSection testID="settings-mcp">
         {mcpLoading || mcpRowNames.length > 0 || !mcpError ? <SettingsGroup>
           {!hasServerList && mcpRowNames.length === 0 ? (

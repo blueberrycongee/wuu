@@ -1,6 +1,6 @@
 {
   "name": "@blueberrycongee/wuu-desktop",
-  "version": "2026.11.8",
+  "version": "2026.1109.0",
   "description": "Desktop app for the Wuu AI coding agent",
   "author": "Andy wu <lpageo@163.com>",
   "private": true,
@@ -57,6 +57,7 @@
     "test:e2e:concurrent-send": "npm run build:core && npm run build && electron scripts/concurrent-send-e2e.mjs",
     "test:e2e:permission-mode": "npm run build && electron scripts/permission-mode-e2e.cjs",
     "test:e2e:streaming": "npm run build && electron scripts/streaming-e2e.cjs",
+    "test:e2e:folded-stream": "npm run build && electron scripts/folded-stream-perf-e2e.cjs",
     "test:e2e:stream-settlement": "electron scripts/stream-settlement-layout-e2e.cjs",
     "test:e2e:stream-code-cursor": "electron scripts/stream-code-cursor-e2e.cjs",
     "test:e2e:image-layout": "npm run build && electron scripts/image-layout-e2e.cjs",

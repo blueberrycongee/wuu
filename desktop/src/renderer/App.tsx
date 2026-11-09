@@ -93,6 +93,7 @@ import { RibbonVisibilityToggle } from "./RibbonVisibilityToggle";
 import {
   pullRequestUnavailableReason
 } from "./RuntimeHelpers";
+import { submittedThreadRuntime } from "./SessionRuntimeState";
 import type { SettingsPage } from "./SettingsView";
 import { useSidebarDrawerState } from "./SidebarDrawerState";
 import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
@@ -200,6 +201,7 @@ export function App({ application, slots, shellPluginId }: {
   const conversationActions = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationActions);
   const submissionView = useSyncExternalStore(application.subscribe, () => application.getSnapshot().submission);
   const conversationWorkspace = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversationWorkspace);
+  const composerRuntime = useSyncExternalStore(application.subscribe, () => application.getSnapshot().composerRuntime);
   const primarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.primaryThreadId);
   const secondarySource = conversationWorkspace.threads.find(thread => thread.id === conversationWorkspace.secondaryThreadId);
   // These display helpers read frozen snapshots; mutations use application actions.
@@ -436,6 +438,9 @@ export function App({ application, slots, shellPluginId }: {
     rightPanelGlobalized,
     setRightPanelOpenWithMotion,
   });
+  // Provided above the whole shell; a new function per render makes React
+  // rescan every mounted turn for consumers on each stream frame.
+  const openArtifactPreview = useStableCallback(openWorkspaceArtifactTab);
   const workspaceToolsCoverConversation = rightPanelGlobalized && !workspaceConversationActive;
   const [environmentPanelOpen, setEnvironmentPanelOpen] = useState(false);
   const [environmentPanelDismissed, setEnvironmentPanelDismissed] =
@@ -685,6 +690,12 @@ export function App({ application, slots, shellPluginId }: {
   );
 
   const mascotProviderNames = useMemo(() => configuration?.providers?.map(provider => provider.name), [configuration?.providers]);
+  // On a draft tab the mascot previews the runtime the submitted thread will
+  // pin, so its hue and accessory stay put across the first send.
+  const mascotRuntime = useMemo(() => {
+    const owner = composerRuntime.owners.find(owner => owner.ownerTabId === composerRuntime.activeOwnerTabId);
+    return submittedThreadRuntime(owner?.selection, owner?.engines, configuration ?? {});
+  }, [composerRuntime, configuration]);
   const {
     conversationSearch,
     conversationSearchResults,
@@ -1002,12 +1013,14 @@ export function App({ application, slots, shellPluginId }: {
     !workspaceToolsCoverConversation &&
     !settingsOpen &&
     !showingPrimaryPluginView;
-  // How much canvas-placement skin artwork shows through the main pane.
-  // Non-canvas skins ignore this attribute entirely.
+  // How much canvas-placement skin artwork shows through the main pane. The
+  // conversation keeps the same veil from the empty home onward; the
+  // transparent tier is reserved for plugin views that declare it.
+  // Frame placements collapse the see-through tiers into one material.
   const paneCanvas: "opaque" | "translucent" | "transparent" = showingPrimaryPluginView
     ? (primaryPageView.canvas ?? "opaque")
     : conversationVisible
-      ? (emptyConversation ? "transparent" : "translucent")
+      ? "translucent"
       : "opaque";
 
   useEffect(() => {
@@ -1437,6 +1450,96 @@ export function App({ application, slots, shellPluginId }: {
     focusEnvironmentToggle: () =>
       environmentToggleRef.current?.focus({ preventScroll: true }),
   });
+  // Slot contexts and direct-child props keep stable identities across
+  // stream-frame publications so memoized surfaces can bail on render.
+  const conversationScrollHandler = useStableCallback(handleConversationScroll);
+  const splitResizeStart = useStableCallback(startSplitResize);
+  const splitSeparatorKey = useStableCallback(handleSplitSeparatorKey);
+  const splitPercentReset = useStableCallback(resetSplitPercent);
+  const sidebarToggle = useStableCallback(toggleSidebar);
+  const sidebarResizeStart = useStableCallback(startSidebarResize);
+  const sidebarResizerPointer = useStableCallback(trackSidebarResizerPointer);
+  const sidebarSeparatorKey = useStableCallback(handleSidebarSeparatorKey);
+  const sidebarDrawerClose = useStableCallback((event: React.PointerEvent<HTMLElement>) =>
+    scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent));
+  const environmentPanelMenuSet = useStableCallback((menu: EnvironmentPanelMenu) => {
+    if (menu === "branch") scheduleGitStatusRefresh(0);
+    setEnvironmentPanelMenu(menu);
+  });
+  const environmentPanelClose = useStableCallback(() => closeEnvironmentPanel({ dismissed: true }));
+  const reviewOpen = useStableCallback(() => {
+    openWorkspaceTool("review");
+    closeEnvironmentPanel({ dismissed: true });
+  });
+  const commitDialogOpen = useStableCallback(() => openEnvironmentDialog("commit"));
+  const pullRequestDialogOpen = useStableCallback(() => openEnvironmentDialog("pull-request"));
+
+  const navigationSlotContext = useMemo(() => ({
+    workspaceSelectionEnabled,
+    sidebarCollapsed,
+    sidebarVisible: !sidebarDrawerMode || sidebarDrawerVisible,
+    onPointerEnter: openSidebarDrawer,
+    onPointerLeave: sidebarDrawerClose,
+    onRibbonPresenceChange: setNativeRibbonPresent,
+  }), [workspaceSelectionEnabled, sidebarCollapsed, sidebarDrawerMode, sidebarDrawerVisible, openSidebarDrawer, sidebarDrawerClose]);
+  const conversationSlotContext = useMemo(() => ({
+    scrollRef: conversationScrollRef,
+    contentRef: scrollContentRef,
+    splitPaneRefs,
+    composerFocusTargets,
+    visible: conversationVisible,
+    restoring: conversationRestoring,
+    onScroll: conversationScrollHandler,
+    onStreamFrame: scheduleStreamScroll,
+    onCollapseComplete: handleTurnCollapseComplete,
+    splitLeftPercent,
+    onSplitResizeStart: splitResizeStart,
+    onSplitSeparatorKey: splitSeparatorKey,
+    onSplitSeparatorDoubleClick: splitPercentReset,
+  }), [conversationScrollRef, scrollContentRef, splitPaneRefs, composerFocusTargets, conversationVisible, conversationRestoring, conversationScrollHandler, scheduleStreamScroll, handleTurnCollapseComplete, splitLeftPercent, splitResizeStart, splitSeparatorKey, splitPercentReset]);
+  const composerDockSlotContext = useMemo(() => ({
+    variant: "dock", pane: "primary",
+    registerFocusTarget: composerFocusTargets.primary,
+    visible: !settingsOpen,
+    containerRef: dockComposerRef,
+    runtimeControlsTarget,
+  }), [composerFocusTargets, settingsOpen, dockComposerRef, runtimeControlsTarget]);
+  const previewSlotContext = useMemo(() => ({ layout: {
+    registerFocusTarget: registerPreviewFocusTarget,
+    covered: settingsOpen || showingWebsite || userSpaceViewActive,
+    toolsVisible: workspaceControlsVisible,
+    runtimeControlsRef: setRuntimeControlsTarget,
+    open: rightPanelOpen,
+    present: rightPanelOpen || rightPanelAnimating,
+    prewarm: initialized,
+    onDirtyFileTabsChange: rememberWorkspaceDirtyFiles,
+    globalized: rightPanelGlobalized,
+    conversationTabVisible: rightPanelGlobalized,
+    sheetPhase: workspaceSheetPhase,
+    onToggleGlobalize: toggleWorkspacePanelGlobalized,
+    canExitGlobalized: !rightPanelAutoGlobalized || workspaceRightPanelDockableWithoutSidebar,
+    browserOverlaySuppressed,
+    documentComposer: documentComposerVisible,
+    pane: conversationWorkspace.activePane,
+  } }), [registerPreviewFocusTarget, settingsOpen, showingWebsite, userSpaceViewActive, workspaceControlsVisible, rightPanelOpen, rightPanelAnimating, initialized, rememberWorkspaceDirtyFiles, rightPanelGlobalized, workspaceSheetPhase, toggleWorkspacePanelGlobalized, rightPanelAutoGlobalized, workspaceRightPanelDockableWithoutSidebar, browserOverlaySuppressed, documentComposerVisible, conversationWorkspace.activePane]);
+  const settingsSlotContext = useMemo(() => ({ layout: {
+    browserSettingsAllowed: !poppedOutMode,
+    embedded: embeddedSettings,
+    embeddedDrawerPhase: sidebarDrawerPhase,
+    onSidebarPointerEnter: openSidebarDrawer,
+    onSidebarPointerLeave: sidebarDrawerClose,
+    sidebarWidth,
+    resizingSidebar,
+    shellRef: settingsShellRef,
+    sidebarCollapsed,
+    sidebarAnimating,
+    onToggleSidebar: sidebarToggle,
+    onSidebarResizeStart: sidebarResizeStart,
+    onSidebarResizerPointer: sidebarResizerPointer,
+    onSidebarSeparatorKey: sidebarSeparatorKey,
+  } satisfies ApplicationSettingsLayoutV1 }), [poppedOutMode, embeddedSettings, sidebarDrawerPhase, openSidebarDrawer, sidebarDrawerClose, sidebarWidth, resizingSidebar, settingsShellRef, sidebarCollapsed, sidebarAnimating, sidebarToggle, sidebarResizeStart, sidebarResizerPointer, sidebarSeparatorKey]);
+  const layersSlotContext = useMemo(() => ({ settingsOnly: settingsOpen }), [settingsOpen]);
+
   const activateThread = useCallback((threadId: string): Promise<void> => presentNavigation(() => application.invoke("thread.activate", { threadId })).catch(reportPresentedNavigationError), [application, presentNavigation]);
 
   useConversationSearchNavigation({
@@ -1584,9 +1687,9 @@ export function App({ application, slots, shellPluginId }: {
 
   return (
     <WuuMascotRuntimeProvider
-      provider={activeThread?.model_provider || configuration?.provider}
+      provider={activeThread?.model_provider || mascotRuntime.provider || configuration?.provider}
       providers={mascotProviderNames}
-      model={activeThread?.model || configuration?.model}
+      model={activeThread?.model ?? mascotRuntime.model ?? configuration?.model}
     >
       <SideConversationAvailableContext.Provider value={sideConversationAvailable}>
       <FileSelectionProvider application={application} source={{ ownerTabId: application.getSnapshot().drafts.split
@@ -1594,7 +1697,7 @@ export function App({ application, slots, shellPluginId }: {
         : application.getSnapshot().drafts.activeTabId }}>
       <ImagePreviewProvider>
       <WorkspaceBrowserOpenContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceBrowserURL}>
-      <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openWorkspaceArtifactTab}>
+      <ArtifactPreviewContext.Provider value={poppedOutMode || isTouchWebShell() ? undefined : openArtifactPreview}>
       <ArtifactInteractionProvider application={application}>
         <div
           ref={appShellRef}
@@ -1642,14 +1745,7 @@ export function App({ application, slots, shellPluginId }: {
             </div>
           ) : null}
           <HoverRevealScopeContext.Provider value={sidebarHoverScope}>
-            <slots.Slot name={`${shellPluginId}/application.navigation`} context={{
-              workspaceSelectionEnabled,
-              sidebarCollapsed,
-              sidebarVisible: !sidebarDrawerMode || sidebarDrawerVisible,
-              onPointerEnter: openSidebarDrawer,
-              onPointerLeave: (event: React.PointerEvent<HTMLElement>) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent),
-              onRibbonPresenceChange: setNativeRibbonPresent,
-            }} />
+            <slots.Slot name={`${shellPluginId}/application.navigation`} context={navigationSlotContext} />
           </HoverRevealScopeContext.Provider>
 
           {/* Hidden rather than unmounted: inserting or removing a shell child
@@ -1758,19 +1854,11 @@ export function App({ application, slots, shellPluginId }: {
           environmentPanelMenu={environmentPanelMenu}
           environmentGitBusy={environmentGitBusy}
           pullRequestDisabledReason={pullRequestDisabledReason}
-          onSetEnvironmentPanelMenu={(menu) => {
-            if (menu === "branch") scheduleGitStatusRefresh(0);
-            setEnvironmentPanelMenu(menu);
-          }}
-          onCloseEnvironmentPanel={() =>
-            closeEnvironmentPanel({ dismissed: true })
-          }
-          onOpenReview={() => {
-            openWorkspaceTool("review");
-            closeEnvironmentPanel({ dismissed: true });
-          }}
-          onOpenCommit={() => openEnvironmentDialog("commit")}
-          onOpenPullRequest={() => openEnvironmentDialog("pull-request")}
+          onSetEnvironmentPanelMenu={environmentPanelMenuSet}
+          onCloseEnvironmentPanel={environmentPanelClose}
+          onOpenReview={reviewOpen}
+          onOpenCommit={commitDialogOpen}
+          onOpenPullRequest={pullRequestDialogOpen}
           rightPanelFilePath={rightPanelFilePath}
           onCloseFilePreview={handleCloseFilePreview}
         />
@@ -1795,23 +1883,9 @@ export function App({ application, slots, shellPluginId }: {
             </SettingsControlsProvider>
           </div>
         ) : null}
-        <slots.Slot name={`${shellPluginId}/application.conversation`} context={{
-          scrollRef: conversationScrollRef,
-          contentRef: scrollContentRef,
-          splitPaneRefs,
-          composerFocusTargets,
-          visible: conversationVisible,
-          restoring: conversationRestoring,
-          onScroll: handleConversationScroll,
-          onStreamFrame: scheduleStreamScroll,
-          onCollapseComplete: handleTurnCollapseComplete,
-          splitLeftPercent,
-          onSplitResizeStart: startSplitResize,
-          onSplitSeparatorKey: handleSplitSeparatorKey,
-          onSplitSeparatorDoubleClick: resetSplitPercent,
-        }} />
+        <slots.Slot name={`${shellPluginId}/application.conversation`} context={conversationSlotContext} />
 
-        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", registerFocusTarget: composerFocusTargets.primary, visible: !settingsOpen, containerRef: dockComposerRef, runtimeControlsTarget }} /> : null}
+        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={composerDockSlotContext} /> : null}
 
         <ConversationStatusCluster
           application={application}
@@ -1849,24 +1923,7 @@ export function App({ application, slots, shellPluginId }: {
         />
       ) : null}
       {poppedOutMode ? null : (
-        <slots.Slot name={`${shellPluginId}/application.preview`} context={{ layout: {
-          registerFocusTarget: registerPreviewFocusTarget,
-          covered: settingsOpen || showingWebsite || userSpaceViewActive,
-          toolsVisible: workspaceControlsVisible,
-          runtimeControlsRef: setRuntimeControlsTarget,
-          open: rightPanelOpen,
-          present: rightPanelOpen || rightPanelAnimating,
-          prewarm: initialized,
-          onDirtyFileTabsChange: rememberWorkspaceDirtyFiles,
-          globalized: rightPanelGlobalized,
-          conversationTabVisible: rightPanelGlobalized,
-          sheetPhase: workspaceSheetPhase,
-          onToggleGlobalize: toggleWorkspacePanelGlobalized,
-          canExitGlobalized: !rightPanelAutoGlobalized || workspaceRightPanelDockableWithoutSidebar,
-          browserOverlaySuppressed,
-          documentComposer: documentComposerVisible,
-          pane: conversationWorkspace.activePane,
-        } }} />
+        <slots.Slot name={`${shellPluginId}/application.preview`} context={previewSlotContext} />
       )}
       </>
 
@@ -1888,28 +1945,13 @@ export function App({ application, slots, shellPluginId }: {
           onCreate={input => application.environment.createPullRequest(input)}
         />
       ) : null}
-      <slots.Slot name={`${shellPluginId}/application.settings`} context={{ layout: {
-        browserSettingsAllowed: !poppedOutMode,
-        embedded: embeddedSettings,
-        embeddedDrawerPhase: sidebarDrawerPhase,
-        onSidebarPointerEnter: openSidebarDrawer,
-        onSidebarPointerLeave: event => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent),
-        sidebarWidth,
-        resizingSidebar,
-        shellRef: settingsShellRef,
-        sidebarCollapsed,
-        sidebarAnimating,
-        onToggleSidebar: toggleSidebar,
-        onSidebarResizeStart: startSidebarResize,
-        onSidebarResizerPointer: trackSidebarResizerPointer,
-        onSidebarSeparatorKey: handleSidebarSeparatorKey,
-      } satisfies ApplicationSettingsLayoutV1 }} />
+      <slots.Slot name={`${shellPluginId}/application.settings`} context={settingsSlotContext} />
       {!poppedOutMode ? (
         <section className="web-workspace-stage" hidden={!showingWebsite || settingsOpen} aria-label={activeWebsite?.title}>
           <WebWorkspacePanel site={ribbonBrowser.state ? { id: WEB_WORKSPACE_RIBBON_ID, url: "about:blank", title: activeWebsite?.title } : undefined} active={showingWebsite && !settingsOpen && !accountOpen} tabs resizeWithWindow />
         </section>
       ) : null}
-      <slots.Slot name={`${shellPluginId}/workbench.layers`} context={{ settingsOnly: settingsOpen }} />
+      <slots.Slot name={`${shellPluginId}/workbench.layers`} context={layersSlotContext} />
       {contextCapsule}
       {/* macOS applies app regions in DOM order, so a later drag titlebar would
         * cover this no-drag control. Keep it as the shell's last child. */}

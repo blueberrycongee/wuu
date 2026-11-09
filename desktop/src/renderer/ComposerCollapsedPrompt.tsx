@@ -1,5 +1,5 @@
 import type { ComposerInputHandle } from "./ComposerInput";
-import { FileText } from "./WuuIcons";
+import { X } from "./WuuIcons";
 import {
   type ClipboardEvent as ReactClipboardEvent,
   useEffect,
@@ -9,7 +9,6 @@ import {
   useSyncExternalStore
 } from "react";
 import { clipboardAttachmentFiles } from "./ComposerMessages";
-import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import type { MessageContentPart } from "../shared/protocol";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { buildFileSelectionPart } from "./FileSelectionParts";
@@ -132,14 +131,13 @@ export function collapsedComposerPromptTitle(text: string): string {
   return name.endsWith(".txt") ? name : `${name}.txt`;
 }
 
-function lineCount(text: string): number {
-  const trimmed = text.trimEnd();
-  let lines = 1;
-  for (let index = 0; index < trimmed.length; index += 1) {
-    const code = trimmed.charCodeAt(index);
-    if (code === 10 || (code === 13 && trimmed.charCodeAt(index + 1) !== 10)) lines += 1;
-  }
-  return lines;
+// The thumbnail previews the paste's opening lines, like a document page —
+// enough to recognize "what did I paste" without dressing the first line up
+// as a filename. The card stays square like image and video thumbnails.
+const COLLAPSED_PROMPT_PREVIEW_LINE_COUNT = 8;
+
+export function collapsedComposerPromptPreviewLines(text: string): string[] {
+  return text.trimStart().split(/\r\n|\r|\n/).slice(0, COLLAPSED_PROMPT_PREVIEW_LINE_COUNT);
 }
 
 /**
@@ -154,22 +152,30 @@ export function CollapsedComposerPromptCard({
   onReveal: () => void;
   onRemove: () => void;
 }): JSX.Element {
-  const { t, formatNumber } = useI18n();
+  const { t } = useI18n();
   const title = collapsedComposerPromptTitle(text);
-  const lines = useMemo(() => lineCount(text), [text]);
+  const previewLines = useMemo(() => collapsedComposerPromptPreviewLines(text), [text]);
   return (
-    <ComposerDocumentCard
-      className="composer-collapsed-prompt-card"
-      icon={<FileText className="icon" />}
-      title={<strong className="composer-document-card-title">{title}</strong>}
-      meta={lines > 1
-        ? t("composer.pastedTextLines", { count: formatNumber(lines) })
-        : t("composer.pastedTextCharacters", { count: formatNumber(text.length) })}
-      openLabel={t("composer.showCollapsedTextNamed", { title })}
-      onOpen={onReveal}
-      removeLabel={t("composer.removeCollapsedText")}
-      onRemove={onRemove}
-    />
+    <div className="composer-attachment-card composer-media-card composer-collapsed-prompt-card">
+      <button
+        className="composer-collapsed-prompt-main"
+        type="button"
+        aria-label={t("composer.showCollapsedTextNamed", { title })}
+        onClick={onReveal}
+      >
+        <span className="composer-collapsed-prompt-preview" aria-hidden="true">
+          {previewLines.map((line, index) => <span key={index}>{line || " "}</span>)}
+        </span>
+      </button>
+      <button
+        className="composer-attachment-card-remove"
+        type="button"
+        aria-label={t("composer.removeCollapsedText")}
+        onClick={onRemove}
+      >
+        <X aria-hidden="true" />
+      </button>
+    </div>
   );
 }
 

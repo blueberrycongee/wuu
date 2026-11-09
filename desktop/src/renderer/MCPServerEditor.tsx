@@ -74,7 +74,6 @@ export function MCPServerEditor({ name: originalName, definition, onClose, onSav
       ]} /></div>
       {mode === "import" ? <>
         <label className="mcp-field">{t("mcp.importJSON")}<textarea className="settings-input mcp-code-input" value={importJSON} onChange={event => setImportJSON(event.target.value)} rows={10} spellCheck={false} placeholder={'{ "mcpServers": { "docs": { "url": "https://example.com/mcp" } } }'} /></label>
-        <p className="settings-section-description">{t("mcp.importHint")}</p>
       </> : <>
         <label className="mcp-field">{t("mcp.name")}<input className="settings-input" value={name} onChange={event => setName(event.target.value)} required disabled={!!definition || saving} autoComplete="off" /></label>
         {mode === "url" ? <label className="mcp-field">{t("mcp.remoteURL")}<input className="settings-input" type="url" value={url} onChange={event => setURL(event.target.value)} required placeholder="https://example.com/mcp" autoComplete="off" /></label>

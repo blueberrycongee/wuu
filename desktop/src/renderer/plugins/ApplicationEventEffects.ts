@@ -1,5 +1,5 @@
 import type { ApplicationEnvironmentV1 } from "../../../../packages/plugin-sdk/src/ui-environment";
-import type { ServerEvent, StreamNotice, TurnEventNotification, UserQuestionRequest } from "../../shared/protocol";
+import type { ServerEvent, StreamNotice, SystemNotificationParams, TurnEventNotification, UserQuestionRequest } from "../../shared/protocol";
 import { activeThreadIDForState, serverEventShouldRefreshGit, serverEventTargetsActiveContext, type AppState } from "../AppState";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
 import { externalAgentActivityStore } from "../ExternalAgentActivityStore";
@@ -14,7 +14,7 @@ export class ApplicationEventEffects {
   constructor(private readonly host: {
     getState: () => AppState;
     getEnvironment: () => Pick<ApplicationEnvironmentV1, "scheduleStatusRefresh">;
-    notify?: (input: { title: string; body: string }) => Promise<unknown>;
+    notify?: (input: SystemNotificationParams) => Promise<unknown>;
     reportError: (error: unknown) => void;
   }) {}
 
@@ -34,13 +34,13 @@ export class ApplicationEventEffects {
         const request = (event.message.params as { request?: UserQuestionRequest } | undefined)?.request;
         const thread = request && state.threads.find(item => item.id === request.thread_id);
         if (request && !thread?.parent_id && !thread?.ephemeral) {
-          void this.notify({ title: translateCurrent("notification.questionTitle"), body: translateCurrent("notification.questionBody") });
+          void this.notify({ title: translateCurrent("notification.questionTitle"), body: translateCurrent("notification.questionBody"), category: "question" });
         }
       } else if (event.message.method === "turn/completed") {
         const params = event.message.params as { thread_id?: string } | undefined;
         const thread = state.threads.find(item => item.id === params?.thread_id);
         if (thread && !thread.parent_id && !thread.ephemeral) {
-          void this.notify({ title: translateCurrent("notification.turnCompletedTitle"), body: translateCurrent("notification.turnCompletedBody") });
+          void this.notify({ title: translateCurrent("notification.turnCompletedTitle"), body: translateCurrent("notification.turnCompletedBody"), category: "turn_completed" });
         }
       }
     }
@@ -75,7 +75,7 @@ export class ApplicationEventEffects {
     showToast({ message: engineNoticeText(notice), dedupeKey: `engine-notice:${key}` });
   }
 
-  private async notify(input: { title: string; body: string }): Promise<void> {
+  private async notify(input: SystemNotificationParams): Promise<void> {
     try {
       await this.host.notify?.(input);
     } catch (error) {

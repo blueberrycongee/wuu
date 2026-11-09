@@ -9,6 +9,7 @@ import type {
 } from "../shared/protocol";
 import { useI18n } from "./i18n";
 import { SelectMenu } from "./SelectMenu";
+import { showActionErrorToast } from "./Toast";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { Switch } from "./ui/Switch";
 import { readRetainedSettingsData, writeRetainedSettingsData } from "./SettingsPageData";
@@ -128,21 +129,19 @@ function PluginConflictControl({ conflict }: { conflict: PluginContributionConfl
   const controls = scope.controls;
   const { t } = useI18n();
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
   const candidates = Array.from(new Map(
     conflict.candidates.map((candidate) => [candidate.pluginId, candidate] as const),
   ).values());
 
-  useEffect(() => { setSaving(false); setError(""); }, [scope]);
+  useEffect(() => { setSaving(false); }, [scope]);
 
   async function choose(pluginId: string): Promise<void> {
     if (!scope.active || saving || pluginId === conflict.winnerPluginId) return;
     setSaving(true);
-    setError("");
     try {
       await controls.chooseConflict(conflict.key, pluginId);
     } catch (saveError) {
-      if (scope.active && !isPluginLifecycleCancellation(saveError)) setError(errorMessage(saveError, t("skills.pluginConflictSaveFailed")));
+      if (scope.active) showActionErrorToast(saveError, t("skills.pluginConflictSaveFailed"));
     } finally {
       if (scope.active) setSaving(false);
     }
@@ -174,7 +173,6 @@ function PluginConflictControl({ conflict }: { conflict: PluginContributionConfl
           onChange={(pluginId) => void choose(pluginId)}
         />
       </div>
-      {error ? <div className="settings-row-error settings-error" role="alert">{error}</div> : null}
     </div>
   );
 }

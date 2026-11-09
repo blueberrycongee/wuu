@@ -178,3 +178,57 @@ func TestLoadFrom_MigratesUnderWuuHomeOverride(t *testing.T) {
 		t.Fatalf("expected migrated config under WUU_HOME: %v", err)
 	}
 }
+
+// Saved account-connector preferences become ordinary global servers. Only an
+// explicit enable is carried over; user definitions and other fields win.
+func TestMigrateAccountConnectorServers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	source := `{"default_provider":"main","composition":{"version":3,"patches":[{"modules":{"account-connectors":true,"other":true}}],"modules":["account-connectors","base"]},"mcp_servers":{
+		"plugin.account-connectors.notion":{"enabled":true,"tool_timeout_ms":90000},
+		"plugin.account-connectors.linear":{"enabled":false},
+		"plugin.account-connectors.sentry":{"enabled":true},
+		"plugin.account-connectors.unknown":{"enabled":true},
+		"plugin.other.docs":{"enabled":true},
+		"sentry":{"command":"local-sentry"}}}`
+	if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	migrateAccountConnectorServers(path)
+	cfg, _, err := readConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultProvider != "main" {
+		t.Fatal("unrelated settings changed")
+	}
+	if patch := cfg.Composition.Patches[0].Modules; len(patch) != 1 || !patch["other"] || cfg.Composition.Modules == nil || len(*cfg.Composition.Modules) != 1 || (*cfg.Composition.Modules)[0] != "base" {
+		t.Fatalf("removed package still selected: %+v", cfg.Composition)
+	}
+	if got := cfg.MCPServers["notion"]; got.URL != "https://mcp.notion.com/mcp" || got.Transport != "http" || got.ToolTimeoutMS != 90000 || got.Enabled != nil {
+		t.Fatalf("notion = %+v", got)
+	}
+	if got := cfg.MCPServers["sentry"]; got.Command != "local-sentry" || got.URL != "" {
+		t.Fatalf("user definition overwritten: %+v", got)
+	}
+	for _, name := range []string{"linear", "unknown", "plugin.account-connectors.notion", "plugin.account-connectors.linear", "plugin.account-connectors.sentry", "plugin.account-connectors.unknown"} {
+		if _, exists := cfg.MCPServers[name]; exists {
+			t.Fatalf("%s should not remain: %+v", name, cfg.MCPServers)
+		}
+	}
+	if _, exists := cfg.MCPServers["plugin.other.docs"]; !exists {
+		t.Fatal("unrelated plugin preference removed")
+	}
+	before, _ := os.ReadFile(path)
+	migrateAccountConnectorServers(path)
+	if after, _ := os.ReadFile(path); string(after) != string(before) {
+		t.Fatal("migration is not idempotent")
+	}
+	invalid := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(invalid, []byte(`{"mcp_servers":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	migrateAccountConnectorServers(invalid)
+	if data, _ := os.ReadFile(invalid); string(data) != `{"mcp_servers":` {
+		t.Fatal("unreadable config was rewritten")
+	}
+}

@@ -195,7 +195,7 @@ Presenter 接收 `contractVersion`、目标、可选匹配键、公开 `snapshot
 
 ## View、卡片和状态
 
-View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、`inspector`、`settings` 或 `overlay`。`registerViewPlacement` 请求初始位置；manifest 的 `contributes.navigation`、`workspaceTools`、`settingsPages` 为用户提供宿主管理的打开入口，每个入口都必须引用该插件注册的视图。
+View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、`inspector`、`settings` 或 `overlay`。`registerViewPlacement` 请求初始位置；manifest 的 `contributes.navigation`、`workspaceTools`、`settingsPages` 为用户提供宿主管理的打开入口，每个入口都必须引用该插件注册的视图。`contributes.navigation` 添加侧边栏目的地并打开到 `primary` 区域；`contributes.workspaceTools` 把视图列进右侧面板的工具选择器，作为可拖宽的 auxiliary 标签页与浏览器、文件、diff 等工具并排 —— 这是设计、视频、音频编辑器等精细工作台应使用的车道。
 
 `persistence=durable` 用于恢复视图布局状态，不会持久化任意组件状态。卸载后仍需保留的数据应放入命名空间存储。View props 包含访问存储、设置、命令和视图导航的 host API。
 

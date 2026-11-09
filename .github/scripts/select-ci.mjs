@@ -7,11 +7,21 @@ let fullDesktop = false;
 let relatedEligible = true;
 let desktopArchitecture = false;
 const relatedSources = [];
-const selected = { go: false, desktop: false, clients: false, native: false };
+const selected = { go: false, race: false, desktop: false, clients: false, native: false };
 const all = () => {
   Object.keys(selected).forEach(key => { selected[key] = true; });
   fullDesktop = true;
   relatedEligible = false;
+};
+// Desktop suites that execute the embedded Go core: session journeys run the
+// session-switch binary and fixture, corpus replays through it, and the shell
+// quota journey builds it with an overlay. Renderer-only lanes (unit, layout,
+// selection) never start a Go process, so binary-only diffs select this set.
+const GO_BINARY_DESKTOP_SUITES = ['corpus', 'session', 'session-lifecycle', 'shell'];
+const selectGoBinary = () => {
+  selected.go = selected.desktop = selected.clients = selected.native = true;
+  desktopArchitecture = true;
+  GO_BINARY_DESKTOP_SUITES.forEach(suite => desktopSuites.add(suite));
 };
 const event = process.env.GITHUB_EVENT_NAME;
 if (!['pull_request', 'push', 'workflow_dispatch'].includes(event)) {
@@ -69,6 +79,33 @@ if (event === 'workflow_dispatch' || unusablePushBase || /^0+$/.test(process.env
       selected.desktop = selected.clients = selected.native = true;
     } else if (/^clients\/(mobile|mobile-app)\//.test(path)) {
       selected.clients = true;
+    } else if (/^clients\/mobile-web\//.test(path)) {
+      // The phone web bundle ships as a packaged desktop resource and imports
+      // renderer sources, but its own code never reaches the Go binary, the
+      // desktop build, or provider-boundary journeys.
+      selected.clients = selected.native = true;
+    } else if (/^(?:clients\/core|packages\/protocol)\//.test(path)) {
+      // The remote client and the wire protocol compile into desktop main and
+      // renderer, and boundary journeys pack their public TypeScript sources.
+      fullDesktop = true;
+      selected.desktop = selected.clients = selected.native = true;
+      desktopArchitecture = true;
+    } else if (/^internal\/plugin\/bundled\//.test(path)) {
+      // Generated plugin artifacts are embedded in the binary but contain no
+      // Go code, so race lanes cannot observe anything Go validation misses.
+      selectGoBinary();
+    } else if (/\.go$/.test(path) || /^go\.(?:mod|sum)$/.test(path) || /^(?:internal|cmd)\//.test(path)) {
+      // Go code reaches the binary, the packaged core, and boundary journeys;
+      // only it can introduce the data races the race lanes guard.
+      selectGoBinary();
+      selected.race = true;
+    } else if (/^(?:plugins|packages\/plugin-sdk|prompts)\//.test(path)
+        || (/^scripts\//.test(path) && !/\.go$/.test(path))) {
+      // Plugin sources, SDK TypeScript, prompts and CI-side scripts validate
+      // through the embedded binary they generate. Embedded data cannot create
+      // a Go data race, and every race-guarded test also runs without -race in
+      // Go validation, so the race lanes are redundant for these inputs.
+      selectGoBinary();
     } else {
       // Shared protocol, core, Go, plugins, dependency locks, build scripts and
       // unknown/new roots retain full coverage until their consumers are known.
@@ -85,6 +122,7 @@ const desktopSelection = selected.desktop
   ? suites.filter(suite => fullDesktop || desktopSuites.has(suite)) : [];
 const outputs = {
   go: selected.go,
+  race: selected.race,
   architecture: selected.go || desktopArchitecture,
   desktop: selected.desktop,
   clients: selected.clients,

@@ -46,6 +46,30 @@ func TestConnectRollsBackWhenInitializedNotificationFails(t *testing.T) {
 	}
 }
 
+func TestConnectCapturesServerInstructions(t *testing.T) {
+	transport := &handshakeTransport{scriptedTransport: newScriptedTransport(), instructions: "server-authored usage contract"}
+	client, err := Connect(context.Background(), "docs", transport)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+	if got := client.Instructions(); got != "server-authored usage contract" {
+		t.Fatalf("Instructions() = %q, want handshake text", got)
+	}
+}
+
+func TestConnectCapturesDiscoverInstructions(t *testing.T) {
+	transport := &handshakeTransport{scriptedTransport: newScriptedTransport(), discoverInstructions: "discovered usage contract"}
+	client, err := Connect(context.Background(), "docs", transport)
+	if err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	defer client.Close()
+	if got := client.Instructions(); got != "discovered usage contract" {
+		t.Fatalf("Instructions() = %q, want server/discover text", got)
+	}
+}
+
 func TestCallSendsCancelledNotificationOnContextCancel(t *testing.T) {
 	transport := newScriptedTransport()
 	f := newInFlight()
@@ -247,7 +271,9 @@ type scriptedTransport struct {
 
 type handshakeTransport struct {
 	*scriptedTransport
-	initializedErr error
+	initializedErr       error
+	instructions         string
+	discoverInstructions string
 }
 
 func newHandshakeTransport(initializedErr error) *handshakeTransport {
@@ -259,14 +285,19 @@ func (t *handshakeTransport) Send(ctx context.Context, req Request) error {
 		t.mu.Lock()
 		t.sent = append(t.sent, req)
 		t.mu.Unlock()
-		t.inbox <- Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32601, Message: "method not found"}}
+		if t.discoverInstructions == "" {
+			t.inbox <- Response{JSONRPC: "2.0", ID: req.ID, Error: &RPCError{Code: -32601, Message: "method not found"}}
+			return nil
+		}
+		result, _ := json.Marshal(DiscoverResult{SupportedVersions: []string{PreferredProtocolVersion}, Instructions: t.discoverInstructions})
+		t.inbox <- Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 		return nil
 	}
 	if req.Method == "initialize" {
 		t.mu.Lock()
 		t.sent = append(t.sent, req)
 		t.mu.Unlock()
-		result, _ := json.Marshal(InitializeResult{ProtocolVersion: PreferredLegacyProtocolVersion})
+		result, _ := json.Marshal(InitializeResult{ProtocolVersion: PreferredLegacyProtocolVersion, Instructions: t.instructions})
 		t.inbox <- Response{JSONRPC: "2.0", ID: req.ID, Result: result}
 		return nil
 	}

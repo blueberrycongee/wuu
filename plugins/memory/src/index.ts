@@ -25,16 +25,16 @@ function object(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-export function string(value: unknown): string {
+function string(value: unknown): string {
   if (value == null) return "";
   if (typeof value !== "string") throw new Error("invalid tool arguments: expected a string");
   return value;
 }
 
-export function objectSchema(properties: Record<string, unknown> = {}, ...required: string[]): JSONSchemaObject {
+function objectSchema(properties: Record<string, unknown> = {}, ...required: string[]): JSONSchemaObject {
   return { type: "object", properties, required, additionalProperties: false };
 }
-export function stringField(description: string): Record<string, unknown> { return { type: "string", description }; }
+function stringField(description: string): Record<string, unknown> { return { type: "string", description }; }
 function jsonResult(value: unknown): ToolExecuteResult {
   return { result: { content: [{ type: "text", text: JSON.stringify(value) }] } };
 }

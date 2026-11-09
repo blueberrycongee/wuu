@@ -170,11 +170,13 @@ func (s *Server) findSessionInput(th *threadState, clientID string) (sessionInpu
 	}
 	th.mu.Unlock()
 
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	for _, entry := range s.pendingQueuedTurns[th.ID] {
-		if entry.msg.ClientID == clientID {
-			return sessionInputResult{State: "queued", SessionID: th.ID, QueueID: entry.id}, true
+	if queue := s.peekTurnQueue(th.ID); queue != nil {
+		queue.mu.Lock()
+		defer queue.mu.Unlock()
+		for _, entry := range queue.pending {
+			if entry.msg.ClientID == clientID {
+				return sessionInputResult{State: "queued", SessionID: th.ID, QueueID: entry.id}, true
+			}
 		}
 	}
 	return sessionInputResult{}, false

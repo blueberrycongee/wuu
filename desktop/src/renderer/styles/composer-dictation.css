@@ -27,14 +27,13 @@
   animation: dictation-appear 180ms ease-out;
 }
 .composer-dictation-status { display: flex; align-items: center; gap: var(--space-2); white-space: nowrap; color: var(--ink-muted); font-size: var(--font-body); }
-.composer-dictation-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink); animation: dictation-pulse 1.4s ease-in-out infinite; flex-shrink: 0; }
+.composer-dictation-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ink); flex-shrink: 0; }
 .composer-dictation-timer { font-variant-numeric: tabular-nums; }
 .composer-dictation-wave { display: flex; align-items: center; justify-content: space-between; gap: 3px; flex: 1; height: 30px; min-width: 16px; overflow: hidden; mask-image: linear-gradient(90deg, transparent, #000 12%, #000 92%, transparent); }
 .composer-dictation-wave > span { height: 26px; min-width: 2px; flex: 1; max-width: 4px; border-radius: 3px; background: var(--ink); transition: transform 80ms linear; }
 .composer-dictation-stop svg { width: 14px; height: 14px; fill: currentColor; }
 .composer-dictation-stop svg.is-spinning { fill: none; }
-.composer-dictation-recording[data-phase="finalizing"] .composer-dictation-dot { animation: none; opacity: .4; }
+.composer-dictation-recording[data-phase="finalizing"] .composer-dictation-dot { opacity: .4; }
 @keyframes dictation-appear { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes dictation-pulse { 50% { opacity: .3; } }
-@media (prefers-reduced-motion: reduce) { .composer-dictation-recording, .composer-dictation-dot { animation: none; } .composer-dictation-wave > span { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .composer-dictation-recording { animation: none; } .composer-dictation-wave > span { transition: none; } }
 @container (max-width: 440px) { .composer-dictation-status-label { display: none; } .composer-dictation-recording { gap: var(--space-2); } }

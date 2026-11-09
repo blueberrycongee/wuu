@@ -428,26 +428,34 @@ async function main() {
   await closeSettings();
 
   // Your own picture through the real Appearance file input: Deep Field
-  // paints it as cells; Remove returns to the bundled artwork.
+  // paints it as cells; Remove returns to the bundled artwork. The
+  // transparent fixture view is the only destination that paints the raw
+  // artwork, so artwork comparisons sample through it; the conversation
+  // veils the same artwork in every state.
   phase = 'deep-field-user-image';
   const picture = path.join(run, 'picture.png');
   fs.writeFileSync(picture, fixturePicture());
   const userImage = report.deepField.userImage = {};
   const paneFreeSample = { x: 1350, y: 860 };
+  const rawArtworkSample = async () => {
+    await openPluginView(ribbons.fixtureClear);
+    await settle();
+    return artworkSample(paneFreeSample.x, paneFreeSample.y);
+  };
   await goHome();
   await settle();
-  userImage.bundled = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+  userImage.bundled = await rawArtworkSample();
   await openSettingsAppearance();
   await chooseBackgroundFile(picture);
   await until(backgroundSaved, 'picture saved', 30000);
   userImage.selectedAfterImport = await evaluate(() => window.localStorage.getItem('wuu.shell-skin'));
   await closeSettings();
-  await goHome();
   await until(async () => {
-    const sample = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+    const sample = await rawArtworkSample();
     return sample && sample[2] > sample[0] + 30;
   }, 'picture painted in the canvas', 30000);
-  userImage.picture = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+  userImage.picture = await rawArtworkSample();
+  await goHome();
   await captureDF('deep-field-example-dark-user-image');
   await evaluate(t => window.wuu.setThemePreference(t), 'light');
   await until(() => evaluate(() => document.documentElement.dataset.theme === 'light'), 'light theme');
@@ -462,20 +470,13 @@ async function main() {
   await sleep(500);
   await capture('tide-dark-home-with-picture');
   await selectSkin(deepField('deep-field'));
-  await until(async () => {
-    const sample = await artworkSample(paneFreeSample.x, paneFreeSample.y);
-    return sample && dist(sample, userImage.picture) < 12;
-  }, 'picture returns with deep-field', 30000);
+  await until(async () => dist(await rawArtworkSample(), userImage.picture) < 12, 'picture returns with deep-field', 30000);
   await openSettingsAppearance();
   assert.ok(await backgroundRemove(), 'background remove button');
   await until(async () => !(await evaluate(() => Boolean(document.querySelector('.background-file-picker')?.parentElement?.querySelector('button.settings-button')))), 'picture removed');
   await closeSettings();
-  await goHome();
-  await until(async () => {
-    const sample = await artworkSample(paneFreeSample.x, paneFreeSample.y);
-    return sample && dist(sample, userImage.bundled) < 12;
-  }, 'bundled artwork restored', 30000);
-  userImage.restored = await artworkSample(paneFreeSample.x, paneFreeSample.y);
+  await until(async () => dist(await rawArtworkSample(), userImage.bundled) < 12, 'bundled artwork restored', 30000);
+  userImage.restored = await rawArtworkSample();
   // Disable through the real CLI path: the default frame returns.
   const disabled = spawnSync(core, ['plugin', 'disable', 'deep-field'], { env: process.env, encoding: 'utf8', timeout: 30000 });
   fs.appendFileSync(path.join(output, 'plugin-install.log'), `disable deep-field\n${disabled.stdout}\n${disabled.stderr}\n`);
@@ -493,25 +494,39 @@ async function main() {
 
   phase = 'checks';
   const pane = { x: 720, y: 500 };
-  // Far edge of the pane: artwork shows there in every transparent state and
-  // no card, bubble or composer reaches it.
+  // Far edge of the pane: artwork shows there wherever the pane is not
+  // opaque, and no card, bubble or composer reaches it.
   const paneFree = { x: 1350, y: 860 };
   const sidebar = { x: 180, y: 600 };
   const ribbon = { x: 26, y: 300 };
 
-  // Canvas skin: sidebar, ribbon and opaque destinations stay on their
-  // surfaces; only the pane interior shows artwork.
-  check('deepfield home shows artwork', dist(at('deepfield-dark-home', pane.x, pane.y), at('deepfield-dark-home', sidebar.x, sidebar.y)) > 24,
-    `pane ${at('deepfield-dark-home', pane.x, pane.y)} vs sidebar ${at('deepfield-dark-home', sidebar.x, sidebar.y)}`);
+  // Canvas skin: the conversation keeps the same translucent veil from the
+  // empty home onward; only the plugin view that declares transparent paints
+  // the raw artwork, and opaque destinations keep their surfaces.
+  const canvasOf = file => report.captures.find(c => c.file === `${file}.png`)?.canvas;
+  check('destinations resolve to their declared canvas tier',
+    canvasOf('deepfield-dark-home') === 'translucent'
+      && canvasOf('deepfield-dark-conversation') === 'translucent'
+      && canvasOf('deepfield-dark-automation') === 'opaque'
+      && canvasOf('deepfield-dark-fixture-opaque') === 'opaque'
+      && canvasOf('deepfield-dark-fixture-clear') === 'transparent'
+      && canvasOf('deepfield-dark-settings-appearance') === 'opaque',
+    JSON.stringify(['home', 'conversation', 'automation', 'fixture-opaque', 'fixture-clear', 'settings-appearance']
+      .map(destination => [destination, canvasOf(`deepfield-dark-${destination}`)])));
+  check('empty home paints like the translucent conversation',
+    dist(at('deepfield-dark-home', paneFree.x, paneFree.y), at('deepfield-dark-conversation', paneFree.x, paneFree.y)) < 6
+      && dist(at('deepfield-dark-home', paneFree.x, paneFree.y), at('deepfield-dark-automation', paneFree.x, paneFree.y)) > 8,
+    `home ${at('deepfield-dark-home', paneFree.x, paneFree.y)} vs conversation ${at('deepfield-dark-conversation', paneFree.x, paneFree.y)} vs automation ${at('deepfield-dark-automation', paneFree.x, paneFree.y)}`);
   check('automation stays opaque', dist(at('deepfield-dark-automation', pane.x, pane.y), at('deepfield-dark-automation', sidebar.x, sidebar.y)) < 12,
     `pane ${at('deepfield-dark-automation', pane.x, pane.y)} vs sidebar ${at('deepfield-dark-automation', sidebar.x, sidebar.y)}`);
   check('default-canvas fixture view stays opaque', dist(at('deepfield-dark-fixture-opaque', pane.x, pane.y), at('deepfield-dark-automation', pane.x, pane.y)) < 4,
     `${at('deepfield-dark-fixture-opaque', pane.x, pane.y)} vs ${at('deepfield-dark-automation', pane.x, pane.y)}`);
-  check('transparent fixture view paints like the pane (single painter)',
-    dist(at('deepfield-dark-fixture-clear', paneFree.x, paneFree.y), at('deepfield-dark-home', paneFree.x, paneFree.y)) < 6,
-    `${at('deepfield-dark-fixture-clear', paneFree.x, paneFree.y)} vs ${at('deepfield-dark-home', paneFree.x, paneFree.y)}`);
+  check('transparent fixture view exposes the artwork directly (single painter)',
+    dist(at('deepfield-dark-fixture-clear', paneFree.x, paneFree.y), at('deepfield-dark-home', paneFree.x, paneFree.y)) > 8
+      && dist(at('deepfield-dark-fixture-clear', paneFree.x, paneFree.y), at('deepfield-dark-automation', paneFree.x, paneFree.y)) > 8,
+    `${at('deepfield-dark-fixture-clear', paneFree.x, paneFree.y)} vs veiled ${at('deepfield-dark-home', paneFree.x, paneFree.y)}`);
   check('conversation veil sits between transparent and opaque',
-    dist(at('deepfield-dark-conversation', paneFree.x, paneFree.y), at('deepfield-dark-home', paneFree.x, paneFree.y)) > 8
+    dist(at('deepfield-dark-conversation', paneFree.x, paneFree.y), at('deepfield-dark-fixture-clear', paneFree.x, paneFree.y)) > 8
       && dist(at('deepfield-dark-conversation', paneFree.x, paneFree.y), at('deepfield-dark-automation', paneFree.x, paneFree.y)) > 8,
     `${at('deepfield-dark-conversation', paneFree.x, paneFree.y)}`);
   check('ribbon stays on the skin frame color',
@@ -519,7 +534,7 @@ async function main() {
     `${at('deepfield-dark-home', ribbon.x, ribbon.y)} vs ${at('deepfield-dark-automation', ribbon.x, ribbon.y)}`);
 
   // Dot screen: neighboring pixels at pitch spacing alternate between the gap
-  // color and the artwork inside the transparent pane.
+  // color and the artwork inside the veiled pane.
   // One of the rows within a pitch crosses the cells rather than a gap row.
   const alternations = [500, 501, 502, 503].map(y => {
     const row = pixels.get('deepfield-dark-home').row(390, y, 32);
@@ -538,11 +553,11 @@ async function main() {
       && dist(at('default-dark-home-restored', sidebar.x, sidebar.y), at('default-dark-home', sidebar.x, sidebar.y)) < 1,
     `${at('default-dark-home-restored', paneFree.x, paneFree.y)} vs ${at('default-dark-home', paneFree.x, paneFree.y)}`);
 
-  // Frame skins keep painting like before: identical pane/sidebar samples
-  // between default and tide content regions (artwork stays in the frame).
+  // Frame skins keep artwork out of the content canvas: identical pane
+  // samples between default and tide. The sidebar intentionally shows each
+  // skin's own material, so it is not a cross-skin comparison.
   check('frame skin keeps content regions identical',
-    dist(at('tide-dark-automation', pane.x, pane.y), at('default-dark-automation', pane.x, pane.y)) < 1
-      && dist(at('tide-dark-automation', sidebar.x, sidebar.y), at('default-dark-automation', sidebar.x, sidebar.y)) < 1,
+    dist(at('tide-dark-automation', pane.x, pane.y), at('default-dark-automation', pane.x, pane.y)) < 1,
     `tide ${at('tide-dark-automation', pane.x, pane.y)} vs default ${at('default-dark-automation', pane.x, pane.y)}`);
 
   const deepFieldReport = report.deepField, pictureReport = deepFieldReport.userImage, rowReport = deepFieldReport.pictureRow;

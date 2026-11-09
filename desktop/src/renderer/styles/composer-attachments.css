@@ -128,7 +128,7 @@
 }
 
 /* The card clips its media, so rings sit inside the edge. */
-html[data-focus-modality="keyboard"] .composer-media-card :is(.composer-media-card-image, .composer-video-card-main):focus-visible {
+html[data-focus-modality="keyboard"] .composer-media-card :is(.composer-media-card-image, .composer-video-card-main, .composer-collapsed-prompt-main):focus-visible {
   outline-offset: -2px;
   border-radius: inherit;
 }
@@ -200,7 +200,38 @@ html[data-focus-modality="keyboard"] .composer-media-card :is(.composer-media-ca
   height: var(--icon-size-xs);
 }
 
-/* Document cards: folded pastes and PDFs. */
+/* Folded pastes are document thumbnails: the card is the page. */
+.composer-collapsed-prompt-card {
+  background: var(--paper);
+}
+
+.composer-collapsed-prompt-main {
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: calc(var(--space-1) + 2px) calc(var(--space-1) + 2px) 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--ink-tertiary);
+  cursor: pointer;
+  font-size: calc(var(--font-ui) * 0.47);
+  line-height: 1.65;
+  text-align: left;
+  transition: color var(--motion-fast) var(--ease-out);
+}
+
+.composer-collapsed-prompt-main:hover {
+  color: var(--ink);
+}
+
+.composer-collapsed-prompt-preview span {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+/* Document cards: PDFs, quotes, preparing/failed uploads. */
 .composer-document-card {
   --composer-attachment-remove-size: var(--control-size-dismiss);
   display: inline-flex;
@@ -300,7 +331,8 @@ button.composer-document-card-main:hover {
   }
 
   .composer-attachment-card-remove,
-  button.composer-document-card-main {
+  button.composer-document-card-main,
+  .composer-collapsed-prompt-main {
     transition: none;
   }
 }

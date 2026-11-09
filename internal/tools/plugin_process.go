@@ -52,8 +52,6 @@ func (t *Toolkit) StartPluginProcess(ctx context.Context, command, cwd string) (
 	return scope.Start(ctx, command, cwd)
 }
 
-func (t *Toolkit) RedactProcessOutput(value string) string { return RedactToolOutput(value) }
-
 // StartEnvironmentProcess applies the same worker-side permission gate as
 // ExecuteEnvironmentResult. The authenticated transport has already applied
 // the host's selected policy; worker paths and sandbox are still enforced here.

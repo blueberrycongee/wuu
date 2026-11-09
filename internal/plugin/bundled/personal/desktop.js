@@ -1597,6 +1597,23 @@ var personalDesktop = (() => {
     const recoveryPrefix = `wuu.personal.draftRecovery.v1:${route.userSpaceId}:`;
     const recoveryAge = 24 * 60 * 60 * 1e3, recoveryLimit = 64 * 1024;
     const conversations = /* @__PURE__ */ new Map(), draftListeners = /* @__PURE__ */ new Set();
+    const streamBurstMethod = /item\/(?:agentMessage|toolCall)\/(?:delta|replace)$/;
+    let streamFlushTimer;
+    const flushDrafts = () => draftListeners.forEach((listener) => listener());
+    const notifyDrafts = (streamed) => {
+      if (!streamed) {
+        if (streamFlushTimer !== void 0) {
+          clearTimeout(streamFlushTimer);
+          streamFlushTimer = void 0;
+        }
+        flushDrafts();
+        return;
+      }
+      streamFlushTimer ??= setTimeout(() => {
+        streamFlushTimer = void 0;
+        flushDrafts();
+      }, 100);
+    };
     const genuiDrafts = /* @__PURE__ */ new Map(), rendererDrafts = /* @__PURE__ */ new Map();
     const recoveryKey = (id) => recoveryPrefix + encodeURIComponent(id);
     const readRecovery = (raw) => {
@@ -1705,7 +1722,7 @@ var personalDesktop = (() => {
           tool.status = "interrupted";
           stream2.verifiedToolTurns.add(tool.turn_id);
         }
-        draftListeners.forEach((listener) => listener());
+        notifyDrafts(false);
         return;
       }
       if (event.kind !== "notification") return;
@@ -1801,7 +1818,7 @@ var personalDesktop = (() => {
         if (method === "item/completed") stream.completedItems.add(itemKey);
         stream.items.set(itemKey, { id: itemID, turn_id: params.turn_id, seq: item.seq, relation: item.relation, source_id: item.source_id, order: previous?.order ?? ++timelineOrder, content: method === "item/started" && previous ? previous.content : item.text ?? previous?.content ?? "", streaming: method !== "item/completed" });
       }
-      draftListeners.forEach((listener) => listener());
+      notifyDrafts(streamBurstMethod.test(event.message.method));
     });
     function PersonalPreferences({ locale, host }) {
       const t = (key) => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
@@ -1835,7 +1852,7 @@ var personalDesktop = (() => {
         } catch (cause) {
           setSelectedModel(modelKey(model));
           const message = String(cause);
-          setModelError(message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message);
+          api.showNotice({ message: message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message, tone: "error", key: `personal-model-${Date.now()}` });
         } finally {
           setModelSaving(false);
         }

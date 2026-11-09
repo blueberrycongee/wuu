@@ -42,7 +42,8 @@ jobs:
           tag="$REQUESTED_TAG"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then tag="$GITHUB_REF_NAME"; fi
           if [[ -n "$tag" ]]; then
-            [[ "$tag" =~ ^v[0-9]{4}\.[0-9]{1,2}\.[0-9]{1,2}(-rc\.[0-9]+)?$ ]] || exit 1
+            # Product versions are UTC CalVer: YYYY.MMDD.P for new releases, YYYY.M.D for older ones.
+            [[ "$tag" =~ ^v[0-9]{4}\.([0-9]{3,4}\.[0-9]|[0-9]{1,2}\.[0-9]{1,2})(-rc\.[0-9]+)?$ ]] || exit 1
             source=$(git rev-parse "refs/tags/$tag^{commit}")
             git merge-base --is-ancestor "$source" origin/main
           else

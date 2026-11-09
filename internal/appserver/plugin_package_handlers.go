@@ -9,7 +9,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -202,11 +201,6 @@ func (s *Server) handlePluginImageRead(req Request, skinImage bool) error {
 		for _, entries := range [][]pluginpkg.ViewEntryContributionSpec{fresh.Navigation, fresh.WorkspaceTools, fresh.SettingsPages} {
 			for _, entry := range entries {
 				check(entry.Icon)
-			}
-		}
-		for _, server := range fresh.MCPServers {
-			if server.Connector != nil && slices.Contains(server.Connector.Icon.AssetPaths(), params.Path) {
-				declared = true
 			}
 		}
 	}

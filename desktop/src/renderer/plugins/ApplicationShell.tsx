@@ -31,7 +31,10 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
   function Slot({ name, context = {}, fallback, layout: Layout }: UISlotProps): React.ReactNode {
     const registered = React.useSyncExternalStore(listener => host.subscribe(listener), host.getUICompositionSnapshot, host.getUICompositionSnapshot);
     const ancestors = React.useContext(SlotAncestors);
-    if (ancestors.includes(name)) throw new Error(`UI slot cycle: ${[...ancestors, name].join(" → ")}`);
+    // A new array on every render would make React rescan the slot's whole
+    // subtree for context consumers on each stream frame.
+    const scope = React.useMemo(() => [...ancestors, name], [ancestors, name]);
+    if (ancestors.includes(name)) throw new Error(`UI slot cycle: ${scope.join(" → ")}`);
     // A contribution cannot recreate a slot after its defining provider unloads.
     const slot = host.getUISlot(name);
     const bindings = React.useContext(SurfaceBindings);
@@ -73,7 +76,7 @@ export function createUIComposition(host: PluginHost): UICompositionV1 {
         <Contribution host={host} contribution={contribution} slots={composition} context={context}>{composed}</Contribution>
       </ShellBoundary>;
     }
-    return <SlotAncestors.Provider value={[...ancestors, name]}>{composed}</SlotAncestors.Provider>;
+    return <SlotAncestors.Provider value={scope}>{composed}</SlotAncestors.Provider>;
   }
   const composition: UICompositionV1 = Object.freeze({ Slot: React.memo(Slot) });
   return composition;
@@ -97,7 +100,7 @@ function UnavailableSurface({ host, binding, service }: { host: PluginHost; bind
   return <SurfaceUnavailable />;
 }
 
-function Contribution({ host, contribution, slots, context, children }: {
+const Contribution = React.memo(function Contribution({ host, contribution, slots, context, children }: {
   host: PluginHost; contribution: RegisteredUIContribution; slots: UICompositionV1; context: Readonly<Record<string, unknown>>; children?: React.ReactNode;
 }): React.ReactNode {
   React.useEffect(() => host.retainGeneration(contribution.pluginId, contribution.generation), [host, contribution]);
@@ -107,7 +110,7 @@ function Contribution({ host, contribution, slots, context, children }: {
   const application = host.getPresentationApplication(contribution.pluginId, contribution.generation, contribution.application);
   const View = contribution.render;
   return <View application={application} slots={slots} context={context} locale={locale} translate={translate}>{children}</View>;
-}
+});
 
 class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string; fullShell?: boolean; recover?: boolean; hideError?: boolean; fallback?: React.ReactNode }, { error?: Error }> {
   private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
@@ -170,7 +173,6 @@ function ShellInteractionBoundary({ host, shell, children }: { host: PluginHost;
 
 /** The selected graph binding is authoritative; absence never chooses a local default. */
 export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pending = false, pendingFallback }: { host: PluginHost; binding: ApplicationShellBinding | null; surfaceBindings?: Readonly<Record<string, ApplicationShellBinding>>; pending?: boolean; pendingFallback?: React.ReactNode }): React.ReactNode {
-  const { t } = useI18n();
   const surfaceKey = JSON.stringify(surfaceBindings);
   const stableBindings = React.useMemo(() => surfaceBindings, [surfaceKey]);
   const shells = React.useSyncExternalStore(listener => host.subscribe(listener), host.getApplicationShells, host.getApplicationShells);
@@ -178,7 +180,7 @@ export function ApplicationShellOutlet({ host, binding, surfaceBindings = {}, pe
     && shell.generation === binding.generation && shell.id === binding.id);
   if (!selected && pending && pendingFallback) return pendingFallback;
   if (!selected) return <RuntimeLoading fullscreen recovering={pending} onRetry={() => window.location.reload()}
-    status={pending ? "connecting" : t("plugins.applicationUnavailable")} />;
+    status={pending ? "connecting" : "failed"} />;
   // Activation identity changes even when a reload reuses the same code fingerprint.
   const activation = host.getGenerationActivation(selected.pluginId, selected.generation);
   return <ShellBoundary fullShell key={activationKey(activation!)} identity={`${selected.pluginId}/${selected.id}`} host={host} pluginId={selected.pluginId} generation={selected.generation}>

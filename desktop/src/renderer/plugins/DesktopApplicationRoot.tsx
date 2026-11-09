@@ -62,7 +62,7 @@ export function DesktopApplicationRoot(): JSX.Element {
   const stablePresentation = Boolean(binding && desktopPluginHost.canRebindPresentation(binding.pluginId, binding.generation));
   const retainPresentation = stablePresentation && pending && !failure && hasShownApplication.current;
   const wrap = (content: React.ReactNode) => <ConversationPresentationBoundary binding={desktopPluginHost.applicationProviders.getBindingRevision()} retiring={!active && pending && !retainPresentation} failed={Boolean(failure && !pending)} getRetirement={stablePresentation ? undefined : desktopPluginHost.applicationProviders.getRetirement} subscribeRetirementPreparation={stablePresentation ? undefined : desktopPluginHost.applicationProviders.subscribeRetirementPreparation}>{content}</ConversationPresentationBoundary>;
-  const recovery = <RuntimeLoading fullscreen recovering={pending} status={pending ? "connecting" : failureMessage}
+  const recovery = <RuntimeLoading fullscreen recovering={pending} status={pending ? "connecting" : "failed"}
     onRetry={window.wuu?.openRecovery ? undefined : () => window.location.reload()}
     onRecovery={!window.wuu?.openRecovery ? undefined : () => {
       void window.wuu.openRecovery!().catch(() => showErrorToast(t("loading.recoveryUnavailable"), "", "application-recovery"));

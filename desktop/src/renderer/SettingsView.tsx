@@ -22,11 +22,15 @@ import {
   Settings,
   Smartphone,
   Trash2,
-  X,
   type IconComponent
 } from "./WuuIcons";
+import { DESKTOP_AUTO_ARCHIVE_DAYS, normalizeProxyURL } from "../shared/protocol";
 import type {
   CodexPetSettingsUpdate,
+  DesktopAutoArchiveDays,
+  DesktopFolder,
+  DesktopPreferences,
+  DesktopUpdateState,
   EngineListResult,
   ExtensionInventoryRecord,
   EngineUpdateParams,
@@ -52,6 +56,7 @@ import { SidePanelToggleIcon } from "./SidePanelToggleIcon";
 import { useSidebarDrawerState, type SidebarDrawerPhase } from "./SidebarDrawerState";
 import { sidebarDrawerExitMs, sidebarMotionMs } from "./AppLayoutState";
 import { SelectMenu } from "./SelectMenu";
+import { providerModelVariantOptions, variantLabel } from "./RuntimeHelpers";
 import type {
   CodexPetsSnapshot,
   DesktopBuildInfo,
@@ -80,6 +85,8 @@ import { SettingsEmptyState, SettingsGroup, SettingsPageHeader, SettingsSection,
 import { pluginSourceLabel } from "./SkillsCatalog";
 import { AppContextSettingsSection } from "./AppContextSettingsSection";
 import { Switch } from "./ui/Switch";
+import { SegmentedControl } from "./ui/SegmentedControl";
+import { updateDesktopPreferences, useDesktopPreferences } from "./desktopPreferences";
 import { BrowserSettingsSection } from "./BrowserSettingsSection";
 import { ENABLE_APP_SNAPSHOTS } from "../shared/featureFlags";
 import { SystemPermissionsSection } from "./SystemPermissions";
@@ -269,7 +276,7 @@ function SettingsViewContent({
   resizingSidebar: boolean;
   shellRef?: RefObject<HTMLDivElement | null>;
   onBack: () => void;
-  onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string) => Promise<void>;
+  onSave: (provider: string, model: string, effort?: string, connection?: RuntimeConnectionUpdate, variant?: string, permissionMode?: string) => Promise<void>;
   onRemoveProvider: (provider: string, options?: { fallbackProvider?: string; fallbackModel?: string }) => Promise<void>;
   onRefreshModelCatalog: () => Promise<void>;
   onProvidersChanged?: (providers: NonNullable<InitializeResult["providers"]>) => void;
@@ -480,6 +487,10 @@ function SettingsViewContent({
   }${sidebarAnimating && !floating ? " sidebar-animating" : ""}`;
 
   const pluginPageTitle = activePluginSettingsRecord?.name ?? activeCustomPluginPage?.title;
+  const crumbTitle = pluginPageTitle
+    ?? (activePage in NATIVE_PAGE_SEARCH_KEY
+      ? settingsPageTitle(activePage as NativeSettingsPage, t)
+      : "");
   const nativeGroups = nativeSettingsGroups(browserSettingsAllowed, controls.capabilities);
   const nativePages = nativeGroups.flatMap((group) => group.pages);
   const normalizedNavQuery = navQuery.trim().toLocaleLowerCase();
@@ -756,21 +767,18 @@ function SettingsViewContent({
       )}
       <main className="settings-main" data-wuu-component="settings-content">
         <SettingsTitlebarSlot.Provider value={titlebarSlot}>
-          {floating ? (
-            <button
-              type="button"
-              className="icon-button settings-close-button"
-              aria-label={t("settings.close")}
-              onClick={onBack}
-            >
-              <X className="icon-lg" />
-            </button>
-          ) : <div className="settings-titlebar">
+          {floating ? null : <div className="settings-titlebar">
             {isTouchWebShell() && !floating && <button type="button" className="settings-phone-back" aria-label={t("common.back")} onClick={onBack}><ArrowLeft size={22} /></button>}
             {/* Match the main shell's docked/collapsed slots. Keep the collapsed
              * toggle inside the drag strip so native hit testing honors no-drag. */}
             {railCollapsed && !embedded && !floating ? sidebarToggle : null}
-            <div ref={setTitlebarSlot} className="settings-titlebar-slot" />
+            <div ref={setTitlebarSlot} className="settings-titlebar-slot">
+              <span className="settings-crumb" aria-hidden="true">
+                <span className="settings-crumb-root">{t("settings.navigation")}</span>
+                <span className="settings-crumb-sep">/</span>
+                <span className="settings-crumb-page">{crumbTitle}</span>
+              </span>
+            </div>
           </div>}
           <div ref={settingsScrollRef} className="settings-scroll">
             <div
@@ -815,6 +823,7 @@ function SettingsViewContent({
                 <SettingsGeneralPage
                   initialized={initialized}
                   onGeneralSave={onGeneralSave}
+                  onSave={onSave}
                   desktopBuild={desktopBuild}
                   permissionStateCache={permissionStateCache}
                   copyState={copyState}
@@ -910,6 +919,7 @@ function SettingsNavItem({
 function SettingsGeneralPage({
   initialized,
   onGeneralSave,
+  onSave,
   permissionStateCache,
   desktopBuild,
   copyState,
@@ -918,6 +928,7 @@ function SettingsGeneralPage({
   initialized: InitializeResult | undefined;
   permissionStateCache: RefObject<SystemPermissionsState | undefined>;
   onGeneralSave: (settings: RuntimeGeneralSettingsUpdate) => Promise<void>;
+  onSave: Parameters<typeof SettingsViewContent>[0]["onSave"];
   desktopBuild: DesktopBuildInfo | undefined;
   copyState: CopyState;
   onCopyVersion: () => Promise<void>;
@@ -974,8 +985,10 @@ function SettingsGeneralPage({
         </SettingsGroup>
       </SettingsSection>
 
+      <DesktopPreferencesSections />
       {ENABLE_APP_SNAPSHOTS && <AppContextSettingsSection />}
       <SystemPermissionsSection stateCache={permissionStateCache} />
+      <NewThreadDefaultsSection initialized={initialized} onSave={onSave} />
 
       <SettingsSection title={t("settings.sectionGit")} testID="settings-git">
         <SettingsGroup>
@@ -992,6 +1005,241 @@ function SettingsGeneralPage({
               onClick={() => void toggleGitAttribution()}
               label={gitAttributionEnabled ? t("settings.disableGitAttribution") : t("settings.enableGitAttribution")}
             />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+    </>
+  );
+}
+
+const PERMISSION_MODE_OPTIONS = [
+  { value: "standard", label: "runtime.permission.standard", hint: "runtime.permission.standardHint" },
+  { value: "read_only", label: "runtime.permission.readOnly", hint: "runtime.permission.readOnlyHint" },
+  { value: "unconfined", label: "runtime.permission.unconfined", hint: "runtime.permission.unconfinedHint" },
+] as const;
+
+function NewThreadDefaultsSection({ initialized, onSave }: {
+  initialized: InitializeResult | undefined;
+  onSave: Parameters<typeof SettingsViewContent>[0]["onSave"];
+}): JSX.Element {
+  const { t } = useI18n();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const providerName = initialized?.provider ?? "";
+  const model = initialized?.model ?? "";
+  const provider = initialized?.providers?.find((row) => row.name === providerName);
+  const effortOptions = providerModelVariantOptions(provider, model, "");
+  const effort = initialized?.variant ?? initialized?.effort ?? "";
+  const permissionMode = initialized?.permissions?.mode || "standard";
+  const disabled = !providerName || !model || busy;
+
+  async function save(change: { permissionMode?: string; variant?: string }): Promise<void> {
+    setBusy(true);
+    setError("");
+    try {
+      await onSave(providerName, model, undefined, undefined, change.variant, change.permissionMode);
+    } catch (err) {
+      setError(toastErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <SettingsSection title={t("settings.sectionNewThreads")} testID="settings-new-threads">
+      <SettingsGroup>
+        <SettingsRow title={t("settings.defaultPermissionMode")} hint={t("settings.newThreadDefaultsHint")} hideDescriptionWhenNarrow error={error}>
+          <SelectMenu
+            triggerClassName="settings-select-trigger"
+            ariaLabel={t("settings.defaultPermissionMode")}
+            dataTestid="settings-default-permission-mode"
+            value={permissionMode}
+            disabled={disabled}
+            align="right"
+            onChange={(next) => void save({ permissionMode: next })}
+            options={PERMISSION_MODE_OPTIONS.map((option) => ({ value: option.value, label: t(option.label), hint: t(option.hint) }))}
+          />
+        </SettingsRow>
+        {effortOptions.length > 1 && (
+          <SettingsRow title={t("settings.defaultReasoningEffort")}>
+            <SelectMenu
+              triggerClassName="settings-select-trigger"
+              ariaLabel={t("settings.defaultReasoningEffort")}
+              dataTestid="settings-default-reasoning-effort"
+              value={effortOptions.includes(effort) ? effort : ""}
+              disabled={disabled}
+              align="right"
+              onChange={(next) => void save({ variant: next })}
+              options={effortOptions.map((option) => ({ value: option, label: variantLabel(option) }))}
+            />
+          </SettingsRow>
+        )}
+      </SettingsGroup>
+    </SettingsSection>
+  );
+}
+
+function DesktopPreferencesSections(): JSX.Element | null {
+  const { t } = useI18n();
+  const preferences = useDesktopPreferences();
+  const [updateState, setUpdateState] = useState<DesktopUpdateState>({ kind: "unsupported" });
+  const [checking, setChecking] = useState(false);
+  const [errors, setErrors] = useState<Partial<Record<keyof DesktopPreferences | "update" | DesktopFolder, string>>>({});
+  const [proxyDraft, setProxyDraft] = useState<string>();
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+
+  useEffect(() => {
+    const api = window.wuu;
+    if (!api?.getDesktopUpdateState) return;
+    let active = true;
+    const unsubscribe = api.onDesktopUpdateChanged?.(next => { if (active) setUpdateState(next); });
+    void api.getDesktopUpdateState().then(next => { if (active) setUpdateState(next); }, () => {});
+    return () => { active = false; unsubscribe?.(); };
+  }, []);
+
+  if (!preferences) return null;
+
+  async function save<K extends keyof DesktopPreferences>(key: K, value: DesktopPreferences[K]): Promise<void> {
+    setErrors(current => ({ ...current, [key]: "" }));
+    try {
+      await updateDesktopPreferences({ [key]: value });
+    } catch (error) {
+      setErrors(current => ({ ...current, [key]: toastErrorMessage(error, t("settings.saveFailed")) }));
+    }
+  }
+
+  async function checkForUpdates(): Promise<void> {
+    setChecking(true);
+    setErrors(current => ({ ...current, update: "" }));
+    try {
+      await window.wuu.checkDesktopUpdate?.();
+    } catch (error) {
+      setErrors(current => ({ ...current, update: toastErrorMessage(error, t("desktopUpdate.failed")) }));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function openFolder(folder: DesktopFolder): Promise<void> {
+    setErrors(current => ({ ...current, [folder]: "" }));
+    try {
+      await window.wuu.openDesktopFolder?.(folder);
+    } catch (error) {
+      setErrors(current => ({ ...current, [folder]: toastErrorMessage(error, t("settings.openFolderFailed")) }));
+    }
+  }
+
+  const toggle = (key: "notify_turn_completed" | "notify_questions" | "notification_sound" | "auto_check_updates" | "open_at_login", title: string, hint?: string) => (
+    <SettingsRow title={title} hint={hint} hideDescriptionWhenNarrow error={errors[key]}>
+      <Switch
+        checked={preferences[key] === true}
+        data-testid={`settings-${key.replaceAll("_", "-")}`}
+        onClick={() => void save(key, !preferences[key])}
+        label={title}
+      />
+    </SettingsRow>
+  );
+  function commitProxyURL(): void {
+    if (proxyDraft === undefined || !preferences) return;
+    const url = proxyDraft.trim() ? normalizeProxyURL(proxyDraft) : "";
+    if (url === undefined) {
+      setErrors(current => ({ ...current, proxy_url: t("settings.proxyURLInvalid") }));
+      return;
+    }
+    setProxyDraft(undefined);
+    if (url !== preferences.proxy_url) void save("proxy_url", url);
+  }
+
+  const updatesSupported = updateState.kind !== "unsupported";
+  const updateBusy = checking || updateState.kind === "checking" || updateState.kind === "prompting";
+
+  return (
+    <>
+      <SettingsSection title={t("settings.sectionNotifications")} testID="settings-notifications">
+        <SettingsGroup>
+          {toggle("notify_turn_completed", t("settings.notifyTurnCompleted"), t("settings.notificationsBackgroundHint"))}
+          {toggle("notify_questions", t("settings.notifyQuestions"))}
+          {toggle("notification_sound", t("settings.notificationSound"))}
+        </SettingsGroup>
+      </SettingsSection>
+      <SettingsSection title={t("settings.sectionInput")} testID="settings-input">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.sendShortcut")} hint={t("settings.sendShortcutHint")} hideDescriptionWhenNarrow error={errors.send_shortcut}>
+            <SegmentedControl
+              label={t("settings.sendShortcut")}
+              value={preferences.send_shortcut}
+              options={[
+                { value: "enter", label: "Enter", testID: "settings-send-shortcut-enter" },
+                { value: "mod_enter", label: isMac ? "⌘ Enter" : "Ctrl+Enter", testID: "settings-send-shortcut-mod-enter" },
+              ]}
+              onChange={value => void save("send_shortcut", value)}
+            />
+          </SettingsRow>
+        </SettingsGroup>
+      </SettingsSection>
+      {(preferences.open_at_login !== undefined || updatesSupported) && (
+        <SettingsSection title={t("settings.sectionStartupUpdates")} testID="settings-startup-updates">
+          <SettingsGroup>
+            {preferences.open_at_login !== undefined && toggle("open_at_login", t("settings.openAtLogin"))}
+            {updatesSupported && toggle("auto_check_updates", t("settings.autoCheckUpdates"))}
+            {updatesSupported && (
+              <SettingsRow title={t("settings.checkUpdates")} error={errors.update}>
+                <button className="settings-button" type="button" data-testid="settings-check-updates"
+                  disabled={updateBusy} onClick={() => void checkForUpdates()}>
+                  {updateBusy ? t("settings.checkingUpdates") : t("settings.checkNow")}
+                </button>
+              </SettingsRow>
+            )}
+          </SettingsGroup>
+        </SettingsSection>
+      )}
+      <SettingsSection title={t("settings.sectionNetwork")} testID="settings-network">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.proxy")} hint={t("settings.proxyRestartHint")} hideDescriptionWhenNarrow error={errors.proxy_mode}>
+            <SegmentedControl
+              label={t("settings.proxy")}
+              value={preferences.proxy_mode}
+              options={[
+                { value: "system", label: t("settings.proxySystem"), testID: "settings-proxy-system" },
+                { value: "manual", label: t("settings.proxyManual"), testID: "settings-proxy-manual" },
+                { value: "none", label: t("settings.proxyNone"), testID: "settings-proxy-none" },
+              ]}
+              onChange={value => void save("proxy_mode", value)}
+            />
+          </SettingsRow>
+          {preferences.proxy_mode === "manual" && (
+            <SettingsRow title={t("settings.proxyURL")} error={errors.proxy_url}>
+              <input
+                className="settings-input"
+                data-testid="settings-proxy-url"
+                aria-label={t("settings.proxyURL")}
+                value={proxyDraft ?? preferences.proxy_url}
+                placeholder="http://127.0.0.1:7890"
+                spellCheck={false}
+                autoComplete="off"
+                onChange={event => {
+                  const value = event.currentTarget.value;
+                  setProxyDraft(value);
+                  setErrors(current => ({ ...current, proxy_url: "" }));
+                }}
+                onBlur={commitProxyURL}
+                onKeyDown={event => { if (event.key === "Enter") commitProxyURL(); }}
+              />
+            </SettingsRow>
+          )}
+        </SettingsGroup>
+      </SettingsSection>
+      <SettingsSection title={t("settings.sectionData")} testID="settings-data">
+        <SettingsGroup>
+          <SettingsRow title={t("settings.dataFolder")} hint={t("settings.dataFolderHint")} hideDescriptionWhenNarrow error={errors.data}>
+            <button className="settings-button" type="button" data-testid="settings-open-data-folder" onClick={() => void openFolder("data")}>
+              {t("settings.openFolder")}
+            </button>
+          </SettingsRow>
+          <SettingsRow title={t("settings.logFolder")} error={errors.logs}>
+            <button className="settings-button" type="button" data-testid="settings-open-log-folder" onClick={() => void openFolder("logs")}>
+              {t("settings.openFolder")}
+            </button>
           </SettingsRow>
         </SettingsGroup>
       </SettingsSection>
@@ -1146,6 +1394,8 @@ function SettingsArchivePage({
   onRetry?: () => void;
 }): JSX.Element {
   const { t, formatDate } = useI18n();
+  const preferences = useDesktopPreferences();
+  const [autoArchiveError, setAutoArchiveError] = useState("");
   const [query, setQuery] = useState("");
   const [workspaceFilter, setWorkspaceFilter] = useState("all");
   const sortedThreads = useMemo(
@@ -1189,6 +1439,15 @@ function SettingsArchivePage({
   }, [workspaceFilter, query, sortedThreads, t]);
   const noMatches = sortedThreads.length > 0 && groups.length === 0;
 
+  async function saveAutoArchive(days: DesktopAutoArchiveDays): Promise<void> {
+    setAutoArchiveError("");
+    try {
+      await updateDesktopPreferences({ auto_archive_days: days });
+    } catch (error) {
+      setAutoArchiveError(toastErrorMessage(error, t("settings.saveFailed")));
+    }
+  }
+
   return (
     <>
       <SettingsPageHeader
@@ -1209,6 +1468,24 @@ function SettingsArchivePage({
         ) : undefined}
       />
       <div className="settings-archive-page" aria-busy={deletion?.pending || undefined}>
+        {preferences ? (
+          <SettingsGroup>
+            <SettingsRow title={t("settings.autoArchive")} hint={t("settings.autoArchiveHint")} hideDescriptionWhenNarrow error={autoArchiveError}>
+              <SelectMenu
+                triggerClassName="settings-select-trigger"
+                ariaLabel={t("settings.autoArchive")}
+                dataTestid="settings-auto-archive"
+                value={String(preferences.auto_archive_days)}
+                align="right"
+                onChange={(next) => void saveAutoArchive(Number(next) as DesktopAutoArchiveDays)}
+                options={DESKTOP_AUTO_ARCHIVE_DAYS.map((days) => ({
+                  value: String(days),
+                  label: days === 0 ? t("settings.autoArchiveOff") : t("settings.autoArchiveAfterDays", { count: days }),
+                }))}
+              />
+            </SettingsRow>
+          </SettingsGroup>
+        ) : null}
         {deletion?.result || deletion?.error ? (
           <div className="settings-archive-delete-result" role={deletion.error || deletion.result?.failed ? "alert" : "status"}>
             {deletion.result ? <p>{t("settings.deleteArchivedResult", deletion.result)}</p> : null}

@@ -41,15 +41,10 @@ func (s *Server) mcpConfiguration(ctx context.Context) (config.SourceView, map[s
 	return view, document.Servers, nil
 }
 
-const mcpConnectorConfigurationUnavailable = "This connection is unavailable in this user space."
-
-// A shared user host may address only globally installed connector declarations.
-func sharedMCPConnectorAllowed(source string, definition config.MCPServerConfig) bool {
-	return (source == "user" || source == "bundled") && definition.Connector != nil
-}
+const mcpConfigurationUnavailable = "This MCP server is unavailable in this user space."
 
 // Active ownership is resolved from the admitted package, not from a namespaced
-// configuration key. A disabled or replaced package cannot be enabled here.
+// configuration key. A disabled or replaced package cannot be reached here.
 func (s *Server) activePluginMCPDefinition(snapshot runtime.ExtensionSnapshot, name string) (config.MCPServerConfig, bool) {
 	if s.rt == nil || s.rt.SafeMode {
 		return config.MCPServerConfig{}, false
@@ -62,9 +57,6 @@ func (s *Server) activePluginMCPDefinition(snapshot runtime.ExtensionSnapshot, n
 			for _, active := range snapshot.ActivePlugins {
 				if active.ID == installed.ID && active.Source == installed.Source && active.Fingerprint == installed.Fingerprint {
 					definition, exists := active.MCPServers[localName]
-					if s.rt.UserBinding().IsUser() && (!s.rt.SharedMCPConnectors() || !sharedMCPConnectorAllowed(active.Source, definition)) {
-						return config.MCPServerConfig{}, false
-					}
 					return definition, exists
 				}
 			}
@@ -73,65 +65,28 @@ func (s *Server) activePluginMCPDefinition(snapshot runtime.ExtensionSnapshot, n
 	return config.MCPServerConfig{}, false
 }
 
-// A user host may manage only its explicitly admitted global connector
-// declarations; unknown names and project services fail closed after removal.
-func (s *Server) checkMCPConnectorDomain(name string) error {
+// A shared user host reaches only the owner's global standalone servers.
+// Cleanup reads, cancellation and sign-out use this check alone.
+func (s *Server) checkMCPServerDomain(name string) error {
 	if s.rt == nil || !s.rt.UserBinding().IsUser() {
 		return nil
 	}
-	if !runtime.IsPluginMCPServerName(name) {
-		return errors.New(mcpConnectorConfigurationUnavailable)
+	if !s.rt.SharedMCPConnectors() || runtime.IsPluginMCPServerName(name) {
+		return errors.New(mcpConfigurationUnavailable)
 	}
-	name = strings.TrimSpace(name)
-	for _, item := range s.rt.ExtensionSnapshot().Plugins {
-		for localName, definition := range item.MCPServers {
-			if runtime.PluginMCPServerName(item.ID, localName) != name {
-				continue
-			}
-			if definition.Connector != nil {
-				if s.rt.SharedMCPConnectors() && sharedMCPConnectorAllowed(item.Source, definition) {
-					return nil
-				}
-				return errors.New(mcpConnectorConfigurationUnavailable)
-			}
-			return errors.New(mcpConnectorConfigurationUnavailable)
-		}
-	}
-	return errors.New(mcpConnectorConfigurationUnavailable)
+	return nil
 }
 
-// Connection and OAuth entry points re-check admitted ownership. Cleanup reads,
-// cancellation and sign-out deliberately remain available after disablement.
-func (s *Server) admitMCPConnectorAction(ctx context.Context, name string) error {
+// Connection and OAuth entry points also require an active plugin owner.
+func (s *Server) admitMCPServerAction(name string) error {
 	name = strings.TrimSpace(name)
-	if !runtime.IsPluginMCPServerName(name) {
-		if s.rt.UserBinding().IsUser() {
-			return errors.New(mcpConnectorConfigurationUnavailable)
-		}
-		return nil
-	}
-	if s.rt.UserBinding().IsUser() && !s.rt.SharedMCPConnectors() {
-		return errors.New(mcpConnectorConfigurationUnavailable)
-	}
-	definition, active := s.activePluginMCPDefinition(s.rt.ExtensionSnapshot(), name)
-	if !active {
-		return fmt.Errorf("MCP server %q is not owned by an active plugin", name)
-	}
-	if definition.Connector == nil {
-		return nil
-	}
-	if strings.TrimSpace(definition.Connector.SetupRequired) != "" {
-		return fmt.Errorf("MCP connector %q requires setup before it can connect", name)
-	}
-	view, _, err := s.mcpConfiguration(ctx)
-	if err != nil {
+	if err := s.checkMCPServerDomain(name); err != nil {
 		return err
 	}
-	if override, exists := view.Config.MCPServers[name]; exists && override.Enabled != nil {
-		definition.Enabled = override.Enabled
-	}
-	if !definition.ConnectorEnabled() {
-		return fmt.Errorf("MCP connector %q is disabled; enable its startup preference before connecting", name)
+	if runtime.IsPluginMCPServerName(name) {
+		if _, active := s.activePluginMCPDefinition(s.rt.ExtensionSnapshot(), name); !active {
+			return fmt.Errorf("MCP server %q is not owned by an active plugin", name)
+		}
 	}
 	return nil
 }
@@ -145,14 +100,17 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 	if mgr, err := s.mcpManager(); err == nil {
 		statuses = mgr.Status()
 	}
+	user := s.rt.UserBinding().IsUser()
 	effective := map[string]config.MCPServerConfig{}
-	for name, definition := range view.Config.MCPServers {
-		if s.rt.UserBinding().IsUser() || runtime.IsPluginMCPServerName(name) {
-			continue
-		}
-		effective[name] = definition
-		if _, exists := statuses[name]; !exists {
-			statuses[name] = mcp.ServerStatus{Name: name, State: mcp.MCPServerStateConfigured}
+	if !user || s.rt.SharedMCPConnectors() {
+		for name, definition := range view.Config.MCPServers {
+			if runtime.IsPluginMCPServerName(name) {
+				continue
+			}
+			effective[name] = definition
+			if _, exists := statuses[name]; !exists {
+				statuses[name] = mcp.ServerStatus{Name: name, State: mcp.MCPServerStateConfigured}
+			}
 		}
 	}
 	owners := map[string]string{}
@@ -160,10 +118,10 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 	active := map[string]bool{}
 	snapshot := s.rt.ExtensionSnapshot()
 	for _, item := range snapshot.Plugins {
+		if user {
+			break
+		}
 		for localName, definition := range item.MCPServers {
-			if s.rt.UserBinding().IsUser() && s.rt.SharedMCPConnectors() && !sharedMCPConnectorAllowed(item.Source, definition) {
-				continue
-			}
 			name := runtime.PluginMCPServerName(item.ID, localName)
 			owners[name], labels[name] = item.ID, localName
 			admitted, enabled := s.activePluginMCPDefinition(snapshot, name)
@@ -171,7 +129,7 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 			if enabled {
 				definition = admitted
 			}
-			if override, exists := view.Config.MCPServers[name]; (!s.rt.UserBinding().IsUser() || s.rt.SharedMCPConnectors()) && exists && override.Enabled != nil {
+			if override, exists := view.Config.MCPServers[name]; exists && override.Enabled != nil {
 				definition.Enabled = override.Enabled
 			}
 			effective[name] = definition
@@ -197,14 +155,10 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 		server.PluginID, server.DisplayName = owners[server.Name], labels[server.Name]
 		server.ToolNames = toolNames[server.Name]
 		definition, exists := definitions[server.Name]
-		server.Editable = exists && server.PluginID == "" && (definition.Command != "" || definition.URL != "")
+		server.Editable = !user && exists && server.PluginID == "" && (definition.Command != "" || definition.URL != "")
 		if definition, exists := effective[server.Name]; exists {
 			enabled := definition.Enabled == nil || *definition.Enabled
-			if server.PluginID != "" {
-				enabled = definition.ConnectorEnabled()
-			}
 			server.ConfigurationEnabled = &enabled
-			server.Connector = definition.Connector
 			if !enabled && !server.Connected {
 				server.State = string(mcp.MCPServerStateDisabled)
 			}
@@ -217,14 +171,9 @@ func (s *Server) mcpServerList(ctx context.Context) (MCPListResult, error) {
 		if server.PluginID != "" {
 			enabled := active[server.Name]
 			server.PluginActive = &enabled
-			server.Configurable = enabled && server.Connector != nil && (!s.rt.UserBinding().IsUser() || s.rt.SharedMCPConnectors())
-			if server.Connector != nil && s.rt.UserBinding().IsUser() && !s.rt.SharedMCPConnectors() {
-				server.ConfigurationUnavailableReason = mcpConnectorConfigurationUnavailable
-			}
 		}
 		if mgr, err := s.mcpManager(); err == nil {
 			if auth, err := mgr.OAuthStatus(ctx, server.Name); err == nil {
-				server.Identity = auth.Identity
 				server.AuthorizationID = auth.AuthorizationID
 			}
 			if cfg, ok := mgr.Config(server.Name); ok && cfg.OAuth != nil {
@@ -240,29 +189,15 @@ func (s *Server) handleMCPDefinitionRead(ctx context.Context, req Request) error
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if s.rt.UserBinding().IsUser() {
+		return s.writeResponse(req.ID, nil, errors.New(mcpConfigurationUnavailable))
+	}
 	view, definitions, err := s.mcpConfiguration(ctx)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if runtime.IsPluginMCPServerName(params.Name) {
-		if s.rt.UserBinding().IsUser() && !s.rt.SharedMCPConnectors() {
-			return s.writeResponse(req.ID, nil, errors.New(mcpConnectorConfigurationUnavailable))
-		}
-		definition, active := s.activePluginMCPDefinition(s.rt.ExtensionSnapshot(), params.Name)
-		if !active || definition.Connector == nil {
-			return s.writeResponse(req.ID, nil, errors.New("this MCP connector is not owned by an active plugin"))
-		}
-		if override, exists := view.Config.MCPServers[params.Name]; exists && override.Enabled != nil {
-			definition.Enabled = override.Enabled
-		}
-		enabled := definition.ConnectorEnabled()
-		return s.writeResponse(req.ID, MCPDefinitionResult{Config: config.MCPServerConfig{Enabled: &enabled}, Revision: view.Revision}, nil)
-	}
-	if s.rt.UserBinding().IsUser() {
-		return s.writeResponse(req.ID, nil, errors.New(mcpConnectorConfigurationUnavailable))
-	}
 	definition, exists := definitions[params.Name]
-	if !exists || (definition.Command == "" && definition.URL == "") {
+	if runtime.IsPluginMCPServerName(params.Name) || !exists || (definition.Command == "" && definition.URL == "") {
 		return s.writeResponse(req.ID, nil, errors.New("this MCP definition is managed by its project or plugin"))
 	}
 	return s.writeResponse(req.ID, MCPDefinitionResult{Config: definition, Revision: view.Revision}, nil)
@@ -276,34 +211,18 @@ func (s *Server) handleMCPConfigure(ctx context.Context, req Request) error {
 	if len(params.Servers) == 0 {
 		return s.writeResponse(req.ID, nil, errors.New("at least one MCP definition is required"))
 	}
-	var rawParams struct {
-		Servers map[string]json.RawMessage `json:"servers"`
-	}
-	if err := json.Unmarshal(req.Params, &rawParams); err != nil {
-		return s.writeResponse(req.ID, nil, err)
+	if s.rt.UserBinding().IsUser() {
+		return s.writeResponse(req.ID, nil, errors.New(mcpConfigurationUnavailable))
 	}
 	for name, definition := range params.Servers {
 		if name == "" || strings.TrimSpace(name) != name {
 			return s.writeResponse(req.ID, nil, errors.New("MCP names must be nonempty and trimmed"))
 		}
 		if runtime.IsPluginMCPServerName(name) {
-			var preference map[string]json.RawMessage
-			if err := json.Unmarshal(rawParams.Servers[name], &preference); err != nil {
-				return s.writeResponse(req.ID, nil, err)
-			}
-			if definition == nil || definition.Enabled == nil || len(preference) != 1 || preference["enabled"] == nil {
-				return s.writeResponse(req.ID, nil, fmt.Errorf("plugin MCP connector %q accepts only an enabled preference", name))
-			}
-			if params.Revision == "" {
-				return s.writeResponse(req.ID, nil, errors.New("read the MCP connector preference before saving"))
-			}
-			continue
+			return s.writeResponse(req.ID, nil, fmt.Errorf("MCP server %q is managed by its plugin", name))
 		}
 		if definition == nil {
 			continue
-		}
-		if err := definition.Connector.Validate(); err != nil {
-			return s.writeResponse(req.ID, nil, fmt.Errorf("mcp_servers.%s.connector: %w", name, err))
 		}
 		if (strings.TrimSpace(definition.Command) == "") == (strings.TrimSpace(definition.URL) == "") {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("MCP server %q requires either a command or a URL", name))
@@ -323,17 +242,9 @@ func (s *Server) handleMCPConfigure(ctx context.Context, req Request) error {
 			return s.writeResponse(req.ID, nil, err)
 		}
 	}
-	// A connector preference only switches a package-declared server, the same
-	// change as enabling or disabling its plugin: running turns keep their pinned
-	// generation. Removal also fences old connections without stopping turns.
-	// Adding or editing standalone definitions still needs exclusive ownership.
-	mutation := pluginGenerationMutationLive
-	for name, definition := range params.Servers {
-		if !runtime.IsPluginMCPServerName(name) && definition != nil {
-			mutation = pluginGenerationMutationExclusive
-		}
-	}
-	releaseMutation, err := s.beginPluginGenerationMutation("configure MCP services in", mutation)
+	// Running turns keep their pinned generation, as when a plugin is enabled or
+	// disabled; removal fences old connections without stopping those turns.
+	releaseMutation, err := s.beginPluginGenerationMutation("configure MCP services in", pluginGenerationMutationLive)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
@@ -345,24 +256,7 @@ func (s *Server) handleMCPConfigure(ctx context.Context, req Request) error {
 	if params.Revision != "" && params.Revision != view.Revision {
 		return s.writeResponse(req.ID, nil, errors.New("configuration changed; reopen the MCP editor before saving"))
 	}
-	snapshot := s.rt.ExtensionSnapshot()
 	for name, definition := range params.Servers {
-		if runtime.IsPluginMCPServerName(name) {
-			if s.rt.UserBinding().IsUser() && !s.rt.SharedMCPConnectors() {
-				return s.writeResponse(req.ID, nil, errors.New(mcpConnectorConfigurationUnavailable))
-			}
-			declared, active := s.activePluginMCPDefinition(snapshot, name)
-			if !active || declared.Connector == nil {
-				return s.writeResponse(req.ID, nil, fmt.Errorf("MCP connector %q is not owned by an active plugin", name))
-			}
-			if *definition.Enabled && strings.TrimSpace(declared.Connector.SetupRequired) != "" {
-				return s.writeResponse(req.ID, nil, fmt.Errorf("MCP connector %q requires setup before it can be enabled", name))
-			}
-			continue
-		}
-		if s.rt.UserBinding().IsUser() {
-			return s.writeResponse(req.ID, nil, errors.New(mcpConnectorConfigurationUnavailable))
-		}
 		_, effectiveExists := view.Config.MCPServers[name]
 		original, editable := definitions[name]
 		editable = editable && (original.Command != "" || original.URL != "")
@@ -391,28 +285,6 @@ func (s *Server) handleMCPConfigure(ctx context.Context, req Request) error {
 		rawDefinitions = map[string]json.RawMessage{}
 	}
 	for name, definition := range params.Servers {
-		if runtime.IsPluginMCPServerName(name) {
-			// Preserve existing JSON fields; this operation is not an editor for
-			// the package or its credential settings.
-			var preference map[string]json.RawMessage
-			if previous := rawDefinitions[name]; len(previous) > 0 {
-				if err := json.Unmarshal(previous, &preference); err != nil {
-					return s.writeResponse(req.ID, nil, err)
-				}
-			}
-			if preference == nil {
-				preference = map[string]json.RawMessage{}
-			}
-			preference["enabled"], err = json.Marshal(*definition.Enabled)
-			if err != nil {
-				return s.writeResponse(req.ID, nil, err)
-			}
-			rawDefinitions[name], err = json.Marshal(preference)
-			if err != nil {
-				return s.writeResponse(req.ID, nil, err)
-			}
-			continue
-		}
 		if definition == nil {
 			delete(rawDefinitions, name)
 		} else {

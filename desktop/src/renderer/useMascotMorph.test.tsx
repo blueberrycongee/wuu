@@ -45,6 +45,12 @@ it("retargets rapid morphs without replacing the identity and restores its autho
   expect(svg.innerHTML).not.toMatch(/NaN|Infinity/);
 });
 
+it("paints the core silhouette for a morph mounted before any fluid pass", () => {
+  const { svg, body, advance } = mount();
+  advance(600);
+  expect(svg.querySelector("[data-morph-core]")?.getAttribute("d")).toBe(body.getAttribute("d"));
+});
+
 it("keeps the current phase when retargeting a live morph", () => {
   const { svg, render, advance } = mount();
   render("wave");

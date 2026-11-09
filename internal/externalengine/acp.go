@@ -37,6 +37,11 @@ var (
 	// discovery budget: a slow or wedged selection only strips that model's
 	// metadata instead of starving the rest of the catalog.
 	acpModelProbeTimeout = 15 * time.Second
+	// Probing stops once the remaining budget cannot fit another probe.
+	// Large advertised catalogs (Devin's fused models exceed a hundred) must
+	// still publish: membership is authoritative even when some models are
+	// listed without their option metadata.
+	acpCatalogProbeReserve = 1 * time.Second
 )
 
 // ACP v1's prompt response owns completion for standard agents. Grok also
@@ -52,6 +57,10 @@ type acpInitialize struct {
 		Session struct {
 			Resume *struct{} `json:"resume"`
 			Close  *struct{} `json:"close"`
+			Delete *struct{} `json:"delete"`
+			// Fork is the unstable ACP sessionCapabilities.fork advertisement:
+			// when present the agent accepts session/fork to copy a session.
+			Fork *struct{} `json:"fork"`
 		} `json:"sessionCapabilities"`
 		Prompt struct {
 			Image bool `json:"image"`
@@ -126,7 +135,9 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 		cwd, _ = os.Getwd()
 	}
 	session := acpSession{asyncConfiguration: e.entry.ID == "devin"}
-	defer func() { err = errors.Join(err, r.closeACPSession(init, session.ID)) }()
+	defer func() {
+		err = errors.Join(err, r.closeACPSession(init, session.ID), r.deleteACPSession(init, session.ID))
+	}()
 	if err := r.session(ctx, "session/new", map[string]any{"cwd": cwd, "mcpServers": []any{}}, &session); err != nil {
 		// Settings surfaces this as the engine's model error, which is where a
 		// user discovers that the agent needs configuration of its own.
@@ -153,7 +164,16 @@ func (e *Engine) DiscoverCatalog(ctx context.Context) (catalog DiscoveredCatalog
 		if _, ok := known[id]; ok {
 			continue
 		}
-		probeCtx, probeCancel := context.WithTimeout(ctx, acpModelProbeTimeout)
+		probeTimeout := acpModelProbeTimeout
+		if deadline, ok := ctx.Deadline(); ok {
+			if remaining := time.Until(deadline) - acpCatalogProbeReserve; remaining < probeTimeout {
+				probeTimeout = remaining
+			}
+		}
+		if probeTimeout <= 0 {
+			break
+		}
+		probeCtx, probeCancel := context.WithTimeout(ctx, probeTimeout)
 		err := session.selectModel(probeCtx, r, session.ID, id)
 		probeCancel()
 		if err != nil {
@@ -627,7 +647,9 @@ func (s *Session) applyACPSelection(ctx context.Context, r *rpc, init acpInitial
 		// Loaded sessions retain previous overrides. A fresh, unprompted session
 		// supplies native defaults, including options dependent on the model.
 		selected = acpSession{asyncConfiguration: s.engine.entry.ID == "devin"}
-		defer func() { err = errors.Join(err, r.closeACPSession(init, selected.ID)) }()
+		defer func() {
+			err = errors.Join(err, r.closeACPSession(init, selected.ID), r.deleteACPSession(init, selected.ID))
+		}()
 		if err := r.session(ctx, "session/new", map[string]any{"cwd": s.binding.RootDir, "mcpServers": []any{}}, &selected); err != nil {
 			return fmt.Errorf("read configured model defaults: %w", err)
 		}
@@ -1250,6 +1272,23 @@ func (r *rpc) closeACPSession(init acpInitialize, ref string) error {
 	defer func() { r.handle = previous }()
 	if err := r.call(ctx, "session/close", map[string]string{"sessionId": ref}, nil); err != nil {
 		return fmt.Errorf("session/close: %w", err)
+	}
+	return nil
+}
+
+// deleteACPSession removes a disposable probe session from the agent's
+// persistent history after closeACPSession releases its locks. Agents that
+// persist every session/new (Devin) would otherwise accumulate one entry per
+// catalog probe and default-model probe. Real conversation sessions are never
+// deleted; only sessions Wuu created solely for discovery call this.
+func (r *rpc) deleteACPSession(init acpInitialize, ref string) error {
+	if init.Capabilities.Session.Delete == nil || ref == "" {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), acpCloseTimeout)
+	defer cancel()
+	if err := r.call(ctx, "session/delete", map[string]string{"sessionId": ref}, nil); err != nil {
+		return fmt.Errorf("session/delete: %w", err)
 	}
 	return nil
 }

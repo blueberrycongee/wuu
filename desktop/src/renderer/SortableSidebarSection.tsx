@@ -1,5 +1,5 @@
 import { ChevronRight } from "./WuuIcons";
-import { type CSSProperties, type HTMLAttributes, type ReactNode, useEffect } from "react";
+import { type CSSProperties, type HTMLAttributes, type ReactNode, useEffect, useMemo } from "react";
 import { arrayMove, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortableTransition } from "./SortableMotion";
@@ -91,10 +91,11 @@ export function SortableSidebarSection({
     transform: CSS.Transform.toString(transform),
     transition,
   };
-  const dragHandleProps: HTMLAttributes<HTMLButtonElement> = {
-    ...attributes,
-    ...listeners,
-  };
+  const dragHandleProps: HTMLAttributes<HTMLButtonElement> = useMemo(
+    () => ({ ...attributes, ...listeners }),
+    [attributes, listeners],
+  );
+  const dragHandleContext = useMemo(() => ({ dragHandleProps, isDragging }), [dragHandleProps, isDragging]);
   return (
     <section
       {...containerProps}
@@ -107,7 +108,7 @@ export function SortableSidebarSection({
       data-sort-indicator={sortIndicator}
       style={style}
     >
-      <SidebarSectionDragHandleContext.Provider value={{ dragHandleProps, isDragging }}>
+      <SidebarSectionDragHandleContext.Provider value={dragHandleContext}>
         {children}
       </SidebarSectionDragHandleContext.Provider>
     </section>

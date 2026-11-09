@@ -340,14 +340,15 @@ func TestPluginTurnToolPolicySelectiveQueueAndRestore(t *testing.T) {
 				t.Fatalf("%+v", result)
 			}
 			// Round-trip queued policy with the same snapshot codec used by durable input.
-			srv.queuedTurnMu.Lock()
-			entry := srv.pendingQueuedTurns[created.SessionID][0]
+			queue := srv.turnQueue(created.SessionID)
+			queue.mu.Lock()
+			entry := queue.pending[0]
 			raw, err := json.Marshal(entry.snapshot)
 			if err == nil {
 				err = json.Unmarshal(raw, &entry.snapshot)
 			}
-			srv.pendingQueuedTurns[created.SessionID][0] = entry
-			srv.queuedTurnMu.Unlock()
+			queue.pending[0] = entry
+			queue.mu.Unlock()
 			if err != nil {
 				t.Fatal(err)
 			}

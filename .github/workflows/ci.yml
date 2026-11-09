@@ -19,6 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       go: ${{ steps.select.outputs.go }}
+      race: ${{ steps.select.outputs.race }}
       architecture: ${{ steps.select.outputs.architecture }}
       desktop: ${{ steps.select.outputs.desktop }}
       desktop_suites: ${{ steps.select.outputs.desktop_suites }}
@@ -355,7 +356,7 @@ jobs:
   go-race:
     name: Go race guards / ${{ matrix.suite }}${{ matrix.shard }}
     needs: changes
-    if: needs.changes.outputs.go == 'true'
+    if: needs.changes.outputs.race == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -735,6 +736,7 @@ jobs:
         env:
           SELECTION_RESULT: ${{ needs.changes.result }}
           GO_REQUIRED: ${{ needs.changes.outputs.go }}
+          RACE_REQUIRED: ${{ needs.changes.outputs.race }}
           ARCHITECTURE_REQUIRED: ${{ needs.changes.outputs.architecture }}
           ARCHITECTURE_RESULT: ${{ needs.architecture-conformance.result }}
           GO_VALIDATION_RESULT: ${{ needs.go-validation.result }}

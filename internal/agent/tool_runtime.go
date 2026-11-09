@@ -237,8 +237,7 @@ func (r *TurnToolRuntime) addStreamToolStart(call *providers.ToolCall) {
 		existing.call.ThoughtSignature = call.ThoughtSignature
 		existing.call.Name = call.Name
 		existing.call.Kind = call.Kind
-		existing.concurrencySafe = toolCanRunConcurrently(r.executor, existing.call)
-		existing.streamSafe = toolCanStartDuringStreaming(r.executor, existing.call)
+		existing.concurrencySafe, existing.streamSafe = toolSchedulingSafety(r.executor, existing.call)
 		return
 	}
 	run := &toolRun{
@@ -254,8 +253,7 @@ func (r *TurnToolRuntime) addStreamToolStart(call *providers.ToolCall) {
 		order: len(r.runs),
 		done:  make(chan struct{}),
 	}
-	run.concurrencySafe = toolCanRunConcurrently(r.executor, run.call)
-	run.streamSafe = toolCanStartDuringStreaming(r.executor, run.call)
+	run.concurrencySafe, run.streamSafe = toolSchedulingSafety(r.executor, run.call)
 	r.runs = append(r.runs, run)
 	r.byID[call.ID] = run
 }
@@ -314,8 +312,7 @@ func (r *TurnToolRuntime) finalizeStreamTool(ctx context.Context, call *provider
 		run.call.Arguments = call.Arguments
 	}
 	run.finalized = run.call.Arguments != ""
-	run.concurrencySafe = toolCanRunConcurrently(r.executor, run.call)
-	run.streamSafe = toolCanStartDuringStreaming(r.executor, run.call)
+	run.concurrencySafe, run.streamSafe = toolSchedulingSafety(r.executor, run.call)
 	r.startReadyStreamPrefixLocked(ctx)
 }
 
@@ -725,8 +722,7 @@ func (r *TurnToolRuntime) registerFinalCalls(ctx context.Context, calls []provid
 		run.call = call
 		run.order = i
 		run.finalized = true
-		run.concurrencySafe = toolCanRunConcurrently(r.executor, call)
-		run.streamSafe = toolCanStartDuringStreaming(r.executor, call)
+		run.concurrencySafe, run.streamSafe = toolSchedulingSafety(r.executor, call)
 		if err := r.prepareRunLocked(ctx, run); err != nil {
 			r.mu.Unlock()
 			return err
@@ -881,8 +877,7 @@ func (r *TurnToolRuntime) runForCallLocked(call providers.ToolCall) *toolRun {
 		finalized: true,
 		done:      make(chan struct{}),
 	}
-	run.concurrencySafe = toolCanRunConcurrently(r.executor, call)
-	run.streamSafe = toolCanStartDuringStreaming(r.executor, call)
+	run.concurrencySafe, run.streamSafe = toolSchedulingSafety(r.executor, call)
 	r.runs = append(r.runs, run)
 	if call.ID != "" {
 		r.byID[call.ID] = run
@@ -956,26 +951,20 @@ func resultPointer(result toolresult.Result) *toolresult.Result {
 	return &clone
 }
 
-func toolCanRunConcurrently(executor ToolExecutor, call providers.ToolCall) bool {
+// toolSchedulingMetadata samples the executor's scheduling metadata once so
+// callers evaluating both flags observe a single consistent snapshot.
+func toolSchedulingMetadata(executor ToolExecutor, call providers.ToolCall) (ToolMetadata, bool) {
 	if executor == nil {
-		return false
+		return ToolMetadata{}, false
 	}
 	mp, ok := executor.(ToolMetadataProvider)
 	if !ok {
-		return false
+		return ToolMetadata{}, false
 	}
-	meta, found := mp.ToolMetadata(call)
-	return found && meta.ConcurrencySafe
+	return mp.ToolMetadata(call)
 }
 
-func toolCanStartDuringStreaming(executor ToolExecutor, call providers.ToolCall) bool {
-	if executor == nil {
-		return false
-	}
-	mp, ok := executor.(ToolMetadataProvider)
-	if !ok {
-		return false
-	}
-	meta, found := mp.ToolMetadata(call)
-	return found && meta.ReadOnly && meta.ConcurrencySafe
+func toolSchedulingSafety(executor ToolExecutor, call providers.ToolCall) (concurrencySafe, streamSafe bool) {
+	meta, found := toolSchedulingMetadata(executor, call)
+	return found && meta.ConcurrencySafe, found && meta.ReadOnly && meta.ConcurrencySafe
 }

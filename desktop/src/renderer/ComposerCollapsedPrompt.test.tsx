@@ -258,7 +258,7 @@ describe("useCollapsedComposerPrompt persistence", () => {
     });
     act(() => {
       container
-        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")
+        .querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-collapsed-prompt-main")
         ?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
     });
     expect(foldedCard()).toBeNull();

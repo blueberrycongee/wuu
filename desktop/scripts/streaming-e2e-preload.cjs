@@ -204,6 +204,15 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
     ...(heldMessages.has(id) ? { held_user_messages: heldMessages.get(id) } : {}),
   }),
   listEngines: async () => ({ engines: [{ id: "wuu", enabled: true, binary_ok: true, requires_host_model: true }] }),
+  // The app asks the core for slash-command skills on composer mount; the mock
+  // answers empty unless a test opts in via WUU_STREAM_E2E_SKILLS.
+  listSkills: async () => {
+    if (!process.env.WUU_STREAM_E2E_SKILLS) return { skills: [] };
+    return { skills: [
+      { name: "review", description: "Review changes", source: "user", user_invocable: true },
+      { name: "debug", description: "Debug helper", source: "user", user_invocable: true },
+    ] };
+  },
   forkThread: async () => ({ thread: null }),
   editThreadMessage: async (threadId) => {
     await ipcRenderer.invoke("test:request-lifecycle", "thread/edit-message", { threadId });

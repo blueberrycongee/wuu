@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { closestCenter, DndContext, useSensor, useSensors } from "@dnd-kit/core";
 import { restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { arrayMove, SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -54,6 +54,9 @@ function restoreReopenedOrder(order: readonly string[], tabs: readonly Pick<Ribb
   const replacements = new Map(tabs.filter(tab => tab.reopenedFrom && !present.has(tab.id)).map(tab => [tab.reopenedFrom!, tab.id]));
   return order.map(id => replacements.get(id) ?? id);
 }
+
+const noopCleanup = () => {};
+const noopRetain = () => noopCleanup;
 
 export function NavigationRibbon({ onOpenExternal, items, websites = [], activeWebsiteId, onSelectWebsite, onNewTab, onCloseTab, onPinTab, onMuteTab, onReorderTabs, footerLeading, footer, ribbonRef }: {
   onOpenExternal?: (url: string) => Promise<void>;
@@ -170,8 +173,11 @@ export function NavigationRibbon({ onOpenExternal, items, websites = [], activeW
   }
 
   const menuWebsite = menu && websites.find((website) => website.id === menu.id);
+  // The ribbon lives inside the drawer hover scope; its own layers must not
+  // retain the drawer open, so the scope retain is deliberately a noop.
+  const hoverScope = useMemo(() => ({ disabled: dragging || resizing || collapsed, retain: noopRetain }), [dragging, resizing, collapsed]);
   return <>
-    <HoverRevealScopeContext.Provider value={{ disabled: dragging || resizing || collapsed, retain: () => () => {} }}>
+    <HoverRevealScopeContext.Provider value={hoverScope}>
     <nav ref={node => { navRef.current = node; if (typeof ribbonRef === "function") ribbonRef(node); else if (ribbonRef) ribbonRef.current = node; }} className="sidebar-ribbon" hidden={collapsed} data-expanded={width > RIBBON_COMPACT_WIDTH || undefined} aria-label={t("sidebar.mainNavigation")}>
       <a className="sidebar-ribbon-brand"
         href="https://github.com/blueberrycongee/wuu" target="_blank" rel="noreferrer"

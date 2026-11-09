@@ -14,7 +14,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/executionenv"
 	"github.com/blueberrycongee/wuu/internal/extensions"
 	"github.com/blueberrycongee/wuu/internal/insight"
-	"github.com/blueberrycongee/wuu/internal/mcp"
 	"github.com/blueberrycongee/wuu/internal/modelroles"
 	"github.com/blueberrycongee/wuu/internal/participant"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -125,7 +124,6 @@ const (
 	MethodMCPRefresh                      = "mcp/refresh"
 	MethodMCPAuthStart                    = "mcp/auth/start"
 	MethodMCPAuthStatus                   = "mcp/auth/status"
-	MethodMCPIdentityRefresh              = "mcp/identity/refresh"
 	MethodMCPAuthFinish                   = "mcp/auth/finish"
 	MethodMCPAuthRemove                   = "mcp/auth/remove"
 	MethodActivityList                    = "activity/list"
@@ -590,25 +588,21 @@ type PermissionSummary struct {
 }
 
 type MCPServerStatus struct {
-	AuthorizationID                string                         `json:"authorization_id,omitempty"`
-	Identity                       *mcp.IdentityStatus            `json:"identity,omitempty"`
-	ToolNames                      []string                       `json:"tool_names,omitempty"`
-	ConfigurationUnavailableReason string                         `json:"configuration_unavailable_reason,omitempty"`
-	Connector                      *config.MCPConnectorDescriptor `json:"connector,omitempty"`
-	ConfigurationEnabled           *bool                          `json:"configuration_enabled,omitempty"`
-	Configurable                   bool                           `json:"configurable,omitempty"`
-	ResourceURL                    string                         `json:"resource_url,omitempty"`
-	PluginActive                   *bool                          `json:"plugin_active,omitempty"`
-	PluginID                       string                         `json:"plugin_id,omitempty"`
-	DisplayName                    string                         `json:"display_name,omitempty"`
-	Editable                       bool                           `json:"editable,omitempty"`
-	OAuthRedirectURI               string                         `json:"oauth_redirect_uri,omitempty"`
-	Name                           string                         `json:"name"`
-	State                          string                         `json:"state"`
-	AuthStatus                     string                         `json:"auth_status,omitempty"`
-	Connected                      bool                           `json:"connected"`
-	ToolCount                      int                            `json:"tool_count"`
-	Error                          string                         `json:"error,omitempty"`
+	AuthorizationID      string   `json:"authorization_id,omitempty"`
+	ToolNames            []string `json:"tool_names,omitempty"`
+	ConfigurationEnabled *bool    `json:"configuration_enabled,omitempty"`
+	ResourceURL          string   `json:"resource_url,omitempty"`
+	PluginActive         *bool    `json:"plugin_active,omitempty"`
+	PluginID             string   `json:"plugin_id,omitempty"`
+	DisplayName          string   `json:"display_name,omitempty"`
+	Editable             bool     `json:"editable,omitempty"`
+	OAuthRedirectURI     string   `json:"oauth_redirect_uri,omitempty"`
+	Name                 string   `json:"name"`
+	State                string   `json:"state"`
+	AuthStatus           string   `json:"auth_status,omitempty"`
+	Connected            bool     `json:"connected"`
+	ToolCount            int      `json:"tool_count"`
+	Error                string   `json:"error,omitempty"`
 }
 
 type MCPListResult struct {
@@ -650,11 +644,10 @@ type MCPAuthStartResult struct {
 }
 
 type MCPAuthStatusResult struct {
-	Identity      *mcp.IdentityStatus `json:"identity,omitempty"`
-	Name          string              `json:"name"`
-	Authenticated bool                `json:"authenticated"`
-	ExpiresAt     string              `json:"expires_at,omitempty"`
-	Scopes        []string            `json:"scopes,omitempty"`
+	Name          string   `json:"name"`
+	Authenticated bool     `json:"authenticated"`
+	ExpiresAt     string   `json:"expires_at,omitempty"`
+	Scopes        []string `json:"scopes,omitempty"`
 }
 
 type MCPAuthFinishParams struct {
@@ -2906,10 +2899,11 @@ type SettingsUsageMetrics struct {
 // SettingsUsageDay is one calendar day of token activity, bucketed by the
 // token_usage row's At timestamp in the requested zone (UTC when the request
 // names none). Days are emitted in ascending date order; gaps in the visible
-// window are filled in by the desktop. The token fields and Turns/Agents
-// cover Wuu's own trail only; Outside holds the same day's usage the engine
-// ledgers recorded outside Wuu, so a chart can color every day the page
-// counts without mixing the two ledgers' fields.
+// window are filled in by the desktop. The token fields cover Wuu's own trail
+// plus ledger usage of sessions Wuu drives on engines that never report to
+// the trail; Turns/Agents stay Wuu-trail counts. Outside holds the same day's
+// usage the engine ledgers recorded outside Wuu, so a chart can color every
+// day the page counts without mixing the two ledgers' fields.
 type SettingsUsageDay struct {
 	Date                string          `json:"date"`
 	InputTokens         int             `json:"input_tokens"`
@@ -2938,11 +2932,13 @@ func (e EngineUsageSum) TotalTokens() int {
 	return e.InputTokens + e.OutputTokens + e.CacheCreationTokens + e.CacheReadTokens
 }
 
-// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums the
-// token_usage trail by each thread's bound engine. Outside reads the engine's
-// own on-disk ledger minus native sessions Wuu already claims, so the two
-// columns never count the same work twice. Outside is nil for engines without
-// a readable local ledger or whose ledger failed to scan.
+// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums
+// the token_usage trail by each thread's bound engine, plus ledger rows of
+// sessions Wuu drives on engines that never report usage to the trail (the
+// ACP family, such as Devin). Outside reads the engine's own on-disk ledger
+// minus native sessions Wuu already claims, so the two columns never count
+// the same work twice. Outside is nil for engines without a readable local
+// ledger or whose ledger failed to scan.
 type SettingsEngineUsage struct {
 	Engine  string          `json:"engine"`
 	Name    string          `json:"name"`
@@ -2955,9 +2951,10 @@ type SettingsEngineUsage struct {
 // the per-model table sorted by total context tokens descending (legacy
 // rows with empty provider+model are surfaced as "(unknown)"), and Days
 // is the calendar-day series for the heatmap (gaps filled by the
-// desktop). EngineBreakdowns attributes the same in-Wuu totals per agent
-// engine and adds the usage each engine recorded outside Wuu in its own
-// local ledger.
+// desktop). EngineBreakdowns attributes usage per agent engine — the
+// in-Wuu trail plus bound-session ledger rows on engines that never
+// report to the trail — and adds the usage each engine recorded
+// outside Wuu in its own local ledger.
 type SettingsUsageResponse struct {
 	TotalSessions    int                   `json:"total_sessions"`
 	GeneratedAt      string                `json:"generated_at"`

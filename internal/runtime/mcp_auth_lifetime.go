@@ -34,7 +34,7 @@ type mcpAuthAttempt struct {
 
 type mcpAuthIdentity struct {
 	config             mcp.ServerConfig
-	connector          []string
+	owner              []string
 	credentials        [][]string
 	credentialScope    []string
 	credentialOverride *mcp.OAuthManager
@@ -251,14 +251,11 @@ func mcpAuthOwnerIdentity(generation *PluginGeneration, manager *mcp.Manager, na
 			if !available[item.ID] {
 				continue
 			}
-			for localName, definition := range item.MCPServers {
+			for localName := range item.MCPServers {
 				if PluginMCPServerName(item.ID, localName) != name {
 					continue
 				}
-				if definition.Connector != nil && strings.TrimSpace(definition.Connector.SetupRequired) != "" {
-					return mcpAuthIdentity{}, false
-				}
-				identity.connector = mcpAuthPackageIdentity(generation, item.ID)
+				identity.owner = mcpAuthPackageIdentity(generation, item.ID)
 				found = true
 			}
 		}

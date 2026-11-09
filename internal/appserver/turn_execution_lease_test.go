@@ -659,9 +659,12 @@ func waitForQueuedTurnRequeue(t *testing.T, srv *Server, threadID string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		srv.queuedTurnMu.Lock()
-		requeued := len(srv.pendingQueuedTurns[threadID]) > 0 && !srv.drainingQueuedTurns[threadID]
-		srv.queuedTurnMu.Unlock()
+		requeued := false
+		if queue := srv.peekTurnQueue(threadID); queue != nil {
+			queue.mu.Lock()
+			requeued = len(queue.pending) > 0 && !queue.draining
+			queue.mu.Unlock()
+		}
 		if requeued {
 			return
 		}

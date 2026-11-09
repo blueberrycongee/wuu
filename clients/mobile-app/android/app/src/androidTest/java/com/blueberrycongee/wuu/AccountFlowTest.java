@@ -171,8 +171,7 @@ public class AccountFlowTest {
             scenario.recreate();
             waitFor(()->onWebView().withElement(findElement(Locator.CSS_SELECTOR,".app-shell")).check(webMatches(getText(),containsString("ANDROID_VERIFIED"))));
             screenshot("restored-session");
-            onWebView().withElement(findElement(Locator.CSS_SELECTOR, ".compact-conversation-actions [aria-haspopup=menu]")).perform(webClick());
-            onWebView().withElement(findElement(Locator.XPATH, "//*[@role='menuitem' and contains(., 'Open right sidebar')]")).perform(webClick());
+            onWebView().withElement(findElement(Locator.XPATH, "//button[@aria-label='Open right sidebar']")).perform(webClick());
             waitFor(() -> onWebView().withElement(findElement(Locator.XPATH, "//button[contains(., 'Files')]")).perform(webClick()));
             waitFor(() -> onWebView().check(webMatches(androidx.test.espresso.web.model.Atoms.script(
                 "function() { function find(root) { var row = root.querySelector('[role=treeitem][data-item-path=\"android-live-proof.txt\"]'); if (row) { row.click(); return true; } for (var el of root.querySelectorAll('*')) if (el.shadowRoot && find(el.shadowRoot)) return true; return false; } return find(document); }",

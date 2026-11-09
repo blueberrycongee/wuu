@@ -11,7 +11,7 @@ export type TopNoticeAction = {
   disabled?: boolean;
 };
 
-export type TopNoticeProps = {
+type TopNoticeProps = {
   message: React.ReactNode;
   icon?: IconComponent;
   onDismiss: () => void;

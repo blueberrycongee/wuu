@@ -54,16 +54,16 @@
  * Switches end their rows, so the end margin gives back the target's overhang
  * and the visible track ends where fields and buttons do.
  *
- * Geometry: a 28x16 track drawn inside its own box (no border adding to it),
- * centered in the target, and a 12px thumb inset 2px on every side, so the
+ * Geometry: a 32x18 track drawn inside its own box (no border adding to it),
+ * centered in the target, and a 14px thumb inset 2px on every side, so the
  * thumb's center is the track's center in both positions. On is the
  * interaction accent pill (theme ink unless a theme supplies an accent) with
  * its on-accent thumb; off is a quiet ink tint with a raised thumb. Fills
  * carry the state, so the track needs no outline. */
 :root {
-  --switch-target-width: 36px;
-  --switch-track-width: 28px;
-  --switch-track-height: 16px;
+  --switch-target-width: 40px;
+  --switch-track-width: 32px;
+  --switch-track-height: 18px;
   --switch-thumb-inset: 2px;
   --switch-thumb-size: calc(var(--switch-track-height) - var(--switch-thumb-inset) * 2);
   --switch-track-off: color-mix(in srgb, var(--ink) 14%, transparent);

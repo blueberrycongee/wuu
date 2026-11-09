@@ -703,7 +703,6 @@ export function ArtifactPreview({
   const source = useArtifactPreviewSource(artifact, cwd, ownerThreadID);
   const fileActions = useArtifactFileActions(cwd, ownerThreadID);
   const nativeActions = nativeArtifactActionsAvailable(service, artifact, ownerThreadID);
-  const [downloadError,setDownloadError] = useState("");
   const dialogRef = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     if (mode === "panel" && !active) restoreArtifactPreviewFocus(origin);
@@ -751,7 +750,7 @@ export function ArtifactPreview({
 
   const download = (): void => {
     const signal = lifetime.current.signal;
-    if (source) void service.save({...artifact, cwd, threadId: ownerThreadID}, {signal}).catch(error => { if (!signal.aborted) setDownloadError(String(error)); });
+    if (source) void service.save({...artifact, cwd, threadId: ownerThreadID}, {signal}).catch(error => { if (!signal.aborted) showErrorToast(error); });
   };
 
   let body: ReactNode;
@@ -831,7 +830,6 @@ export function ArtifactPreview({
             </button>
           </div>
         </header>
-        {downloadError && <p role="alert">{downloadError}</p>}
         <div className="artifact-preview-body">{body}</div>
         {fileActions.menu}
       </div>

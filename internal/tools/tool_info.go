@@ -140,7 +140,7 @@ func (t *Toolkit) toolExposure(name string) ToolExposure {
 		}
 		return ToolExposureDeferred
 	}
-	if t.shouldDeferByDefault(name) {
+	if isDeferredByDefault(name) {
 		return ToolExposureDeferred
 	}
 	return ToolExposureDirect
@@ -244,11 +244,4 @@ func isDeferredByDefault(name string) bool {
 	default:
 		return false
 	}
-}
-
-func (t *Toolkit) shouldDeferByDefault(name string) bool {
-	if isDeferredByDefault(name) {
-		return true
-	}
-	return false
 }

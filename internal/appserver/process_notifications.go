@@ -272,25 +272,26 @@ func (s *Server) enqueueProcessCompletionTurn(binding *runtime.State, threadID, 
 		return
 	}
 
-	s.agentCompletionMu.Lock()
+	completions := s.completionQueue(threadID)
+	completions.mu.Lock()
 	if s.closed.Load() {
-		s.agentCompletionMu.Unlock()
+		completions.mu.Unlock()
 		return
 	}
-	pending := s.pendingAgentCompletionTurns[threadID]
+	pending := completions.pending
 	kept := pending[:0]
 	for _, existing := range pending {
 		if existing.processID == processID {
-			s.agentCompletionMu.Unlock()
+			completions.mu.Unlock()
 			return
 		}
 		kept = append(kept, existing)
 	}
-	s.pendingAgentCompletionTurns[threadID] = append(kept, agentCompletionTurn{
+	completions.pending = append(kept, agentCompletionTurn{
 		processID: processID,
 		msg:       msg,
 	})
-	s.agentCompletionMu.Unlock()
+	completions.mu.Unlock()
 
 	s.kickAgentCompletionDrain(binding, threadID)
 }

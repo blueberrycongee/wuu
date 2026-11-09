@@ -571,7 +571,7 @@ export function SplitPaneComposer({
                         onPickFiles={() => attachmentInputRef.current?.click()}
                       />
                     ) : (
-                      <Tooltip asChild content={t("composer.addAttachment")}><button
+                      <button
                         className="composer-tool-button composer-attach-button"
                         type="button"
                         aria-label={t("composer.addAttachment")}
@@ -579,7 +579,7 @@ export function SplitPaneComposer({
                         onClick={() => attachmentInputRef.current?.click()}
                       >
                         <Paperclip aria-hidden="true" />
-                      </button></Tooltip>
+                      </button>
                     )}
                   </div>
                   <ComposerInput
@@ -620,7 +620,7 @@ export function SplitPaneComposer({
                   <div className="composer-bar-right">
                     {dictation.api && !dictation.active && <DictationButton disabled={readOnly || draftPending || cameraOpen} start={dictation.start} />}
                     {showStop ? (
-                      <Tooltip asChild content={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pauseShortcut")}><button
+                      <button
                         className="composer-action-button composer-stop-button"
                         type="button"
                         onClick={onInterrupt}
@@ -630,7 +630,7 @@ export function SplitPaneComposer({
                         aria-label={t(stopState === "pending" ? "composer.stopping" : stopState === "retry" ? "composer.retryStop" : "composer.pause")}
                       >
                         <ComposerStopIcon state={stopState} submitting={submitting} />
-                      </button></Tooltip>
+                      </button>
                     ) : showContinue ? (
                       <ComposerContinueButton
                         key={`${continuation.threadID}:${continuation.turnID}`}
@@ -638,7 +638,7 @@ export function SplitPaneComposer({
                         disabled={sendDisabled}
                       />
                     ) : (
-                      <Tooltip asChild content={sendLabel}><button
+                      <button
                         className="composer-action-button composer-send-button"
                         data-wuu-component="composer-send"
                         data-wuu-state={draftPending ? "submitting" : "send"}
@@ -654,7 +654,7 @@ export function SplitPaneComposer({
                         disabled={readOnly || sendDisabled || (dictation.active ? dictation.phase !== "listening" : !hasDraft)}
                       >
                         {draftPending ? <ComposerStopIcon submitting /> : <ArrowUp aria-hidden="true" />}
-                      </button></Tooltip>
+                      </button>
                     )}
                   </div>
                 </div>
@@ -746,12 +746,11 @@ export function ComposerQueueStrip({
 
   return (
     <ComposerDrawer
-      className={`composer-pending-drawer${hasHeldMessages ? " is-held" : ""}`}
+      className="composer-pending-drawer"
       data-wuu-component="composer-pending"
       expanded={expanded}
       onExpandedChange={setExpanded}
       toggleLabel={t(expanded ? "composer.collapsePending" : "composer.expandPending")}
-      tone={hasHeldMessages ? "warning" : "default"}
       icon={<ListTodo className="icon-sm" />}
       summary={
         <Tooltip

@@ -10,6 +10,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolctx"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
@@ -248,7 +249,7 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 	}
 	if g.runner.ModelInputReceiptStore != nil {
 		_, sections := g.modelRunner().systemPromptSnapshot()
-		receipt := modelInputReceipt(request, loopdriver.ExecutionContextFromContext(g.ctx), g.descriptor, sections, g.historyRewritten)
+		receipt := modelInputReceipt(request, hashToolsForRequestShape(request.Tools), loopdriver.ExecutionContextFromContext(g.ctx), g.descriptor, sections, g.historyRewritten)
 		if err := g.runner.ModelInputReceiptStore.SaveModelInputReceipt(ctx, receipt); err != nil {
 			return round, fmt.Errorf("persist model input receipt: %w", err)
 		}
@@ -293,7 +294,8 @@ func (g *streamTurnGateway) callModel(ctx context.Context, request providers.Cha
 		step.tools, step.toolLedger, step.enableStreamingToolExec = g.runner.Tools, g.runner.ToolLedger, true
 		if streaming, ok := g.runner.SelectedToolBatch.(toolbatch.StreamingExecutor); ok {
 			step.streamToolAdmission = func(ctx context.Context, call providers.ToolCall) (bool, error) {
-				return streaming.AdmitStream(ctx, toolbatch.StreamRequest{BatchID: batchID, Call: call, ReadOnly: toolCanStartDuringStreaming(g.runner.Tools, call), ConcurrencySafe: toolCanRunConcurrently(g.runner.Tools, call)})
+				concurrencySafe, streamSafe := toolSchedulingSafety(g.runner.Tools, call)
+				return streaming.AdmitStream(ctx, toolbatch.StreamRequest{BatchID: batchID, Call: call, ReadOnly: streamSafe, ConcurrencySafe: concurrencySafe})
 			}
 		}
 		// A successful model RPC ends before its streamed tools. Their lifetime
@@ -520,7 +522,7 @@ func (g *streamTurnGateway) CallTools(ctx context.Context, batch loopdriver.Tool
 	onResult := func(call providers.ToolCall, result toolresult.Result) {
 		if g.onEvent != nil {
 			call = enrichToolCallDisplay(g.runner.Tools, call)
-			g.onEvent(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &call, ToolResult: truncateLog(result.TextProjection(), 2000), ToolResultDetail: resultPointer(result)})
+			g.onEvent(providers.StreamEvent{Type: providers.EventToolUseEnd, ToolCall: &call, ToolResult: stringutil.Truncate(result.TextProjection(), 2000, "..."), ToolResultDetail: resultPointer(result)})
 			if update, ok := todoUpdateEventFromToolResult(call, result.TextProjection()); ok {
 				g.onEvent(providers.StreamEvent{Type: providers.EventTodoUpdate, TodoUpdate: update})
 			}

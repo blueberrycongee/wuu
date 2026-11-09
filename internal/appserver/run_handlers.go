@@ -358,7 +358,7 @@ func (s *Server) registerExecutionRun(binding *runtime.State, store *execution.S
 	defer s.runMu.Unlock()
 	tracker := &runTracker{state: binding.Retain(), store: store, id: run.ID, threadID: run.ThreadID, validator: validator}
 	s.runs[run.ID] = tracker
-	s.activeRunByThread[run.ThreadID] = run.ID
+	s.schedulerFor(run.ThreadID).activeRunID = run.ID
 }
 
 func (s *Server) executionRunAttached(runID string) bool {
@@ -371,7 +371,10 @@ func (s *Server) executionRunAttached(runID string) bool {
 func (s *Server) activeExecutionRunID(threadID string) string {
 	s.runMu.Lock()
 	defer s.runMu.Unlock()
-	return s.activeRunByThread[strings.TrimSpace(threadID)]
+	if sched := s.peekScheduler(strings.TrimSpace(threadID)); sched != nil {
+		return sched.activeRunID
+	}
+	return ""
 }
 
 func (s *Server) executionRunSchemaOutcome(runID, content string) (retryPrompt string, retry bool, validationErr error) {
@@ -567,7 +570,13 @@ func (s *Server) validateExecutionSchemaRetry(binding *runtime.State, snapshot t
 	runID := snapshot.ExecutionRunID
 	s.runMu.Lock()
 	tracker := s.runs[runID]
-	if tracker == nil || s.activeRunByThread[tracker.threadID] != runID {
+	activeRunID := ""
+	if tracker != nil {
+		if sched := s.peekScheduler(tracker.threadID); sched != nil {
+			activeRunID = sched.activeRunID
+		}
+	}
+	if tracker == nil || activeRunID != runID {
 		s.runMu.Unlock()
 		return errExecutionRunChanged
 	}
@@ -617,8 +626,10 @@ func (s *Server) detachExecutionRun(runID string) {
 	s.runMu.Lock()
 	tracker := s.runs[runID]
 	delete(s.runs, runID)
-	if tracker != nil && s.activeRunByThread[tracker.threadID] == runID {
-		delete(s.activeRunByThread, tracker.threadID)
+	if tracker != nil {
+		if sched := s.peekScheduler(tracker.threadID); sched != nil && sched.activeRunID == runID {
+			sched.activeRunID = ""
+		}
 	}
 	s.runMu.Unlock()
 	if tracker != nil {

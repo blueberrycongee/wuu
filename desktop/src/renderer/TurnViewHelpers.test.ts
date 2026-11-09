@@ -11,10 +11,7 @@ import {
   scrollToUserMessage,
   scrollToConversationMessage,
   messageAnchorID,
-  threadReplySnippet,
-  truncateReplyPreview,
   turnReplySnippet,
-  firstUserMessageText,
   turnAnchorID,
   userMessageAnchorID,
 } from "./TurnViewHelpers";
@@ -662,53 +659,6 @@ describe("lastUserMessageAnchor", () => {
   });
 });
 
-describe("threadReplySnippet", () => {
-  it("returns the first non-empty agent message and counts replies", () => {
-    const thread = buildThread([
-      {
-        id: "turn-1",
-        items: [
-          { id: "u-1", type: "user_message" },
-          // First agent message is empty (still streaming) and must be skipped.
-          { id: "a-1", type: "agent_message", text: "   " },
-          { id: "a-2", type: "agent_message", text: "first visible reply" },
-        ],
-      },
-      {
-        id: "turn-2",
-        items: [
-          { id: "u-2", type: "user_message" },
-          { id: "a-3", type: "agent_message", text: "second reply" },
-        ],
-      },
-    ]);
-
-    const snippet = threadReplySnippet(thread);
-    expect(snippet).toEqual({
-      text: "first visible reply",
-      totalAgentMessages: 2,
-    });
-  });
-
-  it("returns undefined when no agent_message has committed text", () => {
-    const thread = buildThread([
-      {
-        id: "turn-1",
-        items: [
-          { id: "u-1", type: "user_message" },
-          { id: "a-1", type: "agent_message", text: "" },
-        ],
-      },
-    ]);
-
-    expect(threadReplySnippet(thread)).toBeUndefined();
-  });
-
-  it("returns undefined for undefined input", () => {
-    expect(threadReplySnippet(undefined)).toBeUndefined();
-  });
-});
-
 /**
  * Build a single turn for the per-turn helper tests. Mirrors buildThread
  * but skips the thread-level wrapping so we can exercise turn-level
@@ -724,63 +674,6 @@ function buildTurn(
     items: items.map((item) => item as never),
   };
 }
-
-describe("firstUserMessageText", () => {
-  it("previews visible question text instead of structured reference context", () => {
-    const turn: Turn = { id: "structured", status: "completed", items_view: "full", items: [{
-      id: "user", type: "user_message", text: "Attached notesOriginal question",
-      content_parts: [{ type: "pasted_text", text: "Attached notes" }, { type: "text", text: "Original question" }],
-    }] };
-    expect(firstUserMessageText(turn)).toBe("Original question");
-  });
-
-  it("returns the first user_message text in a turn", () => {
-    const turn = buildTurn([
-      { id: "a-1", type: "agent_message", text: "ignored" },
-      { id: "u-1", type: "user_message", text: "hello" },
-      { id: "a-2", type: "agent_message", text: "world" },
-    ]);
-    expect(firstUserMessageText(turn)).toBe("hello");
-  });
-
-  it("skips internal agent handoff text", () => {
-    const turn = buildTurn([
-      {
-        id: "handoff",
-        type: "user_message",
-        name: AGENT_NOTIFICATION_NAME,
-        text: handoffText(),
-      },
-      { id: "u-1", type: "user_message", text: "hello" },
-    ]);
-    expect(firstUserMessageText(turn)).toBe("hello");
-  });
-
-  it("skips process notifications in turn previews", () => {
-    const turn = buildTurn([
-      {
-        id: "process-named",
-        type: "user_message",
-        name: PROCESS_NOTIFICATION_NAME,
-        text: "unparseable process payload",
-      },
-      { id: "process-legacy", type: "user_message", text: processNotificationText() },
-      { id: "u-1", type: "user_message", text: "hello" },
-    ]);
-    expect(firstUserMessageText(turn)).toBe("hello");
-  });
-
-  it("returns undefined when no user_message exists", () => {
-    const turn = buildTurn([
-      { id: "a-1", type: "agent_message", text: "answer" },
-    ]);
-    expect(firstUserMessageText(turn)).toBeUndefined();
-  });
-
-  it("returns undefined for undefined input", () => {
-    expect(firstUserMessageText(undefined)).toBeUndefined();
-  });
-});
 
 describe("turnReplySnippet", () => {
   it("returns the first non-empty agent message and counts replies in one turn", () => {
@@ -810,23 +703,5 @@ describe("turnReplySnippet", () => {
 
   it("returns undefined for undefined input", () => {
     expect(turnReplySnippet(undefined)).toBeUndefined();
-  });
-});
-
-describe("truncateReplyPreview", () => {
-  it("returns short text untouched", () => {
-    expect(truncateReplyPreview("短回复")).toBe("短回复");
-  });
-
-  it("collapses whitespace before measuring", () => {
-    const text = "a\n\nb\t\tc";
-    expect(truncateReplyPreview(text)).toBe("a b c");
-  });
-
-  it("truncates overlong replies with an ellipsis", () => {
-    const text = "x".repeat(200);
-    const out = truncateReplyPreview(text);
-    expect(out.endsWith("…")).toBe(true);
-    expect(out.length).toBeLessThanOrEqual(140);
   });
 });

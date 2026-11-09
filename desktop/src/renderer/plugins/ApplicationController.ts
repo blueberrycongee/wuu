@@ -35,7 +35,8 @@ import type { ApplicationPreviewActionMapV1 } from "../../../../packages/plugin-
 import type { ApplicationSettingsActionMapV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { SetStateAction } from "react";
 import type { ApplicationActionMapV1, ApplicationServiceV1, ApplicationSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui";
-import type { InitializeResult, PopOutInitResult, RestartRecoveryItem, ServerEvent, Thread } from "../../shared/protocol";
+import type { DesktopAutoArchiveDays, DesktopPreferences, InitializeResult, PopOutInitResult, RestartRecoveryItem, ServerEvent, Thread } from "../../shared/protocol";
+import { autoArchiveCandidates } from "../AutoArchive";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
   serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, threadBelongsToWorkspace, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
@@ -57,7 +58,6 @@ import { createSessionTabActions } from "../SessionTabActions";
 import { createThreadActivationActions } from "../ThreadActivationActions";
 import { createWorkspaceRuntimeActions } from "../WorkspaceRuntimeActions";
 import { createApplicationSettingsControls } from "./hostApplicationSettingsControls";
-import { ApplicationMCPConnectorLogin, type MCPConnectorLoginIntent } from "./ApplicationMCPConnectorLogin";
 import { ApplicationNavigation, isApplicationNavigationAction } from "./ApplicationNavigation";
 import { ApplicationComposerRuntime, isApplicationComposerRuntimeAction } from "./ApplicationComposerRuntime";
 import { ApplicationConversationDetails, isApplicationConversationDetailsAction } from "./ApplicationConversationDetails";
@@ -197,6 +197,10 @@ export class ApplicationController implements HostApplicationService {
   private activitySourceKey?: string;
   private activityRequest = 0;
   private browserDockTarget?: ApplicationSnapshotV1["browserDockTarget"];
+  private turnStreamStatusProjection?: {
+    source: AppState["turnStreamStatus"];
+    projected: ApplicationSnapshotV1["conversationWorkspace"]["turnStreamStatus"];
+  };
   private previewVisible = false;
   private previewVisibilityOwner?: { signal?: AbortSignal };
   private clearPreviewVisibility?: () => void;
@@ -266,14 +270,7 @@ export class ApplicationController implements HostApplicationService {
     } });
   }
   private settingsControlsOwner?: ReturnType<typeof createApplicationSettingsControls>;
-  private connectorLoginOwner?: ApplicationMCPConnectorLogin;
-  private get connectorLogin() { return this.connectorLoginOwner ??= new ApplicationMCPConnectorLogin({
-    context: () => JSON.stringify([this.state.activeContext, this.state.runtimeConnectionGeneration ?? 0]),
-    presentation: () => JSON.stringify([this.state.activeSessionTabID, this.settings, this.state.nativeSection ?? "conversations",
-      this.state.catalogSection ?? "plugins", this.state.catalogPluginID ?? ""]),
-    inventory: () => this.state.initialized?.extension_inventory ?? [], workbench: () => this.workbench,
-  }); }
-  get settingsControls() { return this.settingsControlsOwner ??= createApplicationSettingsControls({ host: this.contributions, controller: this.workbench, connectorLogin: this.connectorLogin }); }
+  get settingsControls() { return this.settingsControlsOwner ??= createApplicationSettingsControls({ host: this.contributions, controller: this.workbench }); }
   get contributions(): UIContributionRegistryV1 {
     if (!this.dependencies) throw new Error("Application contribution registry is unavailable");
     return this.dependencies.contributions;
@@ -540,8 +537,7 @@ export class ApplicationController implements HostApplicationService {
       ...thread, turns: thread.turns.map(turn => ({ ...turn, items: [], items_view: "conversation" as const })), child_agents: undefined,
       worktree: thread.worktree && { ...thread.worktree, changed_files: thread.worktree.changed_files && [...thread.worktree.changed_files] },
     }));
-    return { state, sidebarThreads, settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent,
-      connectorLoginIntent: this.connectorLoginOwner?.checkpoint() };
+    return { state, sidebarThreads, settings: { ...this.settings }, preview: this.preview, navigationIntent: this.navigationIntent, presentationIntent };
   }
   restoreSidebar(checkpoint: { state: AppState; sidebarThreads?: Thread[] }): void {
     // The newly loaded project catalog owns visibility. A removed/replaced
@@ -597,9 +593,8 @@ export class ApplicationController implements HostApplicationService {
     this.publish();
   }
 
-  restorePresentation(checkpoint: { settings: { open: boolean; pageId: string }; preview: ApplicationSnapshotV1["preview"]; connectorLoginIntent?: MCPConnectorLoginIntent }): void {
+  restorePresentation(checkpoint: { settings: { open: boolean; pageId: string }; preview: ApplicationSnapshotV1["preview"] }): void {
     this.settings = checkpoint.settings; this.preview = checkpoint.preview;
-    if (checkpoint.connectorLoginIntent) this.connectorLogin.restore(checkpoint.connectorLoginIntent);
     this.publish();
   }
 
@@ -637,7 +632,6 @@ export class ApplicationController implements HostApplicationService {
     }
     for (const id of this.draftRevisions.keys()) if (!next.sessionTabs.some(tab => tab.id === id)) this.draftRevisions.delete(id);
     this.state = next;
-    this.connectorLoginOwner?.reconcile();
     this.onboardingOwner?.notifyChanged();
     this.environmentOwner?.notifyChanged();
     this.syncActivities();
@@ -658,7 +652,6 @@ export class ApplicationController implements HostApplicationService {
         notify, reportError: error => console.error("Application event notification failed", error) });
       this.subscriptions = [subscribeWorkspaceBrowserNavigation(() => this.publish()), subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(), this.applicationSideConversation.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
-      if (this.dependencies) this.subscriptions.push(this.workbench.subscribe(() => this.connectorLoginOwner?.reconcile()));
       if (this.browser.available) {
         this.subscriptions.push(this.browser.onInvalidate(({ workdir }) => {
           this.activitySessions = clearActivitiesForWorkdir(this.activitySessions, workdir);
@@ -666,13 +659,18 @@ export class ApplicationController implements HostApplicationService {
         }), this.browser.onDock(target => {
           if ([target.thread_id, target.workdir, target.tabID].some(value => !value?.trim())) return;
           const signal = this.lifetime!.signal;
-          const navigation = this.invoke("thread.activate", { threadId: target.thread_id }, { signal });
+          // Activate directly: routing through the "thread.activate" action
+          // also emits a "primary" reveal, which reselects the conversation in
+          // globalized layout and would hide the page this dock is mounting.
+          const navigation = this.navigationActions(signal).threads.activateThread(target.thread_id);
           const revision = this.navigationRequest;
           void navigation.then(async () => {
             if (signal.aborted || revision !== this.navigationRequest || activeThreadIDForState(this.state) !== target.thread_id || this.state.activeContext?.cwd !== target.workdir) return;
             this.browserDockTarget = Object.freeze({ ...target });
+            this.setSettings(false);
             await this.applicationNavigation.invoke("navigation.show-native", {}, signal);
             await this.applicationPreview.invoke("preview.open-tool", { toolId: "browser" }, signal);
+            await this.applicationNavigation.invoke("navigation.reveal-region", { region: "auxiliary" }, signal);
             this.publish();
           }).catch(error => { if (!signal.aborted) this.updateState(state => ({ ...state, status: String(error) })); });
         }));
@@ -690,7 +688,9 @@ export class ApplicationController implements HostApplicationService {
       });
       if (restore) this.subscriptions.push(restore);
       this.applicationDesktop.syncPet();
-      void this.initialize().catch(error => this.updateState(state => ({ ...state, status: String(error instanceof Error ? error.message : error) })));
+      const autoArchive = this.startAutoArchive();
+      this.subscriptions.push(autoArchive.stop);
+      void this.initialize().then(autoArchive.sweep, error => this.updateState(state => ({ ...state, status: String(error instanceof Error ? error.message : error) })));
     }
     let stopped = false;
     return () => {
@@ -702,7 +702,6 @@ export class ApplicationController implements HostApplicationService {
       this.submissionOwner?.dispose();
       this.submissionOwner = undefined;
       this.lifetime?.abort();
-      this.connectorLoginOwner?.suspend();
       this.clearPreviewVisibility?.();
       this.conversationDetails.stop();
       this.composerRuntimeOwner?.dispose();
@@ -894,7 +893,6 @@ export class ApplicationController implements HostApplicationService {
   setSettings(open: boolean, pageId = this.settings.pageId): void {
     if (open === this.settings.open && pageId === this.settings.pageId) return;
     this.settings = { open, pageId };
-    this.connectorLoginOwner?.reconcile();
     this.publish();
   }
 
@@ -1121,6 +1119,42 @@ export class ApplicationController implements HostApplicationService {
     const message = messages?.find(message => message.id === input.messageId);
     if (!message) throw new Error("Pending message owner is unavailable");
     return message;
+  }
+
+  // Sweeps after the runtime loads, when the window changes, and hourly for
+  // long-lived sessions. Failures stay quiet: the next sweep retries.
+  private startAutoArchive(): { sweep: () => Promise<void>; stop: () => void } {
+    const api = window.wuu;
+    if (!api?.getDesktopPreferences) return { sweep: async () => {}, stop: () => {} };
+    let days: DesktopAutoArchiveDays = 0;
+    let sweeping = false;
+    const sweep = async () => {
+      const signal = this.lifetime?.signal;
+      if (days === 0 || sweeping || !this.state.activeContext || signal?.aborted) return;
+      sweeping = true;
+      try {
+        const { threads } = await api.listAllThreads();
+        const open = new Set([this.state.thread?.id, this.state.secondaryThread?.id,
+          ...this.state.sessionTabs.map(tab => tab.kind === "thread" ? tab.threadID : undefined)]);
+        for (const thread of autoArchiveCandidates(threads, days, Date.now(), open)) {
+          if (signal?.aborted) return;
+          await this.mutationActions(signal).archiveThread(summarizeThreadsForSidebar([thread])[0]);
+        }
+      } catch (error) {
+        if (!signal?.aborted) console.error("Auto-archive failed", error);
+      } finally {
+        sweeping = false;
+      }
+    };
+    const apply = (preferences: DesktopPreferences) => {
+      if (preferences.auto_archive_days === days) return;
+      days = preferences.auto_archive_days;
+      void sweep();
+    };
+    const unsubscribe = api.onDesktopPreferencesChanged?.(apply);
+    void api.getDesktopPreferences().then(apply, error => console.error("Could not read desktop preferences", error));
+    const timer = window.setInterval(() => void sweep(), 3_600_000);
+    return { sweep, stop: () => { unsubscribe?.(); window.clearInterval(timer); } };
   }
 
   private mutationActions(signal?: AbortSignal) {
@@ -1762,6 +1796,21 @@ export class ApplicationController implements HostApplicationService {
 
   private readonly projectConversationTurns = createConversationTurnsProjector();
 
+  // state.turnStreamStatus is replaced immutably on every change, so the
+  // frozen projection can be reused verbatim while the source record is the
+  // same object; this keeps the snapshot's deep retention on a fast === path.
+  private projectTurnStreamStatus(source: AppState["turnStreamStatus"]) {
+    if (this.turnStreamStatusProjection?.source !== source) {
+      this.turnStreamStatusProjection = {
+        source,
+        projected: Object.freeze(Object.fromEntries(
+          Object.entries(source).map(([id, status]) => [id, Object.freeze({ ...status })]),
+        )),
+      };
+    }
+    return this.turnStreamStatusProjection.projected;
+  }
+
   private project(): ApplicationSnapshotV1 {
     const state = this.state;
     const initialized = state.initialized;
@@ -1822,7 +1871,7 @@ export class ApplicationController implements HostApplicationService {
       search: this.applicationSearch.getSnapshot(),
       conversationActions,
       conversationDetails: this.conversationDetails.getSnapshot(),
-      conversationWorkspace: Object.freeze({ turnStreamStatus: Object.freeze(Object.fromEntries(Object.entries(state.turnStreamStatus).map(([id, status]) => [id, Object.freeze({ ...status })]))), primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
+      conversationWorkspace: Object.freeze({ turnStreamStatus: this.projectTurnStreamStatus(state.turnStreamStatus), primaryThreadId: state.thread?.id, secondaryThreadId: state.secondaryThread?.id, activePane: state.activePane,
         threads: this.conversationThreadViews }),
       conversation: Object.freeze({ threadId: thread?.id, title: thread?.title || thread?.preview, turns: Object.freeze(turns), loading: !initialized }),
       composer: Object.freeze({ contractVersion: 1, draftText: this.draft, threadId: thread?.id, running, readOnly: thread?.read_only, availableSubmissionModes: Object.freeze(running ? ["queue", "steer"] as const : ["send"] as const),

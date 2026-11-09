@@ -166,9 +166,10 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	if child := owner.thread(spawned.AgentID); child != nil {
 		t.Fatal("terminal worker UI state materialized before durable completion")
 	}
-	owner.agentCompletionMu.Lock()
-	pendingBeforeRetry := len(owner.pendingAgentCompletionTurns[rootID])
-	owner.agentCompletionMu.Unlock()
+	rootCompletions := owner.completionQueue(rootID)
+	rootCompletions.mu.Lock()
+	pendingBeforeRetry := len(rootCompletions.pending)
+	rootCompletions.mu.Unlock()
 	if pendingBeforeRetry != 0 {
 		t.Fatalf("root completion queue length before durable retry = %d, want 0", pendingBeforeRetry)
 	}
@@ -218,9 +219,9 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	if childStatus != ThreadStatusIdle || childTurn.Status != TurnStatusCompleted {
 		t.Fatalf("terminal worker UI state was not finalized: thread=%s turn=%s", childStatus, childTurn.Status)
 	}
-	owner.agentCompletionMu.Lock()
-	pendingCompletion := len(owner.pendingAgentCompletionTurns[rootID])
-	owner.agentCompletionMu.Unlock()
+	rootCompletions.mu.Lock()
+	pendingCompletion := len(rootCompletions.pending)
+	rootCompletions.mu.Unlock()
 	if pendingCompletion != 1 {
 		t.Fatalf("root completion queue length = %d, want 1 before worker lease release", pendingCompletion)
 	}
@@ -234,9 +235,9 @@ func TestServerFinalizesTerminalWorkerBeforeDeleteCanAcquireItsLease(t *testing.
 	if got := completionAttempts.Load(); got != 2 {
 		t.Fatalf("terminal replay issued another durable write: attempts=%d", got)
 	}
-	owner.agentCompletionMu.Lock()
-	pendingAfterReplay := len(owner.pendingAgentCompletionTurns[rootID])
-	owner.agentCompletionMu.Unlock()
+	rootCompletions.mu.Lock()
+	pendingAfterReplay := len(rootCompletions.pending)
+	rootCompletions.mu.Unlock()
 	if pendingAfterReplay != 1 {
 		t.Fatalf("root completion queue length after terminal replay = %d, want 1", pendingAfterReplay)
 	}
