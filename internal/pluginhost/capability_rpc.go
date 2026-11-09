@@ -317,16 +317,16 @@ type SessionCreateParams struct {
 	// engine. External engines own model access and native session history, so
 	// provider/model/effort carry engine-native identifiers and fork/seed
 	// context, model aliases, and session tool policies do not apply.
-	Engine                 string                           `json:"engine,omitempty"`
-	Provider               string                           `json:"provider,omitempty"`
-	Model                  string                           `json:"model,omitempty"`
-	Variant                string                           `json:"variant,omitempty"`
-	Effort                 string                           `json:"effort,omitempty"`
-	PermissionMode         string                           `json:"permission_mode,omitempty"`
-	Instructions           string                           `json:"instructions,omitempty"`
-	ToolPolicy             *SessionToolPolicy               `json:"tool_policy,omitempty"`
-	Seed                   *SessionContextSeed              `json:"seed,omitempty"`
-	Launch                 *SessionLaunchParams             `json:"launch,omitempty"`
+	Engine         string               `json:"engine,omitempty"`
+	Provider       string               `json:"provider,omitempty"`
+	Model          string               `json:"model,omitempty"`
+	Variant        string               `json:"variant,omitempty"`
+	Effort         string               `json:"effort,omitempty"`
+	PermissionMode string               `json:"permission_mode,omitempty"`
+	Instructions   string               `json:"instructions,omitempty"`
+	ToolPolicy     *SessionToolPolicy   `json:"tool_policy,omitempty"`
+	Seed           *SessionContextSeed  `json:"seed,omitempty"`
+	Launch         *SessionLaunchParams `json:"launch,omitempty"`
 }
 
 type SessionContextSeed struct {
@@ -476,10 +476,10 @@ type SessionSummary struct {
 	State             string `json:"state"`
 	// Engine is the agent engine the session is bound to; empty means the
 	// built-in engine for sessions persisted before engine selection.
-	Engine            string `json:"engine,omitempty"`
-	WorkspaceID       string `json:"workspace_id,omitempty"`
-	CreatedAt         string `json:"created_at,omitempty"`
-	UpdatedAt         string `json:"updated_at,omitempty"`
+	Engine      string `json:"engine,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
 }
 
 type SessionListResult struct {
