@@ -135,8 +135,14 @@ type Env struct {
 	// External engines use a direct browser/CUA surface and receive screenshot
 	// pixels without needing access to the workspace's file tools.
 	externalCapabilitiesOnly bool
-	conversationMCPServers   map[string]bool
-	conversationPluginTools  map[string]bool
+	// conversationMCPServers/conversationPluginTools admit servers and plugin
+	// tools for the lifetime of the capability surface; the turn-prefixed maps
+	// hold one turn's referenced server/tool admission and are cleared when it
+	// ends.
+	conversationMCPServers      map[string]bool
+	conversationPluginTools     map[string]bool
+	turnConversationMCPServers  map[string]bool
+	turnConversationPluginTools map[string]bool
 
 	// Optional dependencies — nil means the feature is unavailable.
 	// Tools check for nil and return a clear error rather than panic.

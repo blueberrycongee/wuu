@@ -2934,8 +2934,8 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 						}
 					}
 				}
-				turnKit.SetConversationTools(servers, pluginTools)
-				defer turnKit.SetConversationTools(nil, nil)
+				turnKit.SetTurnConversationTools(servers, pluginTools)
+				defer turnKit.SetTurnConversationTools(nil, nil)
 			}
 			if len(servers) > 0 {
 				manager := turnKit.MCPManager()

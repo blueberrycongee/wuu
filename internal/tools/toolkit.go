@@ -299,6 +299,8 @@ func (t *Toolkit) CloneForRoot(rootDir string) (*Toolkit, error) {
 		externalCapabilitiesOnly:    t.env.externalCapabilitiesOnly,
 		conversationMCPServers:      maps.Clone(t.env.conversationMCPServers),
 		conversationPluginTools:     maps.Clone(t.env.conversationPluginTools),
+		turnConversationMCPServers:  maps.Clone(t.env.turnConversationMCPServers),
+		turnConversationPluginTools: maps.Clone(t.env.turnConversationPluginTools),
 		SessionID:                   t.env.SessionID,
 		CodeModeStateOwner:          t.env.CodeModeStateOwner,
 		SessionDir:                  t.env.SessionDir,
