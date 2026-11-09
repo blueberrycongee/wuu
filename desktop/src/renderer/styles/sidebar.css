@@ -80,8 +80,35 @@
   transition: transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
 }
 
-.app-shell.right-panel-animating {
-  transition: grid-template-columns var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
+/* Docked right-panel open/close: like the sidebar, the grid commits in one
+ * frame and the panel slides as a promoted overlay on the compositor instead
+ * of relaying out the shell every frame. Sheet states (data-sheet) keep their
+ * own fixed positioning and win over this overlay via source order. */
+.app-shell.right-panel-animating .workspace-right-panel {
+  position: absolute;
+  inset: 0 var(--conversation-pane-inset) 0 auto;
+  z-index: 140;
+  width: var(--workspace-right-panel-width, 360px);
+  min-width: var(--workspace-right-panel-width, 360px);
+  will-change: transform;
+}
+
+.app-shell.right-panel-animating.right-panel-open .workspace-right-panel {
+  transform: translate3d(0, 0, 0);
+  transition: transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
+}
+
+.app-shell.right-panel-animating:not(.right-panel-open) .workspace-right-panel {
+  transform: translate3d(100%, 0, 0);
+  transition: transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
+}
+
+/* The resizer pins to the docked edge, which no longer moves during the
+ * slide; fade it instead of leaving a floating handle mid-animation. */
+.app-shell.right-panel-animating .workspace-right-panel-resizer {
+  opacity: 0;
+  transform: none;
+  transition: opacity var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
 }
 
 .app-shell.right-panel-open {

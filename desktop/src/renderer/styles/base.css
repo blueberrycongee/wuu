@@ -955,6 +955,12 @@ code,
     var(--sidebar-motion-ease) !important;
 }
 
+/* Same exception for the docked right panel's composited slide. */
+.window-resizing .app-shell.right-panel-animating .workspace-right-panel {
+  transition: transform var(--workspace-panel-motion-duration)
+    var(--workspace-panel-motion-ease) !important;
+}
+
 /* Same exception for the globalize sheet: auto-globalize triggered by a live
  * window resize still slides (transform-only, composited — it does not touch
  * the layout budget the blanket rule protects). */
