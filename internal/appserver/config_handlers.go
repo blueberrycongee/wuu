@@ -2111,9 +2111,6 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 	if lookupErr != nil {
 		return s.writeResponse(req.ID, nil, lookupErr)
 	}
-	if isCodexProviderType(existing.Type) {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("provider %q is managed by OpenAI OAuth and cannot be removed", providerName))
-	}
 	if threadID, inUse := s.runningTurnUsingProvider(resolvedName); inUse {
 		return s.writeResponse(req.ID, nil, fmt.Errorf("cannot remove provider %q while it is used by a running turn in thread %q", resolvedName, threadID))
 	}
@@ -2158,9 +2155,11 @@ func (s *Server) handleConfigProviderRemove(req Request) error {
 		params.FallbackProvider, params.FallbackModel = fallbackName, fallbackModel
 	}
 	authStore := authstorage.NewBound(context.Background(), services.Credentials)
-	// This account-level sign-in may be used by other connections or
-	// workspaces. Removing a provider is not an account sign-out.
-	removeCredential := !config.IsXAISubscriptionProvider(existing.Type) || resolvedName != xaisub.AuthProviderID
+	// Subscription connections share one account-level sign-in. Removing a
+	// connection is not an account sign-out, including when the connection's
+	// name is the credential store's type key.
+	removeCredential := (!config.IsXAISubscriptionProvider(existing.Type) || resolvedName != xaisub.AuthProviderID) &&
+		(!isCodexProviderType(existing.Type) || resolvedName != codex.AuthProviderID)
 
 	credentials, authErr := authStore.Load()
 	if authErr != nil && !errors.Is(authErr, authstorage.ErrNotFound) {

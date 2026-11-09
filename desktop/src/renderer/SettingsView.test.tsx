@@ -28,6 +28,8 @@ import type {
   WuuDesktopApi
 } from "../shared/protocol";
 import { I18nProvider } from "./i18n";
+import { clearToasts, ToastViewport } from "./Toast";
+import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { hoverTooltipText, unhoverTooltip } from "./tooltipTestUtils";
 
 type GlobalWindow = typeof window & { wuu: WuuDesktopApi };
@@ -1100,15 +1102,29 @@ describe("SettingsView model services", () => {
     expect(document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.disabled).toBe(true);
     click(document.querySelector('[data-testid="settings-provider-removal-fallback"]'));
     click(document.querySelector('[data-value="openai-codex"]'));
-    onRemoveProvider.mockRejectedValueOnce(new Error("Could not remove provider"));
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
-    });
-    expect(document.querySelector('.model-service-remove-dialog [role="alert"]')?.textContent).toBe("Could not remove provider");
-    await act(async () => {
-      document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
-    });
-    expect(onRemoveProvider).toHaveBeenLastCalledWith("deepseek", { fallbackProvider: "openai-codex", fallbackModel: "gpt-6-astra" });
+    // Removal failures report through the shared toast; the dialog stays open
+    // with its fallback choice so the same action can be retried.
+    clearToasts();
+    const toastContainer = document.createElement("div");
+    document.body.appendChild(toastContainer);
+    const toastRoot = createRoot(toastContainer);
+    act(() => { toastRoot.render(<WuuUIRoot><ToastViewport /></WuuUIRoot>); });
+    try {
+      onRemoveProvider.mockRejectedValueOnce(new Error("Could not remove provider"));
+      await act(async () => {
+        document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
+      });
+      expect(toastContainer.querySelector('[role="alert"]')?.textContent).toBe("Could not remove provider");
+      expect(document.querySelector('.model-service-remove-dialog [role="alert"]')).toBeNull();
+      await act(async () => {
+        document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click();
+      });
+      expect(onRemoveProvider).toHaveBeenLastCalledWith("deepseek", { fallbackProvider: "openai-codex", fallbackModel: "gpt-6-astra" });
+    } finally {
+      act(() => { toastRoot.unmount(); });
+      toastContainer.remove();
+      clearToasts();
+    }
 
     renderSettings({ initialized: { ...initialized, providers: initialized.providers!.filter((provider) => provider.name === "deepseek") }, initialPage: "providers", onRemoveProvider });
     click(document.querySelector('[data-provider="deepseek"]'));

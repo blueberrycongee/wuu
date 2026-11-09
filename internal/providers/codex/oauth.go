@@ -23,6 +23,10 @@ const (
 	tokenURL    = "https://auth.openai.com/oauth/token"
 	clientID    = "app_EMoamEEZ73f0CkXaXp7hrann"
 	refreshSkew = 120 * time.Second
+
+	// AuthProviderID is the durable auth-store key for the account-level
+	// ChatGPT/Codex OAuth sign-in shared by Codex subscription connections.
+	AuthProviderID = "openai-codex"
 )
 
 // OAuthConfig configures the local ChatGPT/Codex OAuth credential source.
@@ -108,7 +112,7 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 	}
 	// Read on every request so replacement and sign-out reach existing clients.
 	store := authstorage.NewBound(ctx, s.selected)
-	state, err := store.Get("openai-codex")
+	state, err := store.Get(AuthProviderID)
 	if err == nil {
 		creds := credentials{
 			accessToken:  strings.TrimSpace(state.AccessToken),
@@ -132,7 +136,7 @@ func (s *OAuthSource) Credentials(ctx context.Context, forceRefresh bool) (crede
 				state.Source = "wuu"
 			}
 			state.BaseURL = s.baseURL
-			if saveErr := store.Set("openai-codex", state); saveErr != nil {
+			if saveErr := store.Set(AuthProviderID, state); saveErr != nil {
 				return credentials{}, saveErr
 			}
 			creds.accessToken = state.AccessToken
@@ -325,7 +329,7 @@ func OAuthStatus(ctx context.Context, selected credentialstore.Store, reuseCLI b
 		state, err = authstorage.ReadCLI(ctx, selected, "codex")
 		source = "codex-cli"
 	} else {
-		state, err = authstorage.NewBound(ctx, selected).Get("openai-codex")
+		state, err = authstorage.NewBound(ctx, selected).Get(AuthProviderID)
 	}
 	if err != nil {
 		if reuseCLI && errors.Is(err, authstorage.ErrNotFound) {

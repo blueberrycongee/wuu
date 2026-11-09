@@ -7,6 +7,8 @@ import type { CatalogProviderSummary, EngineListResult, ProviderSummary, WuuDesk
 import type { ApplicationSettingsControlsV1 } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { ModelServicesPage } from "./ModelServicesPage";
 import { PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
+import { clearToasts, ToastViewport } from "./Toast";
+import { WuuUIRoot } from "./ui/layers/UILayerHost";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -382,6 +384,37 @@ it("does not close retained successor details when old provider removal settles"
     await act(async () => removal.resolve());
     expect(container.querySelector('.connection-page')).toBe(detail);
   } finally { act(() => root.unmount()); container.remove(); }
+});
+
+it("reports connection removal failures through the shared toast", async () => {
+  clearToasts();
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container);
+  const props = { initialized: { protocol_version: "test", workspace_root: "/fixture", provider: "default", model: "m", providers: [
+    { name: "default", type: "openai", model: "m", api_key_configured: true },
+    { name: "openai-codex", type: "openai-codex", model: "m", api_key_configured: true }] },
+    running: false, runningProviderNames: new Set<string>(), onSave: vi.fn(),
+    onRemoveProvider: vi.fn().mockRejectedValue(new Error(
+      "Error invoking remote method 'wuu:config-provider-remove': Error: cannot remove provider \"openai-codex\" while it is used by a running turn in thread \"thread-1\"",
+    )), onRefreshModelCatalog: vi.fn() };
+  try {
+    await act(async () => root.render(<WuuUIRoot>
+      <ToastViewport />
+      <SettingsControlsProvider controls={renewalControls()}><ModelServicesPage {...props} /></SettingsControlsProvider>
+    </WuuUIRoot>));
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-card"][data-provider="openai-codex"]')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove"]')!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>('[data-testid="settings-provider-remove-confirm"]')!.click());
+    await act(async () => {});
+
+    const alerts = [...container.querySelectorAll('[data-wuu-layer-host="true"] [role="alert"]')];
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].textContent).toContain('cannot remove provider "openai-codex" while it is used by a running turn in thread "thread-1"');
+    expect(alerts[0].textContent).not.toContain("Error invoking remote method");
+    // The dialog stays open for retry and does not repeat the failure inline.
+    expect(document.querySelector('[data-testid="settings-provider-remove-confirm"]')).not.toBeNull();
+    expect(container.querySelector(".settings-error")).toBeNull();
+  } finally { act(() => root.unmount()); container.remove(); clearToasts(); }
 });
 
 it("stops reading quota when successor controls no longer provide engine inventory", async () => {
