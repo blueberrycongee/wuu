@@ -4,6 +4,7 @@ import { arrayMove, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useSortableTransition } from "./SortableMotion";
 import { SidebarSectionDragHandleContext } from "./SidebarSection";
+import { TruncatedText } from "./TruncatedText";
 
 export type SidebarSectionHeaderInfo = {
   label: string;
@@ -46,7 +47,7 @@ export function SidebarSectionDragPreview({
           />
         </span>
         <span className="project-row-label">
-          <span className="project-row-name">{info.label}</span>
+          <TruncatedText text={info.label} className="project-row-name" fade />
           <ChevronRight className="project-row-chevron icon" aria-hidden="true" />
         </span>
       </div>

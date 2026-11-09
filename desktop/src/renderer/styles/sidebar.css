@@ -1951,8 +1951,11 @@ html[data-focus-modality="keyboard"] .project-group:focus-within > .project-row 
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  /* Same trailing fade as .thread-row-title: truncated workspace names dim
-   * out instead of printing an ellipsis. */
+}
+
+.project-row-name[data-truncated="true"],
+.thread-row-main > .thread-row-title[data-truncated="true"] {
+  /* Only mask text whose own box is wider than the available space. */
   mask-image: linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent);
   mask-clip: content-box;
   mask-origin: content-box;
@@ -2360,13 +2363,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   flex: 1;
   overflow: hidden;
   white-space: nowrap;
-  /* Truncated tails fade into the reserved accessory space instead of ending
-   * in an ellipsis glyph; the hover card already exposes the full title. The
-   * mask tracks the content box, so it follows the animated padding-right. */
-  mask-image: linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent);
-  mask-clip: content-box;
-  mask-origin: content-box;
-  mask-repeat: no-repeat;
   transition: padding-right var(--motion-base) var(--ease-out);
 }
 
