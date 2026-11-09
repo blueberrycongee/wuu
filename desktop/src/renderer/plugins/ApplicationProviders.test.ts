@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ApplicationProviderInstanceV1, ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
+import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import { ApplicationProviders, type ApplicationRetirementPreparation } from "./ApplicationProviders";
 
 function candidate(label: string, events: string[], fail = false): ApplicationProviderInstanceV1 {
@@ -213,7 +214,7 @@ describe("selected application business provider lifecycle", () => {
     expect(scope.signal.aborted).toBe(true);
     expect(events).toEqual(["one:activate:empty", "one:stop", "two:activate:drafts/v1"]);
     await providers.select(undefined);
-    expect(() => providers.createScope(new AbortController().signal)).toThrow("No application provider");
+    expect(() => providers.createScope(new AbortController().signal)).toThrowError(PluginLifecycleCancellationError);
     expect(events.at(-1)).toBe("two:stop");
   });
 

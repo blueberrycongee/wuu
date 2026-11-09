@@ -106,7 +106,9 @@ export class ApplicationProviders {
   }
   createScope(signal: AbortSignal): ApplicationServiceV1 {
     const record = this.current;
-    if (!record?.instance || !record.lifetime || record.removed) throw new Error("No application provider is active");
+    // An unset writer is a transition gap, not a defect: classify it like a
+    // retired scope so consumers treat the read as expected retirement.
+    if (!record?.instance || !record.lifetime || record.removed) throw new PluginLifecycleCancellationError(new Error("No application provider is active"));
     const scope = new AbortController();
     const sources = [signal, record.lifetime.signal];
     const abort = () => { scope.abort(sources.find(source => source.aborted)?.reason); for (const source of sources) source.removeEventListener("abort", abort); };
