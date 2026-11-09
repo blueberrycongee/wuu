@@ -1,6 +1,7 @@
 import { SurfaceUnavailable } from "./SurfaceUnavailable";
 import { RuntimeLoading } from "../LoadingViews";
 import { showErrorToast } from "../Toast";
+import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 import { useI18n, translateCurrent } from "../i18n";
 import { createPluginTranslator } from "./pluginI18n";
 import * as React from "react";
@@ -114,20 +115,31 @@ const Contribution = React.memo(function Contribution({ host, contribution, slot
 
 class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string; fullShell?: boolean; recover?: boolean; hideError?: boolean; fallback?: React.ReactNode }, { error?: Error }> {
   private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
+  private providerSubscription?: () => void;
   componentDidMount(): void {
     this.observer = this.props.host.observeGenerationRender(this.props.pluginId, this.props.generation, this.state.error);
+    // Provider handoffs cancel every captured read before the replacement
+    // publishes. Retry when the next provider arrives instead of pinning an
+    // unavailable surface for an error the graph already resolved.
+    this.providerSubscription = this.props.host.applicationProviders.subscribe(() => {
+      if (this.state.error) this.setState({ error: undefined });
+    });
   }
   componentDidCatch(error: Error): void {
     this.observer?.failed(error);
-    if (this.props.recover) showErrorToast(translateCurrent("plugins.surfaceUnavailable"), "", `plugin-surface:${this.props.pluginId}:${this.props.generation}`);
+    if (this.props.recover && !isPluginLifecycleCancellation(error)) showErrorToast(translateCurrent("plugins.surfaceUnavailable"), "", `plugin-surface:${this.props.pluginId}:${this.props.generation}`);
   }
-  componentWillUnmount(): void { this.observer?.dispose(); }
+  componentWillUnmount(): void { this.providerSubscription?.(); this.observer?.dispose(); }
   state: { error?: Error } = {};
   static getDerivedStateFromError(error: Error): { error: Error } { return { error }; }
   render(): React.ReactNode {
-    return this.state.error
-      ? this.props.recover ? this.props.fallback : this.props.hideError ? null : <SurfaceUnavailable fullscreen={this.props.fullShell} onRetry={() => this.setState({ error: undefined })} />
-      : this.props.children;
+    if (!this.state.error) return this.props.children;
+    if (this.props.recover) return this.props.fallback;
+    if (this.props.hideError) return null;
+    // A retired scope renders as an absent contribution, like a pending one;
+    // the provider subscription above clears the error on the next binding.
+    if (isPluginLifecycleCancellation(this.state.error) && !this.props.fullShell) return null;
+    return <SurfaceUnavailable fullscreen={this.props.fullShell} onRetry={() => this.setState({ error: undefined })} />;
   }
 }
 

@@ -944,4 +944,56 @@ describe("application shell assembly", () => {
     act(() => root.unmount());
   });
 
+  // A generation committed while the application provider hands off pins a dead
+  // scope on its first render read. The cancelled surface reads as absent and
+  // retries when the successor publishes — it must not hold an unavailable
+  // surface or mark the generation's render as failed.
+  it("recovers a contribution surface after the provider handoff cancels its first read", async () => {
+    const host = new PluginHost({ react: React });
+    let release!: () => void, entered!: () => void;
+    const activation = new Promise<void>(resolve => { release = resolve; });
+    const activating = new Promise<void>(resolve => { entered = resolve; });
+    const provider = (generation: string) => host.applicationProviders.register({ pluginId: "business", generation, id: "application" }, {
+      id: "application", prepare: () => ({
+        activate: async () => { if (generation === "next") { entered(); await activation; } },
+        deactivate: () => undefined, dispose: () => {},
+        createScope: signal => ({
+          getSnapshot: () => ({ label: generation }),
+          invoke: async () => { signal.throwIfAborted(); },
+        }) as unknown as ApplicationServiceV1,
+      }),
+    });
+    const old = provider("old"), next = provider("next");
+    await host.applicationProviders.select(old);
+    await host.activateGeneration({ pluginId: "shell", generation: "stable", register: api => host.registerPresentation(api, presentation => {
+      presentation.registerUISlot({ id: "layers", cardinality: "many" });
+      presentation.registerApplicationShell({ id: "shell", render: ({ slots }) => <main><slots.Slot name="shell/layers" /></main> });
+    }) });
+    const container = document.createElement("div"), root = createRoot(container); document.body.append(container);
+    let switching: Promise<void> | undefined;
+    try {
+      await act(async () => root.render(<ApplicationShellOutlet host={host} binding={{ pluginId: "shell", generation: "stable", id: "shell" }} />));
+      await act(async () => { switching = host.applicationProviders.select(next); await activating; });
+      // The generation activates and renders inside the provider handoff, so
+      // its first application read throws PluginLifecycleCancellationError.
+      await act(async () => host.activateGeneration({ pluginId: "panel", generation: "v1", register: api => host.registerPresentation(api, presentation => {
+        presentation.registerUIContribution({ id: "badge", target: "shell/layers", render: ({ application }) =>
+          <section>{(application.getSnapshot() as unknown as { label: string }).label}</section> });
+      }) }));
+      expect(container.querySelector(".surface-unavailable")).toBeNull();
+      expect(container.textContent).not.toContain("next");
+      expect(host.getGenerationDiagnostics("panel", "v1")).toEqual([]);
+      expect(host.canRebindPresentation("panel", "v1")).toBe(true);
+      await act(async () => { release(); await switching; });
+      expect(container.textContent).toBe("next");
+      expect(container.querySelector(".surface-unavailable")).toBeNull();
+      expect(host.getGenerationDiagnostics("panel", "v1")).toEqual([]);
+    } finally {
+      release(); await switching;
+      act(() => root.unmount()); container.remove();
+      await host.unloadAndWait("panel"); await host.unloadAndWait("shell");
+      await host.applicationProviders.remove(next); await host.applicationProviders.remove(old);
+    }
+  });
+
 });

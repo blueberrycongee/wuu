@@ -1139,6 +1139,7 @@ export class PluginHost {
   }
 
   recordPresenterFailure(contribution: RegisteredPresenter, error: unknown): void {
+    if (isPluginLifecycleCancellation(error)) return;
     if (!this.presenterSnapshot.includes(contribution)) return;
     this.addDiagnostic({
       pluginId: contribution.pluginId,
@@ -1151,6 +1152,7 @@ export class PluginHost {
   }
 
   recordConversationCardFailure(card: RegisteredConversationCard, error: unknown): void {
+    if (isPluginLifecycleCancellation(error)) return;
     if (!this.conversationCardSnapshot.includes(card)) return;
     this.addDiagnostic({
       pluginId: card.pluginId,
@@ -2021,6 +2023,10 @@ export class PluginHost {
     const observer = {
       failed: (error: Error) => {
         if (disposed || state.cleaned || state.renderFailed) return;
+        // A cancelled presentation read is expected retirement, not a render
+        // defect: marking it failed would block rebindPresentation and force a
+        // full shell regeneration after every routine provider handoff.
+        if (isPluginLifecycleCancellation(error)) return;
         state.renderFailed = true;
         this.addDiagnostic({ pluginId, generation, kind: "render", message: `Plugin UI render failed: ${errorMessage(error)}`, cause: error });
         this.report(state, "render", "failed");
