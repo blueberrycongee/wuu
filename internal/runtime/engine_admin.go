@@ -134,7 +134,7 @@ func (s *nativeEngineAdmin) Invoke(ctx context.Context, method string, raw json.
 		if s.canonicalHistory(ctx) {
 			return json.Marshal(pluginprotocol.EngineHistoryForkResult{})
 		}
-		engine, ok := s.factory.(*codexengine.Engine)
+		forker, ok := s.factory.(agentengine.HistoryForker)
 		if !ok {
 			return nil, fmt.Errorf("engine %s does not expose a verified native history cutoff; original history is unchanged", s.engineID)
 		}
@@ -147,12 +147,12 @@ func (s *nativeEngineAdmin) Invoke(ctx context.Context, method string, raw json.
 			}
 			out := make([]providers.ChatMessage, len(messages))
 			for i, message := range messages {
-				out[i] = providers.ChatMessage{Role: message.Role, EngineTurnID: message.EngineTurnID, ProviderItemID: message.ProviderItemID, Steered: message.Steered}
+				out[i] = providers.ChatMessage{Role: message.Role, EngineTurnID: message.EngineTurnID, ProviderItemID: message.ProviderItemID, Steered: message.Steered, ContentSHA256: message.ContentSHA256}
 			}
 			return out
 		}
 		retained, removed := convert(req.Retained), convert(req.Removed)
-		ref, err := engine.ForkHistory(ctx, req.Ref, req.CWD, retained, removed, req.WholeTurn)
+		ref, err := forker.ForkHistory(ctx, req.Ref, req.CWD, retained, removed, agentengine.HistoryForkBoundary{WholeTurn: req.WholeTurn, TurnBoundary: req.TurnBoundary, EndBoundary: req.EndBoundary})
 		if err != nil {
 			return nil, err
 		}

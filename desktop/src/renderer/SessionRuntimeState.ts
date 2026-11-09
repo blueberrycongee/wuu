@@ -6,6 +6,15 @@ import { engineRequiresHostModel } from "./RuntimeHelpers";
 // is actually executing. Centralize that priority so every model-facing UI
 // tells the same story: running turn -> next turn in this session -> default
 // for a session that has not been created yet.
+// Presentation snapshots call these projections on every state update. The
+// projected objects must stay identity-stable while the runtime fields they
+// read are unchanged, or downstream caches keyed on the projection (frozen
+// configuration copies, composer effect deps) churn on every stream event.
+// Cached projections share nested objects with the source state, so callers
+// must treat the returned view as read-only.
+const sessionViewCache = new WeakMap<InitializeResult, Map<string, InitializeResult>>();
+const conversationViewCache = new WeakMap<InitializeResult, Map<string, InitializeResult>>();
+
 export function runtimeViewForSession(
   initialized: InitializeResult | undefined,
   thread: Thread | undefined,
@@ -13,19 +22,38 @@ export function runtimeViewForSession(
   if (!initialized || !thread) {
     return initialized;
   }
-  return {
+  const provider = thread.model_provider || initialized.provider;
+  const model = thread.model || initialized.model;
+  const variant = thread.model_variant ?? initialized.variant;
+  const effort = thread.model_effort ?? initialized.effort;
+  const speed = thread.speed ?? "";
+  const mode = thread.permission_mode || initialized.permissions?.mode;
+  const approveForMe = thread.approve_for_me ?? initialized.permissions?.approve_for_me;
+  const key = JSON.stringify([provider, model, variant, effort, speed, mode, approveForMe]);
+  let entries = sessionViewCache.get(initialized);
+  const cached = entries?.get(key);
+  if (cached) {
+    return cached;
+  }
+  const value = {
     ...initialized,
-    provider: thread.model_provider || initialized.provider,
-    model: thread.model || initialized.model,
-    variant: thread.model_variant ?? initialized.variant,
-    effort: thread.model_effort ?? initialized.effort,
-    speed: thread.speed ?? "",
+    provider,
+    model,
+    variant,
+    effort,
+    speed,
     permissions: {
       ...initialized.permissions,
-      mode: thread.permission_mode || initialized.permissions?.mode,
-      approve_for_me: thread.approve_for_me ?? initialized.permissions?.approve_for_me,
+      mode,
+      approve_for_me: approveForMe,
     },
   };
+  if (!entries) {
+    entries = new Map();
+    sessionViewCache.set(initialized, entries);
+  }
+  entries.set(key, value);
+  return value;
 }
 
 export function runtimeViewForConversation(
@@ -37,11 +65,25 @@ export function runtimeViewForConversation(
   if (!session || turn?.status !== "in_progress") {
     return session;
   }
-  return {
+  const provider = turn.model_provider || session.provider;
+  const model = turn.model || session.model;
+  const key = JSON.stringify([provider, model]);
+  let entries = conversationViewCache.get(session);
+  const cached = entries?.get(key);
+  if (cached) {
+    return cached;
+  }
+  const value = {
     ...session,
-    provider: turn.model_provider || session.provider,
-    model: turn.model || session.model,
+    provider,
+    model,
   };
+  if (!entries) {
+    entries = new Map();
+    conversationViewCache.set(session, entries);
+  }
+  entries.set(key, value);
+  return value;
 }
 
 // A submitted draft has no Thread yet, but thread/start already fixes the

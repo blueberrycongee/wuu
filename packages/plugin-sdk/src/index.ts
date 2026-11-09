@@ -1290,6 +1290,8 @@ export interface ToolRegistration {
   execution_scopes?: Array<"root" | "child">;
   activity?: ToolActivityMetadata;
   display?: ToolDisplayMetadata;
+  /** Agent-facing usage contract host-capability surfaces expose to external engines. Host metadata, not part of provider tool definitions. */
+  guidance?: string;
 }
 
 export interface CapabilityInvokeParams<TInput = unknown, TOutput = unknown> {

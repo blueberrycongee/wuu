@@ -100,7 +100,7 @@ function UnavailableSurface({ host, binding, service }: { host: PluginHost; bind
   return <SurfaceUnavailable />;
 }
 
-function Contribution({ host, contribution, slots, context, children }: {
+const Contribution = React.memo(function Contribution({ host, contribution, slots, context, children }: {
   host: PluginHost; contribution: RegisteredUIContribution; slots: UICompositionV1; context: Readonly<Record<string, unknown>>; children?: React.ReactNode;
 }): React.ReactNode {
   React.useEffect(() => host.retainGeneration(contribution.pluginId, contribution.generation), [host, contribution]);
@@ -110,7 +110,7 @@ function Contribution({ host, contribution, slots, context, children }: {
   const application = host.getPresentationApplication(contribution.pluginId, contribution.generation, contribution.application);
   const View = contribution.render;
   return <View application={application} slots={slots} context={context} locale={locale} translate={translate}>{children}</View>;
-}
+});
 
 class ShellBoundary extends React.Component<{ children: React.ReactNode; identity: string; host: PluginHost; pluginId: string; generation: string; fullShell?: boolean; recover?: boolean; hideError?: boolean; fallback?: React.ReactNode }, { error?: Error }> {
   private observer?: ReturnType<PluginHost["observeGenerationRender"]>;

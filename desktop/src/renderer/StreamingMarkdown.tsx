@@ -79,7 +79,7 @@ export function StreamingMarkdown(props: StreamingMarkdownProps): JSX.Element {
   const active = useConversationRenderActive();
   const hasValue = useStreamedTextHasValue(props.streamKey, active);
   const text = useStreamedText(props.streamKey, props.initialText ?? "", active);
-  return <StreamingMarkdownBody {...props} source={{ text, hasValue, replacementVersion: streamTextStore.replacementVersion(props.streamKey) }} />;
+  return <StreamingMarkdownBody {...props} source={{ text, hasValue, replacementVersion: streamTextStore.replacementVersion(props.streamKey), appendOnly: hasValue }} />;
 }
 
 /** Public live observer uses the host's existing stream; hidden panes retain their last paint. */
@@ -118,7 +118,10 @@ export function ApplicationStreamingMarkdown({ threadId, turnId, itemId, ...prop
   const previous = useRef({ key, text, version: 0 });
   if (previous.current.key !== key) previous.current = { key, text, version: 0 };
   else if (previous.current.text !== text) previous.current = { key, text, version: previous.current.version + (text.startsWith(previous.current.text) ? 0 : 1) };
-  return <StreamingMarkdownBody {...props} streamKey={key} source={{ text, hasValue: live !== undefined, replacementVersion: previous.current.version }} />;
+  // This source's replacementVersion already bumps on every non-prefix
+  // transition, so the stable-block scanner may extend whenever the other
+  // canExtend guards pass even when the store has no live value to offer.
+  return <StreamingMarkdownBody {...props} streamKey={key} source={{ text, hasValue: live !== undefined, replacementVersion: previous.current.version, appendOnly: true }} />;
 }
 
 function StreamingMarkdownBody({
@@ -132,7 +135,7 @@ function StreamingMarkdownBody({
   onFrame,
   onSettled,
   source,
-}: StreamingMarkdownProps & { source: { text: string; hasValue: boolean; replacementVersion: number } }): JSX.Element {
+}: StreamingMarkdownProps & { source: { text: string; hasValue: boolean; replacementVersion: number; appendOnly: boolean } }): JSX.Element {
   const renderActive = useConversationRenderActive();
   const becameRenderActive = useConversationBecameRenderActive();
   const hasStreamValue = source.hasValue;
@@ -261,7 +264,7 @@ function StreamingMarkdownBody({
     visibleText,
     streamKey,
     renderedReplacementVersionRef.current,
-    hasStreamValue,
+    source.appendOnly,
   );
   // Keep the synthetic cursor separated from the Markdown source. Appending
   // the private-use sentinel directly after a closing emphasis delimiter can

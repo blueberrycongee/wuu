@@ -195,7 +195,7 @@ Use the service's actual registration values; a service may also require `client
 
 ## Tool metadata
 
-A server definition can use `tool_overrides` to correct a tool's `read_only`, `concurrency_safe`, or `capability` metadata. Only set these when you know the operation's semantics. Mislabeling a write as a safe read can bypass protections that rely on those declarations.
+A server definition can use `tool_overrides` to correct a tool's `read_only`, `concurrency_safe`, or `capability` metadata, or attach a `guidance` usage contract that host-capability surfaces show to external engines when the tool is exposed to them. Only set these when you know the operation's semantics. Mislabeling a write as a safe read can bypass protections that rely on those declarations.
 
 ## Troubleshooting and trust
 

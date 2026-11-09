@@ -55,7 +55,7 @@ type ModelInputReceiptStore interface {
 	SaveModelInputReceipt(context.Context, ModelInputReceipt) error
 }
 
-func modelInputReceipt(request providers.ChatRequest, execution loopdriver.ExecutionContext, driver loopdriver.Descriptor, sections []SystemPromptSectionInfo, rewritten bool) ModelInputReceipt {
+func modelInputReceipt(request providers.ChatRequest, toolSurfaceHash string, execution loopdriver.ExecutionContext, driver loopdriver.Descriptor, sections []SystemPromptSectionInfo, rewritten bool) ModelInputReceipt {
 	receipt := ModelInputReceipt{
 		ModelSelectionRevision: request.ModelSelectionRevision,
 		ContractVersion:        ModelInputReceiptContractVersion,
@@ -70,7 +70,7 @@ func modelInputReceipt(request providers.ChatRequest, execution loopdriver.Execu
 		InputFactSeqs:          durableInputFactSeqs(request.Messages),
 		Messages:               providers.CloneChatMessages(request.Messages),
 		Tools:                  modelInputTools(request.Tools),
-		ToolSurfaceHash:        hashToolsForRequestShape(request.Tools),
+		ToolSurfaceHash:        toolSurfaceHash,
 		SystemSections:         modelInputSystemSections(sections),
 		ForceToolName:          request.ForceToolName,
 		Temperature:            request.Temperature,

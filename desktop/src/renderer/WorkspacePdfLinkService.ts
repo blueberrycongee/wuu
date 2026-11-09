@@ -1,6 +1,7 @@
 import { isValidExplicitDest, type PDFDocumentProxy } from "pdfjs-dist";
 import { EventBus, PDFLinkService, PDFViewer } from "pdfjs-dist/web/pdf_viewer.mjs";
 import { parseLinkTarget } from "./LinkTargets";
+import { showErrorToast } from "./Toast";
 
 export class WorkspacePdfLinkService extends PDFLinkService {
   private navigation = 0;
@@ -61,9 +62,7 @@ export class WorkspacePdfLinkService extends PDFLinkService {
       if (!this.isReady() || !this.externalLinkEnabled) return;
       // The main-process external URL policy remains authoritative. No renderer
       // navigation or window creation is needed for a PDF annotation click.
-      void this.openExternal!(target.url).catch(error => {
-        console.warn("Could not open PDF link", error);
-      });
+      void this.openExternal!(target.url).catch(showErrorToast);
     };
     link.onclick = open;
     link.onauxclick = open;

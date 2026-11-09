@@ -1170,7 +1170,7 @@ export type MCPServerConfig = {
   oauth?: { client_id?: string; client_secret?: string; scopes?: string[]; redirect_uri?: string };
   enabled?: boolean;
   tool_timeout_ms?: number;
-  tool_overrides?: Record<string, { read_only?: boolean; concurrency_safe?: boolean; capability?: string }>;
+  tool_overrides?: Record<string, { read_only?: boolean; concurrency_safe?: boolean; capability?: string; guidance?: string }>;
 };
 export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
 export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
@@ -2957,9 +2957,11 @@ export type SettingsUsageMetrics = {
 // the token_usage row's At timestamp. Days are emitted in ascending
 // date order; the desktop fills in the heatmap gaps locally so the
 // backend only ships days that actually saw activity. The token fields
-// and turns/agents cover Wuu's own trail only; outside holds the same
-// day's usage the engine ledgers recorded outside Wuu, so a chart can
-// color every day the page counts without mixing the two ledgers' fields.
+// cover Wuu's own trail plus ledger usage of sessions Wuu drives on
+// engines that never report to the trail; turns/agents stay Wuu-trail
+// counts. outside holds the same day's usage the engine ledgers recorded
+// outside Wuu, so a chart can color every day the page counts without
+// mixing the two ledgers' fields.
 export type SettingsUsageDay = {
   date: string;
   input_tokens: number;
@@ -2988,11 +2990,13 @@ export type EngineUsageSum = {
   sessions: number;
 };
 
-// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums the
-// token_usage trail by each thread's bound engine. Outside reads the engine's
-// own on-disk ledger minus native sessions Wuu already claims, so the two
-// columns never count the same work twice. Outside is absent for engines
-// without a readable local ledger or whose ledger failed to scan.
+// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums
+// the token_usage trail by each thread's bound engine, plus ledger rows of
+// sessions Wuu drives on engines that never report usage to the trail (the
+// ACP family, such as Devin). Outside reads the engine's own on-disk ledger
+// minus native sessions Wuu already claims, so the two columns never count
+// the same work twice. Outside is absent for engines without a readable
+// local ledger or whose ledger failed to scan.
 export type SettingsEngineUsage = {
   engine: string;
   name: string;
@@ -3003,11 +3007,11 @@ export type SettingsEngineUsage = {
 // SettingsUsageResponse is the single source of truth for the desktop
 // usage page. ModelBreakdowns is sorted by total context tokens
 // descending; empty Provider+Model entries are bucketed as "(unknown)"
-// in the UI. Days carries the calendar-day series for the heatmap —
-// both are derived from the same per-row token_usage trail so the
-// views always sum to the same totals. EngineBreakdowns attributes the
-// same in-Wuu totals per agent engine and adds the usage each engine
-// recorded outside Wuu in its own local ledger.
+// in the UI. Days carries the calendar-day series for the heatmap.
+// EngineBreakdowns attributes usage per agent engine — the in-Wuu trail
+// plus bound-session ledger rows on engines that never report to the
+// trail — and adds the usage each engine recorded outside Wuu in its
+// own local ledger.
 export type SettingsUsageResponse = {
   total_sessions: number;
   generated_at: string;
@@ -3047,6 +3051,28 @@ export const MESSAGE_FLOW_FONT_SIZE_RANGE = {
   step: 0.5,
   default: 15,
 } as const;
+
+// Every layer validates persisted settings and IPC payloads against this one
+// policy: strict acceptance for storage/IPC boundaries, clamping for renderer
+// controls that coerce a dragged or typed value back into the range.
+export function isMessageFlowFontSize(value: unknown): value is MessageFlowFontSize {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= MESSAGE_FLOW_FONT_SIZE_RANGE.min &&
+    value <= MESSAGE_FLOW_FONT_SIZE_RANGE.max
+  );
+}
+
+export function clampMessageFlowFontSize(value: unknown): MessageFlowFontSize {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return MESSAGE_FLOW_FONT_SIZE_RANGE.default;
+  }
+  return Math.min(
+    MESSAGE_FLOW_FONT_SIZE_RANGE.max,
+    Math.max(MESSAGE_FLOW_FONT_SIZE_RANGE.min, value),
+  );
+}
 
 export type ThemePreference = "system" | "light" | "dark";
 

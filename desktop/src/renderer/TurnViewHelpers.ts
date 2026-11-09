@@ -4,7 +4,7 @@ import {
   messageFlowFinalTextIndex,
   messageFlowStatusLabel,
 } from "./message-flow-display";
-import { streamFieldValue, userMessageBodyText } from "./ThreadItemText";
+import { streamFieldValue } from "./ThreadItemText";
 import { prefersReducedMotion } from "./motion";
 import { createScrollGlide } from "./ScrollGlide";
 import { conversationSearchPattern } from "./ConversationSearchDisplay";
@@ -126,47 +126,11 @@ export type ThreadReplySnippet = {
   totalAgentMessages: number;
 };
 
-// Builds a short preview of the thread's agent replies for sidebar hover
-// popovers. Skips agent_message items with no committed text (still-active
-// streams that haven't produced visible output yet). Returns undefined when
-// there is nothing readable to show — callers fall back to the thread's
-// own `preview` field in that case.
-export function threadReplySnippet(
-  thread: Thread | undefined,
-): ThreadReplySnippet | undefined {
-  if (!thread) {
-    return undefined;
-  }
-  let firstReply: string | undefined;
-  let total = 0;
-  for (const turn of thread.turns ?? []) {
-    for (const item of turn.items ?? []) {
-      if (item.type !== "agent_message") {
-        continue;
-      }
-      const trimmed = (item.text ?? "").trim();
-      if (!trimmed) {
-        continue;
-      }
-      total += 1;
-      if (firstReply === undefined) {
-        firstReply = trimmed;
-      }
-    }
-  }
-  if (!firstReply) {
-    return undefined;
-  }
-  return {
-    text: firstReply,
-    totalAgentMessages: total,
-  };
-}
-
-// Per-turn variant of threadReplySnippet. The conversation turn rail shows
-// one horizontal bar per turn on the left side of the message stream;
-// hovering a bar must surface *that turn's* reply, not the whole thread's
-// first reply. Same empty-text skipping rules as the thread-level helper.
+// The conversation turn rail shows one horizontal bar per turn on the left
+// side of the message stream; hovering a bar must surface *that turn's*
+// reply, not the whole thread's first reply. Agent message items with no
+// committed text (still-active streams) are skipped; returns undefined when
+// there is nothing readable to show.
 export function turnReplySnippet(
   turn: Turn | undefined,
 ): ThreadReplySnippet | undefined {
@@ -195,49 +159,6 @@ export function turnReplySnippet(
     text: firstReply,
     totalAgentMessages: total,
   };
-}
-
-// Per-turn variant for the first user message text. Used in the
-// conversation turn rail's hover preview to show what the user
-// asked for alongside the first agent reply. Same empty-text
-// skipping rules as turnReplySnippet.
-export function firstUserMessageText(
-  turn: Turn | undefined,
-): string | undefined {
-  if (!turn) {
-    return undefined;
-  }
-  for (const item of turn.items ?? []) {
-    if (item.type !== "user_message") {
-      continue;
-    }
-    // Gate first on the item-level signal so corrupted payload text never
-    // reaches the trim path.
-    if (isInternalUserNotificationItem(item)) {
-      continue;
-    }
-    const trimmed = userMessageBodyText(item.text ?? "", item.content_parts).trim();
-    if (!trimmed) {
-      continue;
-    }
-    return trimmed;
-  }
-  return undefined;
-}
-
-// Caps the preview body to ~140 characters on a single line. The Claude.ai
-// reference card uses three short lines, but the wuu sidebar is narrow
-// (326px) and the title already sits above the popover — a tighter single
-// line keeps the popover visually compact and avoids duplicating context
-// the title already conveys.
-const THREAD_REPLY_PREVIEW_MAX_CHARS = 140;
-
-export function truncateReplyPreview(text: string): string {
-  const normalized = text.replace(/\s+/g, " ").trim();
-  if (normalized.length <= THREAD_REPLY_PREVIEW_MAX_CHARS) {
-    return normalized;
-  }
-  return `${normalized.slice(0, THREAD_REPLY_PREVIEW_MAX_CHARS - 1).trimEnd()}…`;
 }
 
 // Compact "X 分钟前" / "X 小时前" formatter for sidebar hover previews.

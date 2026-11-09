@@ -1,6 +1,7 @@
 import { useSettingsControls } from "../SettingsControlsContext";
 import { useEffect, useState } from "react";
 import { useI18n } from "../i18n";
+import { showActionErrorToast } from "../Toast";
 import { SettingsRow } from "../SettingsRow";
 import { BackgroundSettings } from "./BackgroundSettings";
 import { showsUserImage, useShellSkins, useSkinImage, type AvailableShellSkin } from "./ShellSkin";
@@ -29,13 +30,12 @@ export function ShellSkinSettings(): JSX.Element {
   const { t } = useI18n();
   const { skins, selected } = useShellSkins(controls);
   const [mode, setMode] = useState(controls.currentAppliedTheme);
-  const [error, setError] = useState(false);
   useEffect(() => {
     setMode(controls.currentAppliedTheme());
     return controls.observeAppliedTheme(setMode);
   }, [controls]);
   const choose = (key: string) => {
-    try { controls.selectShellSkin(key); setError(false); } catch { setError(true); }
+    try { controls.selectShellSkin(key); } catch (reason) { showActionErrorToast(reason, t("settings.saveFailed")); }
   };
   const skin = skins.find(candidate => candidate.key === selected);
   const unavailable = selected !== "default" && !skin;
@@ -49,7 +49,6 @@ export function ShellSkinSettings(): JSX.Element {
       </SettingsRow>
     )}
     {unavailable && <p className="settings-description" role="status">{t("settings.skinUnavailable")}</p>}
-    {error && <p role="alert">{t("settings.saveFailed")}</p>}
     {/* The picture is the selected skin's artwork, so only skins that can show it offer it. */}
     {showsUserImage(skin) && <BackgroundSettings canvasSkin={skin?.placement === "canvas" ? skin.name : undefined} />}
   </>;

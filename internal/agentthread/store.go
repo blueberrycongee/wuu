@@ -634,28 +634,8 @@ func (s *Store) writeThreadsLocked(threads []Metadata) error {
 	if err != nil {
 		return fmt.Errorf("encode thread index: %w", err)
 	}
-	tmp, err := os.CreateTemp(s.dir, ".threads.*.tmp")
-	if err != nil {
-		return fmt.Errorf("create thread index tmp: %w", err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write thread index tmp: %w", err)
-	}
-	if _, err := tmp.Write([]byte("\n")); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write thread index newline: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("close thread index tmp: %w", err)
-	}
-	if err := os.Rename(tmpName, filepath.Join(s.dir, "threads.json")); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("rename thread index: %w", err)
+	if err := securefs.WriteFileAtomic(filepath.Join(s.dir, "threads.json"), append(data, '\n')); err != nil {
+		return fmt.Errorf("write thread index: %w", err)
 	}
 	return nil
 }

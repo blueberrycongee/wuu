@@ -143,6 +143,9 @@ func TestDiscoverWithOptionsIncludesOfficialBundledCUAWhenEnabled(t *testing.T) 
 			if got := cua.MCPServers["computer"].Command; got != helper {
 				t.Fatalf("%s helper command = %q, want %q", target.pluginID, got, helper)
 			}
+			if got := cua.MCPServers["computer"].ToolOverrides["computer"].Guidance; got == "" {
+				t.Fatalf("%s computer tool override guidance is empty", target.pluginID)
+			}
 			if len(cua.SkillDirs()) != 1 {
 				t.Fatalf("%s skill dirs = %+v", target.pluginID, cua.SkillDirs())
 			}

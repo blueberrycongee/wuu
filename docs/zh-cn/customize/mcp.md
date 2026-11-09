@@ -170,7 +170,7 @@ Wuu 读取项目配置目录中的 Claude 风格 `.mcp.json`：
 
 ## 工具元数据
 
-服务定义可以通过 `tool_overrides` 修正工具的 `read_only`、`concurrency_safe` 或 `capability` 元数据。只有明确知道操作语义时才设置。把写操作误标为安全读取，可能绕过依赖这些声明的保护。
+服务定义可以通过 `tool_overrides` 修正工具的 `read_only`、`concurrency_safe` 或 `capability` 元数据，或附加 `guidance` 使用契约——当工具暴露给外部引擎时，宿主能力面会向引擎展示它。只有明确知道操作语义时才设置。把写操作误标为安全读取，可能绕过依赖这些声明的保护。
 
 ## 排查与信任
 

@@ -35,18 +35,25 @@ function useStoredIDs(key: string, fallback: string[] = []) {
 
 export function DefaultNavigationSurface({ application, slots, workspaceSelectionEnabled = false, ...layout }: DefaultNavigationLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element {
   const presentNavigation = usePresentedNavigation();
-  const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  // Field subscriptions keep the sidebar off stream-frame publications; none of
+  // these fields carry projected stream text.
+  const tabs = useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs);
+  const phase = useSyncExternalStore(application.subscribe, () => application.getSnapshot().phase);
+  const workspacesSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().workspaces);
+  const view = useSyncExternalStore(application.subscribe,
+    () => (application.getSnapshot() as ApplicationSnapshotV1 & { navigationWorkspace: ApplicationNavigationViewV1 }).navigationWorkspace);
+  const conversationThreadId = useSyncExternalStore(application.subscribe, () => application.getSnapshot().conversation.threadId);
+  const navigationSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation);
+  const settingsOpen = useSyncExternalStore(application.subscribe, () => application.getSnapshot().settings.open);
   // Compare the complete tab inventory, not just visible drafts: selecting an
   // existing draft must not look like creation. Initial/restored tabs stay still.
-  const previousTabs = useRef({ application, items: snapshot.tabs.items, phase: snapshot.phase });
+  const previousTabs = useRef({ application, items: tabs.items, phase });
   const previousTabIDs = new Set(previousTabs.current.items.map(tab => tab.id));
   const canAnimateNewTabs = previousTabs.current.application === application
-    && previousTabs.current.phase === "ready" && snapshot.phase === "ready";
+    && previousTabs.current.phase === "ready" && phase === "ready";
   useLayoutEffect(() => {
-    previousTabs.current = { application, items: snapshot.tabs.items, phase: snapshot.phase };
-  }, [application, snapshot.tabs.items, snapshot.phase]);
-  // The controller owns this SDK extension; no private state or reducer is accepted.
-  const view = (snapshot as ApplicationSnapshotV1 & { navigationWorkspace: ApplicationNavigationViewV1 }).navigationWorkspace;
+    previousTabs.current = { application, items: tabs.items, phase };
+  }, [application, tabs.items, phase]);
   const invoke = useMemo(() => application.invoke.bind(application) as SidebarNavigationService["invoke"], [application]);
   const { t } = useI18n();
   const run = useCallback((operation: Promise<unknown>) => { void operation.catch(reportPresentedNavigationError); }, []);
@@ -72,9 +79,9 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   type DraftTarget = { workspaceId: string };
   type DraftIntent = { application: ApplicationServiceV1; context: string; target: DraftTarget; targetContext: string; gesture: { origin: Element | null; version: number } };
   const [deferredDraft, setDeferredDraft] = useState<DraftIntent>();
-  const draftContext = JSON.stringify([view.activeContextKind, snapshot.workspaces.activeWorkspaceId, snapshot.workspaces.activeRoot]);
+  const draftContext = JSON.stringify([view.activeContextKind, workspacesSnapshot.activeWorkspaceId, workspacesSnapshot.activeRoot]);
   const targetContext = (target: DraftTarget): string => {
-    const workspace = snapshot.workspaces.workspaces.find(row => row.id === target.workspaceId);
+    const workspace = workspacesSnapshot.workspaces.find(row => row.id === target.workspaceId);
     return JSON.stringify([target.workspaceId, workspace?.root, workspace?.available]);
   };
   const startDraft = (target: DraftTarget, gesture = { origin: document.activeElement, version: interactionVersion.current }): void => {
@@ -189,20 +196,20 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
   return <>{archiveTip && <UILayerPortal layer="notice"><ArchiveTip key={archiveTip.id} threadTitle={threadDisplayTitle(archiveTip.thread, rows, t("app.thisConversation"))} errorMessage={archiveTip.error} pending={archiveTip.pending}
     onDismiss={() => setArchiveTip(undefined)} onViewArchive={() => { setArchiveTip(undefined); run(application.invoke("settings.open", { pageId: "archive" })); }}
     onForceArchive={archiveTip.forceRetryable ? () => run(archiveThread(archiveTip.thread, true)) : undefined} /></UILayerPortal>}<AppSidebar {...layout} navigation={navigation} initialized={view.initialized}
-    activeContextKind={view.activeContextKind} activeSessionTabID={snapshot.tabs.activeTabId} selectedWorkspaceID={view.selectedWorkspaceId}
+    activeContextKind={view.activeContextKind} activeSessionTabID={tabs.activeTabId} selectedWorkspaceID={view.selectedWorkspaceId}
     lastViewedTurnByThreadID={view.lastViewedTurnByThreadId}
     sidebarWorkspaces={workspaces} activeWorkspaceID={workspaceSelectionEnabled ? view.focusedWorkspaceId ?? view.selectedWorkspaceId : undefined}
     pendingConversations={view.pendingConversations.map(row => ({ ...row, context: { ...row.context }, title: row.title || t("tabs.newConversation") }))}
-    draftConversations={snapshot.tabs.items.filter(tab => tab.kind === "draft"
-      && (tab.id === snapshot.tabs.activeTabId || view.pendingConversations.some(row => row.id === tab.id))).map(tab => {
+    draftConversations={tabs.items.filter(tab => tab.kind === "draft"
+      && (tab.id === tabs.activeTabId || view.pendingConversations.some(row => row.id === tab.id))).map(tab => {
       const pending = view.pendingConversations.find(row => row.id === tab.id);
       // Draft input is not a session title; wait for the created thread's title.
       return { id: tab.id, title: t("tabs.newConversation"), pending: Boolean(pending), entering: canAnimateNewTabs && !previousTabIDs.has(tab.id) };
     })}
     onSelectPendingConversation={tabId => run(presentNavigation(() => application.invoke("tab.select", { tabId })))}
-    pinnedThreads={rows.filter(row => row.pinned && !row.archived)} activeThreadID={snapshot.conversation.threadId}
-    pendingThreadID={snapshot.tabs.pending?.kind === "thread" ? snapshot.tabs.pending.targetId : undefined}
-    pendingWorkspaceID={snapshot.tabs.pending?.kind === "workspace" ? snapshot.tabs.pending.targetId : undefined}
+    pinnedThreads={rows.filter(row => row.pinned && !row.archived)} activeThreadID={conversationThreadId}
+    pendingThreadID={tabs.pending?.kind === "thread" ? tabs.pending.targetId : undefined}
+    pendingWorkspaceID={tabs.pending?.kind === "workspace" ? tabs.pending.targetId : undefined}
     collapsedSidebarSectionIDs={collapsed} expandedSidebarSectionIDs={expanded} collapsedFolderIDs={collapsedFolders} setCollapsedFolderIDs={setCollapsedFolders}
     loadingWorkspaceThreadIDs={new Set(view.loadingWorkspaceIds)} workspaceThreadsByWorkspaceID={workspaceRows}
     workspaceMenuOpen={workspaceMenuOpen} workspaceMenuRef={workspaceMenuRef} searchOpen={view.searchOpen} sectionOrder={sectionOrder}
@@ -228,7 +235,7 @@ export function DefaultNavigationSurface({ application, slots, workspaceSelectio
     onMarkThreadsViewed={threads => run(invoke("navigation.mark-viewed", { threadIds: threads.map(row => row.id) }))}
     unreadViewOpen={unreadViewOpen} onToggleUnreadView={() => setUnreadViewOpen(value => !value)} attentionStickyIDs={attentionStickyIDs} onAttentionStickyIDsChange={setAttentionStickyIDs}
     onShowConversations={() => run(application.invoke("navigation.show-section", { section: "conversations" }))}
-    catalogActive={snapshot.navigation.section === "catalog"} catalogSection={snapshot.navigation.catalogSection} settingsActive={snapshot.settings.open}
+    catalogActive={navigationSnapshot.section === "catalog"} catalogSection={navigationSnapshot.catalogSection} settingsActive={settingsOpen}
     onLeaveSettings={() => run(application.invoke("settings.close", {}))}
     onSelectCatalogSection={section => run(application.invoke("catalog.select-section", { section }))}
     onOpenCatalogPlugin={pluginId => run(application.invoke("catalog.select-section", { section: "plugins" }).then(() => application.invoke("catalog.select-plugin", { pluginId })))}

@@ -2906,16 +2906,12 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		sessionInstructions = metadata.Instructions
 	}
 	var additionalDirectories []string
-	if turnKit != nil && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+	externalEngine := turnKit != nil && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu
+	if externalEngine {
 		catalog := turnKit.RegisteredWorkspaces()
 		additionalDirectories = workspaces.Roots(catalog)
 		if guidance := workspaces.Instructions(catalog); guidance != "" {
 			sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
-		}
-		if threadRuntime != nil && threadRuntime.CapabilityTools != nil {
-			if guidance := externalCapabilityInstructions(threadRuntime.CapabilityTools.Definitions()); guidance != "" {
-				sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
-			}
 		}
 	}
 	capabilityErr := instructionsErr
@@ -2954,6 +2950,14 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			} else {
 				pluginGuidance, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
 			}
+		}
+	}
+	// Collect capability usage contracts only after conversation references have
+	// admitted their servers and plugin tools, so their declared guidance
+	// reaches the engine alongside the built-in contracts.
+	if capabilityErr == nil && externalEngine && threadRuntime != nil && threadRuntime.CapabilityTools != nil {
+		if guidance := externalCapabilityInstructions(threadRuntime.CapabilityTools.Definitions()); guidance != "" {
+			sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
 		}
 	}
 	// Plugin-client submissions preserve literal text. Supply resolved tool and
@@ -6264,8 +6268,8 @@ func (s *Server) handleSettingsUsage(req Request) error {
 	rows := scan.TokenRows
 
 	metrics, days := aggregateUsageRows(rows, loc)
-	engineBreakdowns, outsideRows := s.buildEngineBreakdowns(binding.Sessions, rows)
-	days = mergeOutsideUsageDays(days, outsideRows, loc)
+	engineBreakdowns, boundRows, outsideRows := s.buildEngineBreakdowns(binding.Sessions, rows)
+	days = mergeEngineLedgerDays(days, boundRows, outsideRows, loc)
 
 	response := SettingsUsageResponse{
 		TotalSessions:    countUsageSessions(rows),
@@ -6330,16 +6334,18 @@ const engineUsageScanTimeout = 30 * time.Second
 
 // buildEngineBreakdowns attributes the in-Wuu token_usage trail to each
 // thread's bound engine, then reads the engines' own on-disk ledgers for the
-// usage recorded outside Wuu. Native sessions a Wuu thread already claims are
-// excluded from the outside side, so the two columns never count the same work
-// twice. InWuu.Sessions counts every thread bound to the engine — including
-// engines like the ACP family whose turns report no token usage — so a bound
-// but unreported engine still surfaces with zero tokens. A ledger that fails
-// to scan leaves Outside nil rather than reporting partial data as complete.
-// buildEngineBreakdowns also returns the outside-Wuu ledger rows that survived
-// exclusion and engine failure filtering, so the daily series can color the
-// same days the breakdown counts.
-func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.TokenUsageRow) ([]SettingsEngineUsage, []engineusage.Row) {
+// usage recorded outside Wuu. Engines whose turns report usage drop their
+// Wuu-claimed sessions at scan time, so the two columns never count the same
+// work twice. Engines that never report usage to the trail — the ACP family,
+// such as Devin — return bound-session rows too; those land in the InWuu
+// column because Wuu's own trail cannot cover them. InWuu.Sessions counts
+// every thread bound to the engine, so a bound but unreported engine still
+// surfaces with zero tokens. A ledger that fails to scan leaves Outside nil
+// rather than reporting partial data as complete. buildEngineBreakdowns also
+// returns the ledger rows that survived engine failure filtering, split into
+// bound (in-Wuu) and outside, so the daily series can color the same days the
+// breakdown counts.
+func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.TokenUsageRow) ([]SettingsEngineUsage, []engineusage.Row, []engineusage.Row) {
 	sessions, err := store.List(0)
 	if err != nil {
 		providers.DebugLogf("usage engine breakdown: list sessions: %v", err)
@@ -6395,13 +6401,25 @@ func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.Toke
 		providers.DebugLogf("usage engine breakdown: scan %s ledger: %v", engine, scanErr)
 	}
 	outsideSessions := make(map[string]map[string]struct{})
-	var outsideRows []engineusage.Row
+	var boundRows, outsideRows []engineusage.Row
 	for _, r := range scanned.Rows {
 		if _, failed := scanned.Failed[r.Engine]; failed {
 			continue
 		}
-		outsideRows = append(outsideRows, r)
 		b := get(r.Engine)
+		if _, bound := exclude[r.Engine][r.SessionID]; bound && r.SessionID != "" {
+			// A ledger row for a session a Wuu thread drives. Only engines
+			// that never report usage to the trail reach this branch —
+			// reporting engines drop bound sessions inside the scan — so it
+			// is in-Wuu spend, not a recount of a claimed native session.
+			b.InWuu.InputTokens += r.InputTokens
+			b.InWuu.OutputTokens += r.OutputTokens
+			b.InWuu.CacheCreationTokens += r.CacheCreationTokens
+			b.InWuu.CacheReadTokens += r.CacheReadTokens
+			boundRows = append(boundRows, r)
+			continue
+		}
+		outsideRows = append(outsideRows, r)
 		if b.Outside == nil {
 			b.Outside = &EngineUsageSum{}
 		}
@@ -6446,20 +6464,48 @@ func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.Toke
 		}
 		return out[i].Engine < out[j].Engine
 	})
-	return out, outsideRows
+	return out, boundRows, outsideRows
 }
 
-// mergeOutsideUsageDays folds outside-Wuu ledger rows into the daily series so
-// the trend and heatmap color every day the page counts. Outside totals land
-// on their own field — the in-Wuu token fields, hit rate, turns, and agents
-// stay exactly what aggregateUsageRows computed.
-func mergeOutsideUsageDays(days []SettingsUsageDay, rows []engineusage.Row, loc *time.Location) []SettingsUsageDay {
+// mergeEngineLedgerDays folds engine-ledger rows into the daily series so the
+// trend and heatmap color every day the page counts. Bound rows — ledger
+// usage of sessions Wuu threads drive — add to the day's own token fields,
+// with the hit rate recomputed over the widened denominators; outside rows
+// land on day.Outside. Turns and agents stay exactly what aggregateUsageRows
+// computed.
+func mergeEngineLedgerDays(days []SettingsUsageDay, boundRows, outsideRows []engineusage.Row, loc *time.Location) []SettingsUsageDay {
+	index := make(map[string]int, len(days))
+	for i, day := range days {
+		index[day.Date] = i
+	}
+	dayIndex := func(date string) int {
+		if i, ok := index[date]; ok {
+			return i
+		}
+		days = append(days, SettingsUsageDay{Date: date})
+		index[date] = len(days) - 1
+		return len(days) - 1
+	}
+	for _, r := range boundRows {
+		if r.At.IsZero() {
+			continue
+		}
+		day := &days[dayIndex(r.At.In(loc).Format("2006-01-02"))]
+		day.InputTokens += r.InputTokens
+		day.OutputTokens += r.OutputTokens
+		day.CacheCreationTokens += r.CacheCreationTokens
+		day.CacheReadTokens += r.CacheReadTokens
+		if prompt := day.InputTokens + day.CacheReadTokens; prompt > 0 {
+			day.CacheHitRate = float64(day.CacheReadTokens) / float64(prompt)
+		}
+	}
+
 	type outsideBucket struct {
 		sum      EngineUsageSum
 		sessions map[string]struct{}
 	}
 	byDate := make(map[string]*outsideBucket)
-	for _, r := range rows {
+	for _, r := range outsideRows {
 		if r.At.IsZero() {
 			continue
 		}
@@ -6480,22 +6526,10 @@ func mergeOutsideUsageDays(days []SettingsUsageDay, rows []engineusage.Row, loc 
 			bucket.sessions[r.SessionID] = struct{}{}
 		}
 	}
-	if len(byDate) == 0 {
-		return days
-	}
-
-	index := make(map[string]int, len(days))
-	for i, day := range days {
-		index[day.Date] = i
-	}
 	for date, bucket := range byDate {
 		bucket.sum.Sessions = len(bucket.sessions)
 		sum := bucket.sum
-		if i, ok := index[date]; ok {
-			days[i].Outside = &sum
-		} else {
-			days = append(days, SettingsUsageDay{Date: date, Outside: &sum})
-		}
+		days[dayIndex(date)].Outside = &sum
 	}
 	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
 	return days
@@ -6624,18 +6658,6 @@ func aggregateUsageRows(rows []insight.TokenUsageRow, loc *time.Location) (Setti
 	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
 
 	return metrics, days
-}
-
-// truncateUsageTitle shortens a session's first user message down to a
-// reasonable card headline; the desktop may trim further before display.
-func truncateUsageTitle(s string) string {
-	const max = 60
-	s = strings.TrimSpace(s)
-	r := []rune(s)
-	if len(r) <= max {
-		return s
-	}
-	return string(r[:max-1]) + "…"
 }
 
 // stopHookMessage provides a single-line, bounded snippet of the turn's final

@@ -12,11 +12,7 @@ import (
 )
 
 func toolIsOrchestrator(executor ToolExecutor, call providers.ToolCall) bool {
-	provider, ok := executor.(ToolMetadataProvider)
-	if !ok {
-		return false
-	}
-	metadata, found := provider.ToolMetadata(call)
+	metadata, found := toolSchedulingMetadata(executor, call)
 	return found && metadata.Orchestrator
 }
 

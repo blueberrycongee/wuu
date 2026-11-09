@@ -316,7 +316,7 @@ func TestContextWindowToolsRequireRuntimeEnablement(t *testing.T) {
 	for _, definition := range kit.Definitions() {
 		got[definition.Name] = true
 	}
-	for _, name := range historyRecoveryToolNames {
+	for _, name := range []string{historyReadToolName, historySearchToolName} {
 		if !got[name] {
 			t.Fatalf("history recovery tool %q should remain visible without note compaction", name)
 		}

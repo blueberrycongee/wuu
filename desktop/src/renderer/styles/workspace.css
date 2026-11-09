@@ -1765,6 +1765,10 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  /* Panel width transitions re-wrap the document and would let scroll
+   * anchoring drift the offset (each reflow re-anchors nearer the top);
+   * the persisted reading position must survive the reflow unchanged. */
+  overflow-anchor: none;
   background: var(--workspace-canvas-bg);
 }
 

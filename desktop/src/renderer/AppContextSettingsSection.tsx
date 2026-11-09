@@ -5,8 +5,8 @@ import type { AppContextSettings, AppContextState } from "../shared/protocol";
 import { SettingsGroup, SettingsSection } from "./SettingsSection";
 import { SettingsRow } from "./SettingsRow";
 import { useI18n } from "./i18n";
-import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 import { Switch } from "./ui/Switch";
+import { showActionErrorToast } from "./Toast";
 
 export function AppContextSettingsSection(): JSX.Element | null {
   const settingsControls = useSettingsControls();
@@ -25,7 +25,7 @@ export function AppContextSettingsSection(): JSX.Element | null {
     setRecording(false);
     setRecordingReady(false);
     if (settingsControls.capabilities.appContextRecording) void settingsControls.setAppContextShortcutRecording(false).catch(reason => {
-      if (!isPluginLifecycleCancellation(reason)) setError((reason as Error).message);
+      showActionErrorToast(reason);
     });
   };
 
@@ -71,7 +71,7 @@ export function AppContextSettingsSection(): JSX.Element | null {
       generation.current += 1;
       setState(next);
       if (save) setSettings(next.settings);
-    } catch (reason) { setError((reason as Error).message); }
+    } catch (reason) { showActionErrorToast(reason); }
     finally { setBusy(false); }
   };
 
@@ -96,7 +96,7 @@ export function AppContextSettingsSection(): JSX.Element | null {
                 await settingsControls.setAppContextShortcutRecording!(true);
                 if (attempt === recordingAttempt.current) setRecordingReady(true);
               } catch (reason) {
-                if (attempt === recordingAttempt.current) { stopRecording(); setError((reason as Error).message); }
+                if (attempt === recordingAttempt.current) { stopRecording(); showActionErrorToast(reason); }
               }
             }}
             onBlur={stopRecording}

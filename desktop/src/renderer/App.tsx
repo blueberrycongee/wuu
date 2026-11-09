@@ -1450,6 +1450,96 @@ export function App({ application, slots, shellPluginId }: {
     focusEnvironmentToggle: () =>
       environmentToggleRef.current?.focus({ preventScroll: true }),
   });
+  // Slot contexts and direct-child props keep stable identities across
+  // stream-frame publications so memoized surfaces can bail on render.
+  const conversationScrollHandler = useStableCallback(handleConversationScroll);
+  const splitResizeStart = useStableCallback(startSplitResize);
+  const splitSeparatorKey = useStableCallback(handleSplitSeparatorKey);
+  const splitPercentReset = useStableCallback(resetSplitPercent);
+  const sidebarToggle = useStableCallback(toggleSidebar);
+  const sidebarResizeStart = useStableCallback(startSidebarResize);
+  const sidebarResizerPointer = useStableCallback(trackSidebarResizerPointer);
+  const sidebarSeparatorKey = useStableCallback(handleSidebarSeparatorKey);
+  const sidebarDrawerClose = useStableCallback((event: React.PointerEvent<HTMLElement>) =>
+    scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent));
+  const environmentPanelMenuSet = useStableCallback((menu: EnvironmentPanelMenu) => {
+    if (menu === "branch") scheduleGitStatusRefresh(0);
+    setEnvironmentPanelMenu(menu);
+  });
+  const environmentPanelClose = useStableCallback(() => closeEnvironmentPanel({ dismissed: true }));
+  const reviewOpen = useStableCallback(() => {
+    openWorkspaceTool("review");
+    closeEnvironmentPanel({ dismissed: true });
+  });
+  const commitDialogOpen = useStableCallback(() => openEnvironmentDialog("commit"));
+  const pullRequestDialogOpen = useStableCallback(() => openEnvironmentDialog("pull-request"));
+
+  const navigationSlotContext = useMemo(() => ({
+    workspaceSelectionEnabled,
+    sidebarCollapsed,
+    sidebarVisible: !sidebarDrawerMode || sidebarDrawerVisible,
+    onPointerEnter: openSidebarDrawer,
+    onPointerLeave: sidebarDrawerClose,
+    onRibbonPresenceChange: setNativeRibbonPresent,
+  }), [workspaceSelectionEnabled, sidebarCollapsed, sidebarDrawerMode, sidebarDrawerVisible, openSidebarDrawer, sidebarDrawerClose]);
+  const conversationSlotContext = useMemo(() => ({
+    scrollRef: conversationScrollRef,
+    contentRef: scrollContentRef,
+    splitPaneRefs,
+    composerFocusTargets,
+    visible: conversationVisible,
+    restoring: conversationRestoring,
+    onScroll: conversationScrollHandler,
+    onStreamFrame: scheduleStreamScroll,
+    onCollapseComplete: handleTurnCollapseComplete,
+    splitLeftPercent,
+    onSplitResizeStart: splitResizeStart,
+    onSplitSeparatorKey: splitSeparatorKey,
+    onSplitSeparatorDoubleClick: splitPercentReset,
+  }), [conversationScrollRef, scrollContentRef, splitPaneRefs, composerFocusTargets, conversationVisible, conversationRestoring, conversationScrollHandler, scheduleStreamScroll, handleTurnCollapseComplete, splitLeftPercent, splitResizeStart, splitSeparatorKey, splitPercentReset]);
+  const composerDockSlotContext = useMemo(() => ({
+    variant: "dock", pane: "primary",
+    registerFocusTarget: composerFocusTargets.primary,
+    visible: !settingsOpen,
+    containerRef: dockComposerRef,
+    runtimeControlsTarget,
+  }), [composerFocusTargets, settingsOpen, dockComposerRef, runtimeControlsTarget]);
+  const previewSlotContext = useMemo(() => ({ layout: {
+    registerFocusTarget: registerPreviewFocusTarget,
+    covered: settingsOpen || showingWebsite || userSpaceViewActive,
+    toolsVisible: workspaceControlsVisible,
+    runtimeControlsRef: setRuntimeControlsTarget,
+    open: rightPanelOpen,
+    present: rightPanelOpen || rightPanelAnimating,
+    prewarm: initialized,
+    onDirtyFileTabsChange: rememberWorkspaceDirtyFiles,
+    globalized: rightPanelGlobalized,
+    conversationTabVisible: rightPanelGlobalized,
+    sheetPhase: workspaceSheetPhase,
+    onToggleGlobalize: toggleWorkspacePanelGlobalized,
+    canExitGlobalized: !rightPanelAutoGlobalized || workspaceRightPanelDockableWithoutSidebar,
+    browserOverlaySuppressed,
+    documentComposer: documentComposerVisible,
+    pane: conversationWorkspace.activePane,
+  } }), [registerPreviewFocusTarget, settingsOpen, showingWebsite, userSpaceViewActive, workspaceControlsVisible, rightPanelOpen, rightPanelAnimating, initialized, rememberWorkspaceDirtyFiles, rightPanelGlobalized, workspaceSheetPhase, toggleWorkspacePanelGlobalized, rightPanelAutoGlobalized, workspaceRightPanelDockableWithoutSidebar, browserOverlaySuppressed, documentComposerVisible, conversationWorkspace.activePane]);
+  const settingsSlotContext = useMemo(() => ({ layout: {
+    browserSettingsAllowed: !poppedOutMode,
+    embedded: embeddedSettings,
+    embeddedDrawerPhase: sidebarDrawerPhase,
+    onSidebarPointerEnter: openSidebarDrawer,
+    onSidebarPointerLeave: sidebarDrawerClose,
+    sidebarWidth,
+    resizingSidebar,
+    shellRef: settingsShellRef,
+    sidebarCollapsed,
+    sidebarAnimating,
+    onToggleSidebar: sidebarToggle,
+    onSidebarResizeStart: sidebarResizeStart,
+    onSidebarResizerPointer: sidebarResizerPointer,
+    onSidebarSeparatorKey: sidebarSeparatorKey,
+  } satisfies ApplicationSettingsLayoutV1 }), [poppedOutMode, embeddedSettings, sidebarDrawerPhase, openSidebarDrawer, sidebarDrawerClose, sidebarWidth, resizingSidebar, settingsShellRef, sidebarCollapsed, sidebarAnimating, sidebarToggle, sidebarResizeStart, sidebarResizerPointer, sidebarSeparatorKey]);
+  const layersSlotContext = useMemo(() => ({ settingsOnly: settingsOpen }), [settingsOpen]);
+
   const activateThread = useCallback((threadId: string): Promise<void> => presentNavigation(() => application.invoke("thread.activate", { threadId })).catch(reportPresentedNavigationError), [application, presentNavigation]);
 
   useConversationSearchNavigation({
@@ -1655,14 +1745,7 @@ export function App({ application, slots, shellPluginId }: {
             </div>
           ) : null}
           <HoverRevealScopeContext.Provider value={sidebarHoverScope}>
-            <slots.Slot name={`${shellPluginId}/application.navigation`} context={{
-              workspaceSelectionEnabled,
-              sidebarCollapsed,
-              sidebarVisible: !sidebarDrawerMode || sidebarDrawerVisible,
-              onPointerEnter: openSidebarDrawer,
-              onPointerLeave: (event: React.PointerEvent<HTMLElement>) => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent),
-              onRibbonPresenceChange: setNativeRibbonPresent,
-            }} />
+            <slots.Slot name={`${shellPluginId}/application.navigation`} context={navigationSlotContext} />
           </HoverRevealScopeContext.Provider>
 
           {/* Hidden rather than unmounted: inserting or removing a shell child
@@ -1771,19 +1854,11 @@ export function App({ application, slots, shellPluginId }: {
           environmentPanelMenu={environmentPanelMenu}
           environmentGitBusy={environmentGitBusy}
           pullRequestDisabledReason={pullRequestDisabledReason}
-          onSetEnvironmentPanelMenu={(menu) => {
-            if (menu === "branch") scheduleGitStatusRefresh(0);
-            setEnvironmentPanelMenu(menu);
-          }}
-          onCloseEnvironmentPanel={() =>
-            closeEnvironmentPanel({ dismissed: true })
-          }
-          onOpenReview={() => {
-            openWorkspaceTool("review");
-            closeEnvironmentPanel({ dismissed: true });
-          }}
-          onOpenCommit={() => openEnvironmentDialog("commit")}
-          onOpenPullRequest={() => openEnvironmentDialog("pull-request")}
+          onSetEnvironmentPanelMenu={environmentPanelMenuSet}
+          onCloseEnvironmentPanel={environmentPanelClose}
+          onOpenReview={reviewOpen}
+          onOpenCommit={commitDialogOpen}
+          onOpenPullRequest={pullRequestDialogOpen}
           rightPanelFilePath={rightPanelFilePath}
           onCloseFilePreview={handleCloseFilePreview}
         />
@@ -1808,23 +1883,9 @@ export function App({ application, slots, shellPluginId }: {
             </SettingsControlsProvider>
           </div>
         ) : null}
-        <slots.Slot name={`${shellPluginId}/application.conversation`} context={{
-          scrollRef: conversationScrollRef,
-          contentRef: scrollContentRef,
-          splitPaneRefs,
-          composerFocusTargets,
-          visible: conversationVisible,
-          restoring: conversationRestoring,
-          onScroll: handleConversationScroll,
-          onStreamFrame: scheduleStreamScroll,
-          onCollapseComplete: handleTurnCollapseComplete,
-          splitLeftPercent,
-          onSplitResizeStart: startSplitResize,
-          onSplitSeparatorKey: handleSplitSeparatorKey,
-          onSplitSeparatorDoubleClick: resetSplitPercent,
-        }} />
+        <slots.Slot name={`${shellPluginId}/application.conversation`} context={conversationSlotContext} />
 
-        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={{ variant: "dock", pane: "primary", registerFocusTarget: composerFocusTargets.primary, visible: !settingsOpen, containerRef: dockComposerRef, runtimeControlsTarget }} /> : null}
+        {initialized && !showingWebsite && !splitConversation && !showingManagementCatalog && !workspaceToolsCoverConversation && !showingPrimaryPluginView ? <slots.Slot name={`${shellPluginId}/application.composer`} context={composerDockSlotContext} /> : null}
 
         <ConversationStatusCluster
           application={application}
@@ -1862,24 +1923,7 @@ export function App({ application, slots, shellPluginId }: {
         />
       ) : null}
       {poppedOutMode ? null : (
-        <slots.Slot name={`${shellPluginId}/application.preview`} context={{ layout: {
-          registerFocusTarget: registerPreviewFocusTarget,
-          covered: settingsOpen || showingWebsite || userSpaceViewActive,
-          toolsVisible: workspaceControlsVisible,
-          runtimeControlsRef: setRuntimeControlsTarget,
-          open: rightPanelOpen,
-          present: rightPanelOpen || rightPanelAnimating,
-          prewarm: initialized,
-          onDirtyFileTabsChange: rememberWorkspaceDirtyFiles,
-          globalized: rightPanelGlobalized,
-          conversationTabVisible: rightPanelGlobalized,
-          sheetPhase: workspaceSheetPhase,
-          onToggleGlobalize: toggleWorkspacePanelGlobalized,
-          canExitGlobalized: !rightPanelAutoGlobalized || workspaceRightPanelDockableWithoutSidebar,
-          browserOverlaySuppressed,
-          documentComposer: documentComposerVisible,
-          pane: conversationWorkspace.activePane,
-        } }} />
+        <slots.Slot name={`${shellPluginId}/application.preview`} context={previewSlotContext} />
       )}
       </>
 
@@ -1901,28 +1945,13 @@ export function App({ application, slots, shellPluginId }: {
           onCreate={input => application.environment.createPullRequest(input)}
         />
       ) : null}
-      <slots.Slot name={`${shellPluginId}/application.settings`} context={{ layout: {
-        browserSettingsAllowed: !poppedOutMode,
-        embedded: embeddedSettings,
-        embeddedDrawerPhase: sidebarDrawerPhase,
-        onSidebarPointerEnter: openSidebarDrawer,
-        onSidebarPointerLeave: event => scheduleSidebarDrawerCloseFromPointerLeave(event.nativeEvent),
-        sidebarWidth,
-        resizingSidebar,
-        shellRef: settingsShellRef,
-        sidebarCollapsed,
-        sidebarAnimating,
-        onToggleSidebar: toggleSidebar,
-        onSidebarResizeStart: startSidebarResize,
-        onSidebarResizerPointer: trackSidebarResizerPointer,
-        onSidebarSeparatorKey: handleSidebarSeparatorKey,
-      } satisfies ApplicationSettingsLayoutV1 }} />
+      <slots.Slot name={`${shellPluginId}/application.settings`} context={settingsSlotContext} />
       {!poppedOutMode ? (
         <section className="web-workspace-stage" hidden={!showingWebsite || settingsOpen} aria-label={activeWebsite?.title}>
           <WebWorkspacePanel site={ribbonBrowser.state ? { id: WEB_WORKSPACE_RIBBON_ID, url: "about:blank", title: activeWebsite?.title } : undefined} active={showingWebsite && !settingsOpen && !accountOpen} tabs resizeWithWindow />
         </section>
       ) : null}
-      <slots.Slot name={`${shellPluginId}/workbench.layers`} context={{ settingsOnly: settingsOpen }} />
+      <slots.Slot name={`${shellPluginId}/workbench.layers`} context={layersSlotContext} />
       {contextCapsule}
       {/* macOS applies app regions in DOM order, so a later drag titlebar would
         * cover this no-drag control. Keep it as the shell's last child. */}

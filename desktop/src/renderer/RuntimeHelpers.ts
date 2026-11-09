@@ -1,4 +1,4 @@
-import type { CodexModelSummary, GitStatusResult, InitializeResult, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
+import type { GitStatusResult, InitializeResult, ProviderModelSummary, ProviderSummary } from "../shared/protocol";
 import { translateCurrent as t } from "./i18n";
 import type { TranslationKey } from "./i18n/resources/zh-CN";
 
@@ -33,10 +33,6 @@ export function providerIsCodex(initialized: Pick<InitializeResult, "providers">
 
 export function isCodexProvider(initialized: Pick<InitializeResult, "provider" | "providers">): boolean {
   return providerIsCodex(initialized, initialized.provider);
-}
-
-export function displayCodexModelName(model?: CodexModelSummary): string {
-  return model?.display_name || model?.slug || "GPT";
 }
 
 export function shortCodexModelLabel(model: string): string {
@@ -145,49 +141,6 @@ export function providerModelVariantOptions(
   return orderedEffortOptions(options);
 }
 
-export function providerModelReasoningMode(
-  provider: ProviderSummary | undefined,
-  modelID: string
-): "off" | "toggle" | "levels" {
-  const model = provider?.models?.find((item) => item.id === modelID);
-  if (!model) {
-    return "off";
-  }
-  const variants = (model.variants ?? []).map((item) => item.id).filter(Boolean);
-  const supported = variants.length > 0 ? variants : (model.supported_efforts ?? []).filter(Boolean);
-  if (supported.length > 0) {
-    return "levels";
-  }
-  return model.capabilities?.reasoning === true ? "toggle" : "off";
-}
-
-export function providerModelEffortOptions(
-  provider: ProviderSummary | undefined,
-  modelID: string,
-  currentEffort: string
-): string[] {
-  return providerModelVariantOptions(provider, modelID, currentEffort);
-}
-
-export function normalizedEffortForProviderModel(
-  currentEffort: string,
-  provider: ProviderSummary | undefined,
-  modelID: string
-): string {
-  if (!currentEffort) {
-    return "";
-  }
-  const model = provider?.models?.find((item) => item.id === modelID);
-  const supported = model?.supported_efforts ?? [];
-  if (supported.length === 0 || supported.includes(currentEffort)) {
-    return currentEffort;
-  }
-  if (model?.default_effort && supported.includes(model.default_effort)) {
-    return model.default_effort;
-  }
-  return "";
-}
-
 export function normalizedVariantForProviderModel(
   currentVariant: string,
   provider: ProviderSummary | undefined,
@@ -208,30 +161,6 @@ export function normalizedVariantForProviderModel(
   }
   if (model?.default_effort && supported.includes(model.default_effort)) {
     return model.default_effort;
-  }
-  return "";
-}
-
-export function codexEffortOptions(model: CodexModelSummary | undefined, currentEffort: string): string[] {
-  const defaults = ["low", "medium", "high", "xhigh"];
-  const supported = (model?.supported_reasoning?.length ? model.supported_reasoning : defaults).filter(Boolean);
-  const options = ["", ...supported];
-  if (currentEffort && !options.includes(currentEffort)) {
-    options.push(currentEffort);
-  }
-  return orderedEffortOptions(options);
-}
-
-export function normalizedEffortForModel(currentEffort: string, model: CodexModelSummary): string {
-  if (currentEffort === "") {
-    return "";
-  }
-  const supported = model.supported_reasoning ?? [];
-  if (supported.length === 0 || supported.includes(currentEffort)) {
-    return currentEffort;
-  }
-  if (model.default_reasoning_level && supported.includes(model.default_reasoning_level)) {
-    return model.default_reasoning_level;
   }
   return "";
 }

@@ -30,6 +30,11 @@ type ToolDefinition struct {
 	// prefix. Providers that support tool-level cache markers can place
 	// a breakpoint at the end of the contiguous stable prefix.
 	CacheStable bool
+	// Guidance is an agent-facing usage contract for host-capability
+	// surfaces that present the tool to external engines. It is host
+	// routing metadata, like DirectOnly: never part of provider wire
+	// schemas and never consulted for execution policy.
+	Guidance string
 }
 
 // LoadableToolDefinition is the provider-neutral shape for a tool schema that
@@ -402,6 +407,9 @@ type ChatMessage struct {
 	ProviderItems    []ProviderItem
 	Images           []InputImage
 	Files            []InputFile
+	// ContentSHA256 carries a digest of Content as identity evidence across
+	// engine-boundary transports that deliberately withhold replayable text.
+	ContentSHA256 string `json:"-"`
 	// ContentParts is durable presentation metadata; provider adapters ignore it.
 	ContentParts []MessageContentPart `json:"content_parts,omitempty"`
 	ToolCallID   string

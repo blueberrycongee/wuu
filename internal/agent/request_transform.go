@@ -67,12 +67,6 @@ func (c *RequestTransformChain) RemoveByPlugin(pluginID string) {
 	c.removeByOwner(pluginID)
 }
 
-func (c *RequestTransformChain) RemoveByGeneration(generationID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.removeByOwner(generationID)
-}
-
 func (c *RequestTransformChain) removeByOwner(owner string) {
 	var toRemove []string
 	for key, entryOwner := range c.owners {

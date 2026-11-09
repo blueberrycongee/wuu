@@ -129,6 +129,7 @@ export function PluginConversationView({ presentation = "standard", conversation
       observer.disconnect();
     };
   }, [composerNode, controller.scheduleScrollToBottom]);
+  const bubbleContext = useMemo(() => ({ enabled: bubbles, revealed: gesture.revealed }), [bubbles, gesture.revealed]);
   return <section ref={rootRef} className="plugin-conversation" data-conversation-id={conversationId} data-presentation={presentation}>
     <header className="titlebar plugin-conversation-titlebar" data-wuu-component="conversation-titlebar">
       <div className="title-block"><div className="conversation-title-heading">{avatar}<h1 tabIndex={-1}>{title}</h1>{subtitle && <span className="plugin-conversation-subtitle">{subtitle}</span>}</div></div>
@@ -140,7 +141,7 @@ export function PluginConversationView({ presentation = "standard", conversation
         data-times-dragging={bubbles ? gesture.dragging : undefined}
         style={bubbles ? { "--bubble-time-progress": gesture.progress } as React.CSSProperties : undefined}>
         {bubbles && <button type="button" className="bubble-time-toggle" aria-pressed={gesture.revealed} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" onClick={gesture.toggle}>{t(gesture.revealed ? "message.hideTimes" : "message.showTimes")}</button>}
-        <ConversationBubbleContext.Provider value={{ enabled: bubbles, revealed: gesture.revealed }}>
+        <ConversationBubbleContext.Provider value={bubbleContext}>
         <ConversationFlow className="plugin-conversation-flow" role="log" aria-live="polite" aria-busy={loading}>{children}{sessionId && sessionScope && <PluginConversationQuestions sessionId={sessionId} scope={sessionScope} onReply={onQuestionReply} />}</ConversationFlow>
         </ConversationBubbleContext.Provider>
       </div>
@@ -242,12 +243,13 @@ export function PluginConversationMessage({ id: suppliedId, role, content, times
         messageActions={messageActions} messageAttachments={inlineAttachments} linkPolicy={linkPolicy} item={item} />;
   const hasResources = Boolean(resources?.length);
   const messageContent = interactive?.length || hasResources ? <>{(content.trim() || process) && textMessageContent}{interactive?.map((part, index) => <InteractiveAnswer key={index} {...part} fallback={part.fallbackText ?? content} />)}{resources?.map(resource => <ConversationResource key={`${resource.itemId}:${resource.partIndex}`} resource={resource} />)}</> : textMessageContent;
+  const replyButton = onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>;
   return <ArtifactThreadContext.Provider value={undefined}><SideConversationAvailableContext.Provider value={false}>
     <div className={["plugin-conversation-message", className].filter(Boolean).join(" ")} data-wuu-component="plugin-ui-conversation-message" data-role={role}
       data-turn-id={role === "assistant" ? messageTurnId : undefined} data-bubble={bubble.enabled || undefined} data-has-resources={hasResources || undefined} data-preview-only={!content.trim() && !interactive?.length && resources?.every(resource => resource.preview) || undefined}>
       {bubble.enabled && validTime && <time className="bubble-message-time" dateTime={validTime} aria-hidden={!bubble.revealed} title={formatDate(validTime, { dateStyle: "medium", timeStyle: "short" })}>{formatDate(validTime, { hour: "2-digit", minute: "2-digit" })}</time>}
       {replyPreview}
-      {bubble.enabled ? <div className="bubble-message-body" data-has-reaction={!!reaction?.emoji || undefined} data-reactable={!!reaction?.onChange || undefined}>{reaction && <ConversationReaction reaction={reaction} />}{attachmentContent}{(content.trim() || process || interactive?.length || hasResources) && <div className="bubble-message-content">{messageContent}</div>}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</div> : <>{messageContent}{onReply && <button type="button" className="plugin-message-reply" data-action="reply-message" aria-label={replyLabel} title={replyLabel} onClick={event => { event.currentTarget.focus({ preventScroll: true }); onReply(); }}><CornerUpLeft aria-hidden="true" /></button>}</>}
+      {bubble.enabled ? <div className="bubble-message-body" data-has-reaction={!!reaction?.emoji || undefined} data-reactable={!!reaction?.onChange || undefined}>{reaction && <ConversationReaction reaction={reaction} />}{attachmentContent}{(content.trim() || process || interactive?.length || hasResources) && <div className="bubble-message-content">{messageContent}</div>}{replyButton}</div> : <>{messageContent}{replyButton}</>}
       {footer}
     </div>
   </SideConversationAvailableContext.Provider></ArtifactThreadContext.Provider>;
@@ -428,8 +430,8 @@ export function PluginConversationAttachment({ resourceId, onOpen, onRead, name,
       <button type="button" className="conversation-file-card-main" data-action="open-attachment" aria-label={t("conversationAttachment.open", { name })} disabled={opening} aria-busy={opening} onClick={() => { void open(); }}>
         {opening ? <LoaderCircle className="is-spinning" /> : bubble.enabled ? <ConversationAttachmentIcon mediaType={mediaType} /> : <FileText />}<span className="conversation-file-card-copy"><strong title={`${name} · ${mediaType} · ${formatByteSize(size, formatNumber)}`}>{name}</strong></span>
       </button>
-      {!bubble.enabled && (localURL ? <a className="icon-button conversation-file-download" href={localURL} download={name} aria-label={downloadLabel} title={downloadLabel}><Download /></a>
-        : <button type="button" className="icon-button conversation-file-download" data-action="load-attachment" aria-label={loadLabel} title={loadLabel} disabled={loading || downloading} onClick={() => { void download(); }}>{loading || downloading ? <LoaderCircle className="is-spinning" /> : <Download />}</button>)}
+      {!bubble.enabled && (localURL ? <a className="icon-button conversation-file-download" href={localURL} download={name} aria-label={downloadLabel}><Download /></a>
+        : <button type="button" className="icon-button conversation-file-download" data-action="load-attachment" aria-label={loadLabel} disabled={loading || downloading} onClick={() => { void download(); }}>{loading || downloading ? <LoaderCircle className="is-spinning" /> : <Download />}</button>)}
     </div>
     {(actionError || error) && <p role="alert">{actionError || error}</p>}
     {raster && localURL && <img src={localURL} alt={name} />}

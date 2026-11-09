@@ -9,7 +9,7 @@
   "scripts": {
     "build": "node ../scripts/build-bundled-plugins.mjs",
     "build:check": "node ../scripts/build-bundled-plugins.mjs --check",
-    "test": "node --test goal/test/lifecycle.test.mjs automation/test/schedule.test.mjs automation/test/lifecycle.test.mjs automation/test/user-routines.test.mjs automation-client/test/selected-provider.test.mjs personal/src/personal-records.test.mjs personal/src/personal-runtime.test.mjs personal/src/existing-session.test.mjs personal/src/controller-review.test.mjs personal/src/existing-session-runtime.test.mjs dream/src/personal-dream.test.mjs dream/src/coding-dream.test.mjs memory/src/memory.test.mjs personal/src/genui/runtime.test.mjs generative-ui/src/editable-list.test.mjs generative-ui/src/view-state.test.mjs design-mode/test/server.test.mjs",
+    "test": "node --test goal/test/lifecycle.test.mjs automation/test/schedule.test.mjs automation/test/lifecycle.test.mjs automation/test/user-routines.test.mjs automation-client/test/selected-provider.test.mjs personal/src/personal-records.test.mjs personal/src/personal-runtime.test.mjs personal/src/existing-session.test.mjs personal/src/controller-review.test.mjs personal/src/existing-session-runtime.test.mjs personal/test/share-capture.test.mjs dream/src/personal-dream.test.mjs dream/src/coding-dream.test.mjs memory/src/memory.test.mjs personal/src/genui/runtime.test.mjs personal/src/genui/genui.test.mjs generative-ui/src/editable-list.test.mjs generative-ui/src/view-state.test.mjs design-mode/test/server.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

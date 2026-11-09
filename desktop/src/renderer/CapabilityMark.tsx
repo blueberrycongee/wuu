@@ -17,23 +17,6 @@ const marks = {
 
 type Motif = keyof typeof marks;
 
-// Skills have no icon descriptor. Prefer capability words over arbitrary hashes;
-// unknown skills receive the shared module mark rather than an invented meaning.
-export function skillCapability(name: string): Motif {
-  const words = name.toLowerCase().split(/[^a-z0-9]+/);
-  const groups: [Motif, string[]][] = [
-    ["inspect", ["debug", "diagnosis", "diagnose"]],
-    ["verify", ["review", "check", "test", "audit"]],
-    ["create", ["creator", "create"]],
-    ["build", ["build", "install", "deploy", "release"]],
-    ["browser", ["browser", "web"]],
-    ["presentation", ["pptx", "presentation", "slides"]],
-    ["branch", ["commit", "git", "delegate"]],
-    ["memory", ["memory", "remember"]],
-  ];
-  return groups.find(([, keywords]) => keywords.some((word) => words.includes(word)))?.[0] ?? "module";
-}
-
 export function CapabilityMark({ motif, name, ...props }: SVGProps<SVGSVGElement> & {
   motif?: Motif;
   name?: string;

@@ -112,7 +112,9 @@ func (s *Store) Login(in Login, register bool) (Session, error) {
 	var recovery string
 	if register {
 		salt = make([]byte, 16)
-		_, _ = rand.Read(salt)
+		if _, err := rand.Read(salt); err != nil {
+			return Session{}, ErrUnavailable
+		}
 		hash = passwordHash(in.Password, salt)
 		recovery = randomToken()
 	} else {
@@ -332,7 +334,9 @@ func (s *Store) Reset(username, secret, password string, recovering bool) (strin
 	}
 	next := randomToken()
 	newSalt := make([]byte, 16)
-	_, _ = rand.Read(newSalt)
+	if _, err := rand.Read(newSalt); err != nil {
+		return "", ErrUnavailable
+	}
 	newHash := passwordHash(password, newSalt)
 	tx, err := s.db.Begin()
 	if err != nil {

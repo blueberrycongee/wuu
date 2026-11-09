@@ -1525,7 +1525,7 @@ it("streams only scoped tool previews and replaces them with the durable interac
   expect(ui.container.querySelector('[data-preview="true"]')).toBeNull();
   await emit("item/started", { thread_id: "s-private", turn_id: "turn-1", item: tool });
   await emit("item/toolCall/delta", { thread_id: "s-private", turn_id: "turn-1", item_id: "item-1", delta: "{partial" });
-  expect(ui.container.querySelector('[data-preview="true"]')?.textContent).toBe("{partial");
+  await vi.waitFor(() => expect(ui.container.querySelector('[data-preview="true"]')?.textContent).toBe("{partial"));
   const part = { type: "resource", mime_type: "application/vnd.wuu.ui+json", name: "Question", resource: { mimeType: "application/vnd.wuu.ui+json", text: "final" }, artifact: { placement: "inline", ref: "artifact-1", sha256: "a".repeat(64), size_bytes: 5 } };
   rows = [{ seq: 15, role: "assistant", content: "Fallback", ui_text: "", ui_resources: [{ part, part_index: 1, tool_call_id: "call-1", fallback_text: "Fallback" }] }];
   await emit("turn/completed", { thread_id: "s-private", turn: { id: "turn-1", status: "completed", items_view: "full", items: [{ ...tool, status: "completed" }] } });

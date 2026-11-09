@@ -21,6 +21,8 @@ export interface ToolServiceDefinition {
   direct_only?: boolean;
   defer_loading?: boolean;
   cache_stable?: boolean;
+  /** Agent-facing usage contract for host-capability surfaces. */
+  guidance?: string;
 }
 export interface ToolServiceCatalogEntry {
   name: string;

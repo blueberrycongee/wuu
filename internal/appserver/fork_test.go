@@ -303,3 +303,36 @@ func itemBySourceIDForForkTest(t *testing.T, turn Turn, sourceID string) ThreadI
 	t.Fatalf("item with source id %q not found in turn %+v", sourceID, turn)
 	return ThreadItem{}
 }
+
+// The boundary pair is how external engines choose a native cutoff: only a
+// non-steered user prompt (or the end of history) can bound a fork.
+func TestForkBoundaryAfter(t *testing.T) {
+	classify := func(msg providers.ChatMessage) (string, bool) { return msg.Role, msg.Steered }
+	user := providers.ChatMessage{Role: "user"}
+	steered := providers.ChatMessage{Role: "user", Steered: true}
+	assistant := providers.ChatMessage{Role: "assistant"}
+	tool := providers.ChatMessage{Role: "tool"}
+	meta := providers.ChatMessage{Role: "meta"}
+	system := providers.ChatMessage{Role: "system"}
+	for _, test := range []struct {
+		name                      string
+		rest                      []providers.ChatMessage
+		turnBoundary, endBoundary bool
+	}{
+		{"session end", nil, true, true},
+		{"meta tail still reaches the end", []providers.ChatMessage{meta}, true, true},
+		{"system tail still reaches the end", []providers.ChatMessage{system}, true, true},
+		{"next prompt is a turn boundary", []providers.ChatMessage{user, assistant}, true, false},
+		{"meta before the next prompt stays a boundary", []providers.ChatMessage{meta, user}, true, false},
+		{"system record before the next prompt stays a boundary", []providers.ChatMessage{system, user}, true, false},
+		{"steered input is inside its turn", []providers.ChatMessage{steered, assistant}, false, false},
+		{"mid-turn output is not a boundary", []providers.ChatMessage{assistant, tool, user}, false, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			turnBoundary, endBoundary := forkBoundaryAfter(test.rest, classify)
+			if turnBoundary != test.turnBoundary || endBoundary != test.endBoundary {
+				t.Fatalf("boundary = %v/%v, want %v/%v", turnBoundary, endBoundary, test.turnBoundary, test.endBoundary)
+			}
+		})
+	}
+}

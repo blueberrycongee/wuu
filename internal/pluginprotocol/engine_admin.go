@@ -79,14 +79,26 @@ type EngineHistoryMessage struct {
 	EngineTurnID   string `json:"engine_turn_id,omitempty"`
 	ProviderItemID string `json:"provider_item_id,omitempty"`
 	Steered        bool   `json:"steered,omitempty"`
+	// ContentSHA256 digests the visible text so an engine can verify a native
+	// message carries the same prompt without receiving replayable content.
+	ContentSHA256 string `json:"content_sha256,omitempty"`
 }
 
 type EngineHistoryForkRequest struct {
-	Ref       string                 `json:"ref"`
-	CWD       string                 `json:"cwd"`
-	Retained  []EngineHistoryMessage `json:"retained"`
-	Removed   []EngineHistoryMessage `json:"removed"`
-	WholeTurn bool                   `json:"whole_turn"`
+	Ref      string                 `json:"ref"`
+	CWD      string                 `json:"cwd"`
+	Retained []EngineHistoryMessage `json:"retained"`
+	Removed  []EngineHistoryMessage `json:"removed"`
+	// WholeTurn reports the caller asked for a whole-turn or whole-session
+	// target rather than an item-level cutoff.
+	WholeTurn bool `json:"whole_turn"`
+	// TurnBoundary reports that Retained ends at a turn boundary: the next
+	// visible element after it is a non-steered user prompt or nothing.
+	TurnBoundary bool `json:"turn_boundary,omitempty"`
+	// EndBoundary reports that Retained reaches the session's current end.
+	// Engines whose native fork only copies the whole session must reject
+	// partial boundaries instead of silently widening the copied context.
+	EndBoundary bool `json:"end_boundary,omitempty"`
 }
 type EngineHistoryForkResult struct {
 	Ref string `json:"ref"`
