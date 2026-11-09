@@ -884,7 +884,7 @@ func RunToolLoop(
 			}
 		}
 		if cfg.ModelInputReceiptStore != nil {
-			receipt := modelInputReceipt(req,
+			receipt := modelInputReceipt(req, requestInfo.ToolSurfaceHash,
 				loopdriver.ExecutionContext{SessionID: cfg.SessionID, ExecutionID: cfg.ExecutionID},
 				loopdriver.Descriptor{ID: cfg.DriverID, Version: cfg.DriverVersion}, cfg.SystemPromptSections, historyRewritten)
 			if err := cfg.ModelInputReceiptStore.SaveModelInputReceipt(ctx, receipt); err != nil {

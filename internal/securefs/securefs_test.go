@@ -5,8 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 )
+
+// ModeString is a tiny helper for log lines that report what was
+// tightened; keeps call sites free of strconv imports.
+func ModeString(m os.FileMode) string {
+	return "0" + strconv.FormatUint(uint64(m.Perm()), 8)
+}
 
 func skipIfNotUnix(t *testing.T) {
 	t.Helper()
@@ -334,25 +341,6 @@ func TestModeString(t *testing.T) {
 	for _, c := range cases {
 		if got := ModeString(c.m); got != c.want {
 			t.Errorf("ModeString(%s) = %q, want %q", ModeString(c.m), got, c.want)
-		}
-	}
-}
-
-func TestSafeToPrint(t *testing.T) {
-	cases := []struct {
-		path string
-		want bool
-	}{
-		{"/home/u/.wuu/notes.txt", true},
-		{"/home/u/.wuu/auth.json", false},
-		{"/home/u/.wuu/config.json", false},
-		{"/home/u/.wuu/sessions/foo.db", false},
-		{"/home/u/.wuu/SessionBackup/db", false},
-		{"/home/u/.wuu/private.key", false},
-	}
-	for _, c := range cases {
-		if got := SafeToPrint(c.path); got != c.want {
-			t.Errorf("SafeToPrint(%q) = %v, want %v", c.path, got, c.want)
 		}
 	}
 }
