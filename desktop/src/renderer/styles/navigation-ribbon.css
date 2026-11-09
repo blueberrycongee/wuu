@@ -243,7 +243,9 @@
   overflow: visible;
 }
 
-.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-animating
+/* The doubled .app-shell outranks the collapsed visibility:hidden rule further
+ * down this file, which would otherwise hide the pane mid-slide. */
+.app-shell.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-animating
   .sidebar :is(.sidebar-content, .plugin-workbench-view-navigation) {
   visibility: visible;
   opacity: 1;
