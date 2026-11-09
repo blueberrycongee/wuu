@@ -806,6 +806,17 @@ func TestACPHelper(t *testing.T) {
 				result = booleanSession()
 				break
 			}
+			if scenario == "devin-inline-config" {
+				// Current Devin CLI inlines configOptions in session/new and
+				// only re-sends config_option_update when configuration changes.
+				result = map[string]any{
+					"sessionId": "native-session",
+					"configOptions": []any{
+						map[string]any{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "model-a", "options": []any{map[string]string{"value": "model-a", "name": "Model A"}}},
+					},
+				}
+				break
+			}
 			if scenario == "speed" || scenario == "speed-catalog" {
 				result = speedACPSessionResult("model-a", "fast-mode", selectedSpeed)
 				break
@@ -1194,6 +1205,25 @@ func TestACPChildInheritsParentEnvironment(t *testing.T) {
 				t.Fatalf("ACP child environment = %q, want %q", result.Result.Content, tc.want)
 			}
 		})
+	}
+}
+
+// Current Devin CLI inlines configOptions in the session/new response and
+// does not follow it with a config_option_update notification. The turn must
+// not wait for one that never arrives.
+func TestACPDevinInlineConfigurationDoesNotWaitForNotification(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngineID(t, "devin", "devin-inline-config").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.Content != "Hello world" {
+		t.Fatalf("result=%+v", result.Result)
 	}
 }
 
