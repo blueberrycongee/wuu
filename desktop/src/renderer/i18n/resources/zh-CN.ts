@@ -283,6 +283,7 @@ export const zhCN = {
   "settings.shellSkin": "外壳皮肤",
   "settings.shellSkinDescription": "改变窗口外框和背景，不改变内容颜色。",
   "settings.skinDefault": "默认",
+  "settings.skinMore": "更多",
   "settings.skinUnavailable": "此皮肤暂不可用，当前显示默认外壳。启用对应插件后会自动恢复。",
   "settings.skinImageFailed": "图片不可用，已显示皮肤底色。",
   "settings.contentTheme": "配色方案",

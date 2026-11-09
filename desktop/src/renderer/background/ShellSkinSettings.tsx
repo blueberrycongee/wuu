@@ -1,54 +1,50 @@
 import { useSettingsControls } from "../SettingsControlsContext";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useI18n } from "../i18n";
-import { showActionErrorToast } from "../Toast";
 import { SettingsRow } from "../SettingsRow";
 import { BackgroundSettings } from "./BackgroundSettings";
-import { showsUserImage, useShellSkins, useSkinImage, type AvailableShellSkin } from "./ShellSkin";
+import { SkinPreviewCard } from "./ShellSkinCard";
+import { showsUserImage, useShellSkins } from "./ShellSkin";
 
-function SkinChip({ skin, mode, selected, choose, title }: {
-  skin?: AvailableShellSkin; mode: "light" | "dark"; selected: boolean; choose: () => void;
-  title: string;
-}): JSX.Element {
-  const controls = useSettingsControls();
-  const { t } = useI18n();
-  const loaded = useSkinImage(skin, mode, controls);
-  return <button
-    type="button"
-    role="radio"
-    aria-checked={selected}
-    className="shell-skin-chip"
-    onClick={choose}
-    title={skin ? (loaded.error ? t("settings.skinImageFailed") : skin.pluginName) : undefined}
-  >
-    <span>{title}</span>
+// The row stays a three-card summary: the default frame, the current choice
+// (or the first featured skin), and the entry into the full gallery.
+const FEATURED_SKINS = 1;
+
+function MoreCard({ count, label, open }: { count: number; label: string; open: () => void }): JSX.Element {
+  return <button type="button" className="settings-theme-card" onClick={open}>
+    <span className="settings-theme-preview settings-skin-more-box" aria-hidden="true">
+      <span>{`+${count}`}</span>
+    </span>
+    <span className="settings-theme-card-label">{label}</span>
   </button>;
 }
 
-export function ShellSkinSettings(): JSX.Element {
+export function ShellSkinSettings({ onOpenGallery }: { onOpenGallery?: () => void }): JSX.Element {
   const controls = useSettingsControls();
   const { t } = useI18n();
   const { skins, selected } = useShellSkins(controls);
-  const [mode, setMode] = useState(controls.currentAppliedTheme);
-  useEffect(() => {
-    setMode(controls.currentAppliedTheme());
-    return controls.observeAppliedTheme(setMode);
-  }, [controls]);
+  const [error, setError] = useState(false);
   const choose = (key: string) => {
-    try { controls.selectShellSkin(key); } catch (reason) { showActionErrorToast(reason, t("settings.saveFailed")); }
+    try { controls.selectShellSkin(key); setError(false); } catch { setError(true); }
   };
   const skin = skins.find(candidate => candidate.key === selected);
   const unavailable = selected !== "default" && !skin;
+  const featured = skins.slice(0, FEATURED_SKINS);
+  const representative = skin ?? featured[0];
+  const extra = skins.length - (representative ? 1 : 0);
+  const canBrowse = onOpenGallery && skins.length > (representative ? 1 : 0);
   return <>
     {(skins.length > 0 || unavailable) && (
-      <SettingsRow title={t("settings.shellSkin")} description={t("settings.shellSkinDescription")}>
-        <div className="theme-segmented shell-skin-options" role="radiogroup" aria-label={t("settings.shellSkin")}>
-          <SkinChip mode={mode} selected={selected === "default"} choose={() => choose("default")} title={t("settings.skinDefault")} />
-          {skins.map(skin => <SkinChip key={skin.key} skin={skin} mode={mode} selected={selected === skin.key} choose={() => choose(skin.key)} title={skin.name} />)}
+      <SettingsRow block title={t("settings.shellSkin")} description={t("settings.shellSkinDescription")}>
+        <div className="settings-theme-options" role="radiogroup" aria-label={t("settings.shellSkin")}>
+          <SkinPreviewCard selected={selected === "default"} choose={() => choose("default")} title={t("settings.skinDefault")} />
+          {representative && <SkinPreviewCard key={representative.key} skin={representative} selected={selected === representative.key} choose={() => choose(representative.key)} title={representative.name} />}
+          {canBrowse && <MoreCard count={extra} label={t("settings.skinMore")} open={onOpenGallery} />}
         </div>
       </SettingsRow>
     )}
     {unavailable && <p className="settings-description" role="status">{t("settings.skinUnavailable")}</p>}
+    {error && <p role="alert">{t("settings.saveFailed")}</p>}
     {/* The picture is the selected skin's artwork, so only skins that can show it offer it. */}
     {showsUserImage(skin) && <BackgroundSettings canvasSkin={skin?.placement === "canvas" ? skin.name : undefined} />}
   </>;

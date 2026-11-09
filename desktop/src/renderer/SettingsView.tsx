@@ -80,6 +80,7 @@ export type ArchivedSessionView = {
 };
 import { AppearanceTypography } from "./AppearanceTypography";
 import { ShellSkinSettings } from "./background/ShellSkinSettings";
+import { ShellSkinGallery } from "./background/ShellSkinGallery";
 import { SettingsRow } from "./SettingsRow";
 import { SettingsEmptyState, SettingsGroup, SettingsPageHeader, SettingsSection, SettingsTitlebarSlot } from "./SettingsSection";
 import { pluginSourceLabel } from "./SkillsCatalog";
@@ -1262,13 +1263,17 @@ type CodexPetSettingsProps = {
 function SettingsAppearancePage({ inventory, ...petProps }: CodexPetSettingsProps & { inventory?: readonly ExtensionInventoryRecord[] }): JSX.Element {
   const controls = useSettingsControls();
   const { t } = useI18n();
+  const [skinGalleryOpen, setSkinGalleryOpen] = useState(false);
+  if (skinGalleryOpen) {
+    return <ShellSkinGallery onBack={() => setSkinGalleryOpen(false)} />;
+  }
   return (
     <>
       <SettingsPageHeader title={t("settings.appearance")} />
       <SettingsSection title={t("settings.sectionTheme")} testID="settings-appearance">
         <ThemePreferenceControl inventory={inventory} />
         <SettingsGroup>
-          {isTouchWebShell() ? null : <ShellSkinSettings />}
+          {isTouchWebShell() ? null : <ShellSkinSettings onOpenGallery={() => setSkinGalleryOpen(true)} />}
           <ContentThemeControl inventory={inventory} />
         </SettingsGroup>
       </SettingsSection>
