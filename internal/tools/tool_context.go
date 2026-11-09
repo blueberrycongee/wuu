@@ -46,41 +46,6 @@ func (t *Toolkit) ContextBlocks() []wuucontext.Block {
 	return blocks
 }
 
-// AvailableDeferredToolsContextBlock is retained for callers that still probe
-// the old request-only block, but deferred discovery now rides in the static
-// base system prompt as a session-level catalog snapshot.
-func (t *Toolkit) AvailableDeferredToolsContextBlock() (wuucontext.Block, bool) {
-	return wuucontext.Block{}, false
-}
-
-func (t *Toolkit) AvailableDeferredToolNames() []string {
-	if t == nil || !t.ToolSearchEnabled() || t.CodeModeOnly() {
-		return nil
-	}
-	surface := t.activeCompiledSurface()
-	names := make([]string, 0)
-	seen := map[string]struct{}{}
-	for _, tool := range t.allKnownTools() {
-		if !activeSurfaceAllowsKnownTool(surface, tool) {
-			continue
-		}
-		name := tool.Name()
-		if t.toolExposure(name) != ToolExposureDeferred {
-			continue
-		}
-		if !t.toolSearchCanLoadDeferredTool(name) {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 func (t *Toolkit) DeferredToolCatalogEntries() []DeferredToolCatalogEntry {
 	if t == nil || !t.ToolSearchEnabled() || t.CodeModeOnly() {
 		return nil
@@ -94,9 +59,6 @@ func (t *Toolkit) DeferredToolCatalogEntries() []DeferredToolCatalogEntry {
 		}
 		name := tool.Name()
 		if t.toolExposure(name) != ToolExposureDeferred {
-			continue
-		}
-		if !t.toolSearchCanLoadDeferredTool(name) {
 			continue
 		}
 		if _, ok := seen[name]; ok {
