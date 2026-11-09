@@ -70,6 +70,7 @@ type SpawnArguments = {
   name?: string;
   agent_profile?: string;
   model?: string;
+  engine?: string;
   context?: string;
   isolation?: string;
   run_in_background?: boolean;
@@ -104,7 +105,8 @@ class SubagentPlugin implements RuntimePlugin {
             prompt: stringField("Concrete, self-contained task brief with scope, constraints, acceptance criteria, and deliverable."),
             subagent_type: stringField("Optional specialized agent type."),
             name: stringField("Optional addressable task name using lowercase letters, digits, and underscores."),
-            model: stringField("Optional configured model alias or host capability model such as @verification."),
+            model: stringField("Optional configured model alias or host capability model such as @verification; with engine, that engine's native model instead."),
+            engine: stringField("Optional agent engine the child runs under (e.g. \"codex\", \"claude\"). Delegates the task to another installed engine with its own tools and native session. External engines start with fresh context only."),
             context: { type: "string", enum: ["fresh", "fork"], description: "Optional conversation context source. Defaults to fresh; fork inherits the parent conversation." },
             isolation: { type: "string", enum: ["worktree"] },
             run_in_background: { type: "boolean", default: true, description: "Return immediately when true. Set false when the parent must wait for this result before continuing; a foreground wait automatically becomes background after ten minutes." },
@@ -180,10 +182,13 @@ class SubagentPlugin implements RuntimePlugin {
     }
     const workspace = args.isolation?.trim() === "worktree" ? "worktree" : "shared";
     if (workspace === "worktree") context = "fork";
+    const engine = args.engine?.trim() ?? "";
+    if (engine && context === "fork") throw new Error("engine selection requires fresh context; external engines cannot inherit host-managed conversation history");
     const { record, sent } = await this.withTransition(execution, async () => {
       const params: SessionCreateParams = {
         request_id: `create-${requestID}`, name, visibility: "plugin", parent_session_id: parentSessionID,
-        context_source: context, workspace, model_alias: args.model?.trim(), instructions: workerInstructions(args.subagent_type?.trim()),
+        context_source: context, workspace, instructions: workerInstructions(args.subagent_type?.trim()),
+        ...(engine ? { engine, model: args.model?.trim() } : { model_alias: args.model?.trim() }),
       };
       const digest = hash(JSON.stringify({ params, prompt: args.prompt.trim() }));
       const beforeReservation = (await this.readIndex(host)).index;
@@ -220,7 +225,7 @@ class SubagentPlugin implements RuntimePlugin {
       const current = await this.resumeTask(host, record);
       return { record: current, sent: { state: current.state } };
     });
-    const identity = { session_id: record.session_id, task_name: name, run_in_background: background };
+    const identity = { session_id: record.session_id, task_name: name, run_in_background: background, ...(engine ? { engine } : {}) };
     if (background || record.suppress_completion) return textResult({ ...identity, state: sent.state, backgrounded: true });
 
     const inspected = await host.call("host.session.inspect", {

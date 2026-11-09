@@ -73,6 +73,11 @@ func (s *Server) notifyPluginTurnDiscardedWithRetry(binding *runtime.State, thre
 func (s *Server) createPluginSession(ctx context.Context, pluginID string, params pluginhost.SessionCreateParams) (pluginhost.SessionCreateResult, error) {
 	inheritModelOptions := params.ExecutionAuthorization != nil && params.Provider == "" && params.Model == ""
 	if params.ExecutionAuthorization != nil {
+		// Delegated creation bounds are model-catalog grants; an external
+		// engine's selection cannot be attested against them.
+		if agentengine.NormalizeEngineID(params.Engine) != agentengine.EngineWuu {
+			return pluginhost.SessionCreateResult{}, errors.New("delegated session creation does not support external agent engines")
+		}
 		var err error
 		ctx, params, err = s.rt.RestoreExecutionCreation(ctx, pluginID, params)
 		if err != nil {
@@ -137,6 +142,7 @@ func (s *Server) createPluginSession(ctx context.Context, pluginID string, param
 	params.WorkspaceID = strings.TrimSpace(params.WorkspaceID)
 	params.WorkspaceRoot = strings.TrimSpace(params.WorkspaceRoot)
 	params.ModelAlias = strings.TrimSpace(params.ModelAlias)
+	params.Engine = strings.TrimSpace(params.Engine)
 	params.Speed = strings.TrimSpace(params.Speed)
 	if err := validateSpeed(params.Speed); err != nil {
 		return pluginhost.SessionCreateResult{}, err
@@ -293,7 +299,7 @@ func (s *Server) listPluginSessions(ctx context.Context, pluginID string, params
 		if s.hasQueuedUserTurns(item.ID) {
 			state = pluginhost.TurnLifecycleQueued
 		}
-		summary := pluginhost.SessionSummary{SessionID: item.ID, UserSpaceID: item.UserSpaceID, ProductDomain: item.ProductDomain, AgentID: item.AgentID, Name: item.Title, ParentSessionID: item.ParentID, Visibility: item.Visibility, State: state, WorkspaceID: item.WorkspaceID, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano)}
+		summary := pluginhost.SessionSummary{SessionID: item.ID, UserSpaceID: item.UserSpaceID, ProductDomain: item.ProductDomain, AgentID: item.AgentID, Name: item.Title, ParentSessionID: item.ParentID, Visibility: item.Visibility, State: state, Engine: item.EngineID, WorkspaceID: item.WorkspaceID, CreatedAt: item.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: item.UpdatedAt.Format(time.RFC3339Nano)}
 		if scope == pluginhost.SessionListScopeOwned {
 			summary.CreationRequestID = item.CreationRequestID
 		}
@@ -485,7 +491,7 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 	}
 	result := pluginhost.SessionInspectResult{Session: pluginhost.SessionSummary{
 		SessionID: metadata.ID, UserSpaceID: metadata.UserSpaceID, ProductDomain: metadata.ProductDomain, AgentID: metadata.AgentID, Name: metadata.Title, ParentSessionID: metadata.ParentID,
-		Visibility: metadata.Visibility, State: state, WorkspaceID: metadata.WorkspaceID,
+		Visibility: metadata.Visibility, State: state, Engine: metadata.EngineID, WorkspaceID: metadata.WorkspaceID,
 		CreatedAt: metadata.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: metadata.UpdatedAt.Format(time.RFC3339Nano),
 	}}
 	if metadata.Owner == "plugin:"+strings.TrimSpace(pluginID) {
@@ -1299,7 +1305,7 @@ func hostSessionCreateParamsFromPlugin(params pluginhost.SessionCreateParams) ho
 		Speed: params.Speed, RequestID: params.RequestID, Name: params.Name,
 		Visibility: params.Visibility, ParentSessionID: params.ParentSessionID, ContextSource: params.ContextSource,
 		Workspace: params.Workspace, WorkspaceID: params.WorkspaceID, WorkspaceRoot: params.WorkspaceRoot,
-		ModelAlias: params.ModelAlias, Provider: params.Provider, Model: params.Model,
+		ModelAlias: params.ModelAlias, Engine: params.Engine, Provider: params.Provider, Model: params.Model,
 		Variant: params.Variant, Effort: params.Effort, PermissionMode: params.PermissionMode,
 		Instructions: params.Instructions,
 	}
