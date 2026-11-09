@@ -554,7 +554,7 @@ func (h *UserHost) serve(ctx context.Context, in io.Reader, out io.Writer, regis
 		case MethodInitialize, MethodPluginClientRequest, MethodPluginClientCancel, MethodPluginDesktopModuleRead, MethodPluginDesktopActivation,
 			MethodStateInspectionsList, MethodStateInspectionsReconcile,
 			MethodDevicePushRegister, MethodDevicePushUnregister, MethodShutdown,
-			MethodUserQuestionList, MethodUserQuestionRespond, MethodUserQuestionCancel, MethodUserQuestionHold:
+			MethodUserQuestionList, MethodUserQuestionRespond, MethodUserQuestionCancel, MethodUserQuestionHold, MethodMCPList:
 		default:
 			// A user host exposes product-owned operations, never a generic
 			// thread editor, storage mutator, workspace shell, or Coding export.

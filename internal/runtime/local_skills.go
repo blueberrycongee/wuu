@@ -19,8 +19,6 @@ func (s *Session) bindLocalSkillRefresh(kit *tools.Toolkit, root string, generat
 		return
 	}
 	if s.UserBinding().IsUser() {
-		// Only explicit installs in this user's product files belong to this host.
-		// Do not search Coding/global directories or ancestor projects.
 		cfg := s.skillsConfig
 		if generation != nil {
 			cfg = generation.settings.Skills
@@ -29,8 +27,25 @@ func (s *Session) bindLocalSkillRefresh(kit *tools.Toolkit, root string, generat
 			if !cfg.IsEnabled() {
 				return nil, ctx.Err()
 			}
-			items, _, err := skills.DiscoverLocal(ctx, []skills.SourceDir{{Path: filepath.Join(s.RootDir, ".agents", "skills"), Source: "user"}}, nil)
-			return items, err
+			var dirs []skills.SourceDir
+			if s.UserSpaceID == "local" && s.ProductDomain == "personal" && s.UserHostIsolationMode != UserHostIsolationVerifiedHost {
+				dirs = userSkillDirs(s.HomeDir, s.WuuHome)
+			}
+			dirs = append(dirs, skills.SourceDir{Path: filepath.Join(s.RootDir, ".agents", "skills"), Source: "user"})
+			items, _, err := skills.DiscoverLocal(ctx, dirs, nil)
+			if err != nil {
+				return nil, err
+			}
+			byName := make(map[string]skills.Skill, len(items))
+			for _, item := range items {
+				byName[item.Name] = item
+			}
+			items = items[:0]
+			for _, item := range byName {
+				items = append(items, item)
+			}
+			sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+			return items, nil
 		})
 		return
 	}
@@ -51,16 +66,7 @@ func localSkillLoader(root, homeDir, wuuHome string, plugins pluginSkillSnapshot
 	if !cfg.IsEnabled() {
 		return func(ctx context.Context, _ bool) ([]skills.Skill, error) { return nil, ctx.Err() }
 	}
-	var userDirs []skills.SourceDir
-	if home := skillUserHome(homeDir); home != "" {
-		for _, path := range []string{".codex/skills", ".claude/skills", ".agents/skills", ".config/opencode/skills"} {
-			userDirs = append(userDirs, skills.SourceDir{Path: filepath.Join(home, filepath.FromSlash(path)), Source: "user"})
-		}
-	}
-	if strings.TrimSpace(wuuHome) != "" {
-		userDirs = append(userDirs, skills.SourceDir{Path: filepath.Join(wuuHome, "skills"), Source: "user"})
-	}
-	dirs := append(userDirs, skillProjectDirs(root)...)
+	dirs := append(userSkillDirs(homeDir, wuuHome), skillProjectDirs(root)...)
 	commands := append(commandUserDirs(wuuHome), commandProjectDirs(root)...)
 	bundled := skills.MergeWithBundled(nil, wuuHome)
 	gate := make(chan struct{}, 1)
@@ -108,6 +114,19 @@ func localSkillLoader(root, homeDir, wuuHome string, plugins pluginSkillSnapshot
 		readAt = time.Now()
 		return cached, nil
 	}
+}
+
+func userSkillDirs(homeDir, wuuHome string) []skills.SourceDir {
+	var userDirs []skills.SourceDir
+	if home := skillUserHome(homeDir); home != "" {
+		for _, path := range []string{".codex/skills", ".claude/skills", ".agents/skills", ".config/opencode/skills"} {
+			userDirs = append(userDirs, skills.SourceDir{Path: filepath.Join(home, filepath.FromSlash(path)), Source: "user"})
+		}
+	}
+	if strings.TrimSpace(wuuHome) != "" {
+		userDirs = append(userDirs, skills.SourceDir{Path: filepath.Join(wuuHome, "skills"), Source: "user"})
+	}
+	return userDirs
 }
 
 func localSkillsBySource(items []skills.Skill, source string) []skills.Skill {

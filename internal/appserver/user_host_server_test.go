@@ -258,7 +258,7 @@ func TestUserHostTransportRejectsGenericMutationAndExport(t *testing.T) {
 		done <- host.Serve(principal.WithContext(context.Background(), principal.LocalOwner()), in, out, nil)
 	}()
 	defer func() { writer.Close(); <-done }()
-	for _, method := range []string{MethodPluginStorageSet, MethodThreadListAll, MethodWorkspaceList, MethodConfigRead} {
+	for _, method := range []string{MethodPluginStorageSet, MethodThreadListAll, MethodWorkspaceList, MethodConfigRead, MethodMCPConfigure, MethodMCPConnect} {
 		params := PluginStorageSetParams{ID: item.SubjectID, Fingerprint: item.Fingerprint, Scope: PluginValueScopeUser, Key: "personal.state", Value: "client overwrite"}
 		frame, _ := json.Marshal(map[string]any{"id": method, "method": method, "params": params})
 		fmt.Fprintln(writer, string(frame))
@@ -266,6 +266,16 @@ func TestUserHostTransportRejectsGenericMutationAndExport(t *testing.T) {
 		if response["error"] == nil || !strings.Contains(fmt.Sprint(response["error"]), "user host client method is unavailable") {
 			t.Errorf("generic operation reached shared authority: %v", response)
 		}
+	}
+	fmt.Fprintln(writer, `{"id":"scoped-mcp","method":"mcp/list","params":{"user_space_id":"local","product_domain":"personal"}}`)
+	list := waitForResponseByID(t, out, "scoped-mcp")
+	if strings.Contains(fmt.Sprint(list["error"]), "user host client method is unavailable") {
+		t.Fatalf("scoped connector list was rejected by transport: %+v", list)
+	}
+	fmt.Fprintln(writer, `{"id":"foreign-mcp","method":"mcp/list","params":{"user_space_id":"other-space","product_domain":"personal"}}`)
+	foreign := waitForResponseByID(t, out, "foreign-mcp")
+	if foreign["error"] == nil || foreign["result"] != nil || !strings.Contains(fmt.Sprint(foreign["error"]), "another user space or product domain") {
+		t.Fatalf("foreign host binding reached connector list: %+v", foreign)
 	}
 	for _, scope := range []struct{ id, space, domain string }{
 		{"foreign-space", "other-space", "personal"},
