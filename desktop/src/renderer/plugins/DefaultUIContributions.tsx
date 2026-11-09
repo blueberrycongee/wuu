@@ -1,5 +1,6 @@
 import { SurfaceUnavailable } from "./SurfaceUnavailable";
 import { TruncatedText } from "../TruncatedText";
+import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 import * as React from "react";
 import type { ApplicationServiceV1, ApplicationPresentationAPI, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ConversationItemSnapshotV1, HeaderSnapshotV1, PresentationHost, PresenterProps, ViewHostAPI } from "../../shared/workbench";
@@ -126,16 +127,20 @@ function WorkspaceTool({ entry, ...props }: ContributionViewProps & { entry: Ret
   </button></Lifetime>;
 }
 
-class ContributionBoundary extends React.Component<{ host: PluginHost; identity: Identity; activeView?: boolean; fallback?: React.ReactNode; onFailure?: (error: unknown) => void; children: React.ReactNode }, { failed: boolean }> {
-  state = { failed: false };
+class ContributionBoundary extends React.Component<{ host: PluginHost; identity: Identity; activeView?: boolean; fallback?: React.ReactNode; onFailure?: (error: unknown) => void; children: React.ReactNode }, { error?: Error }> {
+  state: { error?: Error } = {};
   private observer?: ReturnType<PluginHost["observeGenerationRender"]>;
-  static getDerivedStateFromError() { return { failed: true }; }
+  static getDerivedStateFromError(error: Error) { return { error }; }
   componentDidMount() { this.observer = this.props.host.observeGenerationRender(this.props.identity.pluginId, this.props.identity.generation); }
   componentDidCatch(error: Error) { this.observer?.failed(error); this.props.onFailure?.(error); }
   componentWillUnmount() { this.observer?.dispose(); }
-  render() { return this.state.failed ? this.props.activeView
-    ? <SurfaceUnavailable onRetry={() => this.setState({ failed: false })} />
-    : this.props.fallback : this.props.children; }
+  render() {
+    if (!this.state.error) return this.props.children;
+    // A retired scope reads as an absent contribution; its replacement mounts
+    // with a new activation key. Only real defects hold an unavailable surface.
+    if (isPluginLifecycleCancellation(this.state.error) || !this.props.activeView) return this.props.fallback;
+    return <SurfaceUnavailable onRetry={() => this.setState({ error: undefined })} />;
+  }
 }
 function WorkspaceView(props: ContributionViewProps): React.ReactNode {
   const definitions = useRegistry(props.host, () => props.host.getViewTypes());

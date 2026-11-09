@@ -1,7 +1,7 @@
 import { Tooltip } from "../Tooltip";
 import type { ApplicationServiceV1 } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationWorkbenchV1, WorkbenchSnapshotV1 } from "../../../../packages/plugin-sdk/src/ui-contributions";
-import { PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
+import { isPluginLifecycleCancellation, PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
 import * as React from "react";
 import { createPortal } from "react-dom";
 
@@ -1026,6 +1026,10 @@ export class PluginErrorBoundary extends React.Component<PluginErrorBoundaryProp
   }
 
   componentDidCatch(error: unknown): void {
+    // A cancelled lifecycle is a routine handoff, not a plugin defect: the
+    // replacement mounts through a new activation and neither diagnostics nor
+    // onError callers may act on the retired scope.
+    if (isPluginLifecycleCancellation(error)) return;
     this.props.services.reportError?.(this.props.pluginId, this.props.generation, error);
     this.props.onError?.(error);
   }
@@ -1042,6 +1046,7 @@ export class PluginErrorBoundary extends React.Component<PluginErrorBoundaryProp
   render(): React.ReactNode {
     if (this.state.error === undefined) return this.props.children;
     if (this.props.fallback !== undefined) return this.props.fallback;
+    if (isPluginLifecycleCancellation(this.state.error)) return null;
     return (
       <div className="plugin-workbench-error" role="alert">
         <strong>This plugin view could not be displayed.</strong>
