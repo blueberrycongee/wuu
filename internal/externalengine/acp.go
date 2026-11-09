@@ -1239,7 +1239,12 @@ func (r *rpc) session(ctx context.Context, method string, params map[string]any,
 	if method == "session/load" || method == "session/resume" {
 		session.ID, _ = params["sessionId"].(string)
 	}
-	if session.asyncConfiguration {
+	if session.asyncConfiguration && session.ConfigOptions == nil {
+		// Older Devin CLI publishes its model configuration only through a
+		// config_option_update notification after session/new; current builds
+		// inline configOptions in the response and only re-send the
+		// notification when the configuration later changes. Waiting
+		// unconditionally would stall every turn for the full timeout.
 		waitCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 		if err := r.wait(waitCtx, func() bool { _, ok := updates[session.ID]; return ok }); err != nil {
