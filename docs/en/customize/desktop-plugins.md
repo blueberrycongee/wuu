@@ -206,7 +206,7 @@ Persist interaction state through ordinary plugin storage, scoped by the host's 
 
 ## Views, cards, and status
 
-A view is a registered component placed in `navigation`, `primary`, `auxiliary`, `inspector`, `settings`, or `overlay`. `registerViewPlacement` requests an initial placement. Manifest entries in `contributes.navigation`, `workspaceTools`, or `settingsPages` give users a host-owned way to open the view; each must refer to a view registered by that plugin.
+A view is a registered component placed in `navigation`, `primary`, `auxiliary`, `inspector`, `settings`, or `overlay`. `registerViewPlacement` requests an initial placement. Manifest entries in `contributes.navigation`, `workspaceTools`, or `settingsPages` give users a host-owned way to open the view; each must refer to a view registered by that plugin. `contributes.navigation` adds a sidebar destination that opens in the `primary` region; `contributes.workspaceTools` lists the view in the right-panel tool picker and opens it as a resizable auxiliary tab alongside the browser, file, and diff tools — the lane for precision workbenches such as design, video, or audio editors.
 
 `persistence=durable` preserves view layout state across restoration; it does not persist arbitrary component state. Use namespaced storage for data that must survive unmounting. View props include a host API for storage, settings, commands, and view navigation.
 
