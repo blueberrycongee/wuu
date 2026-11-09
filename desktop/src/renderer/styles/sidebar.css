@@ -339,10 +339,14 @@
 }
 
 .sidebar-content {
-  /* Give row surfaces more breathing room at the rail edges. Compensating
-   * inner padding keeps labels, glyphs, and trailing actions on their axes. */
-  --sidebar-content-pad-x: var(--space-3);
-  --sidebar-row-pad-x: calc(var(--pane-inset) - var(--sidebar-content-pad-x));
+  /* The rail sits against the window edge, where square CJK glyphs have
+   * little sidebearing. Give its first ink one extra module beyond the shared
+   * pane inset; the split between list and row padding keeps the fill and the
+   * glyphs on separate edges while preserving their inner gap. */
+  --sidebar-content-pad-x: var(--space-4);
+  --sidebar-row-pad-x: calc(
+    var(--pane-inset) + var(--space-1) - var(--sidebar-content-pad-x)
+  );
   --sidebar-row-radius: calc(var(--radius-xs) + 4px);
   --sidebar-label-weight: 400;
   --sidebar-label-size: var(--font-ui);
