@@ -1,0 +1,35 @@
+{
+  "schemaVersion": 1,
+  "id": "design-mode",
+  "name": "Design Mode",
+  "description": "Design prototypes on a live canvas: edit elements directly, pin comments, and hand revisions to the agent.",
+  "icon": "layout-grid",
+  "version": "0.1.0",
+  "author": { "name": "Wuu" },
+  "minimumWuuVersion": "2026.10.19",
+  "runtime": { "protocol": "wuu-plugin-v1", "command": "node", "args": ["runtime.mjs"], "timeout": 15 },
+  "desktop": {
+    "entry": "desktop.js",
+    "required_services": [{ "name": "ui.application", "major_version": 1, "required": false }]
+  },
+  "interface": {
+    "family": { "id": "wuu.design", "name": "Design", "description": "Design pages, presets, and review workflows." },
+    "displayName": "Design Mode",
+    "shortDescription": "Edit and comment on live HTML pages; send revisions to the agent.",
+    "developerName": "Wuu",
+    "category": "Design",
+    "capabilities": ["Read", "Write"]
+  },
+  "contributes": {
+    "workspaceTools": [
+      {
+        "id": "design",
+        "title": "Design",
+        "view": "design.studio",
+        "icon": "layout-grid",
+        "description": "Live HTML canvas: edit elements, pin comments, hand revisions to the agent.",
+        "order": 45
+      }
+    ]
+  }
+}

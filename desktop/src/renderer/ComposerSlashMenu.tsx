@@ -1,7 +1,6 @@
 import type { CSSProperties, ReactNode } from "react";
 import type { ComposerSlashCommand } from "./ComposerSlashCommands";
-import { SlashCommandIcon } from "./ComposerRuntimeMenus";
-import { Tooltip } from "./Tooltip";
+import { ComposerCommandRow } from "./ComposerRuntimeMenus";
 import { useI18n } from "./i18n";
 
 export function ComposerSlashMenu({ id, width, commands, selectedIndex, onSelectIndex, onSelect, query, status }: {
@@ -22,51 +21,17 @@ export function ComposerSlashMenu({ id, width, commands, selectedIndex, onSelect
         <div className="slash-command-list composer-menu-scroll scrollbar-hidden" data-scroll-fade="compact">
           {commands.map((command, index) => {
             const selected = index === selectedIndex;
-            const optionID = `${id}-${command.id}`;
             return (
-              <Tooltip
-                content={
-                  command.disabledReason || command.kind === "skill"
-                    ? undefined
-                    : command.description
-                }
+              <ComposerCommandRow
+                command={command}
+                id={`${id}-${command.id}`}
                 key={command.id}
-              >
-                <button
-                  className={`slash-command-item${selected ? " selected" : ""}`}
-                  data-command-name={command.name}
-                  id={optionID}
-                  role="option"
-                  type="button"
-                  aria-selected={selected}
-                  disabled={Boolean(command.disabledReason)}
-                  onMouseEnter={() => {
-                    if (!command.disabledReason) {
-                      onSelectIndex(index);
-                    }
-                  }}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => onSelect(command)}
-                >
-                  <SlashCommandIcon command={command} />
-                  <span className="composer-plus-menu-item-title slash-command-title">
-                    {command.kind === "skill" ? command.name : command.title}
-                  </span>
-                  {command.kind === "skill" ? (
-                    <span className={`composer-plus-menu-item-desc ${command.disabledReason ? "slash-command-meta" : "slash-command-summary"}`}>
-                      {command.disabledReason ?? command.description}
-                    </span>
-                  ) : (
-                    <span
-                      className={`composer-plus-menu-item-desc ${
-                        command.disabledReason ? "slash-command-meta" : "slash-command-command"
-                      }`}
-                    >
-                      {command.disabledReason ?? `/${command.name}`}
-                    </span>
-                  )}
-                </button>
-              </Tooltip>
+                role="option"
+                className={`slash-command-item${selected ? " selected" : ""}`}
+                selected={selected}
+                onHover={() => onSelectIndex(index)}
+                onSelect={onSelect}
+              />
             );
           })}
         </div>

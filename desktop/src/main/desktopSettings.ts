@@ -12,6 +12,7 @@ import {
   CODEX_PET_SIZE_OPTIONS,
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isLanguagePreference,
+  isMessageFlowFontSize,
   normalizeProxyURL,
   type CodexPetSettings,
   type CodexPetSize,
@@ -34,15 +35,6 @@ export type {
 
 export const DEFAULT_MESSAGE_FLOW_FONT_SIZE: MessageFlowFontSize =
   MESSAGE_FLOW_FONT_SIZE_RANGE.default;
-
-function isMessageFlowFontSize(value: unknown): value is MessageFlowFontSize {
-  return (
-    typeof value === "number" &&
-    Number.isFinite(value) &&
-    value >= MESSAGE_FLOW_FONT_SIZE_RANGE.min &&
-    value <= MESSAGE_FLOW_FONT_SIZE_RANGE.max
-  );
-}
 
 export type DesktopSettings = {
   // Appearance. "system" follows the OS light/dark preference; the

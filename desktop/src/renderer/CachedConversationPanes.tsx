@@ -3,6 +3,7 @@ import {
   memo,
   useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
   type ReactNode,
 } from "react";
@@ -30,6 +31,7 @@ import {
   type InstructionFilesEntry,
 } from "./InstructionFilesCard";
 import { TurnView } from "./TurnView";
+import { sameSnapshotValue } from "./plugins/ImmutableSnapshot";
 import { UserQuestionCard } from "./UserQuestionCard";
 import type { TurnFileDiffSelection } from "./TurnFileDiffTypes";
 import { latestAgentMessageLocation } from "./TurnViewHelpers";
@@ -279,13 +281,6 @@ const CachedConversationPane = memo(function CachedConversationPane({
     existing.push(entry);
     entriesByAfterTurnID.set(entry.afterTurnID, existing);
   }
-  const renderContextEntry = (entry: ContextCompositionEntry) => (
-    <ContextCompositionCard
-      entry={entry}
-      key={entry.id}
-      onDismiss={onDismissContextComposition}
-    />
-  );
   // Ask-user interruptions render inline after the turn that paused for them,
   // not above the composer dock.
   const pendingQuestion =
@@ -299,22 +294,9 @@ const CachedConversationPane = memo(function CachedConversationPane({
           onCancelUserQuestion,
         }
       : undefined;
-  const renderPendingQuestionCard = (attachAfterTurn: boolean): JSX.Element | null => {
-    if (!pendingQuestion) return null;
-    const card = (
-      <UserQuestionCard
-        key={pendingQuestion.request.request_id}
-        request={pendingQuestion.request}
-        onAnswer={(answer) =>
-          pendingQuestion.onAnswerUserQuestion(pendingQuestion.request.request_id, answer)
-        }
-        onCancel={() =>
-          pendingQuestion.onCancelUserQuestion(pendingQuestion.request.request_id)
-        }
-      />
-    );
-    return attachAfterTurn ? <div className="user-question-after-turn">{card}</div> : card;
-  };
+  const retainedQuestion = useRef(pendingQuestion);
+  if (!sameSnapshotValue(retainedQuestion.current, pendingQuestion)) retainedQuestion.current = pendingQuestion;
+  const stableQuestion = retainedQuestion.current;
   const threadInstructionEntries = instructionFilesEntries.filter(
     (entry) => entry.threadID === thread.id,
   );
@@ -327,9 +309,152 @@ const CachedConversationPane = memo(function CachedConversationPane({
   ));
   const latestTurn = threadTurns[threadTurns.length - 1];
   const canEdit = canEditThreadMessage(thread);
-  const latestTurnStreamStatus = latestTurn
+  const liveStreamStatus = latestTurn
     ? turnStreamStatus[latestTurn.id]
     : undefined;
+  const retainedStreamStatus = useRef(liveStreamStatus);
+  if (!sameSnapshotValue(retainedStreamStatus.current, liveStreamStatus)) retainedStreamStatus.current = liveStreamStatus;
+  // Render props read live values through a ref — the same pattern as
+  // threadRef above — so the callbacks stay identity-stable and the
+  // TurnListEntry memo can bail on untouched turns. Because the callbacks no
+  // longer change identity when their captured inputs move, the entry memo
+  // needs a scope version: bump it whenever a value the renderers read changes
+  // identity so entries re-render and produce fresh PaneTurnView props.
+  const scopeSignature: readonly unknown[] = [
+    thread,
+    activeContextCwd,
+    contextCompositionEntries,
+    canEdit,
+    historyMessageEdit,
+    stableQuestion,
+    retainedStreamStatus.current,
+    onOpenFile,
+    onOpenURL,
+    onStreamFrame,
+    onCollapseComplete,
+    onCancelEditMessage,
+    onDismissContextComposition,
+  ];
+  const renderScopeVersionRef = useRef(0);
+  const previousSignatureRef = useRef(scopeSignature);
+  if (
+    previousSignatureRef.current.length !== scopeSignature.length ||
+    previousSignatureRef.current.some((value, index) => value !== scopeSignature[index])
+  ) {
+    renderScopeVersionRef.current += 1;
+    previousSignatureRef.current = scopeSignature;
+  }
+  const renderScope = {
+    thread,
+    activeContextCwd,
+    latestAgentLocation,
+    latestTurn,
+    canEdit,
+    historyMessageEdit,
+    entriesByAfterTurnID,
+    pendingQuestion: stableQuestion,
+    latestTurnStreamStatus: retainedStreamStatus.current,
+    onOpenFile,
+    onOpenURL,
+    onStreamFrame,
+    onCollapseComplete,
+    onCancelEditMessage,
+    onDismissContextComposition,
+  };
+  const renderScopeRef = useRef(renderScope);
+  renderScopeRef.current = renderScope;
+  const renderContextEntry = useCallback(
+    (entry: ContextCompositionEntry) => (
+      <ContextCompositionCard
+        entry={entry}
+        key={entry.id}
+        onDismiss={renderScopeRef.current.onDismissContextComposition}
+      />
+    ),
+    [],
+  );
+  const renderPendingQuestionCard = useCallback((attachAfterTurn: boolean): JSX.Element | null => {
+    const pending = renderScopeRef.current.pendingQuestion;
+    if (!pending) return null;
+    const card = (
+      <UserQuestionCard
+        key={pending.request.request_id}
+        request={pending.request}
+        onAnswer={(answer) =>
+          pending.onAnswerUserQuestion(pending.request.request_id, answer)
+        }
+        onCancel={() =>
+          pending.onCancelUserQuestion(pending.request.request_id)
+        }
+      />
+    );
+    return attachAfterTurn ? <div className="user-question-after-turn">{card}</div> : card;
+  }, []);
+  const renderAfterTurn = useCallback(
+    (turn: Turn) => {
+      const scope = renderScopeRef.current;
+      return (
+        <>
+          {(scope.entriesByAfterTurnID.get(turn.id) ?? []).map(renderContextEntry)}
+          {turn.id === scope.pendingQuestion?.request.turn_id
+            ? renderPendingQuestionCard(true)
+            : null}
+        </>
+      );
+    },
+    [renderContextEntry, renderPendingQuestionCard],
+  );
+  const renderTurn = useCallback(
+    (turn: Turn) => {
+      const scope = renderScopeRef.current;
+      const turnThread = scope.thread;
+      return (
+        <PaneTurnView
+          threadID={turnThread.id}
+          sessionLocator={turnThread.session_locator}
+          engineID={turnThread.engine_id}
+          turn={turn}
+          cwd={turnThread.cwd ?? scope.activeContextCwd}
+          onOpenFile={scope.onOpenFile ? handleOpenFile : undefined}
+          onOpenURL={scope.onOpenURL}
+          onOpenAgent={handleOpenAgentByID}
+          latestAgentMessageID={
+            scope.latestAgentLocation?.turnID === turn.id
+              ? scope.latestAgentLocation.itemID
+              : undefined
+          }
+          isLatestTurn={scope.latestTurn?.id === turn.id}
+          onStreamFrame={scope.onStreamFrame}
+          onCollapseComplete={scope.onCollapseComplete}
+          onForkMessage={handleForkMessage}
+          canEdit={scope.canEdit}
+          onEditMessage={handleEditMessage}
+          editingMessage={scope.historyMessageEdit}
+          onCancelEditMessage={scope.onCancelEditMessage}
+          onSubmitEditMessage={handleSubmitEditMessage}
+          onOpenFileDiff={handleOpenFileDiffSelection}
+          streamStatus={
+            scope.latestTurn?.id === turn.id ? scope.latestTurnStreamStatus : undefined
+          }
+        />
+      );
+    },
+    [
+      handleOpenFile,
+      handleOpenAgentByID,
+      handleForkMessage,
+      handleEditMessage,
+      handleSubmitEditMessage,
+      handleOpenFileDiffSelection,
+    ],
+  );
+  const forcedFullTurnIDs = useMemo(
+    () => [
+      ...(historyMessageEdit ? [historyMessageEdit.turnID] : []),
+      ...(stableQuestion ? [stableQuestion.request.turn_id] : []),
+    ],
+    [historyMessageEdit, stableQuestion],
+  );
   return (
     <ConversationRenderActivityProvider active={isActive} restoring={restoring}>
       <SessionSwitchProfiler threadID={thread.id}>
@@ -351,56 +476,16 @@ const CachedConversationPane = memo(function CachedConversationPane({
                   {entriesAfterMissingTurn.map(renderContextEntry)}
                   {threadInstructionCards}
                   <ConversationCards threadId={thread.id} onStreamFrame={onStreamFrame} />
-                  {pendingQuestion && !turnIDs.has(pendingQuestion.request.turn_id)
+                  {stableQuestion && !turnIDs.has(stableQuestion.request.turn_id)
                     ? renderPendingQuestionCard(false)
                     : null}
                 </>
               }
-              renderAfterTurn={(turn) => (
-                <>
-                  {(entriesByAfterTurnID.get(turn.id) ?? []).map(renderContextEntry)}
-                  {turn.id === pendingQuestion?.request.turn_id
-                    ? renderPendingQuestionCard(true)
-                    : null}
-                </>
-              )}
-              forcedFullTurnIDs={
-                [
-                  ...(historyMessageEdit ? [historyMessageEdit.turnID] : []),
-                  ...(pendingQuestion ? [pendingQuestion.request.turn_id] : []),
-                ]
-              }
+              renderAfterTurn={renderAfterTurn}
+              forcedFullTurnIDs={forcedFullTurnIDs}
               autoLoadEarlier={isActive}
-              renderTurn={(turn) => (
-                <PaneTurnView
-                  threadID={thread.id}
-                  sessionLocator={thread.session_locator}
-                  engineID={thread.engine_id}
-                  turn={turn}
-                  cwd={thread.cwd ?? activeContextCwd}
-                  onOpenFile={onOpenFile ? handleOpenFile : undefined}
-                  onOpenURL={onOpenURL}
-                  onOpenAgent={handleOpenAgentByID}
-                  latestAgentMessageID={
-                    latestAgentLocation?.turnID === turn.id
-                      ? latestAgentLocation.itemID
-                      : undefined
-                  }
-                  isLatestTurn={latestTurn?.id === turn.id}
-                  onStreamFrame={onStreamFrame}
-                  onCollapseComplete={onCollapseComplete}
-                  onForkMessage={handleForkMessage}
-                  canEdit={canEdit}
-                  onEditMessage={handleEditMessage}
-                  editingMessage={historyMessageEdit}
-                  onCancelEditMessage={onCancelEditMessage}
-                  onSubmitEditMessage={handleSubmitEditMessage}
-                  onOpenFileDiff={handleOpenFileDiffSelection}
-                  streamStatus={
-                    latestTurn?.id === turn.id ? latestTurnStreamStatus : undefined
-                  }
-                />
-              )}
+              renderTurn={renderTurn}
+              renderScopeVersion={renderScopeVersionRef.current}
             />
           </ConversationFlow>
         </div>
@@ -453,7 +538,11 @@ function reuseCachedConversationPane(
   }
   for (const key of previousKeys) {
     if (previous[key] !== next[key]) {
-      return false;
+      // turnStreamStatus is rebuilt with the conversation workspace on every
+      // publication that touches it; equal content should still bail.
+      if (key !== "turnStreamStatus" || !sameSnapshotValue(previous[key], next[key])) {
+        return false;
+      }
     }
   }
   return true;

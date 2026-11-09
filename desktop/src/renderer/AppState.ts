@@ -132,6 +132,10 @@ type AppState = {
   configError?: string;
   initialized?: InitializeResult;
   runtimeConnectionGeneration?: number;
+  // The last committed plugin inventory generation. Skills live in the same
+  // publication, so this is the slash catalog's freshness signal even when an
+  // update leaves the inventory records themselves byte-identical.
+  extensionEpoch?: number;
   // Page selection outlives shell activations, including catalog refreshes.
   nativeSection?: "conversations" | "catalog";
   catalogSection?: "plugins" | "skills";
@@ -688,6 +692,7 @@ function reduceNotification(
       }
       return {
         ...state,
+        extensionEpoch: params.epoch,
         initialized: {
           ...state.initialized,
           extension_inventory: params.extension_inventory,
@@ -2719,11 +2724,19 @@ function activeThreadIDForState(state: AppState): string | undefined {
   return activeThreadForState(state)?.id;
 }
 
+// Thread snapshots are immutable, so the parsed result is stable per thread
+// object; caching keeps prop identity stable for memoized side panels across
+// stream-frame publications that only appended token text.
+const latestTodoUpdateCache = new WeakMap<Thread, TodoUpdate | null>();
+
 function latestTodoUpdateForThread(
   thread: Thread | undefined,
 ): TodoUpdate | undefined {
   if (!thread) {
     return undefined;
+  }
+  if (latestTodoUpdateCache.has(thread)) {
+    return latestTodoUpdateCache.get(thread) ?? undefined;
   }
   for (let turnIndex = thread.turns.length - 1; turnIndex >= 0; turnIndex--) {
     const turn = thread.turns[turnIndex];
@@ -2734,10 +2747,12 @@ function latestTodoUpdateForThread(
       }
       const update = parseTodoUpdateArguments(item.arguments);
       if (update) {
+        latestTodoUpdateCache.set(thread, update);
         return update;
       }
     }
   }
+  latestTodoUpdateCache.set(thread, null);
   return undefined;
 }
 

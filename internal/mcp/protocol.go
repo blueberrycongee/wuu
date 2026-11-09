@@ -222,6 +222,9 @@ type InitializeResult struct {
 		Name    string `json:"name"`
 		Version string `json:"version"`
 	} `json:"serverInfo"`
+	// Instructions are server-provided usage text for the agent. Wuu treats
+	// them as untrusted metadata, the same as server tool descriptions.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // Tool represents an MCP tool definition.

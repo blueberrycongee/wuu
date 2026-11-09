@@ -4,8 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { showActionErrorToast } from "./Toast";
-vi.mock("./Toast", () => ({ showActionErrorToast: vi.fn() }));
+import { showActionErrorToast, showErrorToast } from "./Toast";
+vi.mock("./Toast", () => ({ showActionErrorToast: vi.fn(), showErrorToast: vi.fn() }));
 import { WorkspaceFileService } from "../main/workspaceFiles";
 import type {
   RuntimeContext,
@@ -108,6 +108,7 @@ const directoryResults: Record<string, WorkspaceDirectoryListResult> = {
 
 beforeEach(() => {
   vi.mocked(showActionErrorToast).mockClear();
+  vi.mocked(showErrorToast).mockClear();
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
@@ -234,18 +235,14 @@ async function clickMenuItem(text: string): Promise<void> {
 }
 
 describe("WorkspaceFileTree", () => {
-  it.each(["", "src"])("recovers a directory failure at %j by retrying the current root", async (failedPath) => {
+  it("recovers a root directory failure by retrying the current root", async () => {
     let shouldFail = true;
     listWorkspaceDirectory.mockImplementation(async (path = "", cwd = "/repo") => {
-      if (path === failedPath && shouldFail) throw new Error("Directory unavailable");
+      if (path === "" && shouldFail) throw new Error("Directory unavailable");
       return { ...directoryResults[path], root: cwd };
     });
     await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
     await settleDirectoryLoads();
-    if (failedPath) {
-      await act(async () => rowButtonByTitle("src/").click());
-      await settleDirectoryLoads();
-    }
     expect(container.textContent).toContain("Directory unavailable");
     const retry = container.querySelector<HTMLButtonElement>('.workspace-panel-empty button');
     expect(retry).not.toBeNull();
@@ -255,6 +252,28 @@ describe("WorkspaceFileTree", () => {
     expect(listWorkspaceDirectory).toHaveBeenLastCalledWith("", "/repo");
     expect(rowButtonByTitle("README.md")).toBeTruthy();
     expect(container.textContent).not.toContain("Directory unavailable");
+  });
+
+  it("toasts a subdirectory failure and keeps the loaded tree", async () => {
+    let shouldFail = true;
+    listWorkspaceDirectory.mockImplementation(async (path = "", cwd = "/repo") => {
+      if (path === "src" && shouldFail) throw new Error("Directory unavailable");
+      return { ...directoryResults[path], root: cwd };
+    });
+    await render(<WorkspaceFileTree activeContext={activeContext} open onOpenFile={() => {}} />);
+    await settleDirectoryLoads();
+    await act(async () => rowButtonByTitle("src/").click());
+    await settleDirectoryLoads();
+    expect(vi.mocked(showErrorToast)).toHaveBeenCalled();
+    // The loaded tree stays in place rather than collapsing to the root retry.
+    expect(container.querySelector(".workspace-panel-empty button")).toBeNull();
+    expect(rowButtonByTitle("README.md")).toBeTruthy();
+    // Collapsing and re-expanding retries the failed load.
+    shouldFail = false;
+    await act(async () => rowButtonByTitle("src/").click());
+    await act(async () => rowButtonByTitle("src/").click());
+    await settleDirectoryLoads();
+    expect(rowButtonByTitle("src/components/")).toBeTruthy();
   });
 
   it("ignores a retried root response after navigating to another root", async () => {
@@ -580,7 +599,10 @@ describe("WorkspaceFileTree", () => {
     expect(button?.disabled).toBe(false);
     await act(async () => { button?.click(); });
     expect(exporter).toHaveBeenCalledWith("src/components/Button.tsx", activeContext.cwd);
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Share destination unavailable");
+    expect(vi.mocked(showActionErrorToast)).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Share destination unavailable" }),
+      expect.any(String),
+    );
     expect(button?.disabled).toBe(false);
   });
 

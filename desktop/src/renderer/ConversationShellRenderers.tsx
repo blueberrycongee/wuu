@@ -1,5 +1,6 @@
 import {
   lazy,
+  memo,
   Suspense,
   useLayoutEffect,
   useRef,
@@ -488,7 +489,7 @@ export type ConversationSidePanelsProps = {
   onCloseFilePreview: () => void;
 };
 
-export function ConversationSidePanels({
+export const ConversationSidePanels = memo(function ConversationSidePanels({
   application,
   slots,
   slotOwner,
@@ -537,7 +538,7 @@ export function ConversationSidePanels({
 
     </>
   );
-}
+});
 
 export type SettingsShellRendererProps = Omit<
   SettingsViewProps,

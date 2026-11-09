@@ -14,6 +14,7 @@ const selected = {
   SELECTION_RESULT: 'success',
   GO_REQUIRED: 'true',
   GO_VALIDATION_RESULT: 'success',
+  RACE_REQUIRED: 'true',
   GO_RACE_RESULT: 'success',
   ARCHITECTURE_REQUIRED: 'true',
   ARCHITECTURE_RESULT: 'success',
@@ -41,13 +42,21 @@ test('selected Go and architecture checks must all succeed', () => {
 
 test('unselected checks must be skipped, not failed or run unexpectedly', () => {
   const unselected = {
-    GO_REQUIRED: 'false', GO_VALIDATION_RESULT: 'skipped', GO_RACE_RESULT: 'skipped',
+    GO_REQUIRED: 'false', GO_VALIDATION_RESULT: 'skipped', RACE_REQUIRED: 'false', GO_RACE_RESULT: 'skipped',
     ARCHITECTURE_REQUIRED: 'false', ARCHITECTURE_RESULT: 'skipped',
   };
   assert.equal(passes(unselected), true);
   for (const name of ['GO_VALIDATION_RESULT', 'GO_RACE_RESULT', 'ARCHITECTURE_RESULT']) {
     assert.equal(passes({ ...unselected, [name]: 'failure' }), false, name);
     assert.equal(passes({ ...unselected, [name]: 'success' }), false, name);
+  }
+});
+
+test('binary-content diffs without Go code keep validation but skip the race lanes', () => {
+  const withoutRace = { RACE_REQUIRED: 'false', GO_RACE_RESULT: 'skipped' };
+  assert.equal(passes(withoutRace), true);
+  for (const result of ['failure', 'cancelled', 'success', '']) {
+    assert.equal(passes({ ...withoutRace, GO_RACE_RESULT: result }), false, `GO_RACE_RESULT=${result}`);
   }
 });
 
@@ -135,7 +144,7 @@ test('final CI gate never reports unsuccessful required jobs as passing', () => 
     'changes', 'repository-check', 'go-validation', 'go-race', 'architecture-conformance', 'desktop-unit', 'desktop-suite',
     'desktop-macos-controls', 'clients-check', 'macos-check', 'windows-check', 'linux-check',
   ].map(job => [job, { result: 'success' }]));
-  needs.changes.outputs = { go: 'true', architecture: 'true', desktop: 'true', desktop_suites: '["unit","unit-extra","shell"]', desktop_e2e_suites: '["shell"]', clients: 'true', native: 'true' };
+  needs.changes.outputs = { go: 'true', race: 'true', architecture: 'true', desktop: 'true', desktop_suites: '["unit","unit-extra","shell"]', desktop_e2e_suites: '["shell"]', clients: 'true', native: 'true' };
   const passes = (event = 'pull_request') => gatePasses('ci-check', { RESULTS: JSON.stringify(needs), EVENT: event });
   assert.equal(passes(), true);
   assert.equal(passes('push'), true);
@@ -147,7 +156,7 @@ test('final CI gate never reports unsuccessful required jobs as passing', () => 
     }
     needs[job].result = 'success';
   }
-  needs.changes.outputs = { go: 'false', architecture: 'false', desktop: 'false', desktop_suites: '[]', desktop_e2e_suites: '[]', clients: 'false', native: 'false' };
+  needs.changes.outputs = { go: 'false', race: 'false', architecture: 'false', desktop: 'false', desktop_suites: '[]', desktop_e2e_suites: '[]', clients: 'false', native: 'false' };
   for (const job of ['go-validation', 'go-race', 'architecture-conformance', 'desktop-unit', 'desktop-suite', 'desktop-macos-controls', 'clients-check', 'macos-check', 'windows-check', 'linux-check']) {
     needs[job].result = 'skipped';
   }

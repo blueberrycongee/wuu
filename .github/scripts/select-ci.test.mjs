@@ -7,6 +7,8 @@ import { execFileSync } from 'node:child_process';
 
 const script = resolve('.github/scripts/select-ci.mjs');
 const suites = ['unit', 'unit-extra', 'selection', 'corpus', 'layout', 'session', 'session-lifecycle', 'shell'];
+// Suites that execute the embedded Go core; binary-only diffs select exactly these.
+const goBinarySuites = ['corpus', 'session', 'session-lifecycle', 'shell'];
 function select(paths, event = 'pull_request', remove = false, comparison = 'normal') {
   const cwd = mkdtempSync(join(tmpdir(), 'wuu-ci-selection-'));
   const git = (...args) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
@@ -57,11 +59,58 @@ test('session-specific changes retain all session checks across both shards', ()
     assert.deepEqual(JSON.parse(select([path]).desktop_suites), ['session', 'session-lifecycle'], path);
   }
 });
-for (const path of ['desktop/src/renderer/RichContent.tsx', 'desktop/scripts/new-helper.cjs', 'desktop/scripts/image-layout-e2e-preload.cjs', 'desktop/package-lock.json', '.github/workflows/ci.yml', 'internal/session/run.go']) {
+for (const path of ['desktop/src/renderer/RichContent.tsx', 'desktop/scripts/new-helper.cjs', 'desktop/scripts/image-layout-e2e-preload.cjs', 'desktop/package-lock.json', '.github/workflows/ci.yml']) {
   test(`shared or unknown input retains every Desktop suite: ${path}`, () => {
     assert.deepEqual(JSON.parse(select([path]).desktop_suites), suites);
   });
 }
+for (const path of ['internal/session/run.go', 'cmd/wuu/main.go', 'internal/session/testdata/fixture.json']) {
+  test(`Go code retains race guards and the binary-consuming Desktop suites: ${path}`, () => {
+    const result = select([path]);
+    assert.equal(result.go, 'true', path);
+    assert.equal(result.race, 'true', path);
+    assert.equal(result.architecture, 'true', path);
+    assert.equal(result.clients, 'true', path);
+    assert.equal(result.native, 'true', path);
+    assert.deepEqual(JSON.parse(result.desktop_suites), goBinarySuites, path);
+  });
+}
+for (const path of ['plugins/personal/index.ts', 'internal/plugin/bundled/personal/index.js', 'packages/plugin-sdk/src/session-transport.ts', 'prompts/system.md', 'scripts/plugin-failure-isolation-e2e.mjs']) {
+  test(`embedded binary content skips only the race and renderer-only lanes: ${path}`, () => {
+    const result = select([path]);
+    assert.equal(result.go, 'true', path);
+    assert.equal(result.race, 'false', path);
+    assert.equal(result.architecture, 'true', path);
+    assert.equal(result.clients, 'true', path);
+    assert.equal(result.native, 'true', path);
+    assert.deepEqual(JSON.parse(result.desktop_suites), goBinarySuites, path);
+  });
+}
+test('embedded Go source files inside data roots still select the race lanes', () => {
+  for (const path of ['packages/plugin-sdk/embed.go', 'prompts/system.go', 'scripts/session-fixture/main.go', 'internal/plugin/bundled.go']) {
+    const result = select([path]);
+    assert.equal(result.go, 'true', path);
+    assert.equal(result.race, 'true', path);
+    assert.deepEqual(JSON.parse(result.desktop_suites), goBinarySuites, path);
+  }
+});
+for (const path of ['clients/core/src/client.ts', 'packages/protocol/src/index.ts']) {
+  test(`renderer-consumed TypeScript keeps full Desktop coverage without Go lanes: ${path}`, () => {
+    const result = select([path]);
+    assert.equal(result.go, 'false', path);
+    assert.equal(result.race, 'false', path);
+    assert.equal(result.architecture, 'true', path);
+    assert.equal(result.clients, 'true', path);
+    assert.equal(result.native, 'true', path);
+    assert.deepEqual(JSON.parse(result.desktop_suites), suites, path);
+  });
+}
+test('the phone web bundle validates through clients and packaging only', () => {
+  const result = select(['clients/mobile-web/src/App.tsx']);
+  for (const job of ['go', 'race', 'architecture', 'desktop']) assert.equal(result[job], 'false', job);
+  for (const job of ['clients', 'native']) assert.equal(result[job], 'true', job);
+  assert.deepEqual(JSON.parse(result.desktop_suites), []);
+});
 test('shared changes override narrow test selection', () => {
   assert.deepEqual(JSON.parse(select(['desktop/scripts/image-layout-e2e.cjs', 'desktop/src/renderer/styles.css']).desktop_suites), suites);
 });
@@ -79,7 +128,7 @@ test('main pushes select the same validation as PRs for the complete diff', () =
 test('pushes with an unusable before revision fail closed to full coverage', () => {
   for (const comparison of ['missing', 'zero', 'unavailable', 'reversed']) {
     const result = select(['docs/en/project/development.md'], 'push', false, comparison);
-    for (const job of ['go', 'architecture', 'desktop', 'clients', 'native']) assert.equal(result[job], 'true', `${comparison}: ${job}`);
+    for (const job of ['go', 'race', 'architecture', 'desktop', 'clients', 'native']) assert.equal(result[job], 'true', `${comparison}: ${job}`);
     assert.deepEqual(JSON.parse(result.desktop_suites), suites, comparison);
     assert.deepEqual(JSON.parse(result.desktop_related), [], comparison);
   }
@@ -122,12 +171,13 @@ test('architecture conformance follows shared changes and existing event policy,
   assert.equal(select(['desktop/src/main/trustedRemoteTransport.ts'], 'push').architecture, 'true');
 });
 
-test('MCP authentication lifecycle inputs select required architecture and desktop unit gates', () => {
+test('MCP authentication lifecycle inputs select required architecture and desktop coverage', () => {
   for (const path of ['scripts/mcp-auth-reload-e2e/main.go', 'internal/mcp/oauth.go', 'internal/runtime/mcp_auth_lifetime.go', 'internal/appserver/mcp_auth_handlers.go']) {
     const result = select([path]);
     assert.equal(result.architecture, 'true', path);
     assert.equal(result.go, 'true', path);
-    assert(JSON.parse(result.desktop_suites).includes('unit'), path);
+    assert.equal(result.race, 'true', path);
+    assert.deepEqual(JSON.parse(result.desktop_suites), goBinarySuites, path);
   }
   for (const path of ['desktop/src/main/mcpLogin.ts', 'desktop/src/renderer/plugins/ApplicationMCPConnectorLogin.ts', 'desktop/src/renderer/plugins/MCPConnectorHandoff.test.tsx']) {
     const result = select([path]);
@@ -140,14 +190,20 @@ test('agent skill instructions are non-runtime documentation, not executable ski
   const instruction = '.agents/skills/change-validation/SKILL.md';
   for (const remove of [false, true]) {
     const result = select([instruction], 'pull_request', remove);
-    for (const job of ['go', 'architecture', 'desktop', 'clients', 'native']) assert.equal(result[job], 'false', job);
+    for (const job of ['go', 'race', 'architecture', 'desktop', 'clients', 'native']) assert.equal(result[job], 'false', job);
     assert.deepEqual(JSON.parse(result.desktop_suites), []);
   }
   assert.deepEqual(JSON.parse(select([instruction, 'desktop/src/renderer/LanguagePreferenceSection.tsx']).desktop_related), ['src/renderer/LanguagePreferenceSection.tsx']);
-  for (const path of ['.agents/skills/change-validation/scripts/check.mjs', '.agents/skills/change-validation/assets/SKILL.md', 'plugins/example/SKILL.md']) {
-    assert.equal(select([path]).go, 'true', path);
-    assert.deepEqual(JSON.parse(select([path]).desktop_suites), suites, path);
+  for (const path of ['.agents/skills/change-validation/scripts/check.mjs', '.agents/skills/change-validation/assets/SKILL.md']) {
+    const result = select([path]);
+    assert.equal(result.go, 'true', path);
+    assert.equal(result.race, 'true', path);
+    assert.deepEqual(JSON.parse(result.desktop_suites), suites, path);
   }
+  const pluginDoc = select(['plugins/example/SKILL.md']);
+  assert.equal(pluginDoc.go, 'true');
+  assert.equal(pluginDoc.race, 'false');
+  assert.deepEqual(JSON.parse(pluginDoc.desktop_suites), goBinarySuites);
   assert.deepEqual(JSON.parse(select([instruction], 'workflow_dispatch').desktop_suites), suites);
 });
 

@@ -546,6 +546,21 @@ export async function activate(api) {
   const recoveryPrefix = `wuu.personal.draftRecovery.v1:${route.userSpaceId}:`;
   const recoveryAge = 24 * 60 * 60 * 1000, recoveryLimit = 64 * 1024;
   const conversations = new Map(), draftListeners = new Set();
+  // Per-token stream deltas would otherwise repaint the panel once per
+  // notification. Coalesce that burst into a ~100ms flush; lifecycle events
+  // (turn completion, queue changes, local typing) still notify immediately
+  // and also absorb any pending batched update.
+  const streamBurstMethod = /item\/(?:agentMessage|toolCall)\/(?:delta|replace)$/;
+  let streamFlushTimer;
+  const flushDrafts = () => draftListeners.forEach(listener => listener());
+  const notifyDrafts = streamed => {
+    if (!streamed) {
+      if (streamFlushTimer !== undefined) { clearTimeout(streamFlushTimer); streamFlushTimer = undefined; }
+      flushDrafts();
+      return;
+    }
+    streamFlushTimer ??= setTimeout(() => { streamFlushTimer = undefined; flushDrafts(); }, 100);
+  };
   const genuiDrafts = new Map(), rendererDrafts = new Map();
   const recoveryKey = id => recoveryPrefix + encodeURIComponent(id);
   const readRecovery = raw => {
@@ -634,7 +649,7 @@ export async function activate(api) {
     if (verifiedScope && mainSessionID && ["connection-reset", "server-exit"].includes(event.kind)) {
       const stream = streamFor(mainSessionID);
       for (const tool of stream.tools.values()) if (tool.status === "in_progress") { tool.status = "interrupted"; stream.verifiedToolTurns.add(tool.turn_id); }
-      draftListeners.forEach(listener => listener());
+      notifyDrafts(false);
       return;
     }
     if (event.kind !== "notification") return;
@@ -714,7 +729,7 @@ export async function activate(api) {
       if (method === "item/completed") stream.completedItems.add(itemKey);
       stream.items.set(itemKey, { id: itemID, turn_id: params.turn_id, seq: item.seq, relation: item.relation, source_id: item.source_id, content: method === "item/started" && previous ? previous.content : item.text ?? previous?.content ?? "", streaming: method !== "item/completed" });
     }
-    draftListeners.forEach(listener => listener());
+    notifyDrafts(streamBurstMethod.test(event.message.method));
   });
   function PersonalPreferences({ locale, host }) {
     const t = key => (locale?.startsWith("zh") ? words.zh : words.en)[key] || key;
@@ -735,7 +750,7 @@ export async function activate(api) {
       } catch (cause) {
         setSelectedModel(modelKey(model));
         const message = String(cause);
-        setModelError(message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message);
+        api.showNotice({ message: message.includes("thread_busy") || message.includes("while thread") ? t("modelBusy") : message, tone: "error", key: `personal-model-${Date.now()}` });
       } finally {
         setModelSaving(false);
       }

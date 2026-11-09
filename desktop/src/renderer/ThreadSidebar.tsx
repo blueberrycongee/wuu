@@ -32,6 +32,7 @@ import {
 import { resolveLocalizedText, useI18n } from "./i18n";
 import { useHoverReveal } from "./HoverReveal";
 import { motionDurationMs, useReducedMotion } from "./motion";
+import { TruncatedText } from "./TruncatedText";
 import {
   SidebarHoverCardLayer,
   ThreadHoverCardContent,
@@ -1128,7 +1129,7 @@ export function ThreadRowTitle({ title }: { title: string }): JSX.Element {
     let outgoing = Array.from(titleGraphemes.segment(previous), part => part.segment);
     const incoming = Array.from(titleGraphemes.segment(title), part => part.segment);
     const element = elementRef.current!;
-    // Start at the visible ellipsis instead of spending the erase phase on a hidden suffix.
+    // Start at the visible clip instead of spending the erase phase on a hidden suffix.
     if (element.scrollWidth > element.clientWidth) {
       const style = getComputedStyle(element);
       const width = element.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
@@ -1138,13 +1139,13 @@ export function ThreadRowTitle({ title }: { title: string }): JSX.Element {
       let high = outgoing.length;
       while (low < high) {
         const middle = Math.ceil((low + high) / 2);
-        if (context.measureText(outgoing.slice(0, middle).join("") + "…").width <= width) {
+        if (context.measureText(outgoing.slice(0, middle).join("")).width <= width) {
           low = middle;
         } else {
           high = middle - 1;
         }
       }
-      outgoing = [...outgoing.slice(0, low), "…"];
+      outgoing = outgoing.slice(0, low);
     }
 
     const step = motionDurationMs("--motion-fast", 120) / 3;
@@ -1179,5 +1180,18 @@ export function ThreadRowTitle({ title }: { title: string }): JSX.Element {
   }, [title, reducedMotion]);
 
   // Each parent button exposes the complete title, without announcing every typing frame.
-  return <span ref={elementRef} className="thread-row-title" aria-hidden="true">{displayed}</span>;
+  return (
+    <TruncatedText
+      text={title}
+      className="thread-row-title"
+      measureKey={displayed}
+      measureRef={(element) => {
+        elementRef.current = element as HTMLSpanElement | null;
+      }}
+      fade
+      aria-hidden="true"
+    >
+      {displayed}
+    </TruncatedText>
+  );
 }

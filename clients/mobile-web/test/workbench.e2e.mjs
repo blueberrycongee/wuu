@@ -222,8 +222,7 @@ try {
     assert(diff.modified_text.length > 0 && fileText.startsWith(diff.modified_text));
   } else assert.equal(diff.modified_text, fileText);
   if (!downloadBps) {
-  await page.locator('.compact-conversation-actions [aria-haspopup="menu"]').tap();
-  await page.getByRole('menuitem', { name: '打开右侧栏', exact: true }).tap();
+  await page.getByRole('button', { name: '打开右侧栏', exact: true }).tap();
   await page.getByRole('button', { name: '文件', exact: true }).click();
   await page.getByRole('treeitem', { name: 'src', exact: true }).filter({ visible: true }).click();
   await page.getByRole('treeitem', { name: 'browser-task.ts', exact: true }).filter({ visible: true }).click();

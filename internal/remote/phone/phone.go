@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	goruntime "runtime"
 	"sync"
 	"time"
@@ -64,14 +63,7 @@ func (c *Credentials) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return securefs.WriteFileAtomic(path, data)
 }
 
 // Pair scans a pairing URI (the QR content shown on the host) and completes

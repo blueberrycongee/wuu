@@ -2,11 +2,8 @@ package engineusage
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"net/url"
 	"os"
-	"path/filepath"
 	"time"
 )
 
@@ -20,29 +17,19 @@ func (s *Scanner) scanOpenCode(ctx context.Context, exclude func(string, string)
 	if err != nil {
 		return nil, nil
 	}
-	if cached, ok := s.cachedRows(path, info); ok {
+	if cached, ok := s.cachedRows(path, info.Size(), info.ModTime()); ok {
 		return cached, nil
 	}
 	rows, err := readOpenCodeRows(ctx, path, exclude)
 	if err != nil {
 		return nil, err
 	}
-	s.storeRows(path, info, rows)
+	s.storeRows(path, info.Size(), info.ModTime(), rows)
 	return rows, nil
 }
 
 func readOpenCodeRows(ctx context.Context, path string, exclude func(string, string) bool) ([]Row, error) {
-	absolute, err := filepath.Abs(path)
-	if err != nil {
-		return nil, err
-	}
-	u := url.URL{Scheme: "file", Path: filepath.ToSlash(absolute)}
-	q := u.Query()
-	q.Set("mode", "ro")
-	q.Add("_pragma", "query_only(1)")
-	q.Add("_pragma", "busy_timeout(5000)")
-	u.RawQuery = q.Encode()
-	db, err := sql.Open("sqlite", u.String())
+	db, err := openLedgerDB(path)
 	if err != nil {
 		return nil, err
 	}

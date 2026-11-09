@@ -857,10 +857,6 @@ html[data-focus-modality="keyboard"] .composer-editor > :is(textarea, .composer-
   border-radius: var(--radius-xs);
 }
 
-.composer-queue-row.guide .composer-queue-preview {
-  color: var(--turn-warning-text, var(--warning));
-}
-
 .composer-queue-index {
   color: var(--ink-tertiary);
   font-size: var(--font-xs);
@@ -1041,10 +1037,6 @@ html[data-focus-modality="keyboard"] .composer-drawer-summary-select:focus-visib
 .composer-pending-drawer.expanded .composer-pending-preview {
   color: var(--ink-tertiary);
   font-weight: var(--weight-medium);
-}
-
-.composer-pending-drawer.expanded.is-held .composer-pending-preview {
-  color: var(--turn-warning-text, var(--warning));
 }
 
 .composer-pending-details {
@@ -1727,6 +1719,14 @@ html[data-focus-modality="keyboard"] :is(
   --menu-enter-y: -4px;
 }
 
+/* Side-anchored panels (the workspace tool rail opens these to the left of
+ * their button, centered on it) grow out of the rail edge. */
+.floating-menu-middle > :is(.composer-project-menu, .composer-context-menu, .codex-runtime-menu, .select-menu-panel) {
+  transform-origin: center right;
+  --menu-enter-x: 4px;
+  --menu-enter-y: 0;
+}
+
 .composer-project-menu {
   position: absolute;
   left: 12px;
@@ -1774,11 +1774,6 @@ html[data-focus-modality="keyboard"] :is(
   bottom: auto;
   transform-origin: top left;
   --menu-enter-y: -4px;
-}
-
-.slash-command-list {
-  display: grid;
-  gap: 1px;
 }
 
 .slash-command-item.selected:not(:disabled) {
@@ -1830,9 +1825,11 @@ html[data-focus-modality="keyboard"] :is(
   background: var(--menu-hover);
 }
 
-/* Menu rows sit 1px apart, so a row's ring stays inside it. */
+/* Keyboard focus wears the same fill as hover and the slash panel's selected
+ * row; menu rows sit 1px apart, so a row's ring stays inside it. */
 html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-project-menu, .codex-runtime-menu, .access-menu) button:focus-visible {
   outline-offset: -2px;
+  background: var(--menu-hover);
 }
 
 .composer-context-menu button:disabled {
@@ -1871,6 +1868,7 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
 /* Fade only the scrolling choices, keeping the menu surface and entrance intact. */
 .composer-menu-scroll {
   display: grid;
+  gap: 1px;
   flex: 0 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -1885,6 +1883,13 @@ html[data-focus-modality="keyboard"] :is(.composer-context-menu, .composer-proje
   font-weight: var(--weight-medium);
   line-height: var(--line-ui);
   user-select: none;
+}
+
+/* The first label in a scrolled menu takes a row's padding, not the group
+ * separation that follows content. */
+.composer-menu-scroll > .composer-plus-menu-section:first-child,
+.composer-menu-scroll > :first-child > .composer-plus-menu-section:first-child {
+  padding-top: var(--menu-item-padding-block);
 }
 
 .composer-context-menu.composer-plus-menu button {

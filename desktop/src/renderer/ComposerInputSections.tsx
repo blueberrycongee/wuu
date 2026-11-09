@@ -746,12 +746,11 @@ export function ComposerQueueStrip({
 
   return (
     <ComposerDrawer
-      className={`composer-pending-drawer${hasHeldMessages ? " is-held" : ""}`}
+      className="composer-pending-drawer"
       data-wuu-component="composer-pending"
       expanded={expanded}
       onExpandedChange={setExpanded}
       toggleLabel={t(expanded ? "composer.collapsePending" : "composer.expandPending")}
-      tone={hasHeldMessages ? "warning" : "default"}
       icon={<ListTodo className="icon-sm" />}
       summary={
         <Tooltip

@@ -1950,8 +1950,16 @@ html[data-focus-modality="keyboard"] .project-group:focus-within > .project-row 
 .project-row-name {
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-row-name[data-truncated="true"],
+.thread-row-main > .thread-row-title[data-truncated="true"] {
+  /* Only mask text whose own box is wider than the available space. */
+  mask-image: linear-gradient(to right, #000 calc(100% - var(--space-5)), transparent);
+  mask-clip: content-box;
+  mask-origin: content-box;
+  mask-repeat: no-repeat;
 }
 
 .project-row .project-row-loading {
@@ -2354,7 +2362,6 @@ html[data-focus-modality="keyboard"] .thread-row:has(> .thread-row-main:focus-vi
   min-height: 1lh;
   flex: 1;
   overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   transition: padding-right var(--motion-base) var(--ease-out);
 }

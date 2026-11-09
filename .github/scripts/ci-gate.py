@@ -12,7 +12,7 @@ def require(result, selected, name):
 def go_gate(env):
     require(env['SELECTION_RESULT'], True, 'changes')
     for name, flag in [('GO_VALIDATION_RESULT', 'GO_REQUIRED'),
-                       ('GO_RACE_RESULT', 'GO_REQUIRED'),
+                       ('GO_RACE_RESULT', 'RACE_REQUIRED'),
                        ('ARCHITECTURE_RESULT', 'ARCHITECTURE_REQUIRED')]:
         if env[flag] not in ('true', 'false'):
             raise SystemExit(f'Invalid selection: {flag}')
@@ -39,6 +39,7 @@ def ci_gate(env):
     go_gate({
         'SELECTION_RESULT': needs['changes']['result'],
         'GO_REQUIRED': selected['go'],
+        'RACE_REQUIRED': selected['race'],
         'ARCHITECTURE_REQUIRED': selected['architecture'],
         'GO_VALIDATION_RESULT': needs['go-validation']['result'],
         'GO_RACE_RESULT': needs['go-race']['result'],

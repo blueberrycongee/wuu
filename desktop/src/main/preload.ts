@@ -5,6 +5,7 @@ import { contextBridge, ipcRenderer, webFrame } from "electron";
 import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isLanguagePreference,
+  isMessageFlowFontSize,
   type DesktopPlatform,
   type MessageFlowFontSize,
   type PopOutInitResult,
@@ -91,12 +92,7 @@ const initialMessageFlowFontSize: MessageFlowFontSize = ((): MessageFlowFontSize
     const value = ipcRenderer.sendSync(
       "wuu:message-flow-font-size-get-sync",
     ) as unknown;
-    if (
-      typeof value === "number" &&
-      Number.isFinite(value) &&
-      value >= MESSAGE_FLOW_FONT_SIZE_RANGE.min &&
-      value <= MESSAGE_FLOW_FONT_SIZE_RANGE.max
-    ) {
+    if (isMessageFlowFontSize(value)) {
       return value;
     }
     return MESSAGE_FLOW_FONT_SIZE_RANGE.default;

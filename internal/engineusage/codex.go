@@ -35,7 +35,7 @@ func (s *Scanner) scanCodex(ctx context.Context, exclude func(string, string) bo
 			if exclude("codex", codexSessionRef(path)) {
 				return nil
 			}
-			if cached, ok := s.cachedRows(path, info); ok {
+			if cached, ok := s.cachedRows(path, info.Size(), info.ModTime()); ok {
 				rows = append(rows, cached...)
 				return nil
 			}
@@ -46,7 +46,7 @@ func (s *Scanner) scanCodex(ctx context.Context, exclude func(string, string) bo
 			if exclude("codex", sessionID) {
 				return nil
 			}
-			s.storeRows(path, info, fileRows)
+			s.storeRows(path, info.Size(), info.ModTime(), fileRows)
 			rows = append(rows, fileRows...)
 			return nil
 		})

@@ -99,6 +99,9 @@ type MCPToolOverride struct {
 	ReadOnly        *bool                 `json:"read_only,omitempty"`
 	ConcurrencySafe *bool                 `json:"concurrency_safe,omitempty"`
 	Capability      capability.Capability `json:"capability,omitempty"`
+	// Guidance is the agent-facing usage contract host-capability surfaces
+	// expose to external engines for this tool.
+	Guidance string `json:"guidance,omitempty"`
 }
 
 // Config holds CLI runtime settings.
