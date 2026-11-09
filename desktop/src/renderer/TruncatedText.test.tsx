@@ -48,10 +48,10 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-function renderTruncated(text = "完整的长文本内容"): HTMLElement {
+function renderTruncated(text = "完整的长文本内容", fade = false): HTMLElement {
   act(() => {
     root = createRoot(container);
-    root!.render(<TruncatedText text={text} className="subject" />);
+    root!.render(<TruncatedText text={text} className="subject" fade={fade} />);
   });
   const element = container.querySelector(".subject");
   if (!(element instanceof HTMLElement)) {
@@ -104,6 +104,17 @@ describe("TruncatedText", () => {
     remeasure(element, { scrollWidth: 320, clientWidth: 120 });
     hover(element);
     expect(tooltipLayer()?.textContent).toBe("完整的长文本内容");
+  });
+
+  it("arms the trailing fade only while the text is truncated", () => {
+    const element = renderTruncated("完整的长文本内容", true);
+    expect(element.dataset.truncated).toBeUndefined();
+
+    remeasure(element, { scrollWidth: 320, clientWidth: 120 });
+    expect(element.dataset.truncated).toBe("true");
+
+    remeasure(element, { scrollWidth: 320, clientWidth: 640 });
+    expect(element.dataset.truncated).toBeUndefined();
   });
 
   it("respects multi-line clamp via scrollHeight", () => {
