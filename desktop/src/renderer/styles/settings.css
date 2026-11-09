@@ -1886,6 +1886,41 @@ button.settings-engine-expand:hover {
   font-weight: var(--weight-medium);
 }
 
+/* The block-row skin summary spans the page like the theme picker above it,
+ * so its three cards keep the same footprint instead of shrinking into the
+ * row's control column. */
+.settings-row-control-block > .settings-theme-options {
+  width: 100%;
+}
+
+/* --- Shell skin gallery ----------------------------------------------------
+ * The second-level picker behind the row's "more" card: every skin at a size
+ * where the artwork reads, default frame first.
+ * --------------------------------------------------------------------------- */
+
+.settings-skin-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.settings-skin-preview-large {
+  aspect-ratio: 4 / 3;
+}
+
+@container settings-page (max-width: 36em) {
+  .settings-skin-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container settings-page (max-width: 24em) {
+  .settings-skin-gallery {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .settings-palette-swatch {
   display: inline-flex;
   position: relative;

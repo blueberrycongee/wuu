@@ -287,7 +287,6 @@ export const enUS = {
   "settings.shellSkinDescription": "Changes the window frame and background, not content colors.",
   "settings.skinDefault": "Default",
   "settings.skinMore": "More",
-  "settings.skinCollapse": "Show less",
   "settings.skinUnavailable": "This skin is unavailable. The default frame is shown until its plugin is enabled again.",
   "settings.skinImageFailed": "Image unavailable; showing the skin color.",
   "settings.contentTheme": "Color palette",
