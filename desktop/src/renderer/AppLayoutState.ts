@@ -819,8 +819,13 @@ export function useAppLayoutState({
       `${clamp(event.clientX - bounds.left - bounds.width / 2, -3, 3)}px`
     );
     const sidebar = resizer.parentElement?.querySelector<HTMLElement>(":scope > .sidebar, :scope > .settings-sidebar");
-    const measuredWidth = sidebarAnimating && sidebar
-      ? sidebar.getBoundingClientRect().width - additionalNavigationWidth : undefined;
+    // The rail slides as a promoted transform layer, so its box width stays at
+    // the open width mid-flight; the painted edge is the content layer's right
+    // edge (in the ribbon layout the content is the layer that moves).
+    const paintedEdge = sidebar?.querySelector(".sidebar-content")?.getBoundingClientRect().right
+      ?? sidebar?.getBoundingClientRect().right;
+    const measuredWidth = sidebarAnimating && paintedEdge !== undefined
+      ? paintedEdge - additionalNavigationWidth : undefined;
     const interrupted = measuredWidth !== undefined && measuredWidth > 0 && !sidebarCollapsed;
     const startWidth = interrupted ? measuredWidth : sidebarCollapsed ? 0 : sidebarWidth;
     if (interrupted) {

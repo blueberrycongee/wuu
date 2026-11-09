@@ -61,11 +61,9 @@
 }
 
 /* Collapse/expand animates the same way as the main shell: the JS motion
- * window (`sidebarAnimating`) gates a grid-template-columns transition while
- * `--sidebar-width` flips between 0 and the open width. */
-.settings-shell.sidebar-animating {
-  transition: grid-template-columns var(--sidebar-motion-duration) var(--sidebar-motion-ease);
-}
+ * window (`sidebarAnimating`) flips `--sidebar-width` between 0 and the open
+ * width in one frame, and the shared rules in sidebar.css slide the rail as a
+ * promoted transform overlay — no per-frame grid interpolation here either. */
 
 /* Surface (border, background, box-shadow) and the ::before overlay are
  * inherited from the shared `.sidebar, .settings-sidebar` selector list in

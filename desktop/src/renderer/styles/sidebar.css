@@ -57,8 +57,27 @@
   padding-right: var(--conversation-pane-inset);
 }
 
-.app-shell.sidebar-animating {
-  transition: grid-template-columns var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+/* Dock<->collapse commits the grid in one frame and slides the rail as a
+ * promoted overlay layer — the same transform language the hover drawer and
+ * the workspace sheet already use. The old grid-template-columns interpolation
+ * relaid the whole shell (and rewrapped the conversation) on every frame. */
+:is(.app-shell, .settings-shell).sidebar-animating :is(.sidebar, .settings-sidebar) {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: 140;
+  width: var(--sidebar-open-width, 296px);
+  min-width: var(--sidebar-open-width, 296px);
+  will-change: transform;
+}
+
+:is(.app-shell, .settings-shell).sidebar-animating.sidebar-collapsed :is(.sidebar, .settings-sidebar) {
+  transform: translate3d(-100%, 0, 0);
+  transition: transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+}
+
+:is(.app-shell, .settings-shell).sidebar-animating:not(.sidebar-collapsed) :is(.sidebar, .settings-sidebar) {
+  transform: translate3d(0, 0, 0);
+  transition: transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
 }
 
 .app-shell.right-panel-animating {
@@ -330,10 +349,10 @@
  * start value, so opening the drawer is a plain transform transition with no
  * arming frame. Invisible while collapsed — the grid column is 0-width and
  * overflow-clipped, and -100% of a 0-width box is a 0px shift. Excluded
- * while .sidebar-animating runs the dock<->collapse grid animation so the
- * rail keeps its squish-fade instead of flinging off-screen. Specificity
- * ties the drawer overlay rules below; it sits earlier in source order so
- * every open/closing/focus-within state wins over it. */
+ * while .sidebar-animating runs the dock<->collapse slide — the animating
+ * rules above own the transform for that window. Specificity ties the drawer
+ * overlay rules below; it sits earlier in source order so every
+ * open/closing/focus-within state wins over it. */
 .sidebar-collapsed:not(.sidebar-animating) :is(.sidebar, .settings-sidebar) {
   transform: translate3d(-100%, 0, 0);
 }
@@ -632,6 +651,35 @@
   /* Container height lets the light clamp its transform to this rail without
    * measuring layout on pointermove or changing its top every frame. */
   container-type: size;
+}
+
+/* During dock<->collapse motion the grid has already committed, so the strip
+ * rides the rail's painted edge with the same composited slide: a mid-flight
+ * grab always lands on the moving boundary, never on a stale position. The
+ * collapsed edge is --sidebar-ribbon-width in the ribbon layout, 0 elsewhere. */
+:is(.app-shell, .settings-shell).sidebar-animating > .sidebar-resizer {
+  right: auto;
+  left: calc(var(--sidebar-open-width, 296px) - 5px + var(--conversation-pane-inset));
+}
+
+.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-animating > .sidebar-resizer {
+  left: calc(var(--sidebar-open-width, 296px) - 5px);
+}
+
+:is(.app-shell, .settings-shell).sidebar-animating:not(.sidebar-collapsed) > .sidebar-resizer {
+  animation: sidebar-edge-slide-in var(--sidebar-motion-duration) var(--sidebar-motion-ease) both;
+}
+
+:is(.app-shell, .settings-shell).sidebar-animating.sidebar-collapsed > .sidebar-resizer {
+  animation: sidebar-edge-slide-out var(--sidebar-motion-duration) var(--sidebar-motion-ease) both;
+}
+
+@keyframes sidebar-edge-slide-in {
+  from { transform: translate3d(calc(var(--sidebar-collapsed-edge, 0px) - var(--sidebar-open-width, 296px)), 0, 0); }
+}
+
+@keyframes sidebar-edge-slide-out {
+  to { transform: translate3d(calc(var(--sidebar-collapsed-edge, 0px) - var(--sidebar-open-width, 296px)), 0, 0); }
 }
 
 .sidebar-resizer::before {

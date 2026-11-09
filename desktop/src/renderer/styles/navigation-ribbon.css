@@ -218,6 +218,50 @@
   bottom: var(--conversation-pane-inset);
 }
 
+/* Ribbon layout dock<->collapse: like every other shell the grid commits in
+ * one frame, but the moving layer here is the secondary pane, which slides
+ * under the static ribbon on the compositor. The collapsed content parks at
+ * -100% (it is visibility:hidden anyway) so expanding gets a start value. */
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
+  --sidebar-collapsed-edge: var(--sidebar-ribbon-width);
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-collapsed:not(.sidebar-drawer-open):not(.sidebar-drawer-closing) .sidebar-content {
+  transform: translate3d(-100%, 0, 0);
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-animating .sidebar {
+  /* Neutralize the promoted-overlay slide from sidebar.css: the ribbon stays
+   * docked in the committed column while only the secondary pane moves. */
+  position: relative;
+  inset: auto;
+  z-index: auto;
+  width: auto;
+  min-width: 0;
+  transform: none;
+  transition: none;
+  overflow: visible;
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-animating
+  .sidebar :is(.sidebar-content, .plugin-workbench-view-navigation) {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: none;
+  transition: transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+  will-change: transform;
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-animating.sidebar-collapsed
+  .sidebar :is(.sidebar-content, .plugin-workbench-view-navigation) {
+  transform: translate3d(-100%, 0, 0);
+}
+
+.app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-animating:not(.sidebar-collapsed)
+  .sidebar :is(.sidebar-content, .plugin-workbench-view-navigation) {
+  transform: translate3d(0, 0, 0);
+}
+
 .section-sidebar-toggle {
   display: none;
 }
