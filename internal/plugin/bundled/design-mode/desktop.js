@@ -114,6 +114,11 @@ const EN_STRINGS = {
   "design.retry": "Try again",
   "design.save.failed": "The page could not be saved.",
   "design.apply.failed": "That edit could not be applied to the page.",
+  "design.tab.close": "Close tab",
+  "design.pages.open": "Open page",
+  "design.pages.search": "Search pages…",
+  "design.pages.tabs": "Open canvases",
+  "design.workspace.switch": "Switch workspace",
 };
 
 const ZH_STRINGS = {
@@ -184,6 +189,11 @@ const ZH_STRINGS = {
   "design.retry": "重试",
   "design.save.failed": "页面未能保存。",
   "design.apply.failed": "修改未能应用到页面。",
+  "design.tab.close": "关闭标签页",
+  "design.pages.open": "打开页面",
+  "design.pages.search": "搜索页面…",
+  "design.pages.tabs": "已打开的画布",
+  "design.workspace.switch": "切换工作区",
 };
 
 function translateFrom(table, key, values) {
@@ -237,7 +247,7 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
   const React = api.react;
   const h = React.createElement;
   const { useCallback, useEffect, useMemo, useRef, useState } = React;
-  const { Button, Select, TextArea, EmptyState, LoadingState, ErrorState } = api.ui;
+  const { Button, TextArea, EmptyState, LoadingState, ErrorState } = api.ui;
   const t = useCallback((key, values) => (translate ?? ((k, v) => translateFrom(EN_STRINGS, k, v)))(key, values), [translate]);
 
   // A `?design-server=` URL hint lets component previews and dev shells drive
@@ -270,10 +280,15 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
   const [frameKey, setFrameKey] = useState(0);
   const [stale, setStale] = useState(false);
   const [orphans, setOrphans] = useState([]);
-  const [pendingNav, setPendingNav] = useState(null); // null | { kind: "page" | "workspace", value }
+  const [pendingNav, setPendingNav] = useState(null); // null | { kind: "close" | "workspace", value }
+  const [openTabs, setOpenTabs] = useState([]); // ordered open page paths
+  const [pageFilter, setPageFilter] = useState("");
 
   const frameRef = useRef(null);
   const revertTimerRef = useRef(0);
+  // Per-canvas work survives tab switches: ops/comments/sha are stashed here
+  // and restored on reactivation instead of being discarded.
+  const stashRef = useRef(new Map());
   const bridgeRef = useRef({ nonce: "", ready: false, pending: new Map(), seq: 0 });
   const commentsKeyRef = useRef("");
   const commentsReadyRef = useRef(false);
@@ -422,6 +437,8 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
       setPages(list);
       const preferred = (await storageGet(`design.page.${hash(ws.id)}`)) || "index.html";
       const entry = list.find((item) => item.path === preferred) ?? list[0];
+      stashRef.current.clear();
+      setOpenTabs(entry?.path ? [entry.path] : []);
       setPath(entry?.path ?? "");
       setSha(entry?.sha256 ?? "");
       setOps([]);
@@ -539,43 +556,71 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
       .finally(() => setBusy(""));
   }, [path, workspace, refreshPages]);
 
-  const commitPage = useCallback((next) => {
-    const entry = pages.find((item) => item.path === next);
+  // ---- canvas tabs ---------------------------------------------------------
+  const stashPage = useCallback(() => {
+    if (path) stashRef.current.set(path, { ops, comments, sha, stale, orphans });
+  }, [path, ops, comments, sha, stale, orphans]);
+
+  const loadPage = useCallback((next, entry) => {
+    const stashed = stashRef.current.get(next);
     setPath(next);
-    setSha(entry?.sha256 ?? "");
-    setOps([]);
-    setConflict(null);
+    setSha(stashed?.sha ?? entry?.sha256 ?? "");
+    setOps(stashed?.ops ?? []);
+    setComments(stashed?.comments ?? []);
+    setStale(stashed?.stale ?? false);
+    setOrphans(stashed?.orphans ?? []);
     setSelected(null);
-    setStale(false);
-    setOrphans([]);
+    setConflict(null);
     setRevertArmed(false);
-    setComments([]);
-  }, [pages]);
+  }, []);
+
+  // Switching tabs keeps each canvas's unsaved edits — no discard guard needed.
+  const activateTab = useCallback((next) => {
+    if (next === path) return;
+    stashPage();
+    loadPage(next, pages.find((item) => item.path === next));
+  }, [path, pages, stashPage, loadPage]);
+
+  const openTab = useCallback((next) => {
+    setOpenTabs((tabs) => (tabs.includes(next) ? tabs : [...tabs, next]));
+    activateTab(next);
+  }, [activateTab]);
+
+  const closeTabNow = useCallback((p) => {
+    const remaining = openTabs.filter((item) => item !== p);
+    const closingActive = p === path;
+    stashRef.current.delete(p);
+    setOpenTabs(remaining);
+    if (!closingActive) return;
+    const target = remaining[Math.min(openTabs.indexOf(p), remaining.length - 1)] ?? "";
+    if (target) loadPage(target, pages.find((item) => item.path === target));
+    else { setPath(""); setSha(""); setOps([]); setComments([]); setStale(false); setOrphans([]); setSelected(null); }
+  }, [openTabs, path, pages, loadPage]);
+
+  const closeTab = useCallback((p) => {
+    const tabOps = p === path ? ops : stashRef.current.get(p)?.ops ?? [];
+    if (tabOps.length > 0) setPendingNav({ kind: "close", value: p });
+    else closeTabNow(p);
+  }, [path, ops, closeTabNow]);
+
+  const tabDirty = useCallback((p) => (p === path ? ops.length : stashRef.current.get(p)?.ops?.length ?? 0) > 0, [path, ops]);
 
   const commitWorkspace = useCallback((id) => {
     setWorkspaceId(id);
+    stashRef.current.clear();
+    setOpenTabs([]);
     const ws = workspaces.find((item) => item.id === id);
     if (ws) void openWorkspace(ws);
   }, [workspaces, openWorkspace]);
 
-  // Switching page or workspace drops unsaved canvas edits — guard it the same
-  // way reload/revert are guarded instead of silently discarding them.
-  const requestNav = useCallback((kind, value) => {
-    if (dirty) setPendingNav({ kind, value });
-    else if (kind === "page") commitPage(value);
-    else commitWorkspace(value);
-  }, [dirty, commitPage, commitWorkspace]);
-
-  const choosePage = useCallback((next) => {
-    if (next === path) return;
-    requestNav("page", next);
-  }, [path, requestNav]);
-
-  // Workspace switch reloads the server session and page list.
+  // Workspace switch drops every open canvas — guard any unsaved edit,
+  // whether it sits on the active tab or a stashed one.
   const chooseWorkspace = useCallback((id) => {
     if (id === workspace?.id) return;
-    requestNav("workspace", id);
-  }, [workspace?.id, requestNav]);
+    const anyDirty = dirty || [...stashRef.current.values()].some((state) => (state.ops?.length ?? 0) > 0);
+    if (anyDirty) setPendingNav({ kind: "workspace", value: id });
+    else commitWorkspace(id);
+  }, [workspace?.id, dirty, commitWorkspace]);
 
   const sendToAgent = useCallback(async () => {
     if (comments.length === 0 || busy) return;
@@ -591,12 +636,17 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
         "",
         `The file lives at \`${workspace?.root ? `${workspace.root}/${path}` : path}\`. Apply the requested changes directly to that file.`,
       ].join("\n");
-      // Each send opens a fresh, self-contained conversation — the brief
-      // already carries the file path and every pinned comment.
-      const tab = await api.application.invoke("tab.new", { workspaceId: workspace?.id }).catch(() => undefined);
-      if (!tab?.tabId) throw new Error(t("design.newTab.failed"));
-      await api.application.invoke("composer.set-draft", { text: brief, ownerTabId: tab.tabId });
-      const submitted = await api.application.invoke("composer.submit", { ownerTabId: tab.tabId, text: brief });
+      // Feedback rides the session the user is looking at; only spawn a fresh
+      // draft when the host reports no active session to bind to.
+      let ownerTabId = "";
+      try { ownerTabId = api.application.getSnapshot?.()?.tabs?.activeTabId ?? ""; } catch { /* snapshot is optional */ }
+      if (!ownerTabId) {
+        const tab = await api.application.invoke("tab.new", { workspaceId: workspace?.id }).catch(() => undefined);
+        ownerTabId = tab?.tabId ?? "";
+      }
+      if (!ownerTabId) throw new Error(t("design.newTab.failed"));
+      await api.application.invoke("composer.set-draft", { text: brief, ownerTabId });
+      const submitted = await api.application.invoke("composer.submit", { ownerTabId, text: brief });
       if (!submitted?.accepted) throw new Error(t("design.send.failed"));
       const count = comments.length;
       setComments([]);
@@ -681,29 +731,82 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
       h(EmptyState, { title: t("design.empty.workspaces"), description: t("design.empty.workspacesHelp") }));
   }
 
+  const filteredPages = pages.filter((page) => !pageFilter || page.path.toLowerCase().includes(pageFilter.toLowerCase()));
+
   return h("div", { className: "plugin-design" },
+    h("div", { className: "plugin-design-tabsrow" },
+      workspaces.length > 1 ? h(MenuShell, {
+        h, React, className: "plugin-design-viewport", menuClass: "plugin-design-menu-pages",
+        renderTrigger: ({ open, toggle, triggerRef }) => h("button", {
+          type: "button", ref: triggerRef, onClick: toggle,
+          className: "plugin-design-tab plugin-design-tab-ws",
+          "aria-haspopup": "listbox", "aria-expanded": open, "data-open": open || undefined,
+          title: t("design.workspace.switch"), "aria-label": `${t("design.workspace")}: ${workspace?.name ?? ""}`,
+        },
+          h(Glyph, { h, d: ICON_PATHS.workspace }),
+          h("span", { className: "plugin-design-tab-name" }, workspace?.name ?? ""),
+          h(Glyph, { h, d: ICON_PATHS.chevron })),
+        children: (close) => workspaces.map((ws) => h("button", {
+          key: ws.id, type: "button", role: "option", "aria-selected": ws.id === workspace?.id,
+          className: "plugin-design-menu-item", "data-active": ws.id === workspace?.id || undefined,
+          onClick: () => { close(); chooseWorkspace(ws.id); },
+        },
+          h("span", null, ws.name),
+          ws.id === workspace?.id ? h(Glyph, { h, d: ICON_PATHS.check }) : null)),
+      }) : null,
+      h("div", { className: "plugin-design-tabs", role: "tablist", "aria-label": t("design.pages.tabs") },
+        openTabs.map((p) => h("div", {
+          key: p, role: "tab", "aria-selected": p === path,
+          className: "plugin-design-tab", "data-active": p === path || undefined,
+          title: p, onClick: () => activateTab(p),
+        },
+          h("span", { className: "plugin-design-tab-icon", "aria-hidden": true }, h(Glyph, { h, d: ICON_PATHS.page })),
+          h("span", { className: "plugin-design-tab-name" }, p.split("/").pop() ?? p),
+          tabDirty(p) ? h("i", { className: "plugin-design-tab-dot", "aria-hidden": true }) : null,
+          h("button", {
+            type: "button", className: "plugin-design-tab-close",
+            title: t("design.tab.close"), "aria-label": t("design.tab.close"),
+            onClick: (event) => { event.stopPropagation(); closeTab(p); },
+          }, h(Glyph, { h, d: ICON_PATHS.x }))))),
+      h(MenuShell, {
+        h, React, className: "plugin-design-viewport", menuClass: "plugin-design-menu-pages",
+        renderTrigger: ({ open, toggle, triggerRef }) => h("button", {
+          type: "button", ref: triggerRef, onClick: toggle, disabled: pages.length === 0,
+          className: "plugin-design-iconbutton",
+          "aria-haspopup": "listbox", "aria-expanded": open,
+          title: t("design.pages.open"), "aria-label": t("design.pages.open"),
+        }, h(Glyph, { h, d: ICON_PATHS.plus })),
+        children: (close) => h(React.Fragment, null,
+          h("input", {
+            className: "plugin-design-menu-search", type: "search", autoFocus: true,
+            placeholder: t("design.pages.search"), "aria-label": t("design.pages.search"),
+            value: pageFilter, onChange: (event) => setPageFilter(event.currentTarget.value),
+          }),
+          h("div", { className: "plugin-design-menu-list", role: "listbox", "aria-label": t("design.pages.open") },
+            filteredPages.map((page) => h("button", {
+              key: page.path, type: "button", role: "option", "aria-selected": page.path === path,
+              className: "plugin-design-menu-item", "data-active": page.path === path || undefined,
+              title: page.path,
+              onClick: () => { close(); setPageFilter(""); openTab(page.path); },
+            },
+              h("span", null, page.path),
+              openTabs.includes(page.path) ? h(Glyph, { h, d: ICON_PATHS.check }) : null)))),
+      }),
+    ),
     h("div", { className: "plugin-design-topbar" },
-      workspaces.length > 1 ? h(Select, {
-        className: "plugin-design-picker", label: t("design.workspace"),
-        value: workspace?.id ?? "", onChange: (event) => chooseWorkspace(event.currentTarget.value),
-      }, workspaces.map((ws) => h("option", { key: ws.id, value: ws.id }, ws.name))) : null,
-      h(Select, {
-        className: "plugin-design-picker plugin-design-page-picker", label: t("design.page"),
-        value: path, disabled: pages.length === 0,
-        onChange: (event) => choosePage(event.currentTarget.value),
-      }, pages.map((page) => h("option", { key: page.path, value: page.path }, page.path))),
       h(ViewportMenu, { h, React, viewport, onPick: setViewport, t }),
       h("div", { className: "plugin-design-tools", role: "group", "aria-label": t("design.mode.group") },
         h("button", {
-          type: "button", className: "plugin-design-iconbutton", "data-active": mode === "edit" || undefined,
+          type: "button", className: "plugin-design-seg", "data-active": mode === "edit" || undefined,
           onClick: () => setMode("edit"), "aria-pressed": mode === "edit",
           title: t("design.mode.edit"), "aria-label": t("design.mode.edit"),
         }, h(Glyph, { h, d: ICON_PATHS.cursor })),
         h("button", {
-          type: "button", className: "plugin-design-iconbutton", "data-active": mode === "comment" || undefined,
+          type: "button", className: "plugin-design-seg", "data-active": mode === "comment" || undefined,
           onClick: () => { setMode("comment"); command("deselect"); setSelected(null); }, "aria-pressed": mode === "comment",
           title: t("design.mode.comment"), "aria-label": t("design.mode.comment"),
-        }, h(Glyph, { h, d: ICON_PATHS.comment }), comments.length > 0 ? h("span", { className: "plugin-design-badge" }, comments.length) : null)),
+        }, h(Glyph, { h, d: ICON_PATHS.comment }),
+          comments.length > 0 ? h("span", { className: "plugin-design-badge" }, comments.length) : null)),
       h("div", { className: "plugin-design-topbar-spacer" }),
       h("button", {
         type: "button", className: "plugin-design-iconbutton", title: dirty && revertArmed ? t("design.revert.confirm") : t("design.reload"),
@@ -781,7 +884,7 @@ function Studio({ api, host, translate, devServer, devWorkspace }) {
                   const nav = pendingNav;
                   setPendingNav(null);
                   if (nav.kind === "workspace") commitWorkspace(nav.value);
-                  else commitPage(nav.value);
+                  else closeTabNow(nav.value);
                 },
               }, t("design.nav.discard.confirm")))),
         ) : null),
@@ -1001,6 +1104,38 @@ function QuadField({ h, label, values, full, onCommit }) {
         })))));
 }
 
+/** Shared popover shell: fixed-position menu anchored under its trigger. */
+function MenuShell({ h, React, className, menuClass, renderTrigger, children }) {
+  const { useState, useRef, useEffect } = React;
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState(null);
+  const rootRef = useRef(null);
+  const triggerRef = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const down = (event) => { if (!rootRef.current?.contains(event.target)) setOpen(false); };
+    const key = (event) => { if (event.key === "Escape") { setOpen(false); event.stopPropagation(); } };
+    document.addEventListener("pointerdown", down);
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("pointerdown", down); document.removeEventListener("keydown", key); };
+  }, [open]);
+  const toggle = () => {
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      // Clamp to the viewport so menus opened near the right edge stay visible.
+      const x = Math.max(8, Math.min(rect.left, (window.innerWidth || rect.right + 340) - 348));
+      setPos({ x, y: rect.bottom + 4 });
+    }
+    setOpen((value) => !value);
+  };
+  return h("div", { className: `plugin-design-menuwrap${className ? ` ${className}` : ""}`, ref: rootRef },
+    renderTrigger({ open, toggle, triggerRef }),
+    open ? h("div", {
+      className: `plugin-design-menu ${menuClass ?? ""}`,
+      style: pos ? { position: "fixed", top: `${pos.y}px`, left: `${pos.x}px` } : undefined,
+    }, children(() => setOpen(false))) : null);
+}
+
 /** Viewport picker: one trigger showing the active device, menu for the rest. */
 function ViewportMenu({ h, React, viewport, onPick, t }) {
   const { useState, useRef, useEffect } = React;
@@ -1037,7 +1172,7 @@ function ViewportMenu({ h, React, viewport, onPick, t }) {
       h(Glyph, { h, d: ICON_PATHS.chevron })),
     open ? h("div", {
       className: "plugin-design-menu", role: "listbox", "aria-label": t("design.viewport.aria"),
-      style: pos ? { position: "fixed", top: `${pos.y}px`, left: `${pos.x}px`, insetInlineStart: "auto" } : undefined,
+      style: pos ? { position: "fixed", top: `${pos.y}px`, left: `${pos.x}px` } : undefined,
     },
       VIEWPORTS.map((item) => h("button", {
         key: item.id, type: "button", role: "option", "aria-selected": viewport === item.id,
@@ -1098,6 +1233,9 @@ function ViewportIcon({ h, id }) {
 
 const ICON_PATHS = {
   cursor: "M6.5 3.8l12.2 9.4-7 1.3-3.6 6.2L6.5 3.8z",
+  page: "M13.5 3.5H7a1 1 0 0 0-1 1v15a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V8L13.5 3.5zM13.5 3.5V8H18",
+  plus: "M12 5v14M5 12h14",
+  workspace: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
   comment: "M12 4c-4.9 0-8.5 3.2-8.5 7.2 0 2.3 1.3 4.3 3.2 5.5L6 20l3.9-1.9c.7.1 1.4.2 2.1.2 4.9 0 8.5-3.2 8.5-7.1S16.9 4 12 4z",
   refresh: "M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4v4h-4",
   external: "M14 4.5h5.5V10M19.5 4.5L11 13M9 6H6.5A2.5 2.5 0 0 0 4 8.5v9A2.5 2.5 0 0 0 6.5 20h9a2.5 2.5 0 0 0 2.5-2.5V15",
@@ -1136,6 +1274,61 @@ const DESIGN_CSS = `
   border-radius: var(--wuu-radius-menu, 10px); background: var(--wuu-color-surface-muted, rgba(127,127,127,.12));
 }
 
+/* -- canvas tab strip --
+   OD-style: tabs dock into the row's bottom border, rounded only on top.
+   The active tab's own background + bottom border match the surface below
+   so it reads as one continuous sheet; inactive tabs are text-muted until
+   hovered. */
+.plugin-design-tabsrow {
+  flex: none; display: flex; align-items: flex-end; gap: 4px;
+  min-height: 37px; padding-block: 5px 0; padding-inline: var(--pane-inset, var(--space-3, 12px));
+  border-bottom: 1px solid var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.16)));
+}
+.plugin-design-tabs {
+  flex: 1 1 auto; min-width: 0; display: flex; align-items: flex-end; gap: 2px;
+  overflow-x: auto; scrollbar-width: none;
+}
+.plugin-design-tabs::-webkit-scrollbar { display: none; }
+.plugin-design-tab {
+  position: relative; flex: 0 1 auto; display: inline-flex; align-items: center; gap: 6px;
+  min-width: 0; max-width: 160px; height: 30px; margin-bottom: -1px;
+  padding-inline: 9px 5px; border: 1px solid transparent; border-bottom-color: transparent;
+  border-radius: 8px 8px 0 0; background: transparent;
+  color: var(--ink-tertiary); font: inherit; font-size: .85em; font-weight: 550;
+  cursor: pointer; white-space: nowrap;
+}
+.plugin-design-tab:hover { background: var(--wuu-nav-item-hover-background, rgba(127,127,127,.12)); color: var(--ink); }
+.plugin-design-tab[data-active] {
+  z-index: 1; color: var(--ink);
+  background: var(--wuu-color-surface, var(--paper, #fff));
+  border-color: var(--wuu-border-subtle, var(--wuu-hairline, rgba(127,127,127,.16)));
+  border-bottom-color: var(--wuu-color-surface, var(--paper, #fff));
+}
+.plugin-design-tab-icon { flex: none; display: inline-flex; opacity: .74; }
+.plugin-design-tab-icon svg { width: 13px; height: 13px; }
+.plugin-design-tab-ws { flex: none; }
+.plugin-design-tab-ws svg:last-child { width: 11px; height: 11px; opacity: .7; }
+.plugin-design-tab-name { overflow: hidden; text-overflow: ellipsis; }
+.plugin-design-tab-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--wuu-color-accent, #3b82f6); }
+.plugin-design-tab-close {
+  flex: none; display: inline-grid; place-items: center; width: 16px; height: 16px; padding: 0;
+  border: 0; border-radius: 5px; background: transparent; color: inherit; cursor: pointer;
+  opacity: 0;
+}
+.plugin-design-tab:hover .plugin-design-tab-close,
+.plugin-design-tab[data-active] .plugin-design-tab-close,
+.plugin-design-tab-close:focus-visible { opacity: 1; }
+.plugin-design-tab-close:hover { background: rgba(127,127,127,.22); color: var(--ink); }
+.plugin-design-tab-close svg { width: 10px; height: 10px; }
+.plugin-design-menuwrap { position: relative; flex: none; display: inline-flex; }
+.plugin-design-menu-pages { display: flex; flex-direction: column; min-width: 220px; max-width: 340px; }
+.plugin-design-menu-search {
+  width: 100%; height: 28px; margin-block: 0 4px; padding-inline: 8px;
+  border: 1px solid var(--wuu-border-subtle, rgba(127,127,127,.25)); border-radius: 7px;
+  background: transparent; color: var(--ink); font: inherit; font-size: .85em;
+}
+.plugin-design-menu-list { max-height: 280px; overflow-y: auto; display: flex; flex-direction: column; }
+
 /* -- top bar -- */
 .plugin-design-topbar {
   flex: none; display: flex; align-items: center; gap: var(--space-2, 8px);
@@ -1149,7 +1342,6 @@ const DESIGN_CSS = `
  * pickers stay topbar-compact in both the host and preview kits. */
 .plugin-design-topbar label:has(> .plugin-design-picker) { display: inline-flex; align-items: center; margin: 0; font-size: 0; }
 .plugin-design-picker { font-size: var(--wuu-font-size-ui, 15px); max-width: 190px; min-width: 0; }
-.plugin-design-page-picker { max-width: 230px; }
 
 .plugin-design-topbar-spacer, .plugin-design-sheet-spacer { flex: 1; min-width: 8px; }
 
@@ -1166,6 +1358,20 @@ const DESIGN_CSS = `
   box-shadow: 0 1px 2px rgba(15,23,42,.1), 0 0 0 .5px rgba(15,23,42,.06);
 }
 .plugin-design-iconbutton svg { width: 15px; height: 15px; }
+/* Segmented mode switch (OD Preview|Code): options inside the muted track,
+   active one lifts to the surface tone. */
+.plugin-design-seg {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  min-width: 26px; height: 24px;
+  padding-inline: 6px; border: 0; border-radius: 7px; background: transparent;
+  color: var(--ink-tertiary); font: inherit; font-size: .85em; cursor: pointer; white-space: nowrap;
+}
+.plugin-design-seg:hover:not([data-active]) { color: var(--ink); }
+.plugin-design-seg[data-active] {
+  background: var(--wuu-color-surface-elevated, var(--paper, #fff)); color: var(--ink);
+  box-shadow: 0 1px 2px rgba(15,23,42,.1), 0 0 0 .5px rgba(15,23,42,.06);
+}
+.plugin-design-seg svg { width: 14px; height: 14px; }
 .plugin-design-badge {
   position: absolute; top: -2px; right: -4px;
   display: inline-grid; place-items: center; min-width: 15px; height: 15px;
