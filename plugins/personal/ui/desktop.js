@@ -371,7 +371,7 @@ export async function activate(api) {
     .mosaic-routine-link { padding-block:var(--space-3); }
     .mosaic-routine-link:hover { background:var(--field-hover-bg); }
     .mosaic-main .plugin-conversation-scroll .plugin-conversation-flow.conversation-width { padding-bottom:max(var(--mosaic-message-tail-space),var(--conversation-flow-bottom-space)); }
-    .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;font-size:var(--font-sm);color:var(--ink-muted); }
+    .mosaic-receipt { display:flex;align-items:center;justify-content:flex-end;font-size:max(12px, calc(var(--conversation-message-font-size) * .75));color:var(--ink-muted); }
     .plugin-conversation-message:has(> .mosaic-receipt) { anchor-scope:--personal-receipt-bubble; }
     .plugin-conversation-message:has(> .mosaic-receipt) > .bubble-message-body { anchor-name:--personal-receipt-bubble; }
     .plugin-conversation-message:has(> .mosaic-receipt[data-delivery-status="failed"]) { --personal-retry-size:24px;--personal-retry-gap:8px;padding-right:calc(var(--personal-retry-size) + var(--personal-retry-gap)); }
