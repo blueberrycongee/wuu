@@ -21,6 +21,7 @@ import { ImagePreviewProvider } from "./ImagePreview";
 import { initialState, reduceServerEvent, type AppState } from "./AppState";
 import { ConversationSplitPane } from "./ConversationSplitPane";
 import { permissionModeOption } from "./ComposerRuntimeMenus";
+import { variantLabel } from "./RuntimeHelpers";
 import { COMPOSER_COMMAND_MENU_WIDTH } from "./ComposerTypes";
 import { I18nProvider, translateCurrent } from "./i18n";
 import { WuuUIRoot } from "./ui/layers/UILayerHost";
@@ -2098,10 +2099,8 @@ describe("Composer send control", () => {
     });
     const portal = document.body.querySelector('[data-floating-menu-owner="composer-handoff"]')!;
     expect(portal).not.toBeNull();
-    act(() => portal.querySelector<HTMLButtonElement>(".runtime-panel-context button:last-child")!.click());
-    act(() => Array.from(portal.querySelectorAll<HTMLButtonElement>(".runtime-provider-option")).find((button) => button.textContent?.trim() === "work")!.click());
     expect(portal.querySelector('input[type="search"]')).not.toBeNull();
-    act(() => portal.querySelector<HTMLButtonElement>(".codex-model-item")!.click());
+    act(() => Array.from(portal.querySelectorAll<HTMLButtonElement>(".codex-model-item")).find((button) => button.querySelector(".codex-model-item-name")?.textContent === "Grok 4.6")!.click());
     expect(textarea.value).toBe("/handoff work:grok-4.6:medium -- ");
     expect(onHandoffSession).not.toHaveBeenCalled();
     act(() => {
@@ -2136,7 +2135,7 @@ describe("Composer send control", () => {
 
     const menu = document.body.querySelector('[data-floating-menu-owner="composer-handoff"] .codex-model-menu');
     expect(menu).not.toBeNull();
-    expect(menu?.classList.contains("is-models")).toBe(true);
+    expect(menu?.classList.contains("runtime-flat-panel")).toBe(true);
 
     const modelItem = Array.from(
       document.body.querySelectorAll<HTMLButtonElement>('[data-floating-menu-owner="composer-handoff"] .codex-model-item'),
@@ -2173,17 +2172,12 @@ describe("Composer send control", () => {
     });
 
     const portal = document.body.querySelector('[data-floating-menu-owner="composer-handoff"]')!;
-    act(() => portal.querySelector<HTMLButtonElement>(".runtime-panel-context button:last-child")!.click());
-    act(() => Array.from(portal.querySelectorAll<HTMLButtonElement>(".runtime-provider-option")).find((button) => button.textContent?.trim() === "work")!.click());
-    act(() => portal.querySelector<HTMLButtonElement>(".codex-model-item")!.click());
+    act(() => Array.from(portal.querySelectorAll<HTMLButtonElement>(".codex-model-item")).find((button) => button.querySelector(".codex-model-item-name")?.textContent === "Grok 4.6")!.click());
 
-    const effort = portal.querySelector<HTMLInputElement>('input[type="range"]')!;
+    const effort = Array.from(portal.querySelectorAll<HTMLButtonElement>(".runtime-effort-option"))
+      .find(option => option.querySelector(".runtime-effort-option-name")?.textContent === variantLabel("xhigh"))!;
     expect(effort).not.toBeNull();
-    act(() => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(effort, effort.max);
-      effort.dispatchEvent(new Event("input", { bubbles: true }));
-      effort.dispatchEvent(new KeyboardEvent("keyup", { key: "End", bubbles: true }));
-    });
+    act(() => effort.click());
 
     expect(textarea.value).toBe(`/handoff work:grok-4.6:xhigh -- ${intent}`);
     expect(onHandoffSession).not.toHaveBeenCalled();

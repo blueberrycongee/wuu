@@ -648,22 +648,21 @@ describe("main composer focus continuity", () => {
       const oldTrigger = container.querySelector(".codex-runtime-trigger")!;
       await click(".codex-runtime-trigger");
       expect(oldTrigger.getAttribute("aria-expanded")).toBe("true");
-      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
+      expect(document.querySelector('.codex-model-item[aria-checked="true"] .codex-model-item-name')?.textContent).toBe("Loaded fixture model");
       await replacement.commit();
       expect(oldTrigger.isConnected).toBe(false);
       expect(container.querySelector(".codex-runtime-trigger")?.getAttribute("aria-expanded")).toBe("true");
-      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
+      expect(document.querySelector('.codex-model-item[aria-checked="true"] .codex-model-item-name')?.textContent).toBe("Loaded fixture model");
       await act(async () => finishCheckout());
       await flushAsync();
-      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Loaded fixture model");
-      await click(".runtime-panel-model");
+      expect(document.querySelector('.codex-model-item[aria-checked="true"] .codex-model-item-name')?.textContent).toBe("Loaded fixture model");
       const alternative = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item"))
-        .find(button => button.textContent?.includes("Alternative fixture model"));
+        .find(button => button.querySelector(".codex-model-item-name")?.textContent === "Alternative fixture model");
       expect(alternative).toBeDefined();
       await act(async () => alternative!.click());
       const runtime = controller.getSnapshot().composerRuntime;
       expect(runtime.owners.find(owner => owner.ownerTabId === runtime.activeOwnerTabId)?.selection.model).toBe("gpt-alternative");
-      expect(document.querySelector(".runtime-panel-model-name")?.textContent).toBe("Alternative fixture model");
+      expect(document.querySelector('.codex-model-item[aria-checked="true"] .codex-model-item-name')?.textContent).toBe("Alternative fixture model");
       await click(".codex-runtime-trigger");
       expect(document.querySelector(".runtime-panel")).toBeNull();
       await click(".codex-runtime-trigger");
@@ -707,9 +706,8 @@ describe("main composer focus continuity", () => {
     };
     const selectEngine = async (name: string) => {
       await click(".codex-runtime-trigger");
-      await click(".runtime-panel-context button:has(.engine-icon)");
-      const option = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-engine-option"))
-        .find(button => button.querySelector(".runtime-engine-option-name")?.textContent === name)!;
+      const option = Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-engine-icon"))
+        .find(button => button.getAttribute("aria-label") === name)!;
       await act(async () => option.click());
       await flushAsync();
     };
@@ -722,9 +720,8 @@ describe("main composer focus continuity", () => {
     };
     try {
       await selectEngine("Codex");
-      await click(".runtime-panel-model");
       const model = Array.from(document.querySelectorAll<HTMLButtonElement>(".codex-model-item"))
-        .find(button => button.textContent?.includes("Engine fixture model"))!;
+        .find(button => button.querySelector(".codex-model-item-name")?.textContent === "Engine fixture model")!;
       await act(async () => model.click());
       await selectPermission();
       expect(document.querySelector(".permission-menu-anchor button")?.getAttribute("aria-label")).toContain(permissionModeOption(mode).label);

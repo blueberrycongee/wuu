@@ -8,8 +8,6 @@ import {
   Bug,
   Check,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   CircleHelp,
   Cpu,
   Eye,
@@ -42,11 +40,10 @@ import {
   Zap,
   type IconComponent
 } from "./WuuIcons";
-import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import type {
   CodexModelSummary,
   EngineInfo,
-  EngineModelInfo,
   EnginePermissionModeInfo,
   PermissionSummary,
   ProviderModelSummary,
@@ -74,7 +71,7 @@ import { COMPOSER_COMMAND_MENU_WIDTH, COMPOSER_PROJECT_MENU_WIDTH } from "./Comp
 import { SelectMenu } from "./SelectMenu";
 import { engineLabel } from "./EngineDisplay";
 import { EngineIcon } from "./EngineIcons";
-import { lastEffortForRuntimeModel, lastModelForProvider } from "./DraftRuntimeMemory";
+import { lastEffortForRuntimeModel } from "./DraftRuntimeMemory";
 import {
   effectiveModelSpeed,
   orderedEffortOptions,
@@ -90,6 +87,8 @@ import { Tooltip } from "./Tooltip";
 import { TruncatedText } from "./TruncatedText";
 import { ComposerMobileAttachmentChoices } from "./ComposerCamera";
 import { isTouchWebShell } from "./ComposerFocus";
+import { ProviderMark } from "./ProviderMarks";
+import { primaryShortcutLabel } from "./platform";
 
 type ChipTone = "neutral" | "danger";
 
@@ -119,7 +118,70 @@ function availableEngineOptions(
   return options;
 }
 
-function EngineOptionsMenu({
+// A selectable model row shared by the engine and provider columns. The kbd
+// hint marks the first nine visible rows, which ⌘/Ctrl+1–9 selects directly.
+function RuntimeModelRow({
+  name,
+  checked,
+  disabled,
+  quickIndex,
+  mark,
+  onSelect
+}: {
+  name: string;
+  checked: boolean;
+  disabled?: boolean;
+  quickIndex?: number;
+  mark?: ReactNode;
+  onSelect: () => void;
+}): JSX.Element {
+  return (
+    <button
+      className="codex-model-item"
+      role="menuitemradio"
+      type="button"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={onSelect}
+    >
+      {mark ?? null}
+      <span className="codex-model-item-name">{name}</span>
+      {quickIndex !== undefined && quickIndex < 9 ? (
+        <kbd className="runtime-model-kbd" aria-hidden="true">{primaryShortcutLabel(quickIndex + 1)}</kbd>
+      ) : null}
+      {checked ? <Check className="icon-lg" /> : null}
+    </button>
+  );
+}
+
+// The flat picker lays engines, models, and effort out as columns instead of
+// drilling between pages. Its footprint is wider than the old summary card,
+// so the base width follows the reference panel rather than a list menu.
+const RUNTIME_PANEL_WIDTH = 640;
+export const PERMISSION_MENU_WIDTH = 264;
+
+export function runtimePanelWidth(): number {
+  return composerMenuWidth(RUNTIME_PANEL_WIDTH);
+}
+
+// Arrow keys move between rows across the whole panel. The search field keeps
+// Home and End for its caret; Escape is handled by the picker's own document
+// listener so it always closes and refocuses the trigger.
+function handleRuntimePanelKeyDown(
+  event: ReactKeyboardEvent<HTMLElement>,
+  quickSelect?: (index: number) => void
+): void {
+  if ((event.metaKey || event.ctrlKey) && quickSelect && /^[1-9]$/.test(event.key)) {
+    event.preventDefault();
+    quickSelect(Number(event.key) - 1);
+    return;
+  }
+  moveFloatingMenuFocus(event);
+}
+
+// Engine switching lives in a vertical icon column, the same shape as the
+// workspace tool rail the picker opens from when controls are docked there.
+function RuntimeEngineRail({
   options,
   selected,
   locked,
@@ -137,25 +199,79 @@ function EngineOptionsMenu({
   const { t } = useI18n();
   return (
     <div
-      className={`runtime-engine-options${locked ? " is-locked" : ""}`}
+      className={`runtime-engine-rail${locked ? " is-locked" : ""}`}
       role="group"
       aria-label={locked && lockedDescription ? lockedDescription : t("runtime.engine")}
     >
       {options.map((option) => {
         const isSelected = option.id === selected;
-        return (
+        const button = (
           <button
-            className="runtime-engine-option"
+            className="runtime-engine-icon"
             key={option.id}
             role="menuitemradio"
             type="button"
             disabled={locked || running}
             aria-checked={isSelected}
+            aria-label={option.label}
             onClick={() => onSelect(option.id)}
           >
             <EngineIcon engine={option.id} />
-            <span className="runtime-engine-option-name">{option.label}</span>
-            {locked && isSelected ? <Lock aria-hidden="true" /> : isSelected ? <Check aria-hidden="true" /> : null}
+            {locked && isSelected ? <Lock aria-hidden="true" /> : null}
+          </button>
+        );
+        return locked && isSelected ? (
+          <Tooltip key={option.id} content={lockedDescription}>{button}</Tooltip>
+        ) : button;
+      })}
+    </div>
+  );
+}
+
+// The level list replaces the drag slider on the flat panel: radio rows share
+// the menu's arrow-key navigation and can mark the model's own default.
+function RuntimeEffortColumn({
+  model,
+  options,
+  selected,
+  defaultId,
+  disabled,
+  busy,
+  onSelect
+}: {
+  model: string;
+  options: string[];
+  selected: string;
+  defaultId: string;
+  disabled: boolean;
+  busy: boolean;
+  onSelect: (effort: string) => void;
+}): JSX.Element {
+  const { t } = useI18n();
+  return (
+    <div className="runtime-effort-column" role="group" aria-label={t("runtime.reasoningEffort")}>
+      <div className="runtime-flat-side-title">
+        <span>{t("runtime.reasoningEffort")}</span>
+        <TruncatedText className="runtime-flat-side-model" text={model} />
+      </div>
+      {options.map((option) => {
+        const isSelected = option === selected;
+        return (
+          <button
+            className="runtime-effort-option"
+            key={option || "default"}
+            role="menuitemradio"
+            type="button"
+            disabled={disabled}
+            aria-checked={isSelected}
+            aria-busy={busy || undefined}
+            onClick={() => onSelect(option)}
+          >
+            <span className="runtime-effort-option-name">{variantLabel(option)}</span>
+            {option !== "" && option === defaultId ? (
+              <span className="runtime-effort-option-tag">{t("runtime.effort.default")}</span>
+            ) : null}
+            {isSelected ? <Check className="icon-lg" aria-hidden="true" /> : null}
           </button>
         );
       })}
@@ -163,112 +279,30 @@ function EngineOptionsMenu({
   );
 }
 
-export type RuntimePanelView = "summary" | "engines" | "providers" | "models";
-type RuntimePanelDirection = "forward" | "back";
-
-const RUNTIME_PANEL_WIDTH = 256;
-export const PERMISSION_MENU_WIDTH = 264;
-
-export function runtimePanelWidth(): number {
-  return composerMenuWidth(RUNTIME_PANEL_WIDTH);
-}
-
-// The panel morphs between pages with a height transition, so its shell
-// height cannot come from its content. Each page reports how many rows it
-// shows; styles/workspace.css turns that count into a height from the same
-// font-scaled row metrics the rows use.
-function runtimePanelStyle(rows: number, width?: number): CSSProperties {
-  return {
-    "--runtime-rows": String(Math.max(rows, 1)),
-    "--runtime-panel-width": `${width ?? runtimePanelWidth()}px`,
-  } as CSSProperties;
-}
-
-// Arrow keys move between the current page's rows; the effort slider keeps
-// them for its own steps. Escape on a drill-in page returns to the summary
-// and marks the event handled so the picker does not also close.
-function handleRuntimePanelKeyDown(
-  event: ReactKeyboardEvent<HTMLElement>,
-  view: RuntimePanelView,
-  showSummary: () => void
-): void {
-  if (event.key === "Escape") {
-    if (view === "summary") return;
-    event.preventDefault();
-    showSummary();
-    return;
-  }
-  moveFloatingMenuFocus(event);
-}
-
-function RuntimePanelHeader({ title, onBack }: { title: string; onBack: () => void }): JSX.Element {
-  const { t } = useI18n();
-  return (
-    <div className="runtime-panel-header">
-      <button type="button" className="runtime-panel-back" aria-label={t("common.back")} onClick={onBack}>
-        <ChevronLeft aria-hidden="true" />
-      </button>
-      <span>{title}</span>
-    </div>
-  );
-}
-
-// Keep the current effort separate from model navigation: it previews the
-// slider, while engine and service remain available as secondary controls.
-// Speed is an independent accessory in the context header, not another choice row.
-function RuntimePanelSummary({
-  engine,
-  engineId,
-  provider,
-  showEngine,
-  engineLocked,
-  lockedDescription,
-  model,
-  effortOptions,
-  selectedEffort,
-  effortDisabled,
-  effortSaving = false,
+// Speed is a segmented footer choice rather than a toolbar toggle: the flat
+// panel shows both states at once. Save-in-flight keeps the control focusable
+// so a keyboard user is not blurred mid-save.
+function RuntimeSpeedControl({
   speed,
   defaultSpeed,
-  speedDisabled = false,
-  onSelectSpeed,
-  onOpenEngines,
-  onOpenProviders,
-  onOpenModels,
-  onSelectEffort
+  disabled,
+  onSelectSpeed
 }: {
-  engine: string;
-  engineId: string;
-  provider?: string;
-  showEngine: boolean;
-  engineLocked: boolean;
-  lockedDescription?: string;
-  model: string;
-  effortOptions: string[];
-  selectedEffort: string;
-  effortDisabled: boolean;
-  effortSaving?: boolean;
   speed?: string;
   defaultSpeed?: string;
-  speedDisabled?: boolean;
-  onSelectSpeed?: (speed: string) => void | Promise<boolean>;
-  onOpenEngines: () => void;
-  // Absent when the engine offers a single model service.
-  onOpenProviders?: () => void;
-  onOpenModels: () => void;
-  onSelectEffort: (effort: string) => void;
+  disabled?: boolean;
+  onSelectSpeed: (speed: string) => void | Promise<boolean>;
 }): JSX.Element {
   const { t } = useI18n();
   const [pendingSpeed, setPendingSpeed] = useState<string | undefined>(undefined);
   const [speedSaving, setSpeedSaving] = useState(false);
   const [speedCharging, setSpeedCharging] = useState(false);
-  useEffect(() => setPendingSpeed(undefined), [speed, model]);
+  useEffect(() => setPendingSpeed(undefined), [speed]);
   const requestedSpeed = pendingSpeed ?? speed;
   const displayedSpeed = effectiveModelSpeed(requestedSpeed, defaultSpeed);
   const fastModeHint = `${t(displayedSpeed === "fast" ? "runtime.fastModeOn" : displayedSpeed === "standard" ? "runtime.fastModeOff" : "runtime.fastModeDefault")} · ${t("runtime.fastModeHint")}`;
-  // A saving toggle stays focusable; native disabled would blur keyboard input.
   const changeSpeed = async (next: string): Promise<void> => {
-    if (!onSelectSpeed || speedSaving || speedDisabled) return;
+    if (speedSaving || disabled || next === displayedSpeed) return;
     setSpeedCharging(next === "fast");
     setPendingSpeed(next);
     setSpeedSaving(true);
@@ -277,110 +311,39 @@ function RuntimePanelSummary({
     } catch { setPendingSpeed(undefined); }
     finally { setSpeedSaving(false); }
   };
-  const [previewEffort, setPreviewEffort] = useState(selectedEffort);
-
-  useEffect(() => {
-    if (!effortSaving) setPreviewEffort(selectedEffort);
-  }, [selectedEffort, effortSaving]);
-
-  const display = useComposerConnectionDisplay();
-  const engineName = display.label(`engine:${engineId}`, engineLabel(engine));
-  // A bound conversation cannot switch engines, so the engine is a label that
-  // says why rather than a way into a list of choices it cannot take.
-  const engineItem = engineLocked ? (
-    <Tooltip content={lockedDescription}>
-      <span className="runtime-panel-context-item" aria-label={lockedDescription ? `${engineName} · ${lockedDescription}` : engineName}>
-        <EngineIcon engine={engineId} />
-        <span>{engineName}</span>
-        <Lock aria-hidden="true" />
-      </span>
-    </Tooltip>
-  ) : (
-    <button type="button" aria-label={t("runtime.engineNamed", { engine: engineName })} onClick={onOpenEngines}>
-      <EngineIcon engine={engineId} />
-      <span>{engineName}</span>
-    </button>
-  );
-  const providerItem = provider ? (onOpenProviders ? (
-    <button type="button" aria-label={t("runtime.providerNamed", { provider })} onClick={onOpenProviders}>
-      <span>{provider}</span>
-      <ChevronDown aria-hidden="true" />
-    </button>
-  ) : (
-    <span className="runtime-panel-context-item"><span>{provider}</span></span>
-  )) : null;
-
-  return (
-    <div className="runtime-panel-summary">
-      {showEngine || providerItem || onSelectSpeed ? (
-        <div className="runtime-panel-context">
-          <div className="runtime-panel-context-source">
-            {showEngine ? engineItem : null}
-            {showEngine && providerItem ? <span className="runtime-panel-context-separator" aria-hidden="true">/</span> : null}
-            {providerItem}
-          </div>
-          {onSelectSpeed ? (
-            <Tooltip content={fastModeHint}>
-              <button
-                type="button"
-                className="runtime-panel-fast"
-                aria-label={t("runtime.fastMode")}
-                aria-description={fastModeHint}
-                aria-pressed={displayedSpeed ? displayedSpeed === "fast" : "mixed"}
-                disabled={speedDisabled && !speedSaving}
-                aria-disabled={speedDisabled || speedSaving || undefined}
-                aria-busy={speedSaving || undefined}
-                onClick={() => { void changeSpeed(displayedSpeed === "fast" ? "standard" : "fast"); }}
-              >
-                <span
-                  className="runtime-panel-speed-icon"
-                  aria-hidden="true"
-                  data-charging={speedCharging && displayedSpeed === "fast" || undefined}
-                  onAnimationEnd={() => setSpeedCharging(false)}
-                >
-                  <Zap className="runtime-panel-speed-outline" />
-                  <Zap className="runtime-panel-speed-fill" />
-                </span>
-              </button>
-            </Tooltip>
-          ) : null}
-        </div>
+  const renderOption = (id: "standard" | "fast") => (
+    <button
+      key={id}
+      type="button"
+      className="runtime-speed-option"
+      aria-pressed={displayedSpeed === id}
+      disabled={Boolean(disabled) && !speedSaving}
+      aria-disabled={disabled || speedSaving || undefined}
+      aria-busy={speedSaving || undefined}
+      onClick={() => { void changeSpeed(id); }}
+    >
+      {id === "fast" ? (
+        <span
+          className="runtime-speed-icon"
+          aria-hidden="true"
+          data-charging={speedCharging || undefined}
+          onAnimationEnd={() => setSpeedCharging(false)}
+        >
+          <Zap className="runtime-speed-outline" />
+          <Zap className="runtime-speed-fill" />
+        </span>
       ) : null}
-      <div className="runtime-panel-model-group">
-        <div className="runtime-panel-selection">
-          <button type="button" className="runtime-panel-model" data-menu-autofocus onClick={onOpenModels}>
-            <TruncatedText className="runtime-panel-model-name" text={model} />
-            <ChevronRight aria-hidden="true" />
-          </button>
-          {effortOptions.length > 1 ? (
-            <div className="runtime-panel-effort-value">{variantLabel(previewEffort)}</div>
-          ) : null}
-        </div>
-        {effortOptions.length > 1 ? (
-          <div className="runtime-panel-effort">
-            <EffortSelector
-              options={effortOptions}
-              selectedVariant={selectedEffort}
-              disabled={effortDisabled}
-              busy={effortSaving}
-              onPreviewEffort={setPreviewEffort}
-              onSelectEffort={onSelectEffort}
-            />
-          </div>
-        ) : null}
-      </div>
-    </div>
+      {t(id === "fast" ? "runtime.speedFast" : "runtime.speedStandard")}
+    </button>
   );
-}
-
-// The shell morphs between pages, so the summary's height comes from the rows
-// it shows rather than from its content.
-function runtimeSummaryStyle({ context, effort, speed }: { context: boolean; effort: boolean; speed: boolean }): CSSProperties {
-  return {
-    "--runtime-summary-context": context ? "1" : "0",
-    "--runtime-summary-effort": effort ? "1" : "0",
-    ...(speed ? { "--runtime-context-row": "var(--control-size-inline)" } : {}),
-  } as CSSProperties;
+  return (
+    <Tooltip content={fastModeHint}>
+      <div className="theme-segmented runtime-speed-segmented" role="group" aria-label={t("runtime.fastMode")}>
+        {renderOption("standard")}
+        {renderOption("fast")}
+      </div>
+    </Tooltip>
+  );
 }
 
 type PermissionModeState = PermissionMode;
@@ -510,7 +473,6 @@ export type HandoffRuntimePicker = {
   model: string;
   variant: string;
   filterQuery: string;
-  forcedView: RuntimePanelView;
   onSelectProvider: (providerId: string) => void;
   onSelectModel: (provider: string, model: string, variant?: string) => void;
   onSelectEffort: (variant: string) => void;
@@ -698,6 +660,7 @@ export function RuntimePicker({
               running={running}
               lockedDescription={engineLocked ? t("runtime.engineLockedDescription") : undefined}
               onSelectEngine={(id) => onSelectEngine?.(id)}
+              fromRail={inToolRail}
               width={panelWidth}
             />
           ) : (
@@ -719,8 +682,8 @@ export function RuntimePicker({
                 if (!handoff) onSelectEngine?.(id);
               }}
               filterQuery={handoff?.filterQuery ?? ""}
-              forcedView={handoff?.forcedView}
               onSelectProvider={handoff?.onSelectProvider}
+              fromRail={inToolRail}
               width={panelWidth}
               autoFocus
             />
@@ -731,6 +694,10 @@ export function RuntimePicker({
   );
 }
 
+// External-engine picker: engines as an icon column, the engine's models as
+// a searchable flat list, effort and per-model options in the right column,
+// speed as a segmented footer. Everything stays visible at once, so a model
+// switch keeps its engine and effort context on screen.
 function EngineRuntimeMenu({
   engine,
   selectedModel,
@@ -748,6 +715,7 @@ function EngineRuntimeMenu({
   running,
   lockedDescription,
   onSelectEngine,
+  fromRail = false,
   width
 }: {
   engine?: EngineInfo;
@@ -766,29 +734,19 @@ function EngineRuntimeMenu({
   running: boolean;
   lockedDescription?: string;
   onSelectEngine: (id: string) => void;
+  // Docked next to the workspace tool rail the picker opens from; the engine
+  // column mirrors to that edge so it reads as the rail's second column.
+  fromRail?: boolean;
   width?: number;
 }): JSX.Element {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<RuntimePanelView>("summary");
-  const [direction, setDirection] = useState<RuntimePanelDirection>("forward");
   const [query, setQuery] = useState("");
   const [saving, setSaving] = useState(false);
-  useFloatingMenuFocus(panelRef, `${engine?.id ?? "engine"}:${view}`);
+  useFloatingMenuFocus(panelRef, `${engine?.id ?? "engine"}`);
   useEffect(() => {
     setQuery("");
-    setDirection("back");
-    setView("summary");
   }, [engine?.id]);
-
-  const openView = (nextView: RuntimePanelView): void => {
-    setDirection("forward");
-    setView(nextView);
-  };
-  const showSummary = (): void => {
-    setDirection("back");
-    setView("summary");
-  };
 
   const display = useComposerConnectionDisplay();
   const catalogModels = engine?.models ?? [];
@@ -830,154 +788,152 @@ function EngineRuntimeMenu({
     try { return await save() !== false; }
     finally { setSaving(false); }
   };
-  const selectModel = async (model: string): Promise<void> => {
-    if (await changeSelection(() => onSelectModel(model, ""))) showSummary();
+  const selectModel = (model: string): void => {
+    void changeSelection(() => onSelectModel(model, ""));
   };
+
+  // The "engine default" row is index 0 of the quick-select list, ahead of the
+  // filtered catalog rows.
+  const quickSelect = (index: number): void => {
+    if (disabled || saving) return;
+    if (index === 0) {
+      selectModel("");
+      return;
+    }
+    const model = filteredModels[index - 1];
+    if (model) selectModel(model.id);
+  };
+  const hasSide = effortOptions.length > 1 || Boolean(effectiveModel?.options?.length);
 
   return (
     <div
       ref={panelRef}
-      className={`codex-runtime-menu codex-model-menu runtime-panel engine-runtime-panel is-${view}`}
+      className={`codex-runtime-menu codex-model-menu runtime-panel runtime-flat-panel${fromRail ? " from-rail" : ""}`}
       role="menu"
-      style={{
-        ...runtimePanelStyle(view === "models" ? filteredModels.length + 1 : engineOptions.length, width),
-        ...runtimeSummaryStyle({
-          context: true,
-          effort: effortOptions.length > 1,
-          speed: Boolean(effectiveModel?.fast_mode && onSelectSpeed),
-        }),
-      }}
-      onKeyDown={(event) => handleRuntimePanelKeyDown(event, view, showSummary)}
+      style={{ "--runtime-panel-width": `${width ?? runtimePanelWidth()}px` } as CSSProperties}
+      onKeyDown={(event) => handleRuntimePanelKeyDown(event, quickSelect)}
     >
-      <div key={`${engine?.id ?? "engine"}:${view}`} className={`runtime-panel-page is-${direction}`}>
-        {view === "summary" ? (
-          <>
-          <RuntimePanelSummary
-            engine={engineLabel(selectedEngine, engine)}
-            engineId={selectedEngine}
-            showEngine
-            engineLocked={engineLocked}
+      <div className="runtime-flat">
+        {engineOptions.length > 1 ? (
+          <RuntimeEngineRail
+            options={engineOptions}
+            selected={selectedEngine}
+            locked={engineLocked}
+            running={running}
             lockedDescription={lockedDescription}
-            model={effectiveModelID ? effectiveModel?.display_name || effectiveModelID : t("runtime.engineDefaultModel")}
-            effortOptions={effortOptions}
-            selectedEffort={selectedEffort}
-            effortDisabled={disabled}
-            effortSaving={saving}
-            speed={selectedSpeed}
-            defaultSpeed={effectiveModel?.default_speed}
-            speedDisabled={running}
-            onSelectSpeed={effectiveModel?.fast_mode ? onSelectSpeed : undefined}
-            onOpenEngines={() => openView("engines")}
-            onOpenModels={() => openView("models")}
-            onSelectEffort={(effort) => { void changeSelection(() => onSelectEffort(effort)); }}
+            onSelect={(id) => { if (id !== selectedEngine) onSelectEngine(id); }}
           />
-          {effectiveModel?.options?.length ? (
-            <div className="runtime-model-options">
-              {effectiveModel.options.map(option => (
-                <div className="runtime-model-option" key={option.id}>
-                  <span>{option.label}</span>
-                  <SelectMenu
-                    ariaLabel={option.label}
-                    value={option.id in selectedOptions ? JSON.stringify(selectedOptions[option.id]) : ""}
-                    options={[
-                      { value: "", label: t("runtime.engineDefaultOption") },
-                      ...option.choices.map(choice => ({ value: JSON.stringify(choice.value), label: choice.label })),
-                    ]}
-                    disabled={disabled || saving}
-                    onChange={value => {
-                      const options = { ...selectedOptions };
-                      if (value === "") delete options[option.id];
-                      else options[option.id] = JSON.parse(value) as string;
-                      void changeSelection(() => onSelectOptions?.(options));
-                    }}
-                  />
-                </div>
-              ))}
-            </div>
-          ) : null}
-          </>
         ) : null}
-        {view === "engines" ? (
-          <>
-            <RuntimePanelHeader title={t("runtime.engine")} onBack={showSummary} />
-            <div className="runtime-panel-list">
-              <EngineOptionsMenu
-                options={engineOptions}
-                selected={selectedEngine}
-                locked={engineLocked}
-                running={running}
-                lockedDescription={lockedDescription}
-                onSelect={(id) => {
-                  if (id !== selectedEngine) onSelectEngine(id);
-                  showSummary();
+        <div className="runtime-flat-main">
+          {models.length > 0 ? (
+            <label className="menu-search select-menu-search">
+              <Search className="select-menu-search-icon icon-lg" />
+              <input
+                type="search"
+                value={query}
+                placeholder={t("runtime.searchModels")}
+                aria-label={t("runtime.searchModels")}
+                onChange={(event) => setQuery(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  const first = filteredModels[0];
+                  if (event.key === "Enter" && first && !disabled) {
+                    event.preventDefault();
+                    selectModel(first.id);
+                  }
                 }}
               />
-            </div>
-          </>
-        ) : null}
-        {view === "models" ? (
-          <>
-            {models.length > 0 ? (
-              <label className="menu-search select-menu-search">
-                <Search className="select-menu-search-icon icon-lg" />
-                <input
-                  type="search"
-                  value={query}
-                  placeholder={t("runtime.searchModels")}
-                  aria-label={t("runtime.searchModels")}
-                  onChange={(event) => setQuery(event.currentTarget.value)}
-                  onKeyDown={(event) => {
-                    const first = filteredModels[0];
-                    if (event.key === "Enter" && first && !disabled) {
-                      event.preventDefault();
-                      void selectModel(first.id);
-                    }
-                  }}
-                />
-              </label>
+            </label>
+          ) : null}
+          <div className="codex-model-groups runtime-flat-models">
+            <RuntimeModelRow
+              name={t("runtime.engineDefaultModel")}
+              checked={!selectedModel}
+              disabled={disabled || saving}
+              quickIndex={0}
+              onSelect={() => selectModel("")}
+            />
+            {models.length === 0 ? (
+              <div className="composer-menu-empty">
+                {t(engine?.models_status === "empty" ? "runtime.modelsEmpty" : "runtime.engineDefaultModelHint", { engine: engineLabel(selectedEngine, engine) })}
+              </div>
             ) : null}
-            <div className="codex-model-groups">
-              <button className="codex-model-item" role="menuitemradio" type="button" aria-checked={!selectedModel} disabled={disabled || saving} onClick={() => { void selectModel(""); }}>
-                <span className="codex-model-item-name">{t("runtime.engineDefaultModel")}</span>
-                {!selectedModel ? <Check className="icon-lg" /> : null}
-              </button>
-              {models.length === 0 ? (
-                <div className="composer-menu-empty">
-                  {t(engine?.models_status === "empty" ? "runtime.modelsEmpty" : "runtime.engineDefaultModelHint", { engine: engineLabel(selectedEngine, engine) })}
-                </div>
-              ) : null}
-              {models.length > 0 && filteredModels.length === 0 ? (
-                <div className="composer-menu-empty">{t("runtime.noMatchingModels")}</div>
-              ) : null}
-              {filteredModels.length > 0 ? (
-                <div className="codex-model-group">
-                  {filteredModels.map((model) => {
-                    const selected = model.id === effectiveModelID;
-                    return (
-                      <button
-                        className="codex-model-item"
-                        role="menuitemradio"
-                        type="button"
-                        key={model.id}
-                        disabled={disabled || saving}
-                        aria-checked={selected}
-                        onClick={() => { void selectModel(model.id); }}
-                      >
-                        <span className="codex-model-item-name">{model.display_name || model.id}</span>
-                        {selected ? <Check className="icon-lg" /> : null}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-          </>
+            {models.length > 0 && filteredModels.length === 0 ? (
+              <div className="composer-menu-empty">{t("runtime.noMatchingModels")}</div>
+            ) : null}
+            {filteredModels.length > 0 ? (
+              <div className="codex-model-group">
+                {filteredModels.map((model, index) => (
+                  <RuntimeModelRow
+                    key={model.id}
+                    name={model.display_name || model.id}
+                    checked={model.id === effectiveModelID}
+                    disabled={disabled || saving}
+                    quickIndex={index + 1}
+                    onSelect={() => selectModel(model.id)}
+                  />
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </div>
+        {hasSide ? (
+          <div className="runtime-flat-side">
+            {effortOptions.length > 1 ? (
+              <RuntimeEffortColumn
+                model={effectiveModelID ? effectiveModel?.display_name || effectiveModelID : t("runtime.engineDefaultModel")}
+                options={effortOptions}
+                selected={selectedEffort}
+                defaultId={effectiveModel?.default_effort ?? ""}
+                disabled={disabled}
+                busy={saving}
+                onSelect={(effort) => { void changeSelection(() => onSelectEffort(effort)); }}
+              />
+            ) : null}
+            {effectiveModel?.options?.length ? (
+              <div className="runtime-model-options">
+                {effectiveModel.options.map(option => (
+                  <div className="runtime-model-option" key={option.id}>
+                    <span>{option.label}</span>
+                    <SelectMenu
+                      ariaLabel={option.label}
+                      value={option.id in selectedOptions ? JSON.stringify(selectedOptions[option.id]) : ""}
+                      options={[
+                        { value: "", label: t("runtime.engineDefaultOption") },
+                        ...option.choices.map(choice => ({ value: JSON.stringify(choice.value), label: choice.label })),
+                      ]}
+                      disabled={disabled || saving}
+                      onChange={value => {
+                        const options = { ...selectedOptions };
+                        if (value === "") delete options[option.id];
+                        else options[option.id] = JSON.parse(value) as string;
+                        void changeSelection(() => onSelectOptions?.(options));
+                      }}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
         ) : null}
       </div>
+      {effectiveModel?.fast_mode && onSelectSpeed ? (
+        <div className="runtime-flat-footer">
+          <RuntimeSpeedControl
+            speed={selectedSpeed}
+            defaultSpeed={effectiveModel.default_speed}
+            disabled={running}
+            onSelectSpeed={onSelectSpeed}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
 
+// Wuu-engine picker in the same flat shape as external engines: the engine
+// column on the edge, every provider's models grouped in the searchable
+// center column, effort on the right, speed in the footer. Providers are
+// group headers rather than a separate page, so all of them stay selectable.
 export function RuntimeModelMenu({
   initialized,
   state,
@@ -994,8 +950,8 @@ export function RuntimeModelMenu({
   lockedDescription,
   onSelectEngine,
   filterQuery = "",
-  forcedView,
   onSelectProvider,
+  fromRail = false,
   width,
   autoFocus = false,
 }: {
@@ -1014,8 +970,12 @@ export function RuntimeModelMenu({
   lockedDescription?: string;
   onSelectEngine: (id: string) => void;
   filterQuery?: string;
-  forcedView?: RuntimePanelView;
+  // Handoff provider headers apply the provider to the draft instead of
+  // switching to it; other callers leave headers inert.
   onSelectProvider?: (providerId: string) => void;
+  // Docked next to the workspace tool rail; the engine column mirrors to
+  // that edge so it reads as the rail's second column.
+  fromRail?: boolean;
   width?: number;
   // Only a panel the user opened from its trigger takes focus; the handoff
   // and onboarding panels sit beside an input that keeps it.
@@ -1023,11 +983,9 @@ export function RuntimeModelMenu({
 }): JSX.Element {
   const { t } = useI18n();
   const panelRef = useRef<HTMLDivElement>(null);
-  const [view, setView] = useState<RuntimePanelView>("summary");
-  const [direction, setDirection] = useState<RuntimePanelDirection>("forward");
   const [query, setQuery] = useState("");
   // The panel stays open while a selection commits through the app-server
-  // stream, so the highlighted row and the effort pills follow the click
+  // stream, so the highlighted row and the effort list follow the click
   // immediately instead of waiting for the round-trip. Once the stream
   // confirms, the external props become the source of truth again and the
   // optimistic state is dropped.
@@ -1035,24 +993,8 @@ export function RuntimeModelMenu({
   useEffect(() => {
     setOptimistic(null);
   }, [selectedProvider, selectedModel, selectedVariant]);
-  useEffect(() => {
-    if (!forcedView) {
-      return;
-    }
-    setDirection(forcedView === "summary" ? "back" : "forward");
-    setView(forcedView);
-  }, [forcedView]);
 
-  useFloatingMenuFocus(panelRef, view, autoFocus);
-
-  const openView = (nextView: RuntimePanelView): void => {
-    setDirection("forward");
-    setView(nextView);
-  };
-  const showSummary = (): void => {
-    setDirection("back");
-    setView("summary");
-  };
+  useFloatingMenuFocus(panelRef, "", autoFocus);
 
   const display = useComposerConnectionDisplay();
   const providers = initialized.providers ?? [];
@@ -1069,16 +1011,12 @@ export function RuntimeModelMenu({
   const effectiveProvider = providers.find((provider) => provider.name === effectiveProviderName);
   const scopedGroups = groups.filter((group) => group.provider.name === effectiveProviderName);
 
+  // Every provider's models list together under group headers; a filter
+  // matches provider names as well as model names so a prefix narrows to one
+  // group without hiding the rest of the column behind navigation.
   const activeFilter = (query || filterQuery).trim().toLocaleLowerCase();
-  const visibleProviderGroups = activeFilter
-    ? groups.filter((group) =>
-        (group.provider.name.toLocaleLowerCase().includes(activeFilter) || display.label(`provider:${group.provider.name}`, group.provider.name).toLocaleLowerCase().includes(activeFilter))
-        || group.models.some((model) =>
-          providerModelDisplayName(model).toLocaleLowerCase().includes(activeFilter)
-          || model.id.toLocaleLowerCase().includes(activeFilter)))
-    : groups;
   const filteredGroups = activeFilter
-    ? scopedGroups
+    ? groups
         .map((group) => ({
           ...group,
           models: group.models.filter(
@@ -1089,21 +1027,15 @@ export function RuntimeModelMenu({
           )
         }))
         .filter((group) => group.models.length > 0)
-    : scopedGroups;
+    : groups;
 
-  // The engine is worth naming only when there is another one to pick.
-  const showEngine = engineOptions.length > 1 || selectedEngine !== "wuu";
   const effectiveCodex = providerIsCodex(initialized, effectiveProviderName);
   const effortOptions = providerModelVariantOptions(effectiveProvider, effectiveModelID, effectiveVariant);
   const effectiveModel = scopedGroups
     .flatMap((group) => group.models)
     .find((model) => model.id === effectiveModelID);
   const visibleModels = filteredGroups.flatMap((group) => group.models.map((model) => ({ provider: group.provider, model })));
-  const pageRows = view === "providers"
-    ? visibleProviderGroups.length
-    : view === "models"
-      ? visibleModels.length
-      : engineOptions.length;
+  const quickIndex = new Map(visibleModels.map((entry, index) => [`${entry.provider.name}/${entry.model.id}`, index]));
 
   // An unreadable Codex login still leaves the configured provider models
   // selectable, so like external catalog failures it reports through the
@@ -1126,300 +1058,135 @@ export function RuntimeModelMenu({
       if (committed === false) setOptimistic(null);
     });
   };
+  const selectEntry = (entry: { provider: ProviderSummary; model: ProviderModelSummary }): void => {
+    const selected = entry.provider.name === effectiveProviderName && entry.model.id === effectiveModelID;
+    selectModel(
+      entry.provider.name,
+      entry.model.id,
+      selected ? effectiveVariant : rememberedVariantForRuntimeModel(entry.provider, entry.model),
+    );
+  };
+  const quickSelect = (index: number): void => {
+    const entry = visibleModels[index];
+    if (entry) selectEntry(entry);
+  };
+  const effortLabel = effectiveModel ? providerModelDisplayName(effectiveModel) : effectiveModelID || t("runtime.selectModel");
 
   return (
     <div
       ref={panelRef}
-      className={`codex-runtime-menu codex-model-menu runtime-panel is-${view}`}
+      className={`codex-runtime-menu codex-model-menu runtime-panel runtime-flat-panel${fromRail ? " from-rail" : ""}`}
       role="menu"
-      style={{
-        ...runtimePanelStyle(pageRows, width),
-        ...runtimeSummaryStyle({
-          context: showEngine || Boolean(effectiveProviderName) || Boolean(effectiveModel?.fast_mode && onSelectSpeed),
-          effort: effortOptions.length > 1,
-          speed: Boolean(effectiveModel?.fast_mode && onSelectSpeed),
-        }),
-      }}
-      onKeyDown={(event) => handleRuntimePanelKeyDown(event, view, showSummary)}
+      style={{ "--runtime-panel-width": `${width ?? runtimePanelWidth()}px` } as CSSProperties}
+      onKeyDown={(event) => handleRuntimePanelKeyDown(event, quickSelect)}
     >
-      <div key={view} className={`runtime-panel-page is-${direction}`}>
-        {view === "summary" ? (
-          <RuntimePanelSummary
-            engine={selectedEngine}
-            engineId={selectedEngine}
-            provider={display.label(`provider:${effectiveProviderName}`, effectiveProviderName)}
-            showEngine={showEngine}
-            engineLocked={engineLocked}
+      <div className="runtime-flat">
+        {engineOptions.length > 1 ? (
+          <RuntimeEngineRail
+            options={engineOptions}
+            selected={selectedEngine}
+            locked={engineLocked}
+            running={running}
             lockedDescription={lockedDescription}
-            model={effectiveModel ? providerModelDisplayName(effectiveModel) : effectiveModelID || t("runtime.selectModel")}
-            effortOptions={effortOptions}
-            selectedEffort={effectiveVariant}
-            effortDisabled={false}
-            speed={initialized.speed}
-            defaultSpeed={effectiveModel?.default_speed}
-            speedDisabled={running}
-            onSelectSpeed={effectiveModel?.fast_mode ? onSelectSpeed : undefined}
-            onOpenEngines={() => openView("engines")}
-            onOpenProviders={providers.length > 1 ? () => openView("providers") : undefined}
-            onOpenModels={() => openView("models")}
-            onSelectEffort={(variant) => {
-              setOptimistic((current) =>
-                current ? { ...current, variant } : { provider: selectedProvider, model: selectedModel, variant }
-              );
-              void Promise.resolve(onSelectEffort(variant)).then((committed) => {
-                if (committed === false) setOptimistic(null);
-              });
-            }}
+            onSelect={(id) => { if (id !== selectedEngine) onSelectEngine(id); }}
           />
         ) : null}
-        {view === "engines" ? (
-          <>
-            <RuntimePanelHeader title={t("runtime.engine")} onBack={showSummary} />
-            <div className="runtime-panel-list">
-              <EngineOptionsMenu
-                options={engineOptions}
-                selected={selectedEngine}
-                locked={engineLocked}
-                running={running}
-                lockedDescription={lockedDescription}
-                onSelect={(id) => {
-                  if (id !== selectedEngine) onSelectEngine(id);
-                  showSummary();
-                }}
-              />
-            </div>
-          </>
-        ) : null}
-        {view === "providers" ? (
-          <div className="runtime-panel-list runtime-provider-options" role="group" aria-label={t("runtime.provider")}>
-            {visibleProviderGroups.map((group) => {
-              const selected = group.provider.name === effectiveProviderName;
+        <div className="runtime-flat-main">
+          <label className="menu-search select-menu-search">
+            <Search className="select-menu-search-icon icon-lg" />
+            <input
+              type="search"
+              value={query}
+              placeholder={t("runtime.searchModels")}
+              aria-label={t("runtime.searchModels")}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              onKeyDown={(event) => {
+                const first = visibleModels[0];
+                if (event.key !== "Enter" || !first) return;
+                event.preventDefault();
+                selectEntry(first);
+              }}
+            />
+          </label>
+          <div className="codex-model-groups runtime-flat-models">
+            {effectiveCodex && state.loading ? <div className="composer-menu-empty">{t("runtime.loadingCodexModels")}</div> : null}
+            {!state.loading && providers.length === 0 ? <div className="composer-menu-empty">{t("runtime.noModels")}</div> : null}
+            {filteredGroups.length === 0 && providers.length > 0 ? <div className="composer-menu-empty">{t("runtime.noMatchingModels")}</div> : null}
+            {filteredGroups.map((group) => {
+              const providerName = display.label(`provider:${group.provider.name}`, group.provider.name);
+              const header = (
+                <>
+                  <ProviderMark id={group.provider.catalog_id ?? group.provider.type} label={providerName} />
+                  <span>{providerName}</span>
+                </>
+              );
               return (
-                <button
-                  type="button"
-                  className="runtime-provider-option"
-                  role="menuitemradio"
-                  aria-checked={selected}
-                  key={group.provider.name}
-                  onClick={() => {
-                    if (onSelectProvider) {
-                      onSelectProvider(group.provider.name);
-                      openView("models");
-                      return;
-                    }
-                    // Reuse the model this provider was last used with so a
-                    // provider switch does not silently drop back to the catalog
-                    // default; a model that disappeared falls back to it.
-                    const remembered = lastModelForProvider(group.provider.name);
-                    const model =
-                      runtimeModelsForProvider(group.provider, state).find((item) => item.id === remembered)
-                      ?? configuredRuntimeModelForProvider(group.provider, state)
-                      ?? runtimeModelsForProvider(group.provider, state)[0];
-                    if (model && !selected) {
-                      selectModel(group.provider.name, model.id, rememberedVariantForRuntimeModel(group.provider, model));
-                    }
-                    showSummary();
-                  }}
-                >
-                  <span>{display.label(`provider:${group.provider.name}`, group.provider.name)}</span>
-                  {selected ? <Check aria-hidden="true" /> : null}
-                </button>
+                <div className="codex-model-group" key={group.provider.name}>
+                  {onSelectProvider ? (
+                    <button
+                      type="button"
+                      className="runtime-provider-head is-action"
+                      onClick={() => onSelectProvider(group.provider.name)}
+                    >
+                      {header}
+                    </button>
+                  ) : (
+                    <div className="runtime-provider-head">{header}</div>
+                  )}
+                  {group.models.map((model) => {
+                    const selected = group.provider.name === effectiveProviderName && model.id === effectiveModelID;
+                    return (
+                      <RuntimeModelRow
+                        key={`${group.provider.name}/${model.id}`}
+                        name={providerModelDisplayName(model)}
+                        checked={selected}
+                        quickIndex={quickIndex.get(`${group.provider.name}/${model.id}`)}
+                        onSelect={() => {
+                          selectModel(
+                            group.provider.name,
+                            model.id,
+                            selected ? effectiveVariant : rememberedVariantForRuntimeModel(group.provider, model),
+                          );
+                        }}
+                      />
+                    );
+                  })}
+                </div>
               );
             })}
           </div>
-        ) : null}
-        {view === "models" ? (
-          <>
-            <label className="menu-search select-menu-search">
-              <Search className="select-menu-search-icon icon-lg" />
-              <input
-                type="search"
-                value={query}
-                placeholder={t("runtime.searchModels")}
-                aria-label={t("runtime.searchModels")}
-                onChange={(event) => setQuery(event.currentTarget.value)}
-                onKeyDown={(event) => {
-                  const first = visibleModels[0];
-                  if (event.key !== "Enter" || !first) return;
-                  event.preventDefault();
-                  const selected = first.provider.name === effectiveProviderName && first.model.id === effectiveModelID;
-                  selectModel(
-                    first.provider.name,
-                    first.model.id,
-                    selected ? effectiveVariant : rememberedVariantForRuntimeModel(first.provider, first.model),
-                  );
-                  showSummary();
-                }}
-              />
-            </label>
-            <div className="codex-model-groups">
-              {effectiveCodex && state.loading ? <div className="composer-menu-empty">{t("runtime.loadingCodexModels")}</div> : null}
-              {!state.loading && providers.length === 0 ? <div className="composer-menu-empty">{t("runtime.noModels")}</div> : null}
-              {filteredGroups.length === 0 ? <div className="composer-menu-empty">{t("runtime.noMatchingModels")}</div> : null}
-              {filteredGroups.map((group) => (
-                <div className="codex-model-group" key={group.provider.name}>
-                  {group.models.map((model) => (
-                    <RuntimeModelMenuItem
-                      key={`${group.provider.name}/${model.id}`}
-                      provider={group.provider}
-                      model={model}
-                      selected={group.provider.name === effectiveProviderName && model.id === effectiveModelID}
-                      selectedVariant={effectiveVariant}
-                      onSelectModel={(provider, model, variant) => {
-                        selectModel(provider, model, variant);
-                        showSummary();
-                      }}
-                    />
-                  ))}
-                </div>
-              ))}
-            </div>
-          </>
+        </div>
+        {effortOptions.length > 1 ? (
+          <div className="runtime-flat-side">
+            <RuntimeEffortColumn
+              model={effortLabel}
+              options={effortOptions}
+              selected={effectiveVariant}
+              defaultId={effectiveProvider && effectiveModel ? defaultVariantForRuntimeModel(effectiveProvider, effectiveModel) : ""}
+              disabled={false}
+              busy={false}
+              onSelect={(variant) => {
+                setOptimistic((current) =>
+                  current ? { ...current, variant } : { provider: selectedProvider, model: selectedModel, variant }
+                );
+                void Promise.resolve(onSelectEffort(variant)).then((committed) => {
+                  if (committed === false) setOptimistic(null);
+                });
+              }}
+            />
+          </div>
         ) : null}
       </div>
-    </div>
-  );
-}
-
-// A discrete slider over the levels the model offers, weakest on the left.
-// Dragging previews the level in the heading above; the choice commits once on
-// release (or on a keyboard step) instead of once per intermediate position,
-// so tuning never spams the runtime stream.
-function EffortSelector({
-  options,
-  selectedVariant,
-  disabled = false,
-  busy = false,
-  onPreviewEffort,
-  onSelectEffort
-}: {
-  options: string[];
-  selectedVariant: string;
-  disabled?: boolean;
-  busy?: boolean;
-  onPreviewEffort?: (variant: string) => void;
-  onSelectEffort: (variant: string) => void;
-}): JSX.Element {
-  const orderedOptions = orderedEffortOptions(options);
-  const matchedIndex = orderedOptions.indexOf(selectedVariant);
-  const selectedIndex = matchedIndex >= 0 ? matchedIndex : orderedOptions.length - 1;
-  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
-  const pendingIndex = useRef<number | null>(null);
-  const endpointKey = useRef<{ key: string; index: number } | null>(null);
-  const activePointer = useRef<number | null>(null);
-  const sliderRef = useRef<HTMLDivElement>(null);
-  const displayIndex = previewIndex ?? selectedIndex;
-  const lastIndex = Math.max(orderedOptions.length - 1, 1);
-
-  useEffect(() => {
-    if (busy) return;
-    setPreviewIndex(null);
-    pendingIndex.current = null;
-  }, [selectedIndex, busy]);
-
-  const previewTo = (index: number): void => {
-    pendingIndex.current = index;
-    setPreviewIndex(index);
-    onPreviewEffort?.(orderedOptions[index] ?? selectedVariant);
-  };
-  const cancel = (): void => {
-    endpointKey.current = null;
-    activePointer.current = null;
-    pendingIndex.current = null;
-    setPreviewIndex(null);
-    onPreviewEffort?.(orderedOptions[selectedIndex] ?? selectedVariant);
-  };
-  const commit = (index = pendingIndex.current): void => {
-    endpointKey.current = null;
-    activePointer.current = null;
-    pendingIndex.current = null;
-    if (disabled || busy || index === null) return;
-    const next = orderedOptions[index];
-    if (next !== undefined) onSelectEffort(next);
-  };
-
-  // Stops sit at the two ends of the capsule and evenly between them; a pointer
-  // snaps to the nearest one. The knob's outside edge reaches each endpoint.
-  const previewPointer = (clientX: number): void => {
-    const slider = sliderRef.current;
-    const rect = slider?.getBoundingClientRect();
-    if (!slider || !rect || rect.width <= 0) return;
-    const style = getComputedStyle(slider);
-    const knob = Number.parseFloat(style.getPropertyValue("--effort-knob")) || 0;
-    const edge = Number.parseFloat(style.getPropertyValue("--effort-edge")) || 0;
-    const ratio = (clientX - rect.left - edge - knob / 2) / Math.max(rect.width - knob - edge * 2, 1);
-    if (!Number.isFinite(ratio)) return;
-    previewTo(Math.min(orderedOptions.length - 1, Math.max(0, Math.round(ratio * lastIndex))));
-  };
-  const stop = (index: number): string => String(index / lastIndex);
-
-  return (
-    <div
-      ref={sliderRef}
-      className={`codex-effort-slider${disabled ? " is-disabled" : ""}`}
-      style={{ "--effort-ratio": stop(displayIndex) } as CSSProperties}
-    >
-      <span className="codex-effort-track" aria-hidden="true">
-        <span className="codex-effort-fill" />
-      </span>
-      <span className="codex-effort-stops" aria-hidden="true">
-        {orderedOptions.map((variant, index) => (
-          <span
-            key={variant || `default-${index}`}
-            className={index <= displayIndex ? "is-filled" : ""}
-            style={{ "--effort-stop": stop(index) } as CSSProperties}
+      {effectiveModel?.fast_mode && onSelectSpeed ? (
+        <div className="runtime-flat-footer">
+          <RuntimeSpeedControl
+            speed={initialized.speed}
+            defaultSpeed={effectiveModel.default_speed}
+            disabled={running}
+            onSelectSpeed={onSelectSpeed}
           />
-        ))}
-      </span>
-      <span className="codex-effort-knob" aria-hidden="true" />
-      <input
-        type="range"
-        min={0}
-        max={orderedOptions.length - 1}
-        step={1}
-        value={displayIndex}
-        disabled={disabled && !busy}
-        aria-disabled={disabled || busy || undefined}
-        aria-busy={busy || undefined}
-        aria-label={translate("runtime.reasoningEffort")}
-        aria-valuetext={variantLabel(orderedOptions[displayIndex] ?? selectedVariant)}
-        onPointerDown={(event) => {
-          if (disabled || busy || event.button !== 0) return;
-          event.preventDefault();
-          event.currentTarget.focus();
-          event.currentTarget.setPointerCapture(event.pointerId);
-          activePointer.current = event.pointerId;
-          previewPointer(event.clientX);
-        }}
-        onPointerMove={(event) => {
-          if (activePointer.current === event.pointerId) previewPointer(event.clientX);
-        }}
-        onPointerUp={() => commit()}
-        onPointerCancel={cancel}
-        onLostPointerCapture={() => {
-          if (activePointer.current !== null) cancel();
-        }}
-        onChange={(event) => { if (!busy) previewTo(Number(event.currentTarget.value)); }}
-        onKeyDown={(event) => {
-          if (disabled) return;
-          if (busy) {
-            if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) event.preventDefault();
-            return;
-          }
-          if (event.key === "Home" || event.key === "End") {
-            // An older settings response can replace the displayed value while
-            // this key is held, even when the key produced no input event.
-            endpointKey.current = { key: event.key, index: event.key === "Home" ? 0 : orderedOptions.length - 1 };
-          }
-        }}
-        onKeyUp={(event) => {
-          if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) {
-            const endpoint = endpointKey.current;
-            commit(endpoint?.key === event.key ? endpoint.index : Number(event.currentTarget.value));
-          }
-        }}
-        onBlur={cancel}
-      />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1428,34 +1195,6 @@ type RuntimeModelGroup = {
   provider: ProviderSummary;
   models: ProviderModelSummary[];
 };
-
-function RuntimeModelMenuItem({
-  provider,
-  model,
-  selected,
-  selectedVariant,
-  onSelectModel
-}: {
-  provider: ProviderSummary;
-  model: ProviderModelSummary;
-  selected: boolean;
-  selectedVariant: string;
-  onSelectModel: (provider: string, model: string, variant?: string) => void;
-}): JSX.Element {
-  const nextVariant = selected ? selectedVariant : rememberedVariantForRuntimeModel(provider, model);
-  return (
-    <button
-      className="codex-model-item"
-      role="menuitemradio"
-      type="button"
-      aria-checked={selected}
-      onClick={() => onSelectModel(provider.name, model.id, nextVariant)}
-    >
-      <span className="codex-model-item-name">{providerModelDisplayName(model)}</span>
-      {selected ? <Check className="icon-lg" /> : null}
-    </button>
-  );
-}
 
 function rememberedVariantForRuntimeModel(provider: ProviderSummary, model: ProviderModelSummary): string {
   return lastEffortForRuntimeModel(provider.name, model.id) ?? defaultVariantForRuntimeModel(provider, model);

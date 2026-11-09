@@ -363,6 +363,8 @@ export const zhCN = {
   "runtime.fastModeOff": "Fast mode 已关闭 · 普通速度",
   "runtime.fastModeHint": "更快响应，可能增加费用或额度消耗",
   "runtime.fastModeDefault": "跟随引擎默认速度",
+  "runtime.speedStandard": "标准",
+  "runtime.speedFast": "Fast",
   "runtime.engineDefaultModel": "Agent 默认模型",
   "runtime.engineDefaultOption": "默认",
   "runtime.modelsEmpty": "引擎当前没有报告可用模型。",

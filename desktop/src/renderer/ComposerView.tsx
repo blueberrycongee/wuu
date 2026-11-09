@@ -1608,7 +1608,6 @@ export function Composer({
               running={false}
               onSelectEngine={() => {}}
               filterQuery={canSubmitHandoffDraft(handoffDraft) ? "" : handoffDraft.filterQuery}
-              forcedView={canSubmitHandoffDraft(handoffDraft) ? "summary" : handoffDraft.pickerView}
               onSelectProvider={(provider) => {
                 setHandoffRevision((current) => current + 1);
                 setPrompt(handoffPromptFromSelection(provider, "", handoffDraft.intent));

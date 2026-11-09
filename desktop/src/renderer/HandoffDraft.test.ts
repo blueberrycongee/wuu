@@ -44,7 +44,7 @@ describe("handoff draft", () => {
       modelId: "gpt-5.5",
       intent: "keep the verified fix",
       status: "resolved",
-      pickerView: "models",
+      filterQuery: "gpt-5.5",
       revision: 3,
     });
     expect(canSubmitHandoffDraft(draft)).toBe(true);
@@ -58,25 +58,24 @@ describe("handoff draft", () => {
     expect(canSubmitHandoffDraft(draft)).toBe(true);
   });
 
-  it("shows the runtime summary until the user starts choosing a provider", () => {
+  it("keeps the picker unfiltered until the user starts typing a target", () => {
     const draft = reduceHandoffDraft("", catalog, 1);
-    expect(draft.pickerView).toBe("summary");
+    expect(draft.filterQuery).toBe("");
     expect(draft.status).toBe("pending");
     expect(canSubmitHandoffDraft(draft)).toBe(false);
   });
 
-  it("opens the provider list from a provider prefix", () => {
+  it("filters the picker by a provider prefix", () => {
     const draft = reduceHandoffDraft("open", catalog, 1);
-    expect(draft.pickerView).toBe("providers");
     expect(draft.filterQuery).toBe("open");
     expect(draft.status).toBe("pending");
     expect(canSubmitHandoffDraft(draft)).toBe(false);
   });
 
-  it("opens the model list after a unique provider is chosen", () => {
+  it("moves the filter to the model prefix after a provider is chosen", () => {
     const draft = reduceHandoffDraft("openai/", catalog, 1);
     expect(draft.providerId).toBe("openai");
-    expect(draft.pickerView).toBe("models");
+    expect(draft.filterQuery).toBe("");
     expect(canSubmitHandoffDraft(draft)).toBe(false);
   });
 
@@ -84,7 +83,7 @@ describe("handoff draft", () => {
     const draft = reduceHandoffDraft("openai/my-local-gate/vision", catalog, 1);
     expect(draft.status).toBe("unverified");
     expect(draft.modelId).toBe("my-local-gate/vision");
-    expect(draft.pickerView).toBe("models");
+    expect(draft.filterQuery).toBe("my-local-gate/vision");
     expect(canSubmitHandoffDraft(draft)).toBe(true);
   });
 
