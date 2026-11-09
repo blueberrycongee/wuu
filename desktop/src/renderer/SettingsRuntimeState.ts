@@ -4,6 +4,11 @@ import type { CodexPetSettingsUpdate, CodexPetsSnapshot, SettingsUsageResponse }
 import { translateCurrent } from "./i18n";
 import { isPluginLifecycleCancellation, PluginLifecycleCancellationError } from "../shared/PluginLifecycle";
 
+// Same retention contract as SettingsPageData: the usage snapshot is confirmed
+// data, so it survives closing the panel and is reused while the next open
+// revalidates in the background instead of replaying the skeleton.
+const retainedUsage = new WeakMap<Pick<ApplicationServiceV1, "invoke">, SettingsUsageResponse>();
+
 export type SettingsRuntimeState = {
   settingsUsage: SettingsUsageResponse | undefined;
   settingsUsageLoading: boolean;
@@ -64,14 +69,25 @@ export function useSettingsRuntimeState({ settingsOpen, application }: {
 
   useEffect(() => {
     if (!settingsOpen) {
-      setSettingsUsage(undefined); setSettingsUsageLoading(false); setSettingsUsageError("");
+      setSettingsUsageLoading(false); setSettingsUsageError("");
       return;
     }
     const lifetime = new AbortController();
+    setSettingsUsage(retainedUsage.get(application));
     setSettingsUsageLoading(true); setSettingsUsageError("");
     void application.invoke("settings.read-usage", {}, { signal: lifetime.signal })
-      .then(snapshot => { if (!lifetime.signal.aborted) setSettingsUsage(structuredClone(snapshot) as SettingsUsageResponse); })
-      .catch(error => { if (!lifetime.signal.aborted && !isPluginLifecycleCancellation(error)) { setSettingsUsage(undefined); setSettingsUsageError(error instanceof Error ? error.message : translateCurrent("settings.usageLoadFailed")); } })
+      .then(snapshot => {
+        if (lifetime.signal.aborted) return;
+        const next = structuredClone(snapshot) as SettingsUsageResponse;
+        retainedUsage.set(application, next);
+        setSettingsUsage(next);
+      })
+      .catch(error => {
+        if (lifetime.signal.aborted || isPluginLifecycleCancellation(error)) return;
+        retainedUsage.delete(application);
+        setSettingsUsage(undefined);
+        setSettingsUsageError(error instanceof Error ? error.message : translateCurrent("settings.usageLoadFailed"));
+      })
       .finally(() => { if (!lifetime.signal.aborted) setSettingsUsageLoading(false); });
     return () => lifetime.abort();
   }, [settingsOpen, application]);

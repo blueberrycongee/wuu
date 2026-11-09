@@ -2500,19 +2500,21 @@ button.settings-engine-expand:hover {
   white-space: nowrap;
 }
 
-/* Grid: column = week, row = day-of-week */
+/* Grid: column = week, row = day-of-week. Cells carry aspect-ratio:1, so the
+ * rows size from the column width directly — no scripted height pass, and the
+ * first painted frame is already the settled one. */
 .settings-usage-heatmap {
   --heatmap-gap: 3px;
   display: grid;
-  grid-template-rows: repeat(7, 1fr);
+  grid-template-rows: repeat(7, auto);
   grid-template-columns: repeat(var(--heatmap-cols, 12), 1fr);
   grid-auto-flow: column;
   gap: var(--heatmap-gap);
   width: 100%;
-  /* height set inline via JS to keep cells square */
 }
 
 .settings-usage-heatmap-cell {
+  aspect-ratio: 1;
   min-width: 0;
   min-height: 0;
   border-radius: 2px;

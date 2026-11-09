@@ -229,8 +229,11 @@ describe("useSettingsRuntimeState", () => {
     expect(hook.get().codexPets).toEqual(updatedSnapshot);
   });
 
-  it("loads usage only while settings are open and clears it on close", async () => {
-    const getSettingsUsage = vi.fn().mockImplementation(async () => usage());
+  it("loads usage while settings are open and reuses the confirmed snapshot while revalidating on reopen", async () => {
+    const secondRead = deferred<SettingsUsageResponse>();
+    const getSettingsUsage = vi.fn()
+      .mockImplementationOnce(async () => usage())
+      .mockImplementationOnce(() => secondRead.promise);
     installWuuStub({
       listCodexPets: vi.fn().mockResolvedValue(snapshot(false)),
       updateCodexPetSettings: vi.fn().mockResolvedValue(snapshot(false)),
@@ -245,10 +248,21 @@ describe("useSettingsRuntimeState", () => {
     expect(hook.get().settingsUsageError).toBe("");
 
     await hook.rerender(false);
+    await hook.rerender(true);
 
-    expect(hook.get().settingsUsage).toBeUndefined();
-    expect(hook.get().settingsUsageLoading).toBe(false);
+    // Reopening revalidates in the background but already exposes the last
+    // confirmed snapshot, so the page skips the skeleton placeholder.
+    expect(getSettingsUsage).toHaveBeenCalledTimes(2);
+    expect(hook.get().settingsUsage?.total_sessions).toBe(12);
+    expect(hook.get().settingsUsageLoading).toBe(true);
     expect(hook.get().settingsUsageError).toBe("");
+
+    await act(async () => {
+      secondRead.resolve(usage());
+      await flushEffects();
+    });
+    expect(hook.get().settingsUsageLoading).toBe(false);
+    expect(hook.get().settingsUsage?.total_sessions).toBe(12);
   });
 
   it("keeps the app usable when a stale preload does not expose settings usage", async () => {

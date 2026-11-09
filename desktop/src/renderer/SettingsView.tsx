@@ -1648,26 +1648,6 @@ function SettingsUsagePage({
     (sum?.input_tokens ?? 0) + (sum?.output_tokens ?? 0) + (sum?.cache_creation_tokens ?? 0) + (sum?.cache_read_tokens ?? 0);
   const heatmapCols = heatmap.length > 0 ? Math.ceil(heatmap.length / 7) : 12;
 
-  // Keep grid height = 7 × cell-size so cells stay square as panel resizes
-  const heatmapRef = useRef<HTMLDivElement>(null);
-  const [heatmapHeight, setHeatmapHeight] = useState<number | undefined>(undefined);
-  useEffect(() => {
-    const el = heatmapRef.current;
-    if (!el) return;
-    const GAP = 3;
-    const update = () => {
-      const cellW = (el.offsetWidth - (heatmapCols - 1) * GAP) / heatmapCols;
-      setHeatmapHeight(7 * cellW + 6 * GAP);
-    };
-    update();
-    if (typeof ResizeObserver === "undefined") {
-      return;
-    }
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, [heatmapCols]);
-
   // Build month label positions: for each column (week), find the first day;
   // when the month changes from the previous column, record (colIndex, monthLabel).
   const monthLabels: { col: number; label: string }[] = [];
@@ -1695,17 +1675,19 @@ function SettingsUsagePage({
   // The totals cover every recorded day, so the page says since when.
   const firstDay = usage?.metrics.date_range[0];
   const since = firstDay ? t("settings.usageSince", { date: formatUsageSinceDate(firstDay, formatDate) }) : undefined;
-  if (loading) {
-    return (
-      <>
-        {header}
-        <div className="settings-usage-page settings-usage-loading" data-testid="settings-usage" aria-busy="true">
-          <SettingsUsageSkeleton />
-        </div>
-      </>
-    );
-  }
   if (!usage) {
+    // Retained snapshots render straight into the data branch below; the
+    // skeleton only fills the cold-load window when there is nothing to show.
+    if (loading) {
+      return (
+        <>
+          {header}
+          <div className="settings-usage-page settings-usage-loading" data-testid="settings-usage" aria-busy="true">
+            <SettingsUsageSkeleton />
+          </div>
+        </>
+      );
+    }
     return (
       <>
         {header}
@@ -1800,14 +1782,10 @@ function SettingsUsagePage({
             ))}
           </div>
           <div
-            ref={heatmapRef}
             className="settings-usage-heatmap"
             aria-label={t("settings.usageHeatmap")}
             role="grid"
-            style={{
-              "--heatmap-cols": heatmapCols,
-              ...(heatmapHeight !== undefined ? { height: `${heatmapHeight}px` } : {})
-            } as CSSProperties}
+            style={{ "--heatmap-cols": heatmapCols } as CSSProperties}
           >
             {heatmap.map((day) => (
               <Tooltip content={formatHeatmapTitle(day, t, formatCompactUsageValue)} key={day.date}>
