@@ -7,6 +7,8 @@ export interface CanvasArtwork {
   overlay?: string;
   /** Cover-crop alignment in [0, 1] on each axis. */
   align: readonly [number, number];
+  /** A string source can die when its asset cache evicts it; reload it. */
+  onError?: () => void;
 }
 
 // AppBackground resolves the selected skin; the pane only paints it.
@@ -115,7 +117,7 @@ export function ShellCanvasArtwork(): JSX.Element | null {
     void decode(artwork.source).then(decoded => {
       if (disposed) decoded.close?.();
       else { picture = decoded; schedule(); }
-    }, () => {});
+    }, () => artwork.onError?.());
     const observer = new ResizeObserver(([entry]) => {
       const box = entry?.devicePixelContentBoxSize?.[0];
       if (box) deviceSize = [box.inlineSize, box.blockSize];

@@ -28,7 +28,11 @@ export function registerPluginModuleProtocol(): void {
   protocol.handle(PLUGIN_MODULE_SCHEME, (request) => {
 	const assetDigest = digestFromPluginAssetURL(request.url);
 	const asset = assetDigest ? assets.get(assetDigest) : undefined;
-	if (asset) {
+	if (assetDigest && asset) {
+	  // A read marks the asset most-recently-used so bounded-cache eviction
+	  // drops artwork nothing displays before what is still on screen.
+	  assets.delete(assetDigest);
+	  assets.set(assetDigest, asset);
 	  return new Response(asset.data, {
 		headers: {
 		  "Content-Type": asset.mediaType,

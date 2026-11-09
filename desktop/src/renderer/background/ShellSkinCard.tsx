@@ -11,9 +11,9 @@ const line = (ink: string, canvas: string, alpha: number): CSSProperties => ({
   background: `color-mix(in srgb, ${ink} ${Math.round(alpha * 100)}%, ${canvas})`,
 });
 
-function PreviewHalf({ canvas, ink, url }: { canvas: string; ink: string; url: string }): JSX.Element {
+function PreviewHalf({ canvas, ink, url, onImageError }: { canvas: string; ink: string; url: string; onImageError: () => void }): JSX.Element {
   return <span className="settings-skin-half" style={{ background: canvas }}>
-    {url ? <img src={url} alt="" /> : null}
+    {url ? <img src={url} alt="" onError={onImageError} /> : null}
     <i className="settings-skin-half-rail" style={line(ink, canvas, 0.10)} />
     <span className="settings-skin-half-lines">
       <i style={{ width: "46%", ...line(ink, canvas, 0.30) }} />
@@ -42,8 +42,8 @@ export function SkinPreviewCard({ skin, selected, choose, title, previewClassNam
     title={skin ? (failed ? t("settings.skinImageFailed") : skin.pluginName) : undefined}
   >
     <span className={`settings-theme-preview settings-skin-preview${previewClassName ? ` ${previewClassName}` : ""}`} aria-hidden="true">
-      <PreviewHalf {...lv} url={light.url} />
-      <PreviewHalf {...dv} url={dark.url} />
+      <PreviewHalf {...lv} url={light.url} onImageError={light.retry} />
+      <PreviewHalf {...dv} url={dark.url} onImageError={dark.retry} />
     </span>
     <span className="settings-theme-card-label">{title}</span>
   </button>;

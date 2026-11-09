@@ -44,9 +44,9 @@ export function AppBackground(): JSX.Element | null {
     position === "top" ? 0 : position === "bottom" ? 1 : 0.5,
   ] as const, [position]);
   useEffect(() => {
-    publishCanvasArtwork(canvasSource ? { source: canvasSource, dots: variant?.dots, overlay: variant?.overlay, align } : null);
+    publishCanvasArtwork(canvasSource ? { source: canvasSource, dots: variant?.dots, overlay: variant?.overlay, align, onError: pluginImage.retry } : null);
     return () => publishCanvasArtwork(null);
-  }, [canvasSource, variant, align]);
+  }, [canvasSource, variant, align, pluginImage.retry]);
   useLayoutEffect(() => {
     const root = document.documentElement;
     const variables: Record<string, string> = {};
@@ -75,15 +75,17 @@ export function AppBackground(): JSX.Element | null {
     else delete root.dataset.shellImage;
     const image = new Image();
     image.onload = () => root.style.setProperty("--shell-image-ratio", String(image.naturalWidth / image.naturalHeight));
+    image.onerror = () => pluginImage.retry();
     if (frameURL) image.src = frameURL;
     return () => {
       image.onload = null;
+      image.onerror = null;
       for (const name of Object.keys(variables)) root.style.removeProperty(name);
       root.removeAttribute("data-shell-skin");
       delete root.dataset.shellPlacement;
       delete root.dataset.shellImage;
     };
-  }, [enabled, frameURL, variant, mode, placement, skin, align]);
+  }, [enabled, frameURL, variant, mode, placement, skin, align, pluginImage.retry]);
   return enabled && placement === "frame"
     ? createPortal(<div className="app-background" aria-hidden="true" />, document.body)
     : null;

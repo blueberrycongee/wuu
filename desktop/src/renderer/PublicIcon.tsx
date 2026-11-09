@@ -35,7 +35,7 @@ import type { ExtensionIconDescriptor } from "../shared/protocol";
 import { DefaultExtensionIcon } from "./DefaultExtensionIcon";
 import { MODULE_IDENTITY_ICONS } from "./ModuleIdentityIcons";
 import { PluginAvatar } from "./PluginAvatar";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 export const PUBLIC_ICON_COMPONENTS = {
   ...MODULE_IDENTITY_ICONS,
@@ -130,8 +130,12 @@ function PluginAssetIcon({
   const paths: string[] = "path" in icon && icon.path
     ? [icon.path]
     : [icon.light as string, icon.dark as string];
+  const pathsKey = paths.join("\u0000");
   const [urls, setURLs] = useState<readonly string[]>([]);
+  const [cycle, setCycle] = useState(0);
+  const reloads = useRef(2);
 
+  useEffect(() => { reloads.current = 2; }, [pluginId, fingerprint, pathsKey]);
   useEffect(() => {
     let active = true;
     Promise.all(paths.map((path) => loadIcon(pluginId, fingerprint, path)))
@@ -142,18 +146,28 @@ function PluginAssetIcon({
         if (active) setURLs([]);
       });
     return () => { active = false; };
-  }, [pluginId, fingerprint, paths.join("\u0000"), loadIcon]);
+  }, [pluginId, fingerprint, pathsKey, loadIcon, cycle]);
+
+  // A cached URL outlives the bounded main-process asset cache; a failed <img>
+  // drops the dead entries and refetches so the asset is recached.
+  const reload = () => {
+    if (reloads.current <= 0) { setURLs([]); return; }
+    reloads.current -= 1;
+    for (const path of paths) pluginIconURLs.delete(`${pluginId}\u0000${fingerprint}\u0000${path}`);
+    setURLs([]);
+    setCycle(count => count + 1);
+  };
 
   if (urls.length !== paths.length) {
     return <PublicIcon className={className} />;
   }
   if (urls.length === 1) {
-    return <img className={`plugin-icon-asset ${className ?? ""}`} src={urls[0]} alt="" />;
+    return <img key={cycle} className={`plugin-icon-asset ${className ?? ""}`} src={urls[0]} alt="" onError={reload} />;
   }
   return (
     <span className={`plugin-icon-themed ${className ?? ""}`} aria-hidden="true">
-      <img className="plugin-icon-asset plugin-icon-asset-light" src={urls[0]} alt="" />
-      <img className="plugin-icon-asset plugin-icon-asset-dark" src={urls[1]} alt="" />
+      <img key={`${cycle}:light`} className="plugin-icon-asset plugin-icon-asset-light" src={urls[0]} alt="" onError={reload} />
+      <img key={`${cycle}:dark`} className="plugin-icon-asset plugin-icon-asset-dark" src={urls[1]} alt="" onError={reload} />
     </span>
   );
 }

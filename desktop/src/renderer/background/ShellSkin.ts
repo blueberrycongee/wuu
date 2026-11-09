@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ExtensionInventoryRecord, ExtensionSkinDescriptor } from "../../shared/protocol";
 
 export type AvailableShellSkin = ExtensionSkinDescriptor & { key: string; pluginId: string; fingerprint: string; pluginName: string };
@@ -73,19 +73,54 @@ export function loadSkinImage(input: { id: string; fingerprint: string; path: st
   return pending;
 }
 
+// Reads fail transiently while the catalog publishes or a plugin republishes
+// between inventory and read, and a resolved URL can outlive its asset in the
+// bounded main-process cache. Retry the read a few times per cycle, and let a
+// failed <img> request start a fresh cycle after the dead URL is cleared.
+const RETRY_DELAYS_MS = [500, 1500, 3000, 6000];
+const RELOAD_CYCLES = 2;
+
 const hostSkinImages = { loadSkinImage };
 export function useSkinImage(skin: AvailableShellSkin | undefined, mode: "light" | "dark", source: Pick<import("../../../../packages/plugin-sdk/src/ui-settings-controls").ApplicationSettingsControlsV1, "loadSkinImage"> = hostSkinImages) {
   const load = source.loadSkinImage;
   const path = skin?.[mode].image;
   const key = skin && path ? `${skin.pluginId}:${skin.fingerprint}:${path}` : "";
   const [result, setResult] = useState({ key: "", url: "", error: false });
+  const [cycle, setCycle] = useState(0);
+  const reloads = useRef(RELOAD_CYCLES);
+  useEffect(() => { reloads.current = RELOAD_CYCLES; }, [key]);
   useEffect(() => {
     if (!skin || !path) return;
     let active = true;
-    void load({ id: skin.pluginId, fingerprint: skin.fingerprint, path }).then(url => {
-      if (active) setResult({ key, url, error: false });
-    }, () => { if (active) setResult({ key, url: "", error: true }); });
-    return () => { active = false; };
-  }, [key, load]);
-  return result.key === key ? result : { key, url: "", error: false };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let remaining = RETRY_DELAYS_MS.length;
+    const attempt = () => {
+      void load({ id: skin.pluginId, fingerprint: skin.fingerprint, path }).then(url => {
+        if (active) setResult({ key, url, error: false });
+      }, () => {
+        if (!active) return;
+        if (remaining > 0) {
+          remaining -= 1;
+          timer = setTimeout(attempt, RETRY_DELAYS_MS[RETRY_DELAYS_MS.length - remaining - 1]);
+        } else {
+          setResult({ key, url: "", error: true });
+        }
+      });
+    };
+    attempt();
+    return () => { active = false; if (timer !== undefined) clearTimeout(timer); };
+    // A republished inventory replaces the skin object but keeps its key; the
+    // rerun then ends a failure window the catalog mutation caused.
+  }, [key, skin, load, cycle]);
+  const retry = useCallback(() => {
+    if (!key) return;
+    if (reloads.current <= 0) { setResult({ key, url: "", error: true }); return; }
+    reloads.current -= 1;
+    images.delete(key);
+    // Clearing the URL unmounts the dead <img>; the same URL string remounts
+    // it only after the reload repopulates the asset cache.
+    setResult({ key, url: "", error: false });
+    setCycle(count => count + 1);
+  }, [key]);
+  return { ...(result.key === key ? result : { key, url: "", error: false }), retry };
 }
