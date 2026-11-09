@@ -1,2 +1,0 @@
-export const TURN_LIST_COLLAPSE_THRESHOLD = 80;
-export const TURN_LIST_RECENT_FULL_TURNS = 40;
