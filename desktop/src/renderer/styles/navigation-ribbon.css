@@ -35,7 +35,12 @@
   --workbench-top: var(--conversation-pane-inset);
   /* Match New conversation's visible left edge: its artwork starts at x=4,
      while the panel artwork starts at x=3.5 on the same 24-unit grid. */
-  --navigation-toggle-left: calc(var(--sidebar-ribbon-width) + var(--space-2) * 2 + (var(--icon-size) - var(--control-size-toolbar)) / 2 - var(--sidebar-leading-icon-inset) + var(--icon-size) * 0.5 / 24);
+  --navigation-toggle-left: calc(
+    var(--sidebar-ribbon-width) + var(--space-3) + var(--space-2)
+    + (var(--icon-size) - var(--control-size-toolbar)) / 2
+    - var(--sidebar-leading-icon-inset)
+    + var(--icon-size) * 0.5 / 24
+  );
 }
 
 :root:has(.mac-window-controls) .navigation-ribbon-layout:has(.sidebar-ribbon) :is(.section-sidebar-toggle, .ribbon-restore-toggle) {
@@ -99,7 +104,10 @@
 }
 
 .navigation-ribbon-layout:has(.sidebar-ribbon) .sidebar > .sidebar-content {
-  --sidebar-content-pad-x: var(--space-2);
+  /* The secondary pane sits beside the ribbon, where the shared window inset
+   * no longer applies. Keep one module between its border and the first row
+   * surface so compact labels keep a readable gutter. */
+  --sidebar-content-pad-x: var(--space-3);
   --sidebar-row-pad-x: var(--space-2);
   width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
   min-width: calc(var(--sidebar-open-width) - var(--sidebar-ribbon-compact-width, 52px));
