@@ -83,6 +83,12 @@
   --workspace-tool-rail-reserve: calc(var(--workspace-tool-rail-right) - var(--conversation-pane-inset) + var(--workspace-tool-rail-width) + var(--space-2));
 }
 
+/* The open right panel covers the rail's column. Its controls stay mounted in
+ * a hidden target so the composer footer does not reflow beneath the input. */
+.workspace-composer-controls[hidden] {
+  display: none;
+}
+
 .workspace-tool-rail {
   position: absolute;
   top: calc(var(--workbench-top, 0px) + var(--canvas-titlebar-height) + var(--space-2));
