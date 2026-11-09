@@ -27,7 +27,6 @@
         "title": "Design",
         "view": "design.studio",
         "icon": "layout-grid",
-        "description": "Live HTML canvas: edit elements, pin comments, hand revisions to the agent.",
         "order": 45
       }
     ]
