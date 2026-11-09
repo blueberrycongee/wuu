@@ -30,7 +30,7 @@ export async function activate(api) {
     "automation.isolation": "Run in an isolated git worktree", "automation.isolationHelp": "Each run executes in its own worktree instead of the live project directory.",
     "automation.create": "Create", "automation.cancel": "Cancel", "automation.remove": "Delete",
     "automation.next": "Next", "automation.run.completed": "Completed", "automation.run.failed": "Failed",
-    "automation.run.running": "Running", "automation.run.lastFailed": "Last run failed", "automation.run.queued": "Queued", "automation.run.interrupted": "Interrupted", "automation.run.never": "No runs yet",
+    "automation.run.running": "Running", "automation.run.lastFailed": "Last run failed", "automation.run.queued": "Queued", "automation.run.uncertain": "Needs review", "automation.run.interrupted": "Interrupted", "automation.run.never": "No runs yet",
     "automation.schedule.daily": "Daily", "automation.schedule.weekdays": "Weekdays", "automation.schedule.weekly": "Weekly",
     "automation.resize": "Resize automation editor", "automation.close": "Close", "automation.group.details": "Execution", "automation.group.schedule": "Schedule",
     "automation.field.target": "Runs in", "automation.field.project": "Project", "automation.field.time": "Time", "automation.field.isolation": "Isolated run",
@@ -61,7 +61,7 @@ export async function activate(api) {
     "automation.isolation": "在独立 git worktree 中运行", "automation.isolationHelp": "每次运行都在自己的 worktree 中执行，不直接改动当前项目目录。",
     "automation.create": "创建", "automation.cancel": "取消", "automation.remove": "删除",
     "automation.next": "下次", "automation.run.completed": "已完成", "automation.run.failed": "失败",
-    "automation.run.running": "运行中", "automation.run.lastFailed": "上次运行失败", "automation.run.queued": "排队中", "automation.run.interrupted": "已中断", "automation.run.never": "暂无运行",
+    "automation.run.running": "运行中", "automation.run.lastFailed": "上次运行失败", "automation.run.queued": "排队中", "automation.run.uncertain": "需确认", "automation.run.interrupted": "已中断", "automation.run.never": "暂无运行",
     "automation.schedule.daily": "每天", "automation.schedule.weekdays": "工作日", "automation.schedule.weekly": "每周",
     "automation.resize": "调整自动化编辑区宽度", "automation.close": "关闭", "automation.group.details": "执行设置", "automation.group.schedule": "时间安排",
     "automation.field.target": "运行于", "automation.field.project": "项目", "automation.field.time": "时间", "automation.field.isolation": "隔离运行",
@@ -101,7 +101,7 @@ export async function activate(api) {
     .plugin-automation-workspace-picker { flex:0 1 auto; min-width:0; max-width:34%; }
     .plugin-automation-workspace-picker .plugin-automation-picker-trigger { width:100%; }
     .plugin-automation-list { display:flex; flex-direction:column; gap:2px; }
-    .plugin-automation-list + .plugin-automation-group { margin-top:var(--section-gap); }
+    .plugin-automation-list + .plugin-automation-group, .plugin-automation-group + .plugin-automation-group { margin-top:var(--section-gap); }
     /* Rows start their text on the toolbar's edge; the hover and selection
      * surfaces reach past it by the row inset. */
     .plugin-automation-item { display:flex; align-items:center; gap:var(--space-3); min-width:0; margin-inline:calc(var(--compact-padding-inline) * -1); border-radius:var(--radius-xs); transition:background var(--motion-fast) var(--ease-out); }
@@ -114,8 +114,9 @@ export async function activate(api) {
     .plugin-automation-item-main > :not(.plugin-automation-item-icon) { grid-column:2; }
     .plugin-automation-item-icon { grid-row:1; display:flex; align-items:center; height:calc(1em * 1.4); color:var(--ink-tertiary); transition:color var(--motion-fast) var(--ease-out); }
     .plugin-automation-item-icon svg { width:var(--icon-size); height:var(--icon-size); }
-    .plugin-automation-item-icon[data-state="failed"] { color:var(--danger); }
+    .plugin-automation-item-icon[data-state="failed"], .plugin-automation-item-icon[data-state="uncertain"] { color:var(--danger); }
     .plugin-automation-item-icon[data-state="paused"] { color:var(--ink-faint); }
+    .plugin-automation-item-icon[data-state="starting"], .plugin-automation-item-icon[data-state="running"], .plugin-automation-item-icon[data-state="queued"] { color:var(--wuu-color-info, var(--info, currentColor)); }
     .plugin-automation-item-title { transition:color var(--motion-fast) var(--ease-out); }
     .plugin-automation-item[data-paused="true"] .plugin-automation-item-title { color:var(--ink-soft); }
     .plugin-automation .plugin-automation-item-switch { flex:none; gap:0; padding-right:var(--compact-padding-inline); }
@@ -204,7 +205,7 @@ export async function activate(api) {
     .plugin-automation-history-empty { margin:0; color:var(--ink-tertiary); }
     .plugin-automation-history-status { display:inline-flex; color:var(--ink-muted); }
     .plugin-automation-history-status svg { width:var(--icon-size-sm); height:var(--icon-size-sm); }
-    .plugin-automation-history-status[data-run="failed"] { color:var(--danger); }
+    .plugin-automation-history-status[data-run="failed"], .plugin-automation-history-status[data-run="uncertain"] { color:var(--danger); }
     /* A failed run's own message is detail under its date; the mark already says it failed. */
     .plugin-automation-history-detail { margin:0; padding-inline-start:calc(var(--icon-size-sm) + var(--space-2)); color:var(--ink-soft); overflow-wrap:anywhere; user-select:text; }
     .plugin-automation-more { position:relative; }
@@ -298,18 +299,56 @@ export async function activate(api) {
     return null;
   }
 
+  // One lifecycle vocabulary for every surface. The scheduler's raw status is
+  // not a UI contract: unknown or unconfirmed outcomes must not be presented
+  // as safely queued.
   function runStatus(run) {
     if (!run) return null;
     switch (run.status) {
       case "completed": return "completed";
       case "failed": return "failed";
-      case "running":
-      case "starting": return "running";
-      case "queued": return "queued";
+      case "running": return "running";
+      case "starting": return "starting";
+      case "queued":
+      case "held":
+      case "pending": return "queued";
       case "interrupted":
-      case "discarded": return "interrupted";
-      default: return "queued";
+      case "discarded":
+      case "cancelled": return "interrupted";
+      case "uncertain":
+      case "unconfirmed": return "uncertain";
+      default: return "uncertain";
     }
+  }
+
+  function isActiveRun(run) {
+    return ["starting", "running", "queued"].includes(runStatus(run));
+  }
+
+  // One catalog entry per automation identity. Live tasks own scheduled
+  // identities; a dispatched one-shot leaves `tasks`, so its latest retained
+  // run snapshot owns the identity. `runs` is newest-first; recurring snapshots
+  // never re-enter the catalog because deleting a schedule must not resurrect it.
+  function catalogEntries(tasks, runs) {
+    const scheduledIDs = new Set(tasks.map((task) => task.id));
+    const latestRunByTask = new Map();
+    for (const run of runs) {
+      if (run.task_id && !latestRunByTask.has(run.task_id)) latestRunByTask.set(run.task_id, run);
+    }
+    const scheduled = tasks.map((task) => ({ task, run: latestRunByTask.get(task.id), historical: false }));
+    const retained = [];
+    const retainedIDs = new Set();
+    for (const run of runs) {
+      if (run.task?.recurring === true || !run.task?.id || scheduledIDs.has(run.task_id) || retainedIDs.has(run.task_id)) continue;
+      retainedIDs.add(run.task_id);
+      retained.push({ task: run.task, run, historical: true });
+    }
+    return {
+      scheduled,
+      recent: retained.filter((entry) => runStatus(entry.run) !== "completed"),
+      completed: retained.filter((entry) => runStatus(entry.run) === "completed"),
+      byID: new Map([...scheduled, ...retained].map((entry) => [entry.task.id, entry])),
+    };
   }
 
   function SearchIcon() {
@@ -351,7 +390,7 @@ export async function activate(api) {
   // One symbol per run outcome, beside the outcome in words.
   function RunStatus({ status }) {
     return h("span", { className: "plugin-automation-history-status", "data-run": status },
-      status === "completed" ? h(CheckIcon) : status === "failed" ? h(AlertIcon) : status === "interrupted" ? h(CloseIcon) : h(ClockIcon));
+      status === "completed" ? h(CheckIcon) : status === "failed" || status === "uncertain" ? h(AlertIcon) : status === "interrupted" ? h(CloseIcon) : h(ClockIcon));
   }
 
   function PauseIcon() {
@@ -658,8 +697,8 @@ export async function activate(api) {
     const snapshot = React.useSyncExternalStore(subscribeSidebar, getSnapshot);
     if (!snapshot?.workspace) return null;
     const { tasks, runs, workspace, loaded, error, selectedID, busy, choose } = snapshot;
-    const active = runs.filter((run) => ["starting", "running", "queued"].includes(run.status))
-      .sort((a, b) => Number(a.status === "queued") - Number(b.status === "queued") || Date.parse(a.triggered_at) - Date.parse(b.triggered_at));
+    const active = runs.filter(isActiveRun)
+      .sort((a, b) => Number(runStatus(a) === "queued") - Number(runStatus(b) === "queued") || Date.parse(a.triggered_at) - Date.parse(b.triggered_at));
     const upcoming = tasks.filter((task) => !task.paused && Date.parse(task.next_run_at) > 0)
       .sort((a, b) => Date.parse(a.next_run_at) - Date.parse(b.next_run_at));
     const row = (task, key, status, time) => {
@@ -678,7 +717,7 @@ export async function activate(api) {
       h("p", { className: "plugin-automation-sidebar-workspace" }, workspace.name || workspaceName(workspace.root)),
       error ? h("p", { className: "plugin-automation-sidebar-empty", role: "status" }, tr("automation.sidebar.refreshError")) : null,
       !loaded ? (!error ? h("p", { className: "plugin-automation-sidebar-empty", role: "status" }, tr("automation.sidebar.loading")) : null) : h(React.Fragment, null,
-        group("automation.sidebar.running", active.map((run) => row(run.task, run.id, run.status, run.triggered_at))),
+        group("automation.sidebar.running", active.map((run) => row(run.task, run.id, runStatus(run), run.triggered_at))),
         group("automation.sidebar.upcoming", upcoming.map((task) => row(task, task.id, null, task.next_run_at)))));
   }
 
@@ -790,16 +829,14 @@ export async function activate(api) {
       } finally { if (activeView.current && !api.signal.aborted) setBusy(false); }
     };
     const sortedRuns = [...runs].sort((a, b) => new Date(b.triggered_at) - new Date(a.triggered_at));
-    // One-shot tasks leave the schedule on dispatch. Their retained snapshots
-    // keep completed work reachable without changing scheduler persistence.
-    const completed = sortedRuns.filter((run) => !run.task?.recurring && run.status === "completed" && !tasks.some((task) => task.id === run.task_id));
-    const completedTasks = [...new Map(completed.map((run) => [run.task_id, run.task])).values()].filter(Boolean);
+    const entries = catalogEntries(tasks, sortedRuns);
     const matchesQuery = (task) => `${task.title}\n${task.prompt}`.toLowerCase().includes(query.trim().toLowerCase());
     // Scheduled work lists what runs next first. Pausing keeps a task's next
     // run, so its switch never moves the row.
-    const scheduled = [...tasks].sort((a, b) => String(a.next_run_at || "").localeCompare(String(b.next_run_at || ""))).filter(matchesQuery);
-    const finished = completedTasks.filter(matchesQuery);
-    const selectedTask = selection?.id ? tasks.find((task) => task.id === selection.id) || sortedRuns.find((run) => run.task_id === selection.id)?.task : null;
+    const scheduled = [...entries.scheduled].sort((a, b) => String(a.task.next_run_at || "").localeCompare(String(b.task.next_run_at || ""))).filter((entry) => matchesQuery(entry.task));
+    const recent = entries.recent.filter((entry) => matchesQuery(entry.task));
+    const completed = entries.completed.filter((entry) => matchesQuery(entry.task));
+    const selectedTask = selection?.id ? entries.byID.get(selection.id)?.task : null;
     const panelOpen = !!workspace && !!selection && (selection.kind === "new" || !!selectedTask);
     const closePanel = () => {
       notice.current?.dispose();
@@ -827,26 +864,31 @@ export async function activate(api) {
     });
     React.useEffect(() => () => publishSidebar(props.context, null), [props.context]);
     // The row opens the editor; the switch pauses and resumes in place. A
-    // completed one-shot has nothing left to switch.
-    const taskRow = (task, done) => {
-      const lastRun = sortedRuns.find((run) => run.task_id === task.id);
-      const run = done ? null : runStatus(lastRun);
-      const paused = !done && task.paused;
+    // historical one-shot has no schedule or switch, so its latest run owns the
+    // visible status and error until the run record leaves retention.
+    const taskRow = ({ task, run: latestRun, historical }) => {
+      const run = runStatus(latestRun);
+      const paused = !historical && task.paused === true;
       const title = task.title || task.prompt;
       const schedule = task.recurring === false ? tr("automation.once") : describeSchedule(task.cron, task.timezone, tr, props.locale) || task.cron;
       // The icon carries the task's state at a glance; the line names an
       // exception first (paused, failing, running), then when it runs.
-      const state = done ? "done" : paused ? "paused" : run === "failed" ? "failed" : "scheduled";
-      const meta = done
-        ? formatDateTime(lastRun?.completed_at || lastRun?.triggered_at, task.timezone, props.locale)
-        : [paused ? tr("automation.paused") : null, run === "failed" ? tr("automation.run.lastFailed") : run === "running" ? tr("automation.run.running") : null, schedule,
+      const state = historical
+        ? run || "uncertain"
+        : paused ? "paused"
+        : ["starting", "running", "queued", "failed", "uncertain"].includes(run) ? run
+        : "scheduled";
+      const activity = run === "failed" ? "lastFailed" : run === "uncertain" || run === "starting" || run === "running" || run === "queued" ? run : null;
+      const meta = historical
+        ? [run === "completed" ? null : tr(`automation.run.${run || "uncertain"}`), formatDateTime(latestRun?.completed_at || latestRun?.triggered_at, task.timezone, props.locale)].filter(Boolean).join(" · ")
+        : [paused ? tr("automation.paused") : null, activity ? tr(`automation.run.${activity}`) : null, schedule,
           paused ? null : `${tr("automation.next")} ${formatDateTime(task.next_run_at, task.timezone, props.locale) || "—"}`].filter(Boolean).join(" · ");
-      return h("div", { key: task.id, className: "plugin-automation-item", "data-selected": selection?.id === task.id, "data-paused": paused, "data-entering": fresh.current.has(task.id) || undefined },
+      return h("div", { key: task.id, className: "plugin-automation-item", "data-state": state, "data-selected": selection?.id === task.id, "data-paused": paused, "data-entering": (!historical && fresh.current.has(task.id)) || undefined },
         h("button", { type: "button", className: "plugin-automation-item-main", "aria-pressed": selection?.id === task.id, disabled: busy, onClick: () => choose({ kind: "task", id: task.id }) },
-          h("span", { className: "plugin-automation-item-icon", "data-state": state }, state === "done" ? h(CheckIcon) : state === "paused" ? h(PauseIcon) : state === "failed" ? h(AlertIcon) : h(ClockIcon)),
+          h("span", { className: "plugin-automation-item-icon", "data-state": state }, state === "completed" ? h(CheckIcon) : state === "paused" ? h(PauseIcon) : state === "failed" || state === "uncertain" ? h(AlertIcon) : state === "interrupted" ? h(CloseIcon) : h(ClockIcon)),
           h("span", { className: "plugin-automation-item-title" }, title),
           h("span", { className: "plugin-automation-item-meta", title: `${task.cron} · ${task.timezone}` }, h("span", null, meta))),
-        done ? null : h(Checkbox, { className: "plugin-automation-item-switch", label: h("span", { className: "plugin-automation-sr" }, tr("automation.enableNamed", { name: title })), checked: !task.paused, disabled: busy || !!refreshError, onChange: () => act("automation.update", { id: task.id, paused: !task.paused }) }));
+        historical ? null : h(Checkbox, { className: "plugin-automation-item-switch", label: h("span", { className: "plugin-automation-sr" }, tr("automation.enableNamed", { name: title })), checked: !task.paused, disabled: busy || !!refreshError, onChange: () => act("automation.update", { id: task.id, paused: !task.paused }) }));
     };
     return h("main", { className: "plugin-automation" }, h(Page, null,
       h("div", { className: "plugin-automation-body", ref: resize.bodyRef, style: { "--automation-detail-width": `${resize.width}px` }, "data-resizing": resize.resizing ? "true" : "false", "data-panel": panelOpen ? "true" : "false", "data-closing": panelClosing ? "true" : undefined },
@@ -867,11 +909,12 @@ export async function activate(api) {
           workspaceError ? null
             : !workspacesLoaded || (workspace && !loaded) ? h(LoadingState, { className: "plugin-automation-state", title: tr("automation.loading") })
             : !workspace ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.noWorkspace"), description: tr("automation.workspaceNone") })
-            : query.trim() && !scheduled.length && !finished.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
-            : !scheduled.length && !finished.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.emptyHelp") })
+            : query.trim() && !scheduled.length && !recent.length && !completed.length ? h("p", { className: "plugin-automation-filtered-empty" }, tr("automation.search.empty"))
+            : !scheduled.length && !recent.length && !completed.length ? h(EmptyState, { className: "plugin-automation-empty", title: tr("automation.empty"), description: tr("automation.emptyHelp") })
             : h(React.Fragment, null,
-              scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map((task) => taskRow(task, false))) : null,
-              finished.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, finished.map((task) => taskRow(task, true)))) : null)),
+              scheduled.length ? h("div", { className: "plugin-automation-list" }, scheduled.map(taskRow)) : null,
+              recent.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.history")), h("div", { className: "plugin-automation-list" }, recent.map(taskRow))) : null,
+              completed.length ? h("section", { className: "plugin-automation-group" }, h("h2", { className: "plugin-automation-group-title" }, tr("automation.run.completed")), h("div", { className: "plugin-automation-list" }, completed.map(taskRow))) : null)),
         panelOpen ? h(Editor, {
           key: `${workspaceID}:${selection.id || selection.key}`, tr, locale: props.locale, task: selectedTask, initial: selection.draft, workspace, threads, busy,
           readOnly: !!refreshError || (!!selectedTask && !tasks.some((task) => task.id === selectedTask.id)),

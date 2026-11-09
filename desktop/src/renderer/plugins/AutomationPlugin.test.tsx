@@ -109,6 +109,34 @@ it("shows completed one-shot snapshots without treating recurring runs as finish
   expect(ui.container.querySelector("fieldset")!.disabled).toBe(true);
   expect(ui.container.querySelector(".plugin-automation-list")!.textContent).not.toContain("Recurring");
 });
+it("keeps failed and running one-shot runs reachable after they leave the schedule", async () => {
+  const ui = await mount({ tasks: [], runs: [
+    { id: "run-completed", task_id: "done", status: "completed", triggered_at: "2026-09-14T09:00:00Z", completed_at: "2026-09-14T09:03:00Z", task: { ...task, id: "done", title: "Completed run", recurring: false } },
+    { id: "run-failed", task_id: "failed", status: "failed", triggered_at: "2026-09-15T01:00:00Z", error: "Provider unavailable", task: { ...task, id: "failed", title: "Failed run", recurring: false } },
+    { id: "run-running", task_id: "running", status: "running", triggered_at: "2026-09-15T02:00:00Z", task: { ...task, id: "running", title: "Running run", recurring: false } },
+  ] });
+  const groups = [...ui.container.querySelectorAll(".plugin-automation-group")];
+  expect(groups).toHaveLength(2);
+  expect(groups[0].textContent).toContain("Failed run");
+  expect(groups[0].textContent).toContain("Running run");
+  expect(groups[0].textContent).not.toContain("Completed run");
+  expect(groups[1].textContent).toContain("Completed run");
+  expect(groups[1].textContent).not.toContain("Failed run");
+  const failedRow = [...ui.container.querySelectorAll<HTMLButtonElement>(".plugin-automation-item-main")].find(button => button.textContent?.includes("Failed run"));
+  expect(failedRow).toBeDefined();
+  await act(async () => failedRow!.click());
+  expect(ui.container.querySelector("fieldset")!.disabled).toBe(true);
+  expect(ui.container.querySelector("aside")!.textContent).toContain("Provider unavailable");
+  expect(ui.container.querySelector("aside")!.textContent).toContain("失败");
+});
+it("labels an uncertain dispatch as needing review instead of queued", async () => {
+  const ui = await mount({ tasks: [], runs: [{ id: "run-uncertain", task_id: "one", status: "uncertain", triggered_at: "2026-09-15T01:00:00Z", error: "Dispatch outcome is unknown; inspect the session", task: { ...task, id: "one", title: "Uncertain run", recurring: false } }] });
+  await ui.open();
+  const detail = ui.container.querySelector("aside")!;
+  expect(detail.textContent).toContain("需确认");
+  expect(detail.textContent).not.toContain("排队中");
+  expect(detail.textContent).toContain("Dispatch outcome is unknown");
+});
 it("pauses and resumes from the row switch without opening the editor", async () => {
   let paused = false;
   const ui = await mount({ mutate: async (input) => { paused = input.paused; return { ...task, paused }; } });
