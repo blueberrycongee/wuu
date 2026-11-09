@@ -4,8 +4,18 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
+
+func currentProductVersion(t *testing.T) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("..", "..", "VERSION"))
+	if err != nil {
+		t.Fatalf("read VERSION: %v", err)
+	}
+	return strings.TrimSpace(string(data))
+}
 
 func TestDiscoverProjectOverridesUserAndResolvesAssetDirs(t *testing.T) {
 	root := t.TempDir()
@@ -177,36 +187,48 @@ func TestDiscoverWithOptionsHidesBundledCUAByDefault(t *testing.T) {
 	}
 }
 
-func TestDiscoverWithOptionsHidesPersonalProductInReleaseBuilds(t *testing.T) {
-	previous := personalProductBuild
+func TestDiscoverWithOptionsHidesProductGatedPluginsInReleaseBuilds(t *testing.T) {
+	previousPersonal := personalProductBuild
+	previousDesignMode := designModeProductBuild
 	personalProductBuild = "0"
-	t.Cleanup(func() { personalProductBuild = previous })
+	designModeProductBuild = "0"
+	t.Cleanup(func() {
+		personalProductBuild = previousPersonal
+		designModeProductBuild = previousDesignMode
+	})
 
 	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
-		GOOS:      "darwin",
-		LookPath:  func(command string) (string, error) { return command, nil },
-		LookupEnv: func(string) (string, bool) { return "", false },
+		GOOS:       "darwin",
+		WuuVersion: currentProductVersion(t),
+		LookPath:   func(command string) (string, error) { return command, nil },
+		LookupEnv:  func(string) (string, bool) { return "", false },
 	})
 	for _, item := range plugins {
-		if item.ID == "personal" {
+		if item.ID == "personal" || item.ID == "design-mode" {
 			t.Fatalf("%s must stay out of release builds: %+v", item.ID, item)
 		}
 	}
 }
 
-func TestDiscoverWithOptionsIncludesPersonalProductInSourceBuilds(t *testing.T) {
-	previous := personalProductBuild
+func TestDiscoverWithOptionsIncludesProductGatedPluginsInSourceBuilds(t *testing.T) {
+	previousPersonal := personalProductBuild
+	previousDesignMode := designModeProductBuild
 	personalProductBuild = "1"
-	t.Cleanup(func() { personalProductBuild = previous })
+	designModeProductBuild = "1"
+	t.Cleanup(func() {
+		personalProductBuild = previousPersonal
+		designModeProductBuild = previousDesignMode
+	})
 
 	plugins := DiscoverWithOptions("", t.TempDir(), DiscoverOptions{
-		GOOS:      "darwin",
-		LookPath:  func(command string) (string, error) { return command, nil },
-		LookupEnv: func(string) (string, bool) { return "", false },
+		GOOS:       "darwin",
+		WuuVersion: currentProductVersion(t),
+		LookPath:   func(command string) (string, error) { return command, nil },
+		LookupEnv:  func(string) (string, bool) { return "", false },
 	})
 	found := map[string]bool{}
 	for _, item := range plugins {
-		if item.ID != "personal" {
+		if item.ID != "personal" && item.ID != "design-mode" {
 			continue
 		}
 		if !item.Official || item.Source != "bundled" {
@@ -214,7 +236,7 @@ func TestDiscoverWithOptionsIncludesPersonalProductInSourceBuilds(t *testing.T) 
 		}
 		found[item.ID] = true
 	}
-	for _, id := range []string{"personal"} {
+	for _, id := range []string{"personal", "design-mode"} {
 		if !found[id] {
 			t.Fatalf("bundled %s plugin missing from source build: %+v", id, plugins)
 		}
