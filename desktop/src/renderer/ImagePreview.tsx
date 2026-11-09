@@ -1,7 +1,6 @@
 import { Tooltip } from "./Tooltip";
 import { ContentPreview } from "./ContentPreview";
 import { useArtifacts } from "./ArtifactsContext";
-import { showErrorToast } from "./Toast";
 import {
   createContext,
   type CSSProperties,
@@ -18,6 +17,7 @@ import {
 } from "react";
 import { ChevronLeft, ChevronRight, Download, Maximize2, Minus, Plus, RotateCw } from "./WuuIcons";
 import { useI18n } from "./i18n";
+import { showActionErrorToast } from "./Toast";
 import { imagePreviewSelection } from "./ImagePreviewGallery";
 
 export type ImagePreviewItem =
@@ -147,7 +147,7 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
     try {
       await artifacts.save({id: "image-preview", name: item.title || (item.svg == null ? "image" : "image.svg"), mimeType: item.svg == null ? "image/png" : "image/svg+xml", uri: saveSource}, {signal: lifetime.current.signal});
     } catch (error) {
-      if (savedGeneration === generation.current) showErrorToast(error);
+      if (savedGeneration === generation.current) showActionErrorToast(error);
     } finally {
       if (savedGeneration === generation.current) { savingRef.current = false; setSaving(false); }
     }
@@ -275,7 +275,7 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
 
   function backgroundClick(event: ReactMouseEvent<HTMLDivElement>): void {
     const target = event.target as Element;
-    if (!target.closest(".image-preview-image, .image-preview-toolbar-actions, .image-preview-save-error")
+    if (!target.closest(".image-preview-image, .image-preview-toolbar-actions")
       && !suppressClick.current) onClose();
     suppressClick.current = false;
   }

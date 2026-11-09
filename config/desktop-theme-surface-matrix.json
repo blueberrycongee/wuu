@@ -630,7 +630,7 @@
     {
       "name": "unanchored:image-preview.css",
       "synthetic": true,
-      "rows": 11
+      "rows": 10
     },
     {
       "name": "unanchored:mac-window-controls.css",
@@ -1319,7 +1319,6 @@
     {"anchor":"unanchored:icon-controls.css","state":"hover","file":"icon-controls.css","selector":":is(.session-tab-close, .workspace-tool-tab-close, .composer-document-card .composer-attachment-card-remove):hover:not(:disabled)","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
     {"anchor":"unanchored:icon-controls.css","state":"hover","file":"icon-controls.css","selector":".icon-button:hover:not(:disabled), .icon-button.active:not(:disabled), .workspace-toggle-button[aria-pressed=\"true\"]","prop":"background","variable":"--surface-3","status":"bridged","tokens":["--wuu-color-canvas","--wuu-color-surface-elevated","--wuu-color-text"]},
     {"anchor":"unanchored:icon-controls.css","state":"hover","file":"icon-controls.css","selector":".icon-button:hover:not(:disabled), .icon-button.active:not(:disabled), .workspace-toggle-button[aria-pressed=\"true\"]","prop":"color","variable":"--ink","status":"bridged","tokens":["--wuu-color-text"]},
-    {"anchor":"unanchored:image-preview.css","state":"default","file":"image-preview.css","selector":".image-preview-save-error","prop":"color","variable":"--image-preview-status-error","status":"bridged","tokens":["--wuu-color-danger"]},
     {"anchor":"unanchored:image-preview.css","state":"default","file":"image-preview.css","selector":".image-preview-status","prop":"color","variable":"--image-preview-status-text","status":"unbridged","tokens":[]},
     {"anchor":"unanchored:image-preview.css","state":"default","file":"image-preview.css","selector":".image-preview-status.error","prop":"color","variable":"--image-preview-status-error","status":"bridged","tokens":["--wuu-color-danger"]},
     {"anchor":"unanchored:image-preview.css","state":"default","file":"image-preview.css","selector":".image-preview-toolbar","prop":"background","variable":"--image-preview-toolbar-actions-bg","status":"unbridged","tokens":[]},

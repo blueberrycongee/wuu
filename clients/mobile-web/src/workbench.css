@@ -14,7 +14,6 @@
 .workspace-file-export-preview { flex: 1; min-height: 0; overflow: hidden; }
 .workspace-file-export-actions { flex: none; padding: 4px 8px; overflow-wrap: anywhere; }
 .workspace-file-export-actions button { min-height: 44px; color: var(--ink); padding: 4px 12px; }
-.workspace-file-export-actions [role="alert"] { display: block; color: var(--danger); }
 
 .account-workbench-content .app-shell.compact-navigation .conversation-pane {
   grid-template-rows: 56px minmax(0, 1fr);

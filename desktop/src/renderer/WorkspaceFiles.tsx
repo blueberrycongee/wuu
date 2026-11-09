@@ -827,7 +827,9 @@ export function WorkspaceFilePreview({
         setExporting(true);
         void service.exportFile({ path: file.path, root: activeContext.cwd })
           .catch(error => {
-            showActionErrorToast(error, translateCurrent("workspace.files.openFailed"));
+            if (exportGenerationRef.current === generation) {
+              showActionErrorToast(error, translateCurrent("workspace.files.openFailed"));
+            }
           })
           .finally(() => {
             if (exportGenerationRef.current === generation) setExporting(false);
