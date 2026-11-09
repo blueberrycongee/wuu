@@ -108,8 +108,19 @@
      provisional process placement must use the final reading rhythm. */
   --conversation-commentary-line-height: var(--conversation-reading-line-height);
   --conversation-prose-block-gap: var(--space-4);
+  /* Heading depth owns both type size and surrounding space: 40/32/24/16
+   * above and 12/8/8/8 below. h5/h6 stay at body size and use the minor
+   * tier so a deep outline does not turn body text into a title. */
   --conversation-prose-heading-before: var(--section-gap);
   --conversation-prose-heading-after: var(--space-2);
+  --conversation-prose-heading-before-h1: calc(var(--section-gap) + var(--space-2));
+  --conversation-prose-heading-after-h1: var(--space-3);
+  --conversation-prose-heading-before-h3: var(--space-6);
+  --conversation-prose-heading-before-minor: var(--space-4);
+  --conversation-prose-heading-after-minor: var(--space-2);
+  /* A list introduced by prose is closer than a new paragraph, but still
+   * farther than two list items. */
+  --conversation-prose-list-before: var(--space-3);
   --conversation-prose-list-gap: var(--space-2);
   --conversation-prose-indent: 1.45em;
   --conversation-prose-max-width: 100%;

@@ -1824,6 +1824,103 @@ button.settings-engine-expand:hover {
   font-weight: var(--weight-medium);
 }
 
+/* --- Shell skin cards ------------------------------------------------------
+ * Same radio-card idiom as the theme picker: each skin previews both variants
+ * at once, light on the left and dark on the right, artwork under a small
+ * window skeleton tinted with the variant's colors. The more entry is a plain
+ * card that expands the same grid instead of a separate page.
+ * --------------------------------------------------------------------------- */
+
+.settings-skin-preview {
+  display: flex;
+}
+
+.settings-skin-half {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.settings-skin-half + .settings-skin-half {
+  border-left: 1px solid var(--hairline);
+}
+
+.settings-skin-half > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.settings-skin-half-rail {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 17%;
+}
+
+.settings-skin-half-lines {
+  position: absolute;
+  left: 26%;
+  right: 12%;
+  top: 22%;
+  height: 56%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.settings-skin-half-lines > i {
+  display: block;
+  height: 9%;
+  border-radius: 999px;
+}
+
+.settings-skin-more-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ink-soft);
+  font-size: var(--font-lg);
+  font-weight: var(--weight-medium);
+}
+
+/* The block-row skin summary spans the page like the theme picker above it,
+ * so its three cards keep the same footprint instead of shrinking into the
+ * row's control column. */
+.settings-row-control-block > .settings-theme-options {
+  width: 100%;
+}
+
+/* --- Shell skin gallery ----------------------------------------------------
+ * The second-level picker behind the row's "more" card: every skin at a size
+ * where the artwork reads, default frame first.
+ * --------------------------------------------------------------------------- */
+
+.settings-skin-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.settings-skin-preview-large {
+  aspect-ratio: 4 / 3;
+}
+
+@container settings-page (max-width: 36em) {
+  .settings-skin-gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container settings-page (max-width: 24em) {
+  .settings-skin-gallery {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .settings-palette-swatch {
   display: inline-flex;
   position: relative;

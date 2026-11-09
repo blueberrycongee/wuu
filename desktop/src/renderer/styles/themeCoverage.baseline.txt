@@ -41,6 +41,7 @@ image-preview.css .image-preview-toolbar-button:focus-visible outline --image-pr
 image-preview.css .image-preview-toolbar-button:hover:not(:disabled) background --image-preview-toolbar-button-hover
 image-preview.css .image-preview-zoom-readout color --image-preview-zoom-text
 mac-window-controls.css .mac-window-control background --traffic-light-color
+model-services.css .connection-detail-actions > .settings-button-danger:hover:not(:disabled) background --danger-soft
 onboarding.css .equipment-binding fill --equipment-binding
 onboarding.css .equipment-bookmark fill --equipment-accent
 onboarding.css .equipment-edge fill --equipment-edge

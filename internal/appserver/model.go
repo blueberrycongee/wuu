@@ -1489,9 +1489,11 @@ func (th *threadState) itemLocked(turnID, itemID string) (ThreadItem, bool) {
 		return ThreadItem{}, false
 	}
 	turn := th.ensureTurnLocked(turnID, time.Now())
-	for _, item := range turn.Items {
-		if item.ID == itemID {
-			return item, true
+	// Streaming touches items near the tail; scan from the end like
+	// latestToolItemLocked so per-delta lookups stay near the hot end.
+	for i := len(turn.Items) - 1; i >= 0; i-- {
+		if turn.Items[i].ID == itemID {
+			return turn.Items[i], true
 		}
 	}
 	return ThreadItem{}, false
@@ -1502,7 +1504,7 @@ func (th *threadState) upsertItemLocked(turnID string, item ThreadItem, now time
 		delete(th.streamText, item.ID)
 	}
 	turn := th.ensureTurnLocked(turnID, now)
-	for i := range turn.Items {
+	for i := len(turn.Items) - 1; i >= 0; i-- {
 		if turn.Items[i].ID == item.ID {
 			turn.Items[i] = item
 			th.replaceTurnLocked(turn)

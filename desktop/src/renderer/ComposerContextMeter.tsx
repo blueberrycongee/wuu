@@ -99,7 +99,7 @@ export function ComposerContextMeter({
           anchorRef={anchorRef}
           owner="composer-context-meter"
           layer="tooltip"
-          placement={inToolRail ? "below" : "above"}
+          placement={inToolRail ? "middle" : "above"}
           align="right"
           crossAxisOffset={inToolRail ? -(anchorRef.current?.offsetWidth ?? 0) - 8 : 0}
           flip

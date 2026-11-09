@@ -155,7 +155,7 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
     <div className="composer-plus-menu-section" role="presentation">{t("composer.plugins")}</div>
     {loading ? <p className="composer-plugin-notice" role="status">{t("composer.pluginsLoading")}</p> : null}
     {error ? <div className="composer-plugin-notice" role="alert">{t("composer.pluginsLoadFailed")} <button type="button" onClick={() => setRevision(value => value + 1)}>{t("settings.errorRetry")}</button></div> : null}
-    {!loading && !error && !entries.length && !menu.query ? <p className="composer-plugin-notice">{t("composer.pluginsEmpty")}</p> : null}
+    {services.includePluginTools !== false && !loading && !error && !entries.length && !menu.query ? <p className="composer-plugin-notice">{t("composer.pluginsEmpty")}</p> : null}
     {entries.map(entry => {
       const secondary = entry.detail || entry.description;
       return <button type="button" role="menuitem" className="composer-plugin-row" key={entry.key} data-plugin-choice data-plugin-key={entry.key}

@@ -3052,6 +3052,28 @@ export const MESSAGE_FLOW_FONT_SIZE_RANGE = {
   default: 15,
 } as const;
 
+// Every layer validates persisted settings and IPC payloads against this one
+// policy: strict acceptance for storage/IPC boundaries, clamping for renderer
+// controls that coerce a dragged or typed value back into the range.
+export function isMessageFlowFontSize(value: unknown): value is MessageFlowFontSize {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= MESSAGE_FLOW_FONT_SIZE_RANGE.min &&
+    value <= MESSAGE_FLOW_FONT_SIZE_RANGE.max
+  );
+}
+
+export function clampMessageFlowFontSize(value: unknown): MessageFlowFontSize {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return MESSAGE_FLOW_FONT_SIZE_RANGE.default;
+  }
+  return Math.min(
+    MESSAGE_FLOW_FONT_SIZE_RANGE.max,
+    Math.max(MESSAGE_FLOW_FONT_SIZE_RANGE.min, value),
+  );
+}
+
 export type ThemePreference = "system" | "light" | "dark";
 
 // Keep the supported locale registry executable as well as typed. Every shell

@@ -25,6 +25,7 @@ export type FloatingMenuOwner =
   | "web-workspace-options"
   | "sidebar-account"
   | "sidebar-workspace"
+  | "sidebar-recent-view"
   | "conversation-actions"
   | "conversation-workspace"
   | "conversation-status"
@@ -41,7 +42,6 @@ export type FloatingMenuOwner =
   | "composer-slash"
   | "codex-runtime"
   | "composer-query-history"
-  | "minute-clock"
   | "project-sessions"
   | "select-menu";
 export type FloatingMenuPlacement = "above" | "below" | "middle";

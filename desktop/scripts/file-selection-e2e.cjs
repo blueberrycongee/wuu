@@ -435,7 +435,7 @@ async function verifyTextAttachments(variant) {
   // The tray scrolls to the newest attachment; reach the first before clicking.
   await evaluate(() => document.querySelector("[data-main-conversation-composer] .composer-collapsed-prompt-card").scrollIntoView({ inline: "start", block: "nearest", behavior: "instant" }));
   await screenshot(variant.name + "-text-attachments");
-  await click("[data-main-conversation-composer] .composer-collapsed-prompt-card .composer-document-card-main");
+  await click("[data-main-conversation-composer] .composer-collapsed-prompt-card .composer-collapsed-prompt-main");
   // Native textarea values normalize line endings once a snapshot is editable.
   const expanded = question + text.replace(/\r\n/g, "\n");
   await waitFor(expanded => composerValue() === expanded, "direct text expansion", expanded);
@@ -464,7 +464,7 @@ async function verifyTextAttachments(variant) {
   await waitFor(() => composerValue() === "" && !document.querySelector("[data-main-conversation-composer] .composer-collapsed-prompt-card"), "sent text attachment cleared");
   await click('button[aria-label="Close right sidebar"]');
   await waitFor(() => document.querySelector(".workspace-right-panel")?.getAttribute("aria-hidden") !== "false", "conversation visible for history preview");
-  await click(".user-message-pasted-text-toggle");
+  await click(".user-message-pasted-thumb");
   await waitFor(text => document.querySelector(".user-message-pasted-text-content")?.textContent === text, "sent attachment preview", text);
   await screenshot(variant.name + "-text-history");
   await evaluate(() => document.querySelector(".user-message-pasted-text-toggle").scrollIntoView({ block: "center", behavior: "instant" }));

@@ -152,7 +152,7 @@ func TestUserHostConfigSharesOnlyGlobalStandaloneMCPServers(t *testing.T) {
 	}
 }
 
-func TestUserHostSkillRefreshCannotReintroduceGlobalSkills(t *testing.T) {
+func TestUserHostSkillRefreshSharesUserSkillsWithoutProjectSkills(t *testing.T) {
 	home := t.TempDir()
 	root := t.TempDir()
 	path := filepath.Join(home, ".agents", "skills", "coding-secret")
@@ -169,6 +169,13 @@ func TestUserHostSkillRefreshCannotReintroduceGlobalSkills(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(local, "SKILL.md"), []byte("---\nname: personal-note\ndescription: Personal only\n---\nScoped instructions"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	project := filepath.Join(root, ".claude", "skills", "project-only")
+	if err := os.MkdirAll(project, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "SKILL.md"), []byte("---\nname: project-only\ndescription: Project only\n---\nProject instructions"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	kit, err := tools.New(root)
 	if err != nil {
 		t.Fatal(err)
@@ -180,8 +187,35 @@ func TestUserHostSkillRefreshCannotReintroduceGlobalSkills(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(skills) != 1 || skills[0].Name != "personal-note" {
-		t.Fatalf("user host discovered Coding/global skills: %v", skills)
+	if len(skills) != 2 || skills[0].Name != "coding-secret" || skills[1].Name != "personal-note" {
+		t.Fatalf("user host skill catalog: %v", skills)
+	}
+	duplicate := filepath.Join(root, ".agents", "skills", "coding-secret")
+	if err := os.MkdirAll(duplicate, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(duplicate, "SKILL.md"), []byte("---\nname: coding-secret\ndescription: Personal override\n---\nPersonal override"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	skills, err = kit.CurrentSkills(context.Background(), true)
+	if err != nil || len(skills) != 2 || skills[0].Description != "Personal override" {
+		t.Fatalf("personal override: %v, %v", skills, err)
+	}
+	if err := os.RemoveAll(duplicate); err != nil {
+		t.Fatal(err)
+	}
+	rt.UserHostIsolationMode = UserHostIsolationVerifiedHost
+	rt.bindLocalSkillRefresh(kit, root, nil)
+	skills, err = kit.CurrentSkills(context.Background(), true)
+	if err != nil || len(skills) != 1 || skills[0].Name != "personal-note" {
+		t.Fatalf("verified host skills: %v, %v", skills, err)
+	}
+	rt.UserHostIsolationMode = UserHostIsolationLogicalMemory
+	rt.UserSpaceID = "another-user"
+	rt.bindLocalSkillRefresh(kit, root, nil)
+	skills, err = kit.CurrentSkills(context.Background(), true)
+	if err != nil || len(skills) != 1 || skills[0].Name != "personal-note" {
+		t.Fatalf("another user space discovered local account skills: %v, %v", skills, err)
 	}
 }
 

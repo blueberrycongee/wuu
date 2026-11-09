@@ -6660,18 +6660,6 @@ func aggregateUsageRows(rows []insight.TokenUsageRow, loc *time.Location) (Setti
 	return metrics, days
 }
 
-// truncateUsageTitle shortens a session's first user message down to a
-// reasonable card headline; the desktop may trim further before display.
-func truncateUsageTitle(s string) string {
-	const max = 60
-	s = strings.TrimSpace(s)
-	r := []rune(s)
-	if len(r) <= max {
-		return s
-	}
-	return string(r[:max-1]) + "…"
-}
-
 // stopHookMessage provides a single-line, bounded snippet of the turn's final
 // assistant message for Stop hooks that surface it to the user (for example a
 // desktop notification). Collapsing whitespace keeps the payload easy to embed

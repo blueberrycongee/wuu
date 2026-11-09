@@ -11,6 +11,7 @@ import { useHoverReveal } from "./HoverReveal";
 import { SidebarHoverCardLayer } from "./SidebarHoverCard";
 import { motionDurationMs, prefersReducedMotion } from "./motion";
 import { useExitPresence } from "./useExitPresence";
+import { TruncatedText } from "./TruncatedText";
 
 /**
  * Sidebar folds share a native 0/auto height transition. Keep the empty shell
@@ -199,7 +200,11 @@ export function SidebarSection({
             ExpandedIcon={ExpandedIcon}
           />
           <span className="project-row-label">
-            <span className="project-row-name">{label}</span>
+            {typeof label === "string" ? (
+              <TruncatedText text={label} className="project-row-name" fade />
+            ) : (
+              <span className="project-row-name">{label}</span>
+            )}
             <ChevronRight
               className="project-row-chevron icon"
               aria-hidden="true"

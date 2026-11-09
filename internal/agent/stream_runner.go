@@ -18,7 +18,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/provideroptions"
 	"github.com/blueberrycongee/wuu/internal/providers"
-	"github.com/blueberrycongee/wuu/internal/stringutil"
 	"github.com/blueberrycongee/wuu/internal/toolbatch"
 	"github.com/blueberrycongee/wuu/internal/toolledger"
 )
@@ -1519,10 +1518,6 @@ func normalizedChatResponseFinish(resp providers.ChatResponse) providers.FinishR
 		return resp.FinishReason
 	}
 	return providers.NormalizeFinishReason(resp.StopReason, resp.Truncated, len(resp.ToolCalls) > 0)
-}
-
-func truncateLog(s string, maxLen int) string {
-	return stringutil.Truncate(s, maxLen, "...")
 }
 
 // formatCompactNotice produces the human-readable string surfaced via

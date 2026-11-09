@@ -28,9 +28,6 @@ func (t *Toolkit) providerSurfaceDefinitionsForValidation() []providers.ToolDefi
 		if exposure != ToolExposureDirect && exposure != ToolExposureDeferred {
 			continue
 		}
-		if exposure == ToolExposureDeferred && !t.toolSearchCanLoadDeferredTool(name) {
-			continue
-		}
 		seen[name] = struct{}{}
 		defs = append(defs, tool.Definition())
 	}

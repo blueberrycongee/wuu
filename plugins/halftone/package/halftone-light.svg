@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice">
+  <defs>
+    <linearGradient id="base" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8f1e6"/>
+      <stop offset="0.55" stop-color="#f3e8d6"/>
+      <stop offset="1" stop-color="#ecdcc4"/>
+    </linearGradient>
+    <radialGradient id="ember" cx="0.72" cy="0.8" r="0.65">
+      <stop offset="0" stop-color="#eebd83" stop-opacity="0.8"/>
+      <stop offset="0.5" stop-color="#e3a05f" stop-opacity="0.4"/>
+      <stop offset="1" stop-color="#e3a05f" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="0.2" cy="0.22" r="0.55">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1600" height="1000" fill="url(#base)"/>
+  <rect width="1600" height="1000" fill="url(#ember)"/>
+  <ellipse cx="320" cy="220" rx="560" ry="400" fill="url(#glow)"/>
+</svg>

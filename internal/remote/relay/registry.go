@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -167,12 +166,5 @@ func (r *Registry) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(r.path), securefs.DirMode); err != nil {
-		return err
-	}
-	tmp := r.path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, r.path)
+	return securefs.WriteFileAtomic(r.path, data)
 }

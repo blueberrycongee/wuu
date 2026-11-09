@@ -227,9 +227,3 @@ func cacheStablePrefixFingerprint(model string, tools []providers.ToolDefinition
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
 }
-
-// componentFingerprint computes a hash for one component (model, tools, or system).
-func componentFingerprint(name string, value string) string {
-	sum := sha256.Sum256([]byte(name + ":" + value))
-	return hex.EncodeToString(sum[:8]) // Short hash for logging
-}

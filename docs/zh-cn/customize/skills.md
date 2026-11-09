@@ -20,7 +20,7 @@ Wuu 引擎会向模型提供技能名称和描述。任务匹配时，模型可�
 
 Twin 的主对话和回复输入框通过 `/` 展示可由用户调用的技能。继续输入可筛选，上下方向键切换，Enter 或 Tab 选择，然后补充请求并发送。Escape 关闭菜单，Shift+Enter 换行。`/settings` 打开现有 Twin 设置面板，不发送消息。
 
-将 Twin 技能安装到 `$WUU_HOME/user-spaces/<space>/personal/files/.agents/skills/<name>/SKILL.md`，默认本地空间是 `local`。Twin 只读取该产品自己的目录，不读取 Coding 项目、全局技能或其设置。现有 `skills.enabled` 设置须启用。安装技能后重新打开 Twin 可刷新菜单；提交时仍会重新校验技能身份和可用性。目录读取失败会保留草稿并提供重试。
+将 Twin 技能安装到 `$WUU_HOME/user-spaces/<space>/personal/files/.agents/skills/<name>/SKILL.md`，默认本地空间是 `local`。本地 Twin 也会发现 Coding 的用户级技能目录；同名时优先使用 Twin 自己的技能。项目技能仍只属于对应项目，共享技能使用 Twin 自己的工具和权限。其他用户空间和经过验证的隔离主机只发现各自的 Twin 技能。现有 `skills.enabled` 设置须启用。安装技能后重新打开 Twin 可刷新菜单；提交时仍会重新校验技能身份和可用性。目录读取失败会保留草稿并提供重试。
 
 只有经过身份校验的用户消息会展开技能。消息被接纳时保存技能内容，因此排队消息和回执重试保留原指令及附件。插件唤醒消息仍按字面处理。未知命令、文件路径和多行文本仍作为普通消息。
 

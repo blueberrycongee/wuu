@@ -175,16 +175,6 @@
   outline-offset: 2px;
 }
 
-.image-preview-save-error {
-  order: 1;
-  flex: 0 0 auto;
-  margin: 0;
-  padding: 0 18px 12px;
-  color: var(--image-preview-status-error);
-  font-size: var(--font-ui);
-  overflow-wrap: anywhere;
-}
-
 @media (max-width: 480px) {
   .image-preview-toolbar { max-width: calc(100% - 16px); gap: 4px; }
   .image-preview-toolbar-actions { gap: 2px; }

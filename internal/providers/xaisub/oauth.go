@@ -3,7 +3,6 @@ package xaisub
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/blueberrycongee/wuu/internal/authstorage"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
+	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/version"
 )
 
@@ -311,36 +311,7 @@ func credentialExpiring(creds credentials, skew time.Duration) bool {
 	if !creds.expiresAt.IsZero() && !creds.expiresAt.After(time.Now().Add(skew)) {
 		return true
 	}
-	return accessTokenIsExpiring(creds.accessToken, skew)
-}
-
-func accessTokenIsExpiring(token string, skew time.Duration) bool {
-	claims := jwtClaims(token)
-	exp, ok := claims["exp"].(float64)
-	if !ok || exp <= 0 {
-		return false
-	}
-	return time.Unix(int64(exp), 0).Before(time.Now().Add(skew))
-}
-
-func jwtClaims(token string) map[string]any {
-	parts := strings.Split(token, ".")
-	if len(parts) < 2 {
-		return nil
-	}
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		payload, err = base64.URLEncoding.DecodeString(parts[1])
-		if err != nil {
-			return nil
-		}
-	}
-	var claims map[string]any
-	dec := json.NewDecoder(bytes.NewReader(payload))
-	if err := dec.Decode(&claims); err != nil {
-		return nil
-	}
-	return claims
+	return providers.TokenExpiringWithin(creds.accessToken, skew)
 }
 
 type oauthHTTPResponse struct {

@@ -988,35 +988,12 @@ func readJSONFile(path string, out any) error {
 }
 
 func writeJSONFile(path string, value any) error {
-	if err := os.MkdirAll(filepath.Dir(path), securefs.DirMode); err != nil {
-		return fmt.Errorf("create %s dir: %w", filepath.Base(path), err)
-	}
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", filepath.Base(path), err)
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return fmt.Errorf("create %s tmp: %w", filepath.Base(path), err)
-	}
-	tmpName := tmp.Name()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write %s tmp: %w", filepath.Base(path), err)
-	}
-	if _, err := tmp.Write([]byte("\n")); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		return fmt.Errorf("write %s newline: %w", filepath.Base(path), err)
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("close %s tmp: %w", filepath.Base(path), err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		os.Remove(tmpName)
-		return fmt.Errorf("rename %s: %w", filepath.Base(path), err)
+	if err := securefs.WriteFileAtomic(path, append(data, '\n')); err != nil {
+		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
 	}
 	return nil
 }

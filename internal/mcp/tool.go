@@ -28,14 +28,21 @@ type MCPTool struct {
 	client     *Client
 	serverName string
 	tool       Tool
+	definition providers.ToolDefinition
 }
 
 // NewMCPTool creates a wuu-compatible tool from an MCP tool definition.
 func NewMCPTool(client *Client, tool Tool) *MCPTool {
+	serverName := client.Name()
 	return &MCPTool{
 		client:     client,
-		serverName: client.Name(),
+		serverName: serverName,
 		tool:       tool,
+		definition: providers.ToolDefinition{
+			Name:        mcpToolName(serverName, tool.Name),
+			Description: mcpToolDescription(serverName, tool.Description),
+			InputSchema: schemaToMap(tool.InputSchema),
+		},
 	}
 }
 
@@ -90,14 +97,14 @@ func (t *MCPTool) NotifyOnControlRevoked(ctx context.Context, method string, par
 	})
 }
 
-// Definition returns the JSON-schema tool definition for the model.
+// Definition returns the JSON-schema tool definition for the model. The
+// returned value shares the tool's decoded InputSchema map: like
+// Registry.Definitions, callers must treat it as read-only. Guidance is
+// resolved per call because local tool_overrides can change at runtime.
 func (t *MCPTool) Definition() providers.ToolDefinition {
-	return providers.ToolDefinition{
-		Name:        t.Name(),
-		Description: mcpToolDescription(t.serverName, t.tool.Description),
-		InputSchema: schemaToMap(t.tool.InputSchema),
-		Guidance:    t.guidance(),
-	}
+	definition := t.definition
+	definition.Guidance = t.guidance()
+	return definition
 }
 
 // guidance resolves the agent-facing usage contract host-capability surfaces

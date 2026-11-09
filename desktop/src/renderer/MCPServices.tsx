@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { MCPServerStatus } from "../shared/protocol";
 import type { ApplicationSettingsControlsV1, MCPDefinitionResult } from "../../../packages/plugin-sdk/src/ui-settings-controls";
 import { useSettingsControls } from "./SettingsControlsContext";
@@ -65,7 +65,8 @@ export function MCPServicesProvider({ children, contextKey, catalog }: { childre
     return () => { generation.current++; clearInterval(timer); unsubscribe(); remote(); };
   }, [controls, refresh]);
   const fresh = snapshot.current?.controls === controls && snapshot.current.contextKey === contextKey;
-  return <MCPContext.Provider value={{ servers: fresh ? servers : [], error, contextGeneration, catalog, refresh }}>{children}</MCPContext.Provider>;
+  const context = useMemo(() => ({ servers: fresh ? servers : [], error, contextGeneration, catalog, refresh }), [fresh, servers, error, contextGeneration, catalog, refresh]);
+  return <MCPContext.Provider value={context}>{children}</MCPContext.Provider>;
 }
 
 type MCPServicesProps = { pluginID?: string; enabled?: boolean; filter?: string; catalogView?: boolean };
@@ -193,7 +194,7 @@ function MCPServerServices({ pluginID, enabled = true, filter = "", catalogView 
         </div>
         <div className="mcp-service-actions">
           {enabled && server.state !== "disabled" && !(catalogView && server.connected) ? <>
-            {catalogView && !needsAuth ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("mcp.connect")} title={t("mcp.connect")} disabled={!!busy} data-mutation-blocked={!!busy || undefined} onClick={() => void act(server.name, "connect", () => controls.connectMCPServer(server.name))}><Plus className="icon" aria-hidden="true" /></button> : needsAuth ? <button type="button" className="settings-button" disabled={!!busy} data-mutation-blocked={!!busy || undefined} onClick={() => setLogin(server)}>{t("mcp.oauthLogin")}</button>
+            {catalogView && !needsAuth ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" aria-label={t("mcp.connect")} disabled={!!busy} data-mutation-blocked={!!busy || undefined} onClick={() => void act(server.name, "connect", () => controls.connectMCPServer(server.name))}><Plus className="icon" aria-hidden="true" /></button> : needsAuth ? <button type="button" className="settings-button" disabled={!!busy} data-mutation-blocked={!!busy || undefined} onClick={() => setLogin(server)}>{t("mcp.oauthLogin")}</button>
               : <button type="button" className="settings-button" disabled={!!busy} data-mutation-blocked={!!busy || undefined} onClick={() => void act(server.name, server.connected ? "disconnect" : "connect", () => server.connected ? controls.disconnectMCPServer(server.name) : controls.connectMCPServer(server.name))}>{t(server.connected ? "mcp.disconnect" : "mcp.connect")}</button>}
           </> : null}
           {actions.length ? <button type="button" className="settings-button settings-button-ghost settings-icon-button" disabled={!!busy} data-mutation-blocked={!!busy || undefined}

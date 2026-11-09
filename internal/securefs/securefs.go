@@ -21,8 +21,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 )
 
 // FileMode is the permission bits applied to credential-bearing regular
@@ -294,25 +292,3 @@ func tightenOne(path string, info os.FileInfo) error {
 	// current is more restrictive than target — nothing to do.
 	return nil
 }
-
-// ModeString is a tiny helper for log lines that report what was
-// tightened; keeps call sites free of strconv imports.
-func ModeString(m os.FileMode) string {
-	return "0" + strconv.FormatUint(uint64(m.Perm()), 8)
-}
-
-// SafeToPrint returns true if the path lives under a known sensitive
-// directory (anything that should never be logged in plaintext). It's
-// a soft guard — callers should always prefer context-specific logic
-// over this helper.
-func SafeToPrint(path string) bool {
-	lower := strings.ToLower(path)
-	return !strings.Contains(lower, "auth.json") &&
-		!strings.Contains(lower, "config.json") &&
-		!strings.Contains(lower, ".key") &&
-		!strings.Contains(lower, "session")
-}
-
-// Suppress unused import warnings for io (kept for future readers
-// that want to extend WriteFileAtomic with io.Copy semantics).
-var _ = io.EOF

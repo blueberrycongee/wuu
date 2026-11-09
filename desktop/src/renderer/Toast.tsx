@@ -8,9 +8,9 @@ import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
 const TOAST_DEDUPE_WINDOW_MS = 30_000;
 const MAX_QUEUED_TOASTS = 4;
 
-export type ToastTone = "info" | "error";
+type ToastTone = "info" | "error";
 
-export type ToastInput = {
+type ToastInput = {
   message: string;
   tone?: ToastTone;
   dedupeKey?: string;

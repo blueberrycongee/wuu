@@ -40,7 +40,7 @@ async function appendText(value) {
  await evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));
 }
 async function key(keyCode,modifiers=[]) {win.webContents.sendInputEvent({type:'keyDown',keyCode,modifiers});win.webContents.sendInputEvent({type:'keyUp',keyCode,modifiers});await evaluate(()=>new Promise(resolve=>requestAnimationFrame(resolve)));}
-async function capture(name){await evaluate(()=>Promise.all((document.querySelector('.slash-command-menu')?.getAnimations({subtree:true})||[]).map(animation=>animation.finished.catch(()=>{}))));await evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());}
+async function capture(name){await evaluate(()=>Promise.all((document.querySelector('.slash-command-menu')?.getAnimations({subtree:true})||[]).filter(animation=>animation.timeline instanceof DocumentTimeline && Number.isFinite(animation.effect?.getComputedTiming().endTime)).map(animation=>animation.finished.catch(()=>{}))));await evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));fs.writeFileSync(path.join(output,name+'.png'),(await win.webContents.capturePage()).toPNG());}
 async function initialize(){
  provider=http.createServer(async(req,res)=>{
   let bytes='';for await(const chunk of req)bytes+=chunk;
@@ -54,10 +54,11 @@ async function initialize(){
  const state=path.join(scratch,'state'), files=path.join(state,'user-spaces/local/personal/files');
  const skill=path.join(files,'.agents/skills/fixture-note');fs.mkdirSync(skill,{recursive:true});
  fs.writeFileSync(path.join(skill,'SKILL.md'),'---\nname: fixture-note\ndescription: 合成笔记技能\nuser-invocable: true\n---\nPERSONAL_SKILL_DISPATCH_SENTINEL\nArguments: $ARGUMENTS\n');
- const codingSkill=path.join(state,'skills/coding-secret');fs.mkdirSync(codingSkill,{recursive:true});fs.writeFileSync(path.join(codingSkill,'SKILL.md'),'---\nname: coding-secret\ndescription: Must stay outside Personal\n---\nCODING_PRIVATE_SENTINEL');
+ const codingSkill=path.join(state,'skills/coding-shared');fs.mkdirSync(codingSkill,{recursive:true});fs.writeFileSync(path.join(codingSkill,'SKILL.md'),'---\nname: coding-shared\ndescription: Shared Coding skill\n---\nCODING_SHARED_SENTINEL\nArguments: $ARGUMENTS\n');
+ const projectSkill=path.join(files,'.claude/skills/project-secret');fs.mkdirSync(projectSkill,{recursive:true});fs.writeFileSync(path.join(projectSkill,'SKILL.md'),'---\nname: project-secret\ndescription: Project only\n---\nPROJECT_PRIVATE_SENTINEL');
  const config=path.join(scratch,'config.json');
  fs.writeFileSync(config,JSON.stringify({composition:{version:5,profile:'personal'},default_provider:'fixture',providers:{fixture:{type:'openai-compatible',base_url:`http://127.0.0.1:${provider.address().port}`,api_key:'synthetic-unused',model:'fixture',models:{fixture:{context_window:131072}}}},agent:{max_steps:2},skills:{enabled:true}}));
- core=spawn(process.env.WUU_TEST_CORE||path.join(__dirname,'../build/bin/wuu-core'),['app-server','--desktop-owner-pipe','--user-space','local','--product-domain','personal','--composition-profile','personal','--workdir',files,'--config',config],{stdio:['pipe','pipe','pipe','pipe'],env:{...process.env,WUU_HOME:state,WUU_NODE_EXECUTABLE:execFileSync('which',['node'],{encoding:'utf8'}).trim()}});
+ core=spawn(process.env.WUU_TEST_CORE||path.join(__dirname,'../build/bin/wuu-core'),['app-server','--desktop-owner-pipe','--user-space','local','--product-domain','personal','--composition-profile','personal','--workdir',files,'--config',config],{stdio:['pipe','pipe','pipe','pipe'],env:{...process.env,HOME:scratch,WUU_HOME:state,WUU_NODE_EXECUTABLE:execFileSync('which',['node'],{encoding:'utf8'}).trim()}});
  core.stderr.on('data',chunk=>fs.appendFileSync(path.join(output,'host.log'),chunk));
  core.on('exit',code=>{for(const pending of waiting.values())pending.reject(new Error(`host exited ${code}`));waiting.clear();});
  readline.createInterface({input:core.stdout}).on('line',line=>{let frame;try{frame=JSON.parse(line);}catch{return;}const pending=waiting.get(frame.id);if(!pending)return;waiting.delete(frame.id);frame.error?pending.reject(new Error(JSON.stringify(frame.error))):pending.resolve(frame.result);});
@@ -79,6 +80,7 @@ async function initialize(){
    }
    return result;
   }
+  if(method==='mcp/list')report.requests.push({method});
   return rpc(method,params);
  });
 }
@@ -92,9 +94,15 @@ app.whenReady().then(async()=>{
  await initialize();
  win=new BrowserWindow({width:1100,height:850,show:true,webPreferences:{contextIsolation:true,preload:path.join(__dirname,'personal-scoped-e2e-preload.cjs')}});
  win.webContents.on('console-message',(_e,level,message)=>{if(level>=2)fs.appendFileSync(path.join(output,'renderer.log'),message+'\n');});
- await open();await fill('/');
+ await open();await fill('@');
+ await until(()=>document.querySelector('.composer-plugin-choices') && !document.querySelector('.composer-plugin-choices [role=status]'));
+ assert.equal(await evaluate(()=>!!document.querySelector('.composer-plugin-choices [role=alert]')),false,'Personal connector list failed');
+ assert(report.requests.some(r=>r.method==='mcp/list'),'Personal connector list did not reach user host');
+ report.cases.push('Twin mention menu loads the scoped connector inventory through the real Personal host');
+ await fill('/');
  await until(()=>document.querySelector('[data-command-name="fixture-note"]'));
- assert.equal(await evaluate(()=>!!document.querySelector('[data-command-name="coding-secret"]')),false);
+ assert.equal(await evaluate(()=>!!document.querySelector('[data-command-name="coding-shared"]')),true);
+ assert.equal(await evaluate(()=>!!document.querySelector('[data-command-name="project-secret"]')),false);
  await capture('wide-light-menu');
  await fill('/fixture');await until(()=>document.querySelectorAll('.slash-command-item').length===1);
  await evaluate(()=>{const input=document.querySelector('.mosaic-main '+COMPOSER_INPUT);input.dispatchEvent(new CompositionEvent('compositionstart',{bubbles:true}));input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',keyCode:229,bubbles:true,isComposing:true}));});
@@ -111,8 +119,11 @@ app.whenReady().then(async()=>{
  await until(()=>document.querySelector('.mosaic-main .composer-send-button:not(:disabled)'));await evaluate(()=>document.querySelector('.mosaic-main .composer-send-button').click());
  await until(()=>document.querySelector('.mosaic-main').textContent.includes('Fixture completed.'));
  const sent=modelRequests.find(body=>JSON.stringify(body.messages).includes('PERSONAL_SKILL_DISPATCH_SENTINEL'));
- assert(sent,'selected skill never reached model');assert(JSON.stringify(sent.messages).includes('中文验证'));assert(!JSON.stringify(sent.messages).includes('CODING_PRIVATE_SENTINEL'));
- report.cases.push('Owned skill identity resolves into real model input; Coding skill excluded; keyboard/IME and attached file retained');
+ assert(sent,'selected skill never reached model');assert(JSON.stringify(sent.messages).includes('中文验证'));assert(!JSON.stringify(sent.messages).includes('PROJECT_PRIVATE_SENTINEL'));
+ await fill('/coding-shared');await until(()=>document.querySelector('[data-command-name="coding-shared"]'));await key('Enter');await appendText('shared check');await evaluate(()=>document.querySelector('.mosaic-main .composer-send-button').click());
+ await until(()=>composerText(document.querySelector('.mosaic-main '+COMPOSER_INPUT))==='');
+ assert(modelRequests.some(body=>JSON.stringify(body.messages).includes('CODING_SHARED_SENTINEL')),'shared skill never reached model');
+ report.cases.push('Personal and shared Coding skill identities reach the model; project skills remain excluded');
  await evaluate(()=>document.querySelector('.mosaic-main [data-action="reply-message"]').click());await until(()=>document.querySelector('.mosaic-replies '+COMPOSER_INPUT));
  await fill('/fixture');await until(()=>document.querySelector('[data-command-name="fixture-note"]'));await key('Enter');await key('Enter');
  await until(()=>document.querySelector('.mosaic-replies').textContent.includes('Fixture completed.'));
