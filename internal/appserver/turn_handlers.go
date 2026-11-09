@@ -2410,10 +2410,11 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 		entry.origin = session.HeldUserWorkOriginSteer
 		toHold = append(toHold, entry)
 	}
-	s.queuedTurnMu.Lock()
-	queued := append([]queuedTurn(nil), s.pendingQueuedTurns[threadID]...)
-	delete(s.pendingQueuedTurns, threadID)
-	s.queuedTurnMu.Unlock()
+	queue := s.turnQueue(threadID)
+	queue.mu.Lock()
+	queued := append([]queuedTurn(nil), queue.pending...)
+	queue.pending = nil
+	queue.mu.Unlock()
 	userQueued := make([]queuedTurn, 0, len(queued))
 	var discardedPluginTurns []queuedTurn
 	for _, entry := range queued {
@@ -2436,9 +2437,9 @@ func (s *Server) interruptThreadExecution(binding *runtime.State, threadID, expe
 	held, err := s.appendHeldUserTurns(binding, threadID, toHold)
 	timing.span("interrupt_hold_inputs", phaseStarted)
 	if err != nil {
-		s.queuedTurnMu.Lock()
-		s.pendingQueuedTurns[threadID] = append(queued, s.pendingQueuedTurns[threadID]...)
-		s.queuedTurnMu.Unlock()
+		queue.mu.Lock()
+		queue.pending = append(queued, queue.pending...)
+		queue.mu.Unlock()
 		th.mu.Unlock()
 		return false, err
 	}
@@ -2905,16 +2906,12 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		sessionInstructions = metadata.Instructions
 	}
 	var additionalDirectories []string
-	if turnKit != nil && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu {
+	externalEngine := turnKit != nil && agentengine.NormalizeEngineID(th.EngineID) != agentengine.EngineWuu
+	if externalEngine {
 		catalog := turnKit.RegisteredWorkspaces()
 		additionalDirectories = workspaces.Roots(catalog)
 		if guidance := workspaces.Instructions(catalog); guidance != "" {
 			sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
-		}
-		if threadRuntime != nil && threadRuntime.CapabilityTools != nil {
-			if guidance := externalCapabilityInstructions(threadRuntime.CapabilityTools.Definitions()); guidance != "" {
-				sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
-			}
 		}
 	}
 	capabilityErr := instructionsErr
@@ -2953,6 +2950,14 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 			} else {
 				pluginGuidance, capabilityErr = s.resolvePluginReferences(ctx, referenceParts, binding.Host, turnKit)
 			}
+		}
+	}
+	// Collect capability usage contracts only after conversation references have
+	// admitted their servers and plugin tools, so their declared guidance
+	// reaches the engine alongside the built-in contracts.
+	if capabilityErr == nil && externalEngine && threadRuntime != nil && threadRuntime.CapabilityTools != nil {
+		if guidance := externalCapabilityInstructions(threadRuntime.CapabilityTools.Definitions()); guidance != "" {
+			sessionInstructions = strings.TrimSpace(sessionInstructions + "\n\n" + guidance)
 		}
 	}
 	// Plugin-client submissions preserve literal text. Supply resolved tool and
@@ -4333,30 +4338,28 @@ func (s *Server) enqueueAgentCompletionTurn(binding *runtime.State, threadID, ag
 		msg.Role = "user"
 	}
 
-	s.agentCompletionMu.Lock()
+	completions := s.completionQueue(threadID)
+	completions.mu.Lock()
 	if s.closed.Load() {
-		s.agentCompletionMu.Unlock()
+		completions.mu.Unlock()
 		return
-	}
-	if s.pendingAgentCompletionTurns == nil {
-		s.pendingAgentCompletionTurns = make(map[string][]agentCompletionTurn)
 	}
 	resultID = strings.TrimSpace(resultID)
 	if resultID != "" {
-		for _, pending := range s.pendingAgentCompletionTurns[threadID] {
+		for _, pending := range completions.pending {
 			if strings.TrimSpace(pending.resultID) == resultID {
-				s.agentCompletionMu.Unlock()
+				completions.mu.Unlock()
 				return
 			}
 		}
 	}
-	s.pendingAgentCompletionTurns[threadID] = append(s.pendingAgentCompletionTurns[threadID], agentCompletionTurn{
+	completions.pending = append(completions.pending, agentCompletionTurn{
 		agentID:  strings.TrimSpace(agentID),
 		resultID: resultID,
 		msg:      msg,
 		snapshot: cloneSubAgentSnapshot(snapshot),
 	})
-	s.agentCompletionMu.Unlock()
+	completions.mu.Unlock()
 
 	s.kickAgentCompletionDrain(binding, threadID)
 }
@@ -4389,67 +4392,63 @@ func (s *Server) enqueueQueuedUserTurnWithPolicy(threadID string, entry queuedTu
 	}
 	entry.msg.Steered = false
 
-	s.queuedTurnMu.Lock()
+	queue := s.turnQueue(threadID)
+	queue.mu.Lock()
 	if s.closed.Load() {
-		s.queuedTurnMu.Unlock()
+		queue.mu.Unlock()
 		return false
-	}
-	if s.pendingQueuedTurns == nil {
-		s.pendingQueuedTurns = make(map[string][]queuedTurn)
 	}
 	if supersedeCancellation {
 		// A queue cancellation from a stale client belongs to this message's
 		// previous delivery mode. An explicit steer -> queue transition is the
 		// new authoritative intent for the stable id and supersedes it.
-		key := queuedTurnClaimKey(threadID, entry.id)
-		if s.cancelledPendingSubmissions[key] == session.HeldUserWorkOriginQueue {
-			delete(s.cancelledPendingSubmissions, key)
+		if queue.cancelled[entry.id] == session.HeldUserWorkOriginQueue {
+			delete(queue.cancelled, entry.id)
 		}
 	}
-	if s.isCancelledPendingSubmissionLocked(threadID, entry.id, session.HeldUserWorkOriginQueue) {
-		s.queuedTurnMu.Unlock()
+	if queue.cancelledSubmission(entry.id, session.HeldUserWorkOriginQueue) {
+		queue.mu.Unlock()
 		return false
 	}
-	for _, pending := range s.pendingQueuedTurns[threadID] {
+	for _, pending := range queue.pending {
 		if pending.id == entry.id {
-			s.queuedTurnMu.Unlock()
+			queue.mu.Unlock()
 			return false
 		}
 	}
-	if claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, entry.id)]; claim != nil && !claim.cancelled {
-		s.queuedTurnMu.Unlock()
+	if claim := queue.claim(entry.id); claim != nil && !claim.cancelled {
+		queue.mu.Unlock()
 		return false
 	}
-	s.pendingQueuedTurns[threadID] = append(s.pendingQueuedTurns[threadID], entry)
-	s.queuedTurnMu.Unlock()
+	queue.pending = append(queue.pending, entry)
+	queue.mu.Unlock()
 	return true
 }
 
 func (s *Server) recordCancelledPendingSubmission(threadID, id, origin string) {
-	key := queuedTurnClaimKey(threadID, id)
-	if key == "\x00" {
+	if strings.TrimSpace(threadID) == "" && strings.TrimSpace(id) == "" {
 		return
 	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	if s.cancelledPendingSubmissions == nil {
-		s.cancelledPendingSubmissions = make(map[string]string)
+	queue := s.turnQueue(threadID)
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	if queue.cancelled == nil {
+		queue.cancelled = make(map[string]string)
 	}
-	if len(s.cancelledPendingSubmissions) >= maxCancelledPendingSubmissions {
-		clear(s.cancelledPendingSubmissions)
+	if len(queue.cancelled) >= maxCancelledPendingSubmissions {
+		clear(queue.cancelled)
 	}
-	s.cancelledPendingSubmissions[key] = origin
+	queue.cancelled[strings.TrimSpace(id)] = origin
 }
 
 func (s *Server) isCancelledPendingSubmission(threadID, id, origin string) bool {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	return s.isCancelledPendingSubmissionLocked(threadID, id, origin)
-}
-
-func (s *Server) isCancelledPendingSubmissionLocked(threadID, id, origin string) bool {
-	key := queuedTurnClaimKey(threadID, id)
-	return s.cancelledPendingSubmissions[key] == origin
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return false
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	return queue.cancelledSubmission(id, origin)
 }
 
 func (s *Server) removeQueuedUserTurn(threadID, queueID string) (queuedTurn, bool) {
@@ -4458,9 +4457,13 @@ func (s *Server) removeQueuedUserTurn(threadID, queueID string) (queuedTurn, boo
 	if threadID == "" || queueID == "" {
 		return queuedTurn{}, false
 	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	pending := s.pendingQueuedTurns[threadID]
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return queuedTurn{}, false
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	pending := queue.pending
 	next := pending[:0]
 	var removed queuedTurn
 	found := false
@@ -4473,13 +4476,12 @@ func (s *Server) removeQueuedUserTurn(threadID, queueID string) (queuedTurn, boo
 		next = append(next, entry)
 	}
 	if len(next) == 0 {
-		delete(s.pendingQueuedTurns, threadID)
+		queue.pending = nil
 	} else {
-		s.pendingQueuedTurns[threadID] = next
+		queue.pending = next
 	}
 	if !found {
-		claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, queueID)]
-		if claim != nil && !claim.cancelled && !claim.committed {
+		if claim := queue.claim(queueID); claim != nil && !claim.cancelled && !claim.committed {
 			claim.cancelled = true
 			removed = claim.entry
 			found = true
@@ -4500,16 +4502,20 @@ func (s *Server) replaceQueuedUserTurn(threadID, queueID string, msg providers.C
 	msg.ClientID = queueID
 	msg.Steered = false
 
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	pending := s.pendingQueuedTurns[threadID]
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return queuedTurn{}, false
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	pending := queue.pending
 	for index, entry := range pending {
 		if entry.id != queueID {
 			continue
 		}
 		updated := queuedTurn{id: queueID, msg: msg, snapshot: entry.snapshot}
 		pending[index] = updated
-		s.pendingQueuedTurns[threadID] = pending
+		queue.pending = pending
 		return updated, true
 	}
 	return queuedTurn{}, false
@@ -4521,15 +4527,18 @@ func (s *Server) findQueuedUserTurn(threadID, queueID string) (queuedTurn, bool)
 	if threadID == "" || queueID == "" {
 		return queuedTurn{}, false
 	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	for _, entry := range s.pendingQueuedTurns[threadID] {
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return queuedTurn{}, false
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	for _, entry := range queue.pending {
 		if entry.id == queueID {
 			return entry, true
 		}
 	}
-	claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, queueID)]
-	if claim != nil && !claim.cancelled {
+	if claim := queue.claim(queueID); claim != nil && !claim.cancelled {
 		return claim.entry, true
 	}
 	return queuedTurn{}, false
@@ -4551,20 +4560,18 @@ func (s *Server) tryDrainQueuedTurns(binding *runtime.State, threadID string, sy
 		return
 	}
 
-	s.queuedTurnMu.Lock()
+	queue := s.turnQueue(threadID)
+	queue.mu.Lock()
 	if s.closed.Load() {
-		s.queuedTurnMu.Unlock()
+		queue.mu.Unlock()
 		return
 	}
-	if len(s.pendingQueuedTurns[threadID]) == 0 || s.drainingQueuedTurns[threadID] {
-		s.queuedTurnMu.Unlock()
+	if len(queue.pending) == 0 || queue.draining {
+		queue.mu.Unlock()
 		return
 	}
-	if s.drainingQueuedTurns == nil {
-		s.drainingQueuedTurns = make(map[string]bool)
-	}
-	s.drainingQueuedTurns[threadID] = true
-	s.queuedTurnMu.Unlock()
+	queue.draining = true
+	queue.mu.Unlock()
 
 	if synchronous {
 		s.drainQueuedTurns(binding, threadID)
@@ -5328,9 +5335,13 @@ func gateAlreadyDeliveredCompletions(history []providers.ChatMessage, threadRunt
 }
 
 func (s *Server) takeNextQueuedUserTurn(threadID string) (queuedTurn, bool) {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	pending := s.pendingQueuedTurns[threadID]
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return queuedTurn{}, false
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	pending := queue.pending
 	if len(pending) == 0 {
 		return queuedTurn{}, false
 	}
@@ -5343,29 +5354,26 @@ func (s *Server) takeNextQueuedUserTurn(threadID string) (queuedTurn, bool) {
 	}
 	entry := pending[index]
 	if len(pending) == 1 {
-		delete(s.pendingQueuedTurns, threadID)
+		queue.pending = nil
 	} else {
 		next := append([]queuedTurn(nil), pending[:index]...)
-		s.pendingQueuedTurns[threadID] = append(next, pending[index+1:]...)
+		queue.pending = append(next, pending[index+1:]...)
 	}
-	if s.claimedQueuedTurns == nil {
-		s.claimedQueuedTurns = make(map[string]*queuedTurnClaim)
+	if queue.claimed == nil {
+		queue.claimed = make(map[string]*queuedTurnClaim)
 	}
-	s.claimedQueuedTurns[queuedTurnClaimKey(threadID, entry.id)] = &queuedTurnClaim{entry: entry}
+	queue.claimed[entry.id] = &queuedTurnClaim{entry: entry}
 	return entry, true
-}
-
-func queuedTurnClaimKey(threadID, queueID string) string {
-	return strings.TrimSpace(threadID) + "\x00" + strings.TrimSpace(queueID)
 }
 
 // commitQueuedTurnClaim runs while the thread lock is held immediately before
 // the user message append. A dequeue that wins first prevents the append;
 // after this point the message is committed and cancellation is too late.
 func (s *Server) commitQueuedTurnClaim(threadID, queueID string) error {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	claim := s.claimedQueuedTurns[queuedTurnClaimKey(threadID, queueID)]
+	queue := s.turnQueue(threadID)
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	claim := queue.claim(queueID)
 	if claim == nil {
 		return nil
 	}
@@ -5380,15 +5388,15 @@ func (s *Server) commitQueuedTurnClaim(threadID, queueID string) error {
 // entry and committing or putting it back. Claim removal and requeue happen
 // under one lock, so cancellation can never miss both representations.
 func (s *Server) settleQueuedTurnClaim(threadID string, entry queuedTurn, requeue bool) bool {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	key := queuedTurnClaimKey(threadID, entry.id)
-	claim := s.claimedQueuedTurns[key]
+	queue := s.turnQueue(threadID)
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	claim := queue.claim(entry.id)
 	cancelled := claim != nil && claim.cancelled
-	delete(s.claimedQueuedTurns, key)
+	delete(queue.claimed, strings.TrimSpace(entry.id))
 	if requeue && !cancelled {
-		existing := append([]queuedTurn(nil), s.pendingQueuedTurns[threadID]...)
-		s.pendingQueuedTurns[threadID] = append([]queuedTurn{entry}, existing...)
+		existing := append([]queuedTurn(nil), queue.pending...)
+		queue.pending = append([]queuedTurn{entry}, existing...)
 	}
 	return cancelled
 }
@@ -5398,28 +5406,34 @@ func (s *Server) prependQueuedUserTurns(threadID string, entries []queuedTurn) {
 	if threadID == "" || len(entries) == 0 {
 		return
 	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
+	queue := s.turnQueue(threadID)
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
 	if s.closed.Load() {
 		return
 	}
-	if s.pendingQueuedTurns == nil {
-		s.pendingQueuedTurns = make(map[string][]queuedTurn)
-	}
-	existing := append([]queuedTurn(nil), s.pendingQueuedTurns[threadID]...)
-	s.pendingQueuedTurns[threadID] = append(append([]queuedTurn(nil), entries...), existing...)
+	existing := append([]queuedTurn(nil), queue.pending...)
+	queue.pending = append(append([]queuedTurn(nil), entries...), existing...)
 }
 
 func (s *Server) hasQueuedUserTurns(threadID string) bool {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	return len(s.pendingQueuedTurns[threadID]) > 0
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return false
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	return len(queue.pending) > 0
 }
 
 func (s *Server) hasQueuedUserWork(threadID string) bool {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	return len(s.pendingQueuedTurns[threadID]) > 0 || s.drainingQueuedTurns[threadID]
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return false
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	return len(queue.pending) > 0 || queue.draining
 }
 
 func (s *Server) discardQueuedUserTurns(threadID string) []string {
@@ -5431,10 +5445,14 @@ func (s *Server) discardQueuedTurns(threadID string) []queuedTurn {
 	if threadID == "" {
 		return nil
 	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	entries := append([]queuedTurn(nil), s.pendingQueuedTurns[threadID]...)
-	delete(s.pendingQueuedTurns, threadID)
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return nil
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	entries := append([]queuedTurn(nil), queue.pending...)
+	queue.pending = nil
 	return entries
 }
 
@@ -5443,11 +5461,15 @@ func (s *Server) discardQueuedUserWork(threadID string) []string {
 	if threadID == "" {
 		return nil
 	}
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	queueIDs := queuedTurnIDs(s.pendingQueuedTurns[threadID])
-	delete(s.pendingQueuedTurns, threadID)
-	delete(s.drainingQueuedTurns, threadID)
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return nil
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	queueIDs := queuedTurnIDs(queue.pending)
+	queue.pending = nil
+	queue.draining = false
 	return queueIDs
 }
 
@@ -5474,9 +5496,13 @@ func (s *Server) notifyQueuedTurnsDequeued(threadID string, queueIDs []string) {
 }
 
 func (s *Server) clearQueuedTurnDrain(threadID string) {
-	s.queuedTurnMu.Lock()
-	defer s.queuedTurnMu.Unlock()
-	delete(s.drainingQueuedTurns, threadID)
+	queue := s.peekTurnQueue(threadID)
+	if queue == nil {
+		return
+	}
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	queue.draining = false
 }
 
 func (s *Server) kickAgentCompletionDrain(binding *runtime.State, threadID string) {
@@ -5492,20 +5518,18 @@ func (s *Server) tryDrainAgentCompletionTurns(binding *runtime.State, threadID s
 		return
 	}
 
-	s.agentCompletionMu.Lock()
+	completions := s.completionQueue(threadID)
+	completions.mu.Lock()
 	if s.closed.Load() {
-		s.agentCompletionMu.Unlock()
+		completions.mu.Unlock()
 		return
 	}
-	if len(s.pendingAgentCompletionTurns[threadID]) == 0 || s.drainingAgentCompletionTurns[threadID] {
-		s.agentCompletionMu.Unlock()
+	if len(completions.pending) == 0 || completions.draining {
+		completions.mu.Unlock()
 		return
 	}
-	if s.drainingAgentCompletionTurns == nil {
-		s.drainingAgentCompletionTurns = make(map[string]bool)
-	}
-	s.drainingAgentCompletionTurns[threadID] = true
-	s.agentCompletionMu.Unlock()
+	completions.draining = true
+	completions.mu.Unlock()
 
 	if synchronous {
 		s.drainAgentCompletionTurns(binding, threadID)
@@ -5758,13 +5782,17 @@ func (s *Server) waitAndHandoffAnswerReadyTurn(ctx context.Context, th *threadSt
 }
 
 func (s *Server) takePendingAgentCompletionTurns(threadID string) []agentCompletionTurn {
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
+	completions := s.peekCompletionQueue(threadID)
+	if completions == nil {
+		return nil
+	}
+	completions.mu.Lock()
+	defer completions.mu.Unlock()
 	if s.closed.Load() {
 		return nil
 	}
-	pending := cloneAgentCompletionTurns(s.pendingAgentCompletionTurns[threadID])
-	delete(s.pendingAgentCompletionTurns, threadID)
+	pending := cloneAgentCompletionTurns(completions.pending)
+	completions.pending = nil
 	return pending
 }
 
@@ -5772,34 +5800,44 @@ func (s *Server) prependPendingAgentCompletionTurns(threadID string, turns []age
 	if len(turns) == 0 {
 		return
 	}
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
+	completions := s.completionQueue(threadID)
+	completions.mu.Lock()
+	defer completions.mu.Unlock()
 	if s.closed.Load() {
 		return
 	}
-	if s.pendingAgentCompletionTurns == nil {
-		s.pendingAgentCompletionTurns = make(map[string][]agentCompletionTurn)
-	}
-	existing := cloneAgentCompletionTurns(s.pendingAgentCompletionTurns[threadID])
-	s.pendingAgentCompletionTurns[threadID] = append(cloneAgentCompletionTurns(turns), existing...)
+	existing := cloneAgentCompletionTurns(completions.pending)
+	completions.pending = append(cloneAgentCompletionTurns(turns), existing...)
 }
 
 func (s *Server) discardPendingAgentCompletionTurns(threadID string) {
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
-	delete(s.pendingAgentCompletionTurns, threadID)
+	completions := s.peekCompletionQueue(threadID)
+	if completions == nil {
+		return
+	}
+	completions.mu.Lock()
+	defer completions.mu.Unlock()
+	completions.pending = nil
 }
 
 func (s *Server) clearAgentCompletionDrain(threadID string) {
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
-	delete(s.drainingAgentCompletionTurns, threadID)
+	completions := s.peekCompletionQueue(threadID)
+	if completions == nil {
+		return
+	}
+	completions.mu.Lock()
+	defer completions.mu.Unlock()
+	completions.draining = false
 }
 
 func (s *Server) hasQueuedAgentCompletionWork(threadID string) bool {
-	s.agentCompletionMu.Lock()
-	defer s.agentCompletionMu.Unlock()
-	return len(s.pendingAgentCompletionTurns[threadID]) > 0 || s.drainingAgentCompletionTurns[threadID]
+	completions := s.peekCompletionQueue(threadID)
+	if completions == nil {
+		return false
+	}
+	completions.mu.Lock()
+	defer completions.mu.Unlock()
+	return len(completions.pending) > 0 || completions.draining
 }
 
 func combineAgentCompletionMessages(turns []agentCompletionTurn) providers.ChatMessage {
@@ -6230,8 +6268,8 @@ func (s *Server) handleSettingsUsage(req Request) error {
 	rows := scan.TokenRows
 
 	metrics, days := aggregateUsageRows(rows, loc)
-	engineBreakdowns, outsideRows := s.buildEngineBreakdowns(binding.Sessions, rows)
-	days = mergeOutsideUsageDays(days, outsideRows, loc)
+	engineBreakdowns, boundRows, outsideRows := s.buildEngineBreakdowns(binding.Sessions, rows)
+	days = mergeEngineLedgerDays(days, boundRows, outsideRows, loc)
 
 	response := SettingsUsageResponse{
 		TotalSessions:    countUsageSessions(rows),
@@ -6296,16 +6334,18 @@ const engineUsageScanTimeout = 30 * time.Second
 
 // buildEngineBreakdowns attributes the in-Wuu token_usage trail to each
 // thread's bound engine, then reads the engines' own on-disk ledgers for the
-// usage recorded outside Wuu. Native sessions a Wuu thread already claims are
-// excluded from the outside side, so the two columns never count the same work
-// twice. InWuu.Sessions counts every thread bound to the engine — including
-// engines like the ACP family whose turns report no token usage — so a bound
-// but unreported engine still surfaces with zero tokens. A ledger that fails
-// to scan leaves Outside nil rather than reporting partial data as complete.
-// buildEngineBreakdowns also returns the outside-Wuu ledger rows that survived
-// exclusion and engine failure filtering, so the daily series can color the
-// same days the breakdown counts.
-func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.TokenUsageRow) ([]SettingsEngineUsage, []engineusage.Row) {
+// usage recorded outside Wuu. Engines whose turns report usage drop their
+// Wuu-claimed sessions at scan time, so the two columns never count the same
+// work twice. Engines that never report usage to the trail — the ACP family,
+// such as Devin — return bound-session rows too; those land in the InWuu
+// column because Wuu's own trail cannot cover them. InWuu.Sessions counts
+// every thread bound to the engine, so a bound but unreported engine still
+// surfaces with zero tokens. A ledger that fails to scan leaves Outside nil
+// rather than reporting partial data as complete. buildEngineBreakdowns also
+// returns the ledger rows that survived engine failure filtering, split into
+// bound (in-Wuu) and outside, so the daily series can color the same days the
+// breakdown counts.
+func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.TokenUsageRow) ([]SettingsEngineUsage, []engineusage.Row, []engineusage.Row) {
 	sessions, err := store.List(0)
 	if err != nil {
 		providers.DebugLogf("usage engine breakdown: list sessions: %v", err)
@@ -6361,13 +6401,25 @@ func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.Toke
 		providers.DebugLogf("usage engine breakdown: scan %s ledger: %v", engine, scanErr)
 	}
 	outsideSessions := make(map[string]map[string]struct{})
-	var outsideRows []engineusage.Row
+	var boundRows, outsideRows []engineusage.Row
 	for _, r := range scanned.Rows {
 		if _, failed := scanned.Failed[r.Engine]; failed {
 			continue
 		}
-		outsideRows = append(outsideRows, r)
 		b := get(r.Engine)
+		if _, bound := exclude[r.Engine][r.SessionID]; bound && r.SessionID != "" {
+			// A ledger row for a session a Wuu thread drives. Only engines
+			// that never report usage to the trail reach this branch —
+			// reporting engines drop bound sessions inside the scan — so it
+			// is in-Wuu spend, not a recount of a claimed native session.
+			b.InWuu.InputTokens += r.InputTokens
+			b.InWuu.OutputTokens += r.OutputTokens
+			b.InWuu.CacheCreationTokens += r.CacheCreationTokens
+			b.InWuu.CacheReadTokens += r.CacheReadTokens
+			boundRows = append(boundRows, r)
+			continue
+		}
+		outsideRows = append(outsideRows, r)
 		if b.Outside == nil {
 			b.Outside = &EngineUsageSum{}
 		}
@@ -6412,20 +6464,48 @@ func (s *Server) buildEngineBreakdowns(store *session.Store, rows []insight.Toke
 		}
 		return out[i].Engine < out[j].Engine
 	})
-	return out, outsideRows
+	return out, boundRows, outsideRows
 }
 
-// mergeOutsideUsageDays folds outside-Wuu ledger rows into the daily series so
-// the trend and heatmap color every day the page counts. Outside totals land
-// on their own field — the in-Wuu token fields, hit rate, turns, and agents
-// stay exactly what aggregateUsageRows computed.
-func mergeOutsideUsageDays(days []SettingsUsageDay, rows []engineusage.Row, loc *time.Location) []SettingsUsageDay {
+// mergeEngineLedgerDays folds engine-ledger rows into the daily series so the
+// trend and heatmap color every day the page counts. Bound rows — ledger
+// usage of sessions Wuu threads drive — add to the day's own token fields,
+// with the hit rate recomputed over the widened denominators; outside rows
+// land on day.Outside. Turns and agents stay exactly what aggregateUsageRows
+// computed.
+func mergeEngineLedgerDays(days []SettingsUsageDay, boundRows, outsideRows []engineusage.Row, loc *time.Location) []SettingsUsageDay {
+	index := make(map[string]int, len(days))
+	for i, day := range days {
+		index[day.Date] = i
+	}
+	dayIndex := func(date string) int {
+		if i, ok := index[date]; ok {
+			return i
+		}
+		days = append(days, SettingsUsageDay{Date: date})
+		index[date] = len(days) - 1
+		return len(days) - 1
+	}
+	for _, r := range boundRows {
+		if r.At.IsZero() {
+			continue
+		}
+		day := &days[dayIndex(r.At.In(loc).Format("2006-01-02"))]
+		day.InputTokens += r.InputTokens
+		day.OutputTokens += r.OutputTokens
+		day.CacheCreationTokens += r.CacheCreationTokens
+		day.CacheReadTokens += r.CacheReadTokens
+		if prompt := day.InputTokens + day.CacheReadTokens; prompt > 0 {
+			day.CacheHitRate = float64(day.CacheReadTokens) / float64(prompt)
+		}
+	}
+
 	type outsideBucket struct {
 		sum      EngineUsageSum
 		sessions map[string]struct{}
 	}
 	byDate := make(map[string]*outsideBucket)
-	for _, r := range rows {
+	for _, r := range outsideRows {
 		if r.At.IsZero() {
 			continue
 		}
@@ -6446,22 +6526,10 @@ func mergeOutsideUsageDays(days []SettingsUsageDay, rows []engineusage.Row, loc 
 			bucket.sessions[r.SessionID] = struct{}{}
 		}
 	}
-	if len(byDate) == 0 {
-		return days
-	}
-
-	index := make(map[string]int, len(days))
-	for i, day := range days {
-		index[day.Date] = i
-	}
 	for date, bucket := range byDate {
 		bucket.sum.Sessions = len(bucket.sessions)
 		sum := bucket.sum
-		if i, ok := index[date]; ok {
-			days[i].Outside = &sum
-		} else {
-			days = append(days, SettingsUsageDay{Date: date, Outside: &sum})
-		}
+		days[dayIndex(date)].Outside = &sum
 	}
 	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
 	return days
@@ -6590,18 +6658,6 @@ func aggregateUsageRows(rows []insight.TokenUsageRow, loc *time.Location) (Setti
 	sort.Slice(days, func(i, j int) bool { return days[i].Date < days[j].Date })
 
 	return metrics, days
-}
-
-// truncateUsageTitle shortens a session's first user message down to a
-// reasonable card headline; the desktop may trim further before display.
-func truncateUsageTitle(s string) string {
-	const max = 60
-	s = strings.TrimSpace(s)
-	r := []rune(s)
-	if len(r) <= max {
-		return s
-	}
-	return string(r[:max-1]) + "…"
 }
 
 // stopHookMessage provides a single-line, bounded snippet of the turn's final

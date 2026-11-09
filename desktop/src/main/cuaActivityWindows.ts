@@ -2,11 +2,9 @@ import { screen, type Rectangle } from "electron";
 import type { ActivitySession, ServerEvent } from "../shared/protocol";
 import {
   browserPiPScreenRect,
-  PIP_ALIGNMENTS,
   PIP_ANCHOR_MARGIN,
   PIP_CARD_SIZE,
   type BrowserPiPScreenLayout,
-  type PipAlignment,
   type PipRect,
 } from "./browserPiPPlacement";
 import type { CUANativePiPEvent } from "./cuaFrameStreams";
@@ -83,7 +81,6 @@ export type ObservationPiPHandle = {
   setHostLayout?(layout: BrowserPiPScreenLayout | null): void;
   setHostParent?(parent: BrowserPiPHostWindow | null): void;
   setDesktopDock?(enabled: boolean): void;
-  setDesktopAlignment?(alignment: PipAlignment): void;
   isDesktopDocked?(): boolean;
   // Stack placement: index 0 leads at its corner; others rest behind the lead.
   setStackPosition?(index: number, lead?: PiPStackLead): void;
@@ -159,6 +156,11 @@ export class ObservationCoordinator {
   private stackLeadEntry: PiPEntry | undefined;
   // Where the stack last rested, kept after its cards leave.
   private lastStackLead: PiPStackLead | undefined;
+  // Detached cards keep their own stack in docking order: the first card to
+  // leave the column leads and later arrivals trail behind it.
+  private dockedOrder: string[] = [];
+  private dockedLeadEntry: PiPEntry | undefined;
+  private lastDockedLead: PiPStackLead | undefined;
   private readonly pendingStops = new Set<Promise<void>>();
   private closed = false;
   private userBounds: Rectangle | undefined;
@@ -447,6 +449,7 @@ export class ObservationCoordinator {
     if (this.entries.get(entry.key) !== entry) return;
     this.entries.delete(entry.key);
     this.stackOrder = this.stackOrder.filter((id) => id !== entry.key);
+    this.dockedOrder = this.dockedOrder.filter((id) => id !== entry.key);
     entry.pip.setVisible(false, true);
     const stopped = new Promise<void>((resolve) => entry.pip.stop(resolve));
     this.pendingStops.add(stopped);
@@ -483,33 +486,54 @@ export class ObservationCoordinator {
   }
 
   private layoutStack(visible = this.visibleStack()): void {
-    // Desktop-docked cards own their display corner. Column cards keep a
-    // separate stack, so detaching one neither drags the others with it nor
-    // consumes the column's lead slot.
-    const positioned = visible.filter((entry) => !entry.pip.isDesktopDocked?.());
-    const lead = positioned[0];
+    // Column and desktop-docked cards stack separately: detaching moves a card
+    // into the docked group without disturbing the column's lead.
+    this.layoutGroup(
+      visible.filter((entry) => !entry.pip.isDesktopDocked?.()),
+      "stackLeadEntry", "lastStackLead", false,
+    );
+    this.layoutGroup(this.dockedStack(visible), "dockedLeadEntry", "lastDockedLead", true);
+  }
+
+  // Detached previews share one screen corner: the lead owns it and the others
+  // rest behind it in docking order, so floated cards stay together.
+  private dockedStack(visible = this.visibleStack()): PiPEntry[] {
+    const shown = new Set(visible);
+    return this.dockedOrder
+      .map((id) => this.entries.get(id))
+      .filter((entry): entry is PiPEntry => Boolean(entry && shown.has(entry) && entry.pip.isDesktopDocked?.()));
+  }
+
+  private layoutGroup(
+    group: PiPEntry[],
+    leadKey: "stackLeadEntry" | "dockedLeadEntry",
+    lastKey: "lastStackLead" | "lastDockedLead",
+    docked: boolean,
+  ): void {
+    const lead = group[0];
     if (!lead) {
-      this.stackLeadEntry = undefined;
+      this[leadKey] = undefined;
       return;
     }
-    const draggingIndex = positioned.findIndex((entry) => entry.pip.stackLead?.()?.dragging);
+    const draggingIndex = group.findIndex((entry) => entry.pip.stackLead?.()?.dragging);
     if (draggingIndex >= 0) {
-      const motionLead = { ...positioned[draggingIndex]!.pip.stackLead!()!, index: draggingIndex };
-      positioned.forEach((entry, index) => entry.pip.setStackPosition?.(index, motionLead));
-      this.stackLeadEntry = lead;
+      const motionLead = { ...group[draggingIndex]!.pip.stackLead!()!, index: draggingIndex };
+      group.forEach((entry, index) => entry.pip.setStackPosition?.(index, motionLead));
+      this[leadKey] = lead;
       return;
     }
     // A new lead takes over the resting place of the card it replaces, or of
     // the last stack when none remains.
-    const replaced = this.stackLeadEntry;
+    const replaced = this[leadKey];
     const previous = replaced === lead ? undefined
-      : replaced && this.entries.get(replaced.key) === replaced && !replaced.pip.isDesktopDocked?.()
-        ? replaced.pip.stackLead?.() : this.lastStackLead;
-    this.stackLeadEntry = lead;
+      : replaced && this.entries.get(replaced.key) === replaced
+          && (replaced.pip.isDesktopDocked?.() ?? false) === docked
+        ? replaced.pip.stackLead?.() : this[lastKey];
+    this[leadKey] = lead;
     lead.pip.setStackPosition?.(0, previous);
     const frame = lead.pip.stackLead?.();
-    this.lastStackLead = frame;
-    positioned.slice(1).forEach((entry, index) => entry.pip.setStackPosition?.(index + 1, frame));
+    this[lastKey] = frame;
+    group.slice(1).forEach((entry, index) => entry.pip.setStackPosition?.(index + 1, frame));
   }
 
   private visibleStack(): PiPEntry[] {
@@ -549,12 +573,14 @@ export class ObservationCoordinator {
         this.restack();
         return;
       case "desktop_dock":
-        // The detached card leaves the column stack and takes its own screen
-        // corner. Returning promotes it so it takes the resting column slot.
+        // The detached card leaves the column stack and joins the docked
+        // stack, trailing behind cards that left earlier. Returning promotes
+        // it so it takes the resting column slot.
+        if (event.desktop && !this.dockedOrder.includes(entry.key)) this.dockedOrder.push(entry.key);
+        if (!event.desktop) this.dockedOrder = this.dockedOrder.filter((id) => id !== entry.key);
         this.promote(entry.key);
         if (this.stackLeadEntry === entry) this.stackLeadEntry = undefined;
         this.restack();
-        if (event.desktop) this.avoidDesktopOverlap(entry);
         return;
       case "drag_start":
         this.layoutStack();
@@ -562,6 +588,9 @@ export class ObservationCoordinator {
         return;
       case "promote":
         this.promote(entry.key);
+        if (entry.pip.isDesktopDocked?.()) {
+          this.dockedOrder = [entry.key, ...this.dockedOrder.filter((id) => id !== entry.key)];
+        }
         this.restack();
         return;
       case "shown":
@@ -582,13 +611,15 @@ export class ObservationCoordinator {
       case "user_input":
         return;
       case "geometry": {
-        // A detached card's screen position never changes the column stack or
-        // the remembered seed for the next card.
-        if (entry.pip.isDesktopDocked?.()) return;
-        const visible = this.visibleStack();
-        const moving = visible.find((item) => item.pip.stackLead?.()?.dragging) ?? visible[0];
+        // A detached card's motion only re-lays out the docked stack; it never
+        // changes the column stack or the remembered seed for the next card.
+        const group = entry.pip.isDesktopDocked?.()
+          ? this.dockedStack()
+          : this.visibleStack().filter((item) => !item.pip.isDesktopDocked?.());
+        const moving = group.find((item) => item.pip.stackLead?.()?.dragging) ?? group[0];
         if (moving !== entry) return;
-        if ([event.x, event.y, event.width, event.height].every((value) => typeof value === "number")) {
+        if (!entry.pip.isDesktopDocked?.()
+          && [event.x, event.y, event.width, event.height].every((value) => typeof value === "number")) {
           this.userBounds = { x: event.x!, y: event.y!, width: event.width!, height: event.height! };
         }
         this.layoutStack();
@@ -597,22 +628,6 @@ export class ObservationCoordinator {
       case "capture_status":
         return;
     }
-  }
-
-  private avoidDesktopOverlap(entry: PiPEntry): void {
-    const frame = entry.pip.stackLead?.()?.frame;
-    if (!frame) return;
-    const others = this.visibleStack().filter(
-      (other) => other !== entry && other.pip.isDesktopDocked?.(),
-    );
-    const overlapping = others.some((other) => {
-      const otherFrame = other.pip.stackLead?.()?.frame;
-      return otherFrame !== undefined && rectanglesOverlap(frame, otherFrame);
-    });
-    if (!overlapping) return;
-    const used = new Set(others.map((other) => other.pip.stackLead?.()?.alignment));
-    const free = PIP_ALIGNMENTS.find((alignment) => !used.has(alignment));
-    if (free) entry.pip.setDesktopAlignment?.(free);
   }
 
   private handlePiPFailure(entry: PiPEntry, message: string): void {
@@ -790,11 +805,6 @@ export class ObservationCoordinator {
       : screen.getDisplayNearestPoint(cursor).workArea;
     return browserPiPInitialBounds(mainBounds, workArea);
   }
-}
-
-function rectanglesOverlap(a: PipRect, b: PipRect): boolean {
-  return a.x < b.x + b.width && b.x < a.x + a.width
-    && a.y < b.y + b.height && b.y < a.y + a.height;
 }
 
 export function observationKey(activity: ActivitySession): string {

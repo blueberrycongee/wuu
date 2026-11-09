@@ -3,7 +3,6 @@ import type { ProviderModelSummary, ProviderSummary } from "../shared/protocol";
 import {
   orderedEffortOptions,
   providerModelContextWindow,
-  providerModelReasoningMode,
   providerModelVariantOptions
 } from "./RuntimeHelpers";
 
@@ -166,47 +165,5 @@ describe("providerModelVariantOptions", () => {
 
   it("returns just the default option when no provider is configured", () => {
     expect(providerModelVariantOptions(undefined, "anything", "")).toEqual([""]);
-  });
-});
-
-describe("providerModelReasoningMode", () => {
-  it("reports 'off' when the model has no reasoning capability", () => {
-    const provider = providerWithModel({
-      id: "no-reasoning",
-      supported_efforts: [],
-      capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: false }
-    });
-    expect(providerModelReasoningMode(provider, "no-reasoning")).toBe("off");
-  });
-
-  it("reports 'toggle' when reasoning is on but no levels are exposed", () => {
-    const provider = providerWithModel({
-      id: "toggle-only",
-      supported_efforts: [],
-      capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true }
-    });
-    expect(providerModelReasoningMode(provider, "toggle-only")).toBe("toggle");
-  });
-
-  it("reports 'levels' when the model exposes adjustable efforts", () => {
-    const provider = providerWithModel({
-      id: "with-levels",
-      supported_efforts: ["low", "medium", "high"],
-      capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true }
-    });
-    expect(providerModelReasoningMode(provider, "with-levels")).toBe("levels");
-  });
-
-  it("reports 'levels' when the model exposes named variants", () => {
-    const provider = providerWithModel({
-      id: "with-variants",
-      variants: [{ id: "fast" }, { id: "thorough" }],
-      capabilities: { chat: true, tools: true, structured_output: true, streaming: true, system_role: true, reasoning: true }
-    });
-    expect(providerModelReasoningMode(provider, "with-variants")).toBe("levels");
-  });
-
-  it("reports 'off' when no provider is configured", () => {
-    expect(providerModelReasoningMode(undefined, "anything")).toBe("off");
   });
 });

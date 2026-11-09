@@ -1,4 +1,4 @@
-import { createContext, createElement, useContext, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, createElement, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { ApplicationContentSourceV1 } from "../../../packages/plugin-sdk/src/ui-submission";
 import type { RendererInteractionSnapshotV1, RendererSubmissionV1 } from "../shared/workbench";
@@ -14,6 +14,7 @@ export interface ArtifactInteractionSource {
 }
 
 export interface ArtifactInteractionController {
+  subscribe(listener: () => void): () => void;
   getSnapshot(source: ArtifactInteractionSource): RendererInteractionSnapshotV1;
   submit(source: ArtifactInteractionSource, input: RendererSubmissionV1, isCurrent: () => boolean, signal: AbortSignal): Promise<void>;
 }
@@ -22,10 +23,19 @@ export const ArtifactInteractionContext = createContext<ArtifactInteractionContr
 const NO_ACTIONS: readonly string[] = Object.freeze([]);
 const CONTENT_SUBMIT_ACTION = "conversation.composer.submit";
 const SUBMIT_ACTIONS: readonly string[] = Object.freeze([CONTENT_SUBMIT_ACTION]);
+const noSubscription = () => () => {};
 
+// The provider wraps the whole shell. Its value stays fixed per application so a
+// publication does not make React rescan the shell for consumers; artifact cards
+// subscribe to the interaction state they render instead.
 export function ArtifactInteractionProvider({ application, children }: { application: ApplicationServiceV1; children: ReactNode }): ReactNode {
-  const view = useSyncExternalStore(application.subscribe, application.getSnapshot);
+  const controller = useMemo(() => createArtifactInteractionController(application), [application]);
+  return createElement(ArtifactInteractionContext.Provider, { value: controller }, children);
+}
+
+function createArtifactInteractionController(application: ApplicationServiceV1): ArtifactInteractionController {
   const getSnapshot = (source: ArtifactInteractionSource): RendererInteractionSnapshotV1 => {
+    const view = application.getSnapshot();
     const thread = view.conversationWorkspace.threads.find(candidate => candidate.id === source.threadId) as Thread | undefined;
     const turn = thread?.turns.find(candidate => candidate.items.some(item => item.id === source.artifact.itemId));
     const item = turn?.items.find(candidate => candidate.id === source.artifact.itemId);
@@ -49,16 +59,23 @@ export function ArtifactInteractionProvider({ application, children }: { applica
     const result = await application.invoke("conversation.submit-content", { source: captured, ...input }, { signal });
     if (!result.accepted) throw new Error("The response was not sent. Your inputs have been kept.");
   };
-  return createElement(ArtifactInteractionContext.Provider, { value: { getSnapshot, submit } }, children);
+  return { subscribe: application.subscribe, getSnapshot, submit };
 }
 
 export function useArtifactInteraction(artifact: TurnArtifact, threadId?: string) {
   const controller = useContext(ArtifactInteractionContext);
   const source = threadId ? { threadId, artifact } : undefined;
-  const snapshot: RendererInteractionSnapshotV1 = controller && source ? controller.getSnapshot(source) : {
-    contractVersion: 1, threadId, running: false, readOnly: true,
-    disabledReason: "Open the originating conversation to respond",
-  };
+  // Select primitives: a fresh snapshot object per read would never settle.
+  const state = useSyncExternalStore(controller?.subscribe ?? noSubscription, () => {
+    if (!controller || !source) return "";
+    const { running, readOnly, disabledReason } = controller.getSnapshot(source);
+    return JSON.stringify([running, readOnly, disabledReason ?? null]);
+  });
+  const snapshot = useMemo<RendererInteractionSnapshotV1>(() => {
+    if (!state) return { contractVersion: 1, threadId, running: false, readOnly: true, disabledReason: "Open the originating conversation to respond" };
+    const [running, readOnly, disabledReason] = JSON.parse(state) as [boolean, boolean, string | null];
+    return { contractVersion: 1, threadId, running, readOnly, disabledReason: disabledReason ?? undefined };
+  }, [state, threadId]);
   return {
     snapshot,
     actions: snapshot.disabledReason || snapshot.running || snapshot.readOnly ? NO_ACTIONS : SUBMIT_ACTIONS,

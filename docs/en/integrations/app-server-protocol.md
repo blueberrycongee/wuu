@@ -525,7 +525,10 @@ usage must not be carried over from an earlier request.
 `engine/update` accepts `default_engine` and per-engine objects with `enabled`
 and `binary_path`. Omitted fields remain unchanged. It persists settings, updates
 runtime registration, and returns the same shape as `engine/list`. Discover engine
-IDs from the inventory instead of hardcoding a client allowlist.
+IDs from the inventory instead of hardcoding a client allowlist. The update
+response reflects the new availability without starting native model discovery;
+every entry reports `models_status: "deferred"`. Request `engine/list` for the
+catalogs after the mutation resolves.
 
 ACP sign-in has separate explicit operations:
 
@@ -610,13 +613,16 @@ accepts the same optional `timezone`; the desktop sends its own so each daily
 bar lands on the day its calendar draws. Its `engine_breakdowns` attribute the
 same in-Wuu trail to each thread's bound agent engine and add an `outside`
 side per engine — token totals read from the engine's own local ledger
-(`~/.claude` transcripts, `~/.codex` rollouts, the OpenCode database) minus
-native sessions Wuu already claims, so the two columns never count the same
-work twice. `outside` is absent for engines without a readable local ledger or
-whose ledger failed to scan. The same outside totals also land on
-`days[].outside`, so the trend and heatmap color every day the page counts;
-the in-Wuu token fields, hit rate, turns, and agents on each day stay
-untouched.
+(`~/.claude` transcripts, `~/.codex` rollouts, the OpenCode database, the
+Devin `sessions.db`) minus native sessions Wuu already claims, so the two
+columns never count the same work twice. Engines that never report usage to
+Wuu's trail — the ACP family, such as Devin — instead add their bound
+sessions' ledger rows to the `in_wuu` side, since that trail cannot cover
+them. `outside` is absent for engines without a readable local ledger or
+whose ledger failed to scan. The same ledger totals also land on the daily
+series — bound rows on the day's own token fields, outside rows on
+`days[].outside` — so the trend and heatmap color every day the page counts;
+turns and agents on each day stay untouched.
 
 ## Notifications
 

@@ -1058,7 +1058,7 @@ func TestRequiredRemoteMCPKeepsAuthenticationAdmission(t *testing.T) {
 				manager, err := startMCPManager(config.Config{}, []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{
 					ID: "candidate", MCPServers: map[string]config.MCPServerConfig{
 						"docs":    {URL: endpoint.URL, Transport: transport},
-						"account": {URL: endpoint.URL, Enabled: &disabled, Connector: &config.MCPConnectorDescriptor{Title: "Account"}},
+						"account": {URL: endpoint.URL, Enabled: &disabled},
 					},
 				}}}, map[string]bool{"candidate": true}, nil)
 				if status != http.StatusUnauthorized {

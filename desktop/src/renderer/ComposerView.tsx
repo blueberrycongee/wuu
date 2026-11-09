@@ -122,6 +122,7 @@ import { ComposerRuntimeMeters } from "./ComposerRuntimeMeters";
 import { focusComposerTextarea, isTouchWebShell } from "./ComposerFocus";
 import { useComposerHeight } from "./useComposerHeight";
 import { useWorkbenchConnected } from "./WorkbenchConnectionContext";
+import { useDesktopPreferences } from "./desktopPreferences";
 import type { TurnContextUsage } from "./AppState";
 import type { ComposerInlineCompletionContext, ComposerSubmissionModeV1 } from "../shared/workbench";
 
@@ -404,6 +405,7 @@ export function Composer({
   const readOnly = sessionReadOnly || interactionDisabled;
   const { locale, t } = useI18n();
   const workbenchConnected = useWorkbenchConnected();
+  const sendShortcut = useDesktopPreferences()?.send_shortcut ?? "enter";
   const disconnected = !workbenchConnected;
   // A disconnected remote workbench keeps every composer draft editable (the
   // textarea stays enabled and focused), but sending and runtime controls must
@@ -660,7 +662,11 @@ export function Composer({
   const slashQuery = slashDraft?.query ?? "";
   const slashSkillContextKey = activeContext ? composerRuntimeContextKey(activeContext) : "";
   const slashSkillCountKey = services?.view.skillRevision ?? initialized?.extension_trust?.main_session?.skills?.count ?? 0;
-  const slashSkillInventory = initialized?.extension_inventory;
+  // Application scopes already publish skillRevision as a content key for the
+  // inventory, so their effect deps must not also track the inventory object:
+  // host projections re-wrap it on unrelated state updates and an identity dep
+  // would reload the catalog mid-stream, flashing the open menu's skill rows.
+  const slashSkillInventory = services ? undefined : initialized?.extension_inventory;
   const slashRuntimeReady = Boolean(activeContext && initialized);
   const subscribePluginHost = useCallback(
     (listener: () => void) => services ? services.presentation.subscribe(listener) : pluginHost.subscribe(listener),
@@ -744,9 +750,13 @@ export function Composer({
     setPrompt,
     textareaRef
   });
+  // The command list is rebuilt every render, so reset selection on the
+  // list's content — otherwise every stream event would snap the highlight
+  // back to the first row while the menu is open.
+  const slashSelectionKey = JSON.stringify(visibleSlashCommands.map(command => [command.id, command.disabledReason]));
   useEffect(() => {
     setSelectedSlashIndex(firstEnabledSlashCommandIndex(visibleSlashCommands));
-  }, [visibleSlashCommands]);
+  }, [slashQuery, slashSelectionKey]);
 
   useEffect(() => {
     if (!slashRuntimeReady || readOnly || textOnly) {
@@ -1181,8 +1191,10 @@ export function Composer({
       return;
     }
     // Cmd/Ctrl+Enter queues a follow-up while a turn runs; otherwise it sends
-    // the draft instead of acting as an inert key combination.
-    if (event.key === "Enter" && !event.shiftKey && (!primaryModifier || !running)) {
+    // the draft instead of acting as an inert key combination. With the
+    // modifier shortcut, a plain Enter falls through to insert a newline.
+    const sendKeys = sendShortcut === "mod_enter" ? primaryModifier : true;
+    if (event.key === "Enter" && !event.shiftKey && sendKeys && (!primaryModifier || !running)) {
       event.preventDefault();
       submitDraft(currentPrompt);
     }
@@ -1251,7 +1263,7 @@ export function Composer({
             anchorRef={workspacePillRef}
             owner="composer-runtime"
             onDismiss={onToggleMenu}
-            placement={controlsInRail ? "below" : "above"}
+            placement={controlsInRail ? "middle" : "above"}
             align={controlsInRail ? "right" : "left"}
             crossAxisOffset={controlsInRail ? -(workspacePillRef.current?.offsetWidth ?? 0) - 8 : 0}
             flip
@@ -1317,7 +1329,7 @@ export function Composer({
           anchorRef={accessMenuRef}
           owner="composer-access"
           onDismiss={onToggleAccessMenu}
-          placement={controlsInRail ? "below" : "above"}
+          placement={controlsInRail ? "middle" : "above"}
           align={controlsInRail ? "right" : "left"}
           crossAxisOffset={controlsInRail ? -(accessMenuRef.current?.offsetWidth ?? 0) - 8 : 0}
           flip
@@ -1541,31 +1553,29 @@ export function Composer({
                     continuation={continuation}
                     disabled={effectiveSendDisabled}
                   />
-                ) : <Tooltip asChild content={sendDisabledReason || (stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pauseShortcut") : voiceActionLabel)}>
-                  <button
-                    className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
-                    data-wuu-component="composer-send"
-                    data-wuu-state={stopState ?? (draftPending ? "submitting" : showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
-                    aria-busy={draftPending || stopState === "pending" || (showComposerStopAction && submitting) || undefined}
-                    type="button"
-                    onPointerDown={(event) => {
-                      if (!showComposerStopAction && event.button === 0 && textareaRef.current && document.activeElement === composerInputElement(textareaRef.current)) {
-                        // Keep editing focus while the pointer activates Send;
-                        // keyboard navigation and the Stop action stay native.
-                        event.preventDefault();
-                      }
-                    }}
-                    onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
-                    aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
-                    aria-description={sendDisabledReason}
-                    disabled={
-                      stopState === "pending" || (!showComposerStopAction &&
-                      (effectiveSendDisabled || readOnly || (dictation.active ? dictation.phase !== "listening" : !hasDraft) || (handoffMode && !canConfirmHandoff)))
+                ) : <Tooltip asChild content={sendDisabledReason}><button
+                  className={`composer-action-button ${showComposerStopAction ? "composer-stop-button" : "composer-send-button"}`}
+                  data-wuu-component="composer-send"
+                  data-wuu-state={stopState ?? (draftPending ? "submitting" : showComposerStopAction ? submitting ? "submitting" : "stop" : "send")}
+                  aria-busy={draftPending || stopState === "pending" || (showComposerStopAction && submitting) || undefined}
+                  type="button"
+                  onPointerDown={(event) => {
+                    if (!showComposerStopAction && event.button === 0 && textareaRef.current && document.activeElement === composerInputElement(textareaRef.current)) {
+                      // Keep editing focus while the pointer activates Send;
+                      // keyboard navigation and the Stop action stay native.
+                      event.preventDefault();
                     }
-                  >
-                    {showComposerStopAction || draftPending ? <ComposerStopIcon state={stopState} submitting={submitting || draftPending} /> : <ArrowUp aria-hidden="true" />}
-                  </button>
-                </Tooltip>}
+                  }}
+                  onClick={showComposerStopAction ? (disconnected ? undefined : onInterrupt) : submitComposer}
+                  aria-label={stopState ? t(stopState === "pending" ? "composer.stopping" : "composer.retryStop") : showComposerStopAction ? t("composer.pause") : voiceActionLabel}
+                  aria-description={sendDisabledReason}
+                  disabled={
+                    stopState === "pending" || (!showComposerStopAction &&
+                    (effectiveSendDisabled || readOnly || (dictation.active ? dictation.phase !== "listening" : !hasDraft) || (handoffMode && !canConfirmHandoff)))
+                  }
+                >
+                  {showComposerStopAction || draftPending ? <ComposerStopIcon state={stopState} submitting={submitting || draftPending} /> : <ArrowUp aria-hidden="true" />}
+                </button></Tooltip>}
               </div>
             </div>
           </div>

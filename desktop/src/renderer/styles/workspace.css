@@ -83,6 +83,12 @@
   --workspace-tool-rail-reserve: calc(var(--workspace-tool-rail-right) - var(--conversation-pane-inset) + var(--workspace-tool-rail-width) + var(--space-2));
 }
 
+/* The open right panel covers the rail's column. Its controls stay mounted in
+ * a hidden target so the composer footer does not reflow beneath the input. */
+.workspace-composer-controls[hidden] {
+  display: none;
+}
+
 .workspace-tool-rail {
   position: absolute;
   top: calc(var(--workbench-top, 0px) + var(--canvas-titlebar-height) + var(--space-2));
@@ -130,15 +136,13 @@
   background: var(--selection-surface);
 }
 
-.app-shell:has(.workspace-tool-rail):not(.right-panel-open) .conversation-pane,
-.app-shell:has(.workspace-tool-rail).workspace-conversation-active .conversation-pane {
+.app-shell:has(.workspace-tool-rail):not(.right-panel-open) .conversation-pane {
   --workspace-tool-rail-inset: var(--workspace-tool-rail-reserve);
 }
 
 /* The dock uses the full canvas width. In short windows the rail scrolls
  * above it, including when attachments or an expanded draft grow upward. */
-.app-shell:not(.right-panel-open):has([data-main-conversation-composer="dock"]) .workspace-tool-rail,
-.app-shell.workspace-conversation-active:has([data-main-conversation-composer="dock"]) .workspace-tool-rail {
+.app-shell:not(.right-panel-open):has([data-main-conversation-composer="dock"]) .workspace-tool-rail {
   --workspace-tool-rail-bottom-clearance: var(--workspace-conversation-dock-height, 0px);
 }
 
@@ -1767,6 +1771,10 @@ html[data-focus-modality="keyboard"] .workspace-browser-url-form:focus-within {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+  /* Panel width transitions re-wrap the document and would let scroll
+   * anchoring drift the offset (each reflow re-anchors nearer the top);
+   * the persisted reading position must survive the reflow unchanged. */
+  overflow-anchor: none;
   background: var(--workspace-canvas-bg);
 }
 

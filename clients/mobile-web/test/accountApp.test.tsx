@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
-import { act, useRef } from 'react';
+import { act, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { expect, it, vi } from 'vitest';
 import AccountApp from '../src/AccountApp';
-import { CompactConversationActions } from '../../../desktop/src/renderer/CompactConversationActions';
 import { I18nProvider } from '../../../desktop/src/renderer/i18n';
 
 vi.mock('../src/lib/accountStore', () => ({ loadAccount: async () => null, accountDriver: async () => ({}) }));
@@ -11,10 +11,16 @@ vi.mock('../src/lib/credStore', () => ({ webCredStore: { load: async () => null,
 vi.mock('../src/lib/notifications', () => ({ startPushLifecycle: async () => {}, consumeNotificationHost: () => null }));
 vi.mock('../src/NotificationSettings', () => ({ NotificationSettings: () => null }));
 vi.mock('../src/App', () => ({ default: function Workspace() {
-  const ref = useRef<HTMLButtonElement>(null);
-  return <CompactConversationActions environmentToggleRef={ref} canStartNewThread environmentAvailable
-    onStartNewThread={() => {}} environmentPanelVisible={false} onToggleEnvironmentPanel={() => {}}
-    rightPanelOpen={false} onToggleRightPanel={() => {}} />;
+  const [open, setOpen] = useState(false);
+  return <>
+    <button type="button" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}>More</button>
+    {open && createPortal(
+      <div role="menu" onKeyDown={event => { if (event.key === 'Escape') setOpen(false); }}>
+        <button type="button" role="menuitem">Action</button>
+      </div>,
+      document.body,
+    )}
+  </>;
 } }));
 
 it('native back closes the portaled conversation menu before leaving the workspace', async () => {

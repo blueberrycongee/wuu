@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -185,26 +184,9 @@ func (s *BrowserTabFileStore) loadLocked() (browserTabsFile, error) {
 
 func (s *BrowserTabFileStore) saveLocked(file browserTabsFile) error {
 	file.SchemaVersion = browserTabsSchemaVersion
-	if err := os.MkdirAll(filepath.Dir(s.path), securefs.DirMode); err != nil {
-		return err
-	}
 	data, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
-	data = append(data, '\n')
-	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".browser-tabs-*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer func() { _ = os.Remove(tmpPath) }()
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, s.path)
+	return securefs.WriteFileAtomic(s.path, append(data, '\n'))
 }

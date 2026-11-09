@@ -8,6 +8,7 @@
   "author": { "name": "Wuu" },
   "skills": ["./skills/"],
   "interface": {
+    "family": { "id": "wuu.design", "name": "Design", "description": "Design pages, presets, and review workflows." },
     "displayName": "OpenDesign Presets",
     "shortDescription": "Choose a design direction and build from OpenDesign's reusable assets.",
     "developerName": "Wuu",

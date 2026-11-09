@@ -93,7 +93,34 @@ export type UserQuestionResolveResult = {
 export type SystemNotificationParams = {
   title: string;
   body: string;
+  /** Events the user can silence from Settings; uncategorized notices always show. */
+  category?: "turn_completed" | "question";
 };
+
+export type DesktopSendShortcut = "enter" | "mod_enter";
+
+/** Desktop-only preferences persisted by the Electron main process. */
+export type DesktopProxyMode = "system" | "manual" | "none";
+
+export const DESKTOP_AUTO_ARCHIVE_DAYS = [0, 7, 14, 30, 90] as const;
+export type DesktopAutoArchiveDays = (typeof DESKTOP_AUTO_ARCHIVE_DAYS)[number];
+
+export type DesktopPreferences = {
+  notify_turn_completed: boolean;
+  notify_questions: boolean;
+  notification_sound: boolean;
+  auto_check_updates: boolean;
+  send_shortcut: DesktopSendShortcut;
+  proxy_mode: DesktopProxyMode;
+  /** Normalized address used when proxy_mode is "manual"; empty when unset. */
+  proxy_url: string;
+  /** Days without activity before a conversation is archived; 0 turns it off. */
+  auto_archive_days: DesktopAutoArchiveDays;
+  /** Undefined where the OS has no login-item support (Linux). */
+  open_at_login?: boolean;
+};
+
+export type DesktopFolder = "data" | "logs";
 
 export type SystemNotificationResult = {
   shown: boolean;
@@ -1133,37 +1160,7 @@ export type MessageImageReadParams = {
   sha256?: string;
 };
 
-/** Fixed read-only tool probe admitted only from the owning active plugin package. */
-export type MCPIdentityProbe = {
-  tool: string;
-  arguments: Record<string, unknown>;
-  result: "structured_content" | "single_text_json";
-  /** Bounded RFC 6901 JSON pointers; no expressions or executable mappings. */
-  account: { id: string; label?: string; email?: string; kind?: string };
-  workspace?: { id: string; label?: string };
-};
-/** Provider-reported connection identity, not OAuth application branding or permissions. */
-export type MCPIdentityStatus = {
-  state: "verified" | "unavailable";
-  verified_at?: string;
-  account?: { id: string; label?: string; email?: string; kind?: string };
-  workspace?: { id: string; label?: string };
-  error_code?: string;
-};
-
-/** Non-secret onboarding information; standalone MCP metadata is informational only. */
-export type MCPConnectorDescriptor = {
-  title: string;
-  description?: string;
-  documentation_url?: string;
-  /** Package setup required before a plugin-owned connector can be enabled. */
-  setup_required?: string;
-  identity_probe?: MCPIdentityProbe;
-  /** Package-relative brand image, served only for the owning plugin generation. */
-  icon?: { path: string; light?: never; dark?: never } | { path?: never; light: string; dark: string };
-};
 export type MCPServerConfig = {
-  connector?: MCPConnectorDescriptor;
   command?: string;
   args?: string[];
   url?: string;
@@ -1173,7 +1170,7 @@ export type MCPServerConfig = {
   oauth?: { client_id?: string; client_secret?: string; scopes?: string[]; redirect_uri?: string };
   enabled?: boolean;
   tool_timeout_ms?: number;
-  tool_overrides?: Record<string, { read_only?: boolean; concurrency_safe?: boolean; capability?: string }>;
+  tool_overrides?: Record<string, { read_only?: boolean; concurrency_safe?: boolean; capability?: string; guidance?: string }>;
 };
 export type MCPDefinitionResult = { config: MCPServerConfig; revision: string };
 export type MCPConfigureParams = { servers: Record<string, MCPServerConfig | null>; revision?: string };
@@ -1188,15 +1185,9 @@ export type MCPLoginPollResult = {
 
 export type MCPServerStatus = {
   authorization_id?: string;
-  identity?: MCPIdentityStatus;
   tool_names?: string[];
-  connector?: MCPConnectorDescriptor;
   /** Effective per-server startup preference, independent of connection state. */
   configuration_enabled?: boolean;
-  /** Why this host cannot persist a connector startup preference. */
-  configuration_unavailable_reason?: string;
-  /** Only active package-declared connectors accept enabled-only preferences. */
-  configurable?: boolean;
   /** Resource URL without credentials, query parameters, or fragment. */
   resource_url?: string;
   plugin_active?: boolean;
@@ -1229,7 +1220,6 @@ export type MCPAuthStartResult = {
 export type MCPAuthStatusResult = {
   name: string;
   authenticated: boolean;
-  identity?: MCPIdentityStatus;
   expires_at?: string;
   scopes?: string[];
 };
@@ -2033,8 +2023,6 @@ export type PluginReference = {
   plugin_id?: string;
   mcp_server?: string;
   resource_url?: string;
-  account_id?: string;
-  workspace_id?: string;
 };
 
 export type MessageContentPart =
@@ -2969,9 +2957,11 @@ export type SettingsUsageMetrics = {
 // the token_usage row's At timestamp. Days are emitted in ascending
 // date order; the desktop fills in the heatmap gaps locally so the
 // backend only ships days that actually saw activity. The token fields
-// and turns/agents cover Wuu's own trail only; outside holds the same
-// day's usage the engine ledgers recorded outside Wuu, so a chart can
-// color every day the page counts without mixing the two ledgers' fields.
+// cover Wuu's own trail plus ledger usage of sessions Wuu drives on
+// engines that never report to the trail; turns/agents stay Wuu-trail
+// counts. outside holds the same day's usage the engine ledgers recorded
+// outside Wuu, so a chart can color every day the page counts without
+// mixing the two ledgers' fields.
 export type SettingsUsageDay = {
   date: string;
   input_tokens: number;
@@ -3000,11 +2990,13 @@ export type EngineUsageSum = {
   sessions: number;
 };
 
-// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums the
-// token_usage trail by each thread's bound engine. Outside reads the engine's
-// own on-disk ledger minus native sessions Wuu already claims, so the two
-// columns never count the same work twice. Outside is absent for engines
-// without a readable local ledger or whose ledger failed to scan.
+// SettingsEngineUsage breaks token usage down per agent engine. InWuu sums
+// the token_usage trail by each thread's bound engine, plus ledger rows of
+// sessions Wuu drives on engines that never report usage to the trail (the
+// ACP family, such as Devin). Outside reads the engine's own on-disk ledger
+// minus native sessions Wuu already claims, so the two columns never count
+// the same work twice. Outside is absent for engines without a readable
+// local ledger or whose ledger failed to scan.
 export type SettingsEngineUsage = {
   engine: string;
   name: string;
@@ -3015,11 +3007,11 @@ export type SettingsEngineUsage = {
 // SettingsUsageResponse is the single source of truth for the desktop
 // usage page. ModelBreakdowns is sorted by total context tokens
 // descending; empty Provider+Model entries are bucketed as "(unknown)"
-// in the UI. Days carries the calendar-day series for the heatmap —
-// both are derived from the same per-row token_usage trail so the
-// views always sum to the same totals. EngineBreakdowns attributes the
-// same in-Wuu totals per agent engine and adds the usage each engine
-// recorded outside Wuu in its own local ledger.
+// in the UI. Days carries the calendar-day series for the heatmap.
+// EngineBreakdowns attributes usage per agent engine — the in-Wuu trail
+// plus bound-session ledger rows on engines that never report to the
+// trail — and adds the usage each engine recorded outside Wuu in its
+// own local ledger.
 export type SettingsUsageResponse = {
   total_sessions: number;
   generated_at: string;
@@ -3059,6 +3051,28 @@ export const MESSAGE_FLOW_FONT_SIZE_RANGE = {
   step: 0.5,
   default: 15,
 } as const;
+
+// Every layer validates persisted settings and IPC payloads against this one
+// policy: strict acceptance for storage/IPC boundaries, clamping for renderer
+// controls that coerce a dragged or typed value back into the range.
+export function isMessageFlowFontSize(value: unknown): value is MessageFlowFontSize {
+  return (
+    typeof value === "number" &&
+    Number.isFinite(value) &&
+    value >= MESSAGE_FLOW_FONT_SIZE_RANGE.min &&
+    value <= MESSAGE_FLOW_FONT_SIZE_RANGE.max
+  );
+}
+
+export function clampMessageFlowFontSize(value: unknown): MessageFlowFontSize {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return MESSAGE_FLOW_FONT_SIZE_RANGE.default;
+  }
+  return Math.min(
+    MESSAGE_FLOW_FONT_SIZE_RANGE.max,
+    Math.max(MESSAGE_FLOW_FONT_SIZE_RANGE.min, value),
+  );
+}
 
 export type ThemePreference = "system" | "light" | "dark";
 
@@ -3280,6 +3294,12 @@ export type WuuDesktopApi = {
   onDesktopUpdateChanged?: (handler: (state: DesktopUpdateState) => void) => () => void;
   downloadDesktopUpdate?: () => Promise<void>;
   restartDesktopUpdate?: () => Promise<void>;
+  /** Manual update check; the result is reported through the update dialogs. */
+  checkDesktopUpdate?: () => Promise<void>;
+  getDesktopPreferences?: () => Promise<DesktopPreferences>;
+  updateDesktopPreferences?: (patch: Partial<DesktopPreferences>) => Promise<DesktopPreferences>;
+  onDesktopPreferencesChanged?: (handler: (preferences: DesktopPreferences) => void) => () => void;
+  openDesktopFolder?: (folder: DesktopFolder) => Promise<void>;
   getSystemPermissions?: () => Promise<SystemPermissionsState>;
   requestSystemPermission?: (permission: SystemPermission, presentation?: SystemPermissionPresentation) => Promise<void>;
   updateSystemPermissionGuide?: (presentation: SystemPermissionPresentation) => void;
@@ -3454,7 +3474,6 @@ export type WuuDesktopApi = {
   refreshMCPServer: (name: string) => Promise<MCPServerActionResult>;
   startMCPAuth: (name: string) => Promise<MCPAuthStartResult>;
   getMCPAuthStatus: (name: string) => Promise<MCPAuthStatusResult>;
-  refreshMCPIdentity: (name: string) => Promise<MCPAuthStatusResult>;
   finishMCPAuth: (name: string, state: string, code: string) => Promise<MCPAuthFinishResult>;
   removeMCPAuth: (name: string) => Promise<MCPAuthRemoveResult>;
   startChatGPTLogin: (accountId?: string, enablePlanUsage?: boolean) => Promise<AuthChatGPTLoginResult>;

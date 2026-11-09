@@ -201,7 +201,7 @@ button.catalog-row,
   border-top: 0;
 }
 
-:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .connector-mark) {
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .mcp-server-mark) {
   width: var(--catalog-mark-size);
   height: var(--catalog-mark-size);
   border: 1px solid var(--hairline-soft);
@@ -214,19 +214,19 @@ button.catalog-row,
   align-self: center;
 }
 
-:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .connector-mark) > svg {
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .mcp-server-mark) > svg {
   width: 64%;
   height: 64%;
 }
 
 /* Asset images carry their own artwork and inset; do not shrink them like
  * line icons or put a second tile behind a brand's existing background. */
-:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .connector-mark):has(> :is(.plugin-icon-themed, .plugin-icon-asset)) {
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .mcp-server-mark):has(> :is(.plugin-icon-themed, .plugin-icon-asset)) {
   border: 0;
   background: transparent;
 }
 
-:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .connector-mark) > :is(.plugin-icon-themed, .plugin-icon-asset) {
+:is(.plugin-catalog-grid, .skill-catalog-grid) :is(.catalog-row-mark, .mcp-server-mark) > :is(.plugin-icon-themed, .plugin-icon-asset) {
   width: 100%;
   height: 100%;
   border-radius: inherit;
@@ -275,7 +275,7 @@ button.catalog-row,
   -webkit-line-clamp: unset;
 }
 
-.plugin-catalog-grid .connector-mark {
+.plugin-catalog-grid .mcp-server-mark {
   align-self: center;
 }
 

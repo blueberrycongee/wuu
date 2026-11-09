@@ -505,7 +505,7 @@ export function ComposerAttachMenuButton({
 
   return (
     <div className="composer-plus-menu-anchor" ref={triggerRef}>
-      <Tooltip asChild content={t("composer.addAttachment")}><button
+      <button
         className="composer-tool-button composer-attach-button"
         type="button"
         aria-haspopup="menu"
@@ -515,7 +515,7 @@ export function ComposerAttachMenuButton({
         onClick={() => setOpen((current) => !current)}
       >
         <Paperclip aria-hidden="true" />
-      </button></Tooltip>
+      </button>
       {open ? (
         <FloatingMenuPortal
           anchorRef={menuAnchorRef}

@@ -31,10 +31,13 @@ type Definition struct {
 	DirectOnly   bool           `json:"direct_only,omitempty"`
 	DeferLoading bool           `json:"defer_loading,omitempty"`
 	CacheStable  bool           `json:"cache_stable,omitempty"`
+	// Guidance carries the tool's agent-facing usage contract for
+	// host-capability surfaces; see providers.ToolDefinition.Guidance.
+	Guidance string `json:"guidance,omitempty"`
 }
 
 func (d Definition) ProviderDefinition() providers.ToolDefinition {
-	return providers.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema, Freeform: d.Freeform, DirectOnly: d.DirectOnly, DeferLoading: d.DeferLoading, CacheStable: d.CacheStable}
+	return providers.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.InputSchema, Freeform: d.Freeform, DirectOnly: d.DirectOnly, DeferLoading: d.DeferLoading, CacheStable: d.CacheStable, Guidance: d.Guidance}
 }
 
 type ListResult struct {

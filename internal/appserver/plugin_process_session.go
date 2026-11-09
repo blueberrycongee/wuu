@@ -2,7 +2,6 @@ package appserver
 
 import (
 	"context"
-	"strings"
 
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/runtime"
@@ -46,15 +45,17 @@ func (s *Server) resolvePluginProcessSession(ctx context.Context, id string, fol
 			running = th.running || th.admissionReserved || th.executionLease != nil
 			th.mu.Unlock()
 		}
-		s.queuedTurnMu.Lock()
-		running = running || len(s.pendingQueuedTurns[id]) != 0
-		for key, claim := range s.claimedQueuedTurns {
-			if strings.HasPrefix(key, id+"\x00") && !claim.cancelled {
-				running = true
-				break
+		if queue := s.peekTurnQueue(id); queue != nil {
+			queue.mu.Lock()
+			running = running || len(queue.pending) != 0
+			for _, claim := range queue.claimed {
+				if !claim.cancelled {
+					running = true
+					break
+				}
 			}
+			queue.mu.Unlock()
 		}
-		s.queuedTurnMu.Unlock()
 		if !running {
 			// A child can be admitting a turn or executing in another server
 			// before this server's running flag changes. Handoff is permanent.

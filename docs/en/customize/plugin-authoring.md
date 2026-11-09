@@ -104,88 +104,19 @@ still need an explicit composition choice.
 
 ## Declarative contributions
 
-### MCP connector cards
+### MCP servers
 
-Personal uses the same globally installed MCP connector plugins and selected credential provider as Coding when its embedding host explicitly admits account sharing. Project-only MCP definitions remain in Coding. The desktop grants sharing only to its own account user space; other embeddings must set `SharedMCPConnectors` through trusted bootstrap. Verified-isolation hosts do not share accounts.
+A plugin can declare servers in `mcp_servers` using the same fields as user configuration. A declarative-only plugin needs no `runtime` or `desktop` entry. The canonical name is `plugin.<plugin-id>.<server>`; OAuth credentials use that name. Plugin-owned definitions are managed by the package: users connect, sign in, and disconnect them, but cannot edit or remove them as standalone definitions. Disabling the plugin stops its servers; no fallback is substituted.
 
-A plugin-owned MCP server's optional `connector` metadata presents it as an account connector. It uses the existing server definition, connection lifecycle, OAuth store, and plugin ownership; it does not register a second service. Metadata on a standalone service is informational and does not change its ordinary MCP controls. A declarative-only plugin needs no `runtime` or `desktop` entry:
+Plugin-owned servers stay in Coding. A shared Personal host receives only the owner's global standalone servers.
 
-```json
-{
-  "schema_version": 1,
-  "id": "workspace-connector",
-  "name": "Workspace Connector",
-  "version": "0.1.0",
-  "mcp_servers": {
-    "notion": {
-      "url": "https://mcp.notion.com/mcp",
-      "transport": "http",
-      "enabled": false,
-      "connector": {
-        "title": "Notion",
-        "description": "Work with the workspace you authorize.",
-        "documentation_url": "https://developers.notion.com/guides/mcp/build-mcp-client",
-        "icon": { "path": "assets/notion.svg" }
-      }
-    }
-  }
-}
-```
-
-`connector` has these fields:
-
-| Field | Contract |
-| --- | --- |
-| `title` | Required, nonblank display name. |
-| `description` | Optional short explanation of the service. |
-| `documentation_url` | Optional absolute HTTPS link to provider documentation, without embedded credentials. The default catalog does not display it. |
-| `setup_required` | Optional explanation of missing application setup. A nonblank value leaves the connector out of the default catalog and composer, so it never offers connection or authorization. |
-| `identity_probe` | Optional fixed, read-only MCP call and bounded JSON-pointer mapping for provider-reported identity. Admitted only from the active trusted package, not standalone configuration. |
-| `icon` | Optional brand image: `{ "path": "..." }` or `{ "light": "...", "dark": "..." }`, package-relative SVG, PNG, or WebP under the same limits as the plugin `icon`. Shown in a neutral tile on the card, the sign-in dialog, and the composer plugin menu; served only for the owning plugin generation. Cards without one, and standalone services, use a generic mark. |
-
-Declare `enabled: false` explicitly for lazy account onboarding: a new installation must not initiate account connection. The example's canonical server name is `plugin.workspace-connector.notion`; user preferences and OAuth credentials use that same identity. Connect checks the selected configuration provider's revision before saving the enabled preference, then uses the ordinary MCP connection and OAuth flow. Connector Disconnect removes local OAuth credentials and persists `enabled: false`, without claiming provider-side revocation. Disabling the plugin stops its owned servers; no fallback connector is substituted.
-
-When an enabled connector has a saved grant and the server does not require authorization, Connect retries the transport with that grant. A server that requires authorization starts a new login instead.
-
-The default application provider offers optional settings controls `requestMCPConnectorLogin`, `getPendingMCPConnectorLogin`, `takeMCPConnectorLogin`, and `cancelMCPConnectorLogin` for an explicit Connect intent. The process-local checkpoint observes the original configuration receipt; it is never serialized and never replays a write. Attachment validates the context, presentation, package fingerprint/provenance, resource, and enabled state. A changed preference requires successor graph controls; an already-enabled connector can use current controls after fresh validation.
-
-Automatic login is started once by the owner, not by a mounted dialog. Optional `startMCPConnectorLogin` and `pollMCPConnectorLogin` attach to that operation and retain in-flight and terminal receipts across compatible presentation replacement; `retryMCPConnectorLogin` requires an explicit retry after failure. Only an opaque native login handle crosses this process-local handoff: OAuth state, authorization URLs, codes and credentials remain outside the checkpoint. Detaching a view does not cancel the login; explicit cancellation, context/navigation/source changes and expiry do. Native start returns a handle before discovery so cancellation can stop a pending browser launch. Polling may report `phase: "starting"` or `"waiting"` while pending. Backend authority revocation is still terminal, never silently retried. Manual-redirect login retains its existing dialog-owned behavior and requires an explicit retry after interruption; its OAuth material is not checkpointed. Independent providers may omit these optional methods; scoped control cancellation remains mandatory.
-
-A terminal login error can include `authorized: true` when OAuth completed but the subsequent connection failed. Retry the connection with the saved grant; the flag does not mean that the server is connected or will accept the grant.
-
-The current picker supports the Coding/current-project host only. OAuth storage is keyed by the canonical server name, not project identity: projects using that name and the same credential provider share the account, including replacement and local sign-out. User-bound Personal/twin hosts exclude shared MCP configuration from their runtime; the backend reports setup unavailable and rejects connector mutations instead of mixing domain preferences or credentials. Extending this flow requires domain-scoped connection identity, preferences, and credential storage, not a permanent product-ID check. A resource URL binds credentials to a remote endpoint; it grants neither display-location nor domain authority. Without an admitted identity probe, the card leaves account identity unverified.
-
-Use a real provider endpoint and truthful setup requirements. A URL is not proof that the provider supports dynamic client registration. Do not ship a Connect action when a fixed OAuth client, preview enrollment, or administrator setup is still missing. See the [bundled account connector guide](mcp.md#connect-an-account) for the current provider limitations.
-
-#### Verified connection identity
-
-Merge this fragment into the plugin-owned server definition (not user configuration):
-
-```json
-{
-  "connector": {
-    "title": "Notion",
-    "identity_probe": {
-      "tool": "notion-get-self",
-      "arguments": {},
-      "result": "single_text_json",
-      "account": { "id": "/user/id", "label": "/user/name", "email": "/user/email", "kind": "/user/type" },
-      "workspace": { "id": "/workspace/id", "label": "/workspace/name" }
-    }
-  },
-  "tool_overrides": { "notion-get-self": { "read_only": true } }
-}
-```
-
-The named tool must be in the connected server's live tool catalog and explicitly marked `read_only: true` in the same package's `tool_overrides`; server hints alone are insufficient. `arguments` is a fixed JSON object, never generated code. `result` selects either MCP `structuredContent` (`structured_content`) or exactly one text block containing a JSON object (`single_text_json`). Mappings are bounded RFC 6901 JSON pointers, not expressions. Account ID is required; workspace ID is required when a workspace mapping is declared. Optional labels/email may be absent or empty. Only normalized string IDs and display fields are retained; raw responses are not persisted. Fixed arguments are limited to 8 KiB and 16 nested levels; pointers to 512 bytes and 32 segments. The identity decoder accepts a complete tool result up to 64 KiB; retained IDs/names/kind are limited to 512 bytes and email to 320 bytes. The transport reads under its existing 8 MiB message / 4 MiB SSE-event bounds before applying the stricter identity limit.
-
-The host runs this probe only after the user's successful Connect or explicit identity refresh, with the existing OAuth grant and selected credential provider. Startup, status, catalog reads, and token refresh do not run it. Probe failure leaves authorization and transport intact and reports identity unavailable. The cached result is bound to the grant, resource and admitted package declaration; token refresh retains that grant identity, while completed new authorization replaces it. Cancelled or replaced operations cannot publish a late result. Legacy credentials are not migrated by reads; explicit verification can attach identity safely. Account/workspace names never select credentials, authorize tools, or prove the OAuth application brand. This contract does not expand access into Personal/twin domains.
+Use a real provider endpoint. A URL is not proof that the provider supports dynamic client registration; servers that require a fixed OAuth client need `oauth.client_id`.
 
 #### Conversation references
 
 The default composer discovers MCP connections through `listMCPServers` and runtime tool plugins through catalog `conversation_tools`. A theme or service-only package does not need a second opt-out. Use canonical `provenance.plugin_id`, not the catalog record's subject ID, when constructing a runtime plugin reference.
 
-`plugin_reference` message parts carry readable `text` and a `plugin` object (`ApplicationPluginReferenceV1`). Runtime references use `plugin_id`; MCP references also retain `mcp_server`, `resource_url`, opaque `authorization_id`, and any verified `account_id` / `workspace_id`. Preserve the complete part across draft restoration, queueing, editing, and submission. These identifiers are selections, not credentials or execution grants. The host resolves tool names and revalidates connection identity at admission and turn start. An OAuth refresh retains the authorization ID; a new login replaces it. MCP clients bind to their accepted grant and fail if a replacement login supersedes it.
+`plugin_reference` message parts carry readable `text` and a `plugin` object (`ApplicationPluginReferenceV1`). Runtime references use `plugin_id`; MCP references also retain `mcp_server`, `resource_url`, and opaque `authorization_id`. Preserve the complete part across draft restoration, queueing, editing, and submission. These identifiers are selections, not credentials or execution grants. The host resolves tool names and revalidates the server and authorization at admission and turn start. An OAuth refresh retains the authorization ID; a new login replaces it. MCP clients bind to their accepted grant and fail if a replacement login supersedes it.
 
 An engine's `conversation-plugins` capability promises that its turn consumes the host's selected plugin tools and instructions while retaining ordinary permission checks. External engines receive the explicitly selected tools through the existing turn-scoped MCP bridge. Unsupported adapters must omit this capability; the host rejects referenced submissions instead of silently dropping their intent. New references during an active turn are queued, because an existing external bridge cannot acquire a new connection midway through execution.
 
@@ -298,7 +229,7 @@ and retirement. It uses synthetic state and writes repeatable evidence under
 
 ### Shell skins
 
-Declare `contributes.skins` independently of `contributes.themes`. Each skin has a plugin-local `id`, `name`, an optional `placement`, an optional `userImage`, and required `light` and `dark` variants. `placement` is `"frame"` (default) or `"canvas"`: frame placement decorates the window frame and ribbon only, while canvas placement also paints the artwork behind the main pane — the empty home shows it directly, conversations sit under a translucent veil, and opaque destinations cover it. A variant supplies opaque `#RRGGBB` `background` and `foreground` colors, an optional package-relative `image`, and optional `overlay`, `hover`, and `active` colors (`#RRGGBB` or `#RRGGBBAA`). `position` is `center` (default), `top`, `bottom`, `left`, or `right`. Two optional variant fields shape canvas rendering and require `"placement": "canvas"`: `veil`, a number from 0 to 1 (default 0.86) setting how strongly the theme canvas covers the artwork for translucent destinations, and `dots`, an object `{ "pitch": p, "size": s, "shape": "round" | "square" }` that renders the artwork as a screen of cells. The host samples one color per cell on whole device pixels; `pitch` is the cell spacing in CSS pixels (2–32), `size` the dot diameter or square side (0.5 up to pitch), and `shape` defaults to `"round"`. Set `"userImage": true` to let the user's Background image replace the variant images; the host prepares the picture for the skin's placement, and the variant `image` remains the artwork when no picture is saved. `placement`, `userImage`, `veil`, and `dots` require a host at your `minimumWuuVersion`; older hosts reject unknown skin fields at install.
+Declare `contributes.skins` independently of `contributes.themes`. Each skin has a plugin-local `id`, `name`, an optional `placement`, an optional `userImage`, and required `light` and `dark` variants. `placement` is `"frame"` (default) or `"canvas"`: frame placement decorates the window frame and ribbon only, while canvas placement also paints the artwork behind the main pane — conversations sit under a translucent veil in every state, opaque destinations cover it, and only a plugin view that declares `"transparent"` exposes the artwork directly. A variant supplies opaque `#RRGGBB` `background` and `foreground` colors, an optional package-relative `image`, and optional `overlay`, `hover`, and `active` colors (`#RRGGBB` or `#RRGGBBAA`). `position` is `center` (default), `top`, `bottom`, `left`, or `right`. Two optional variant fields shape canvas rendering and require `"placement": "canvas"`: `veil`, a number from 0 to 1 (default 0.86) setting how strongly the theme canvas covers the artwork for translucent destinations, and `dots`, an object `{ "pitch": p, "size": s, "shape": "round" | "square" }` that renders the artwork as a screen of cells. The host samples one color per cell on whole device pixels; `pitch` is the cell spacing in CSS pixels (2–32), `size` the dot diameter or square side (0.5 up to pitch), and `shape` defaults to `"round"`. Set `"userImage": true` to let the user's Background image replace the variant images; the host prepares the picture for the skin's placement, and the variant `image` remains the artwork when no picture is saved. `placement`, `userImage`, `veil`, and `dots` require a host at your `minimumWuuVersion`; older hosts reject unknown skin fields at install.
 
 ```json
 {
@@ -391,7 +322,7 @@ may still complete shutdown successfully.
 
 ## Tools and capabilities
 
-Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root` or `child`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks. These declarations are trusted-extension contracts, not a sandbox.
+Register model tools in the initialization result's `tools` array. Each tool needs an `id`, `description`, and object `input_schema`. The host creates a namespaced public name. `execution_scopes` can limit availability to `root` or `child`; `activity` describes read-only behavior, concurrency safety, risk, and whether the tool orchestrates child tools. Declare real effects rather than marking a writer read-only to bypass scheduling or permission checks. These declarations are trusted-extension contracts, not a sandbox. An optional `guidance` string is the tool's agent-facing usage contract: when the tool is exposed to an external engine through a host-capability surface, the host shows the collected guidance alongside its own binding instructions.
 
 The TypeScript runtime adapter honors `activity.concurrency_safe: true` for tool dispatch.
 Adjacent explicitly safe tools may overlap, with at most eight tool handlers

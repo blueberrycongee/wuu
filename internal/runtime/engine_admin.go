@@ -134,7 +134,7 @@ func (s *nativeEngineAdmin) Invoke(ctx context.Context, method string, raw json.
 		if s.canonicalHistory(ctx) {
 			return json.Marshal(pluginprotocol.EngineHistoryForkResult{})
 		}
-		engine, ok := s.factory.(*codexengine.Engine)
+		forker, ok := s.factory.(agentengine.HistoryForker)
 		if !ok {
 			return nil, fmt.Errorf("engine %s does not expose a verified native history cutoff; original history is unchanged", s.engineID)
 		}
@@ -147,12 +147,12 @@ func (s *nativeEngineAdmin) Invoke(ctx context.Context, method string, raw json.
 			}
 			out := make([]providers.ChatMessage, len(messages))
 			for i, message := range messages {
-				out[i] = providers.ChatMessage{Role: message.Role, EngineTurnID: message.EngineTurnID, ProviderItemID: message.ProviderItemID, Steered: message.Steered}
+				out[i] = providers.ChatMessage{Role: message.Role, EngineTurnID: message.EngineTurnID, ProviderItemID: message.ProviderItemID, Steered: message.Steered, ContentSHA256: message.ContentSHA256}
 			}
 			return out
 		}
 		retained, removed := convert(req.Retained), convert(req.Removed)
-		ref, err := engine.ForkHistory(ctx, req.Ref, req.CWD, retained, removed, req.WholeTurn)
+		ref, err := forker.ForkHistory(ctx, req.Ref, req.CWD, retained, removed, agentengine.HistoryForkBoundary{WholeTurn: req.WholeTurn, TurnBoundary: req.TurnBoundary, EndBoundary: req.EndBoundary})
 		if err != nil {
 			return nil, err
 		}
@@ -284,7 +284,11 @@ func (s *nativeEngineAdmin) cachedEngineCatalog(parent context.Context, entry en
 		if err != nil {
 			return nil, nil, "error", err
 		}
-		return nil, nil, "error", errors.New("engine configuration changed during model discovery; refresh to retry")
+		// A concurrent native write (credential refresh, config edit) moved the
+		// fingerprint after the probe ran. The catalog cannot be trusted as
+		// current, but it is still better than an empty picker: publish it with
+		// the error and keep it out of the cache.
+		return models, modes, "error", errors.New("engine configuration changed during model discovery; refresh to retry")
 	}
 	cache.completed, cache.err = time.Now(), discoverErr
 	previousStatus := cache.status

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/hooks"
@@ -181,14 +182,10 @@ func TestTurnRequeueAtomicallyMovesPendingSteerBackToQueue(t *testing.T) {
 		activeSteerDocument:   &ActiveDocument{Path: "docs/next.md"},
 	}
 	s := &Server{
-		access:              localOwnerTestAccess(),
-		rt:                  rt,
-		out:                 out,
-		threads:             map[string]*threadState{threadID: th},
-		pendingQueuedTurns:  make(map[string][]queuedTurn),
-		claimedQueuedTurns:  make(map[string]*queuedTurnClaim),
-		drainingQueuedTurns: make(map[string]bool),
-		activeRunByThread:   make(map[string]string),
+		access:  localOwnerTestAccess(),
+		rt:      rt,
+		out:     out,
+		threads: map[string]*threadState{threadID: th},
 	}
 	params, err := json.Marshal(TurnRequeueParams{ThreadID: threadID, SteerID: steerID})
 	if err != nil {
@@ -234,14 +231,9 @@ func TestTurnRequeueSupersedesStaleQueueCancellation(t *testing.T) {
 		}},
 	}
 	s := &Server{
-		rt:                          rt,
-		out:                         out,
-		threads:                     map[string]*threadState{threadID: th},
-		pendingQueuedTurns:          make(map[string][]queuedTurn),
-		claimedQueuedTurns:          make(map[string]*queuedTurnClaim),
-		cancelledPendingSubmissions: make(map[string]string),
-		drainingQueuedTurns:         make(map[string]bool),
-		activeRunByThread:           make(map[string]string),
+		rt:      rt,
+		out:     out,
+		threads: map[string]*threadState{threadID: th},
 	}
 	t.Cleanup(s.Close)
 	s.recordCancelledPendingSubmission(threadID, steerID, session.HeldUserWorkOriginQueue)
@@ -300,9 +292,7 @@ func TestPendingUserMessageSummariesIncludeLiveQueueAndSteer(t *testing.T) {
 		}},
 	}
 	s := &Server{
-		threads:            map[string]*threadState{threadID: th},
-		pendingQueuedTurns: make(map[string][]queuedTurn),
-		claimedQueuedTurns: make(map[string]*queuedTurnClaim),
+		threads: map[string]*threadState{threadID: th},
 	}
 	s.enqueueQueuedUserTurn(threadID, queuedTurn{
 		id: "queue-1", msg: providers.ChatMessage{Role: "user", Content: "Next"},
@@ -334,9 +324,10 @@ func TestEnqueueQueuedUserTurnDeduplicatesStableID(t *testing.T) {
 	if s.enqueueQueuedUserTurn("thread-1", entry) {
 		t.Fatal("duplicate enqueue was accepted")
 	}
-	s.queuedTurnMu.Lock()
-	count := len(s.pendingQueuedTurns["thread-1"])
-	s.queuedTurnMu.Unlock()
+	queue := s.peekTurnQueue("thread-1")
+	queue.mu.Lock()
+	count := len(queue.pending)
+	queue.mu.Unlock()
 	if count != 1 {
 		t.Fatalf("queued entries = %d, want 1", count)
 	}
@@ -370,6 +361,50 @@ func TestSteerCancellationTombstoneRejectsMatchingLateSubmission(t *testing.T) {
 	}
 	if s.isCancelledPendingSubmission("thread-1", "steer-1", session.HeldUserWorkOriginQueue) {
 		t.Fatal("steer cancellation tombstone blocked the queue delivery mode")
+	}
+}
+
+// Queued work, cancellation tombstones, and the drain marker live on the
+// per-thread scheduling cell, which deliberately outlives the cached
+// threadState projection: admission swaps and cache evictions must not lose
+// or re-key the thread's scheduling state.
+func TestSchedulerCellSurvivesThreadProjectionEviction(t *testing.T) {
+	const threadID = "thread-1"
+	const drainingID = "thread-draining"
+	s := &Server{threads: map[string]*threadState{
+		threadID:   newThreadState(threadID, nil, "provider", "model", "", false, time.Now().UTC()),
+		drainingID: newThreadState(drainingID, nil, "provider", "model", "", false, time.Now().UTC()),
+	}}
+	if !s.enqueueQueuedUserTurn(threadID, queuedTurn{
+		id: "queued-1", msg: providers.ChatMessage{Role: "user", Content: "keep me"},
+	}) {
+		t.Fatal("queue rejected")
+	}
+	s.recordCancelledPendingSubmission(threadID, "late-1", session.HeldUserWorkOriginQueue)
+	drainQueue := s.turnQueue(drainingID)
+	drainQueue.mu.Lock()
+	drainQueue.draining = true
+	drainQueue.mu.Unlock()
+
+	s.mu.Lock()
+	delete(s.threads, threadID)
+	delete(s.threads, drainingID)
+	s.mu.Unlock()
+
+	if _, ok := s.findQueuedUserTurn(threadID, "queued-1"); !ok {
+		t.Fatal("queued turn was lost with the thread projection")
+	}
+	if s.enqueueQueuedUserTurn(threadID, queuedTurn{
+		id: "late-1", msg: providers.ChatMessage{Role: "user", Content: "replay"},
+	}) {
+		t.Fatal("evicted thread accepted a cancelled submission")
+	}
+	if !s.hasQueuedUserWork(drainingID) {
+		t.Fatal("drain marker was lost with the thread projection")
+	}
+	// Tombstones stay per-thread: another thread must not inherit them.
+	if s.isCancelledPendingSubmission("thread-2", "late-1", session.HeldUserWorkOriginQueue) {
+		t.Fatal("cancellation tombstone leaked across threads")
 	}
 }
 

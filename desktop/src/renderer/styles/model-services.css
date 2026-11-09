@@ -726,7 +726,7 @@
 .connection-summary-list > [role="listitem"] { min-width: 0; }
 .connection-summary-list > [role="listitem"] + [role="listitem"] { border-top: 1px solid var(--hairline-soft); }
 .connection-summary-row {
-  --connection-icon-size: calc(var(--font-ui) * 1.4);
+  --connection-icon-size: calc(var(--space-1) * 8);
   display: grid;
   grid-template-columns: var(--connection-icon-size) minmax(0, 1fr) var(--icon-size);
   align-items: center;
@@ -758,7 +758,13 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 }
 .connection-summary-row > .icon { color: var(--ink-soft); }
 .connection-summary-icon { display: grid; place-items: center; width: var(--connection-icon-size); height: var(--connection-icon-size); }
-.connection-summary-icon > svg { width: 100%; height: 100%; }
+/* Bare engine marks sit on a hairline tile like the provider marks' own. */
+.connection-summary-icon:has(> svg) {
+  border: 1px solid var(--hairline-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-1);
+}
+.connection-summary-icon > svg { width: 58%; height: 58%; }
 .connection-summary-icon .provider-mark { --provider-mark-size: var(--connection-icon-size); }
 .connection-summary-icon .provider-mark :is(svg,.provider-mark-engine) { width: 100%; height: 100%; }
 .connection-summary-copy {
@@ -772,12 +778,19 @@ html[data-focus-modality="keyboard"] .connection-summary-row:focus-visible {
 .connection-summary-name { min-width: 0; overflow-wrap: anywhere; white-space: normal; color: var(--ink-strong); font-size: var(--font-ui); font-weight: var(--weight-regular); line-height: 1.4; }
 .connection-summary-meta { min-width: 0; color: var(--ink-soft); font-size: var(--font-sm); overflow-wrap: anywhere; }
 .connection-summary-meta:empty { display: none; }
-.connection-summary-secondary { min-width: 0; color: var(--ink-soft); font-size: var(--font-sm); line-height: 1.5; overflow-wrap: anywhere; text-align: end; }
+.connection-summary-secondary { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--space-2); color: var(--ink-soft); font-size: var(--font-sm); line-height: 1.5; overflow-wrap: anywhere; text-align: end; }
 .connection-summary-secondary > .connection-summary-status { display: block; }
 .connection-summary-status { color: var(--ink-soft); }
+/* A small status dot leads the summary; color alone never carries the state
+ * (the status text or the usage numbers sit right beside it). */
+.connection-state-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--ink-muted); }
+.connection-state-dot[data-tone="ok"] { background: var(--success); }
+.connection-state-dot[data-tone="warn"] { background: var(--warning); }
+.connection-state-dot[data-tone="danger"] { background: var(--danger); }
+.connection-summary-badge { flex: 0 0 auto; align-self: center; padding: 0 var(--space-2); border-radius: var(--radius-xs); background: var(--ink-overlay-6); color: var(--ink-soft); font-size: var(--font-xs); line-height: 1.6; }
 @container settings-page (max-width: 34em) {
   .connection-summary-copy { grid-template-columns: minmax(0, 1fr); }
-  .connection-summary-secondary { text-align: start; }
+  .connection-summary-secondary { justify-content: flex-start; text-align: start; }
 }
 .connection-usage-summary.connection-usage-inline { display: grid; gap: 2px; font: inherit; color: inherit; font-variant-numeric: tabular-nums; }
 .connection-usage-compact-window { display: grid; grid-template-columns: minmax(4.5em, max-content) minmax(1em, 1fr) 4.5ch; gap: var(--space-2); align-items: center; min-width: 0; }

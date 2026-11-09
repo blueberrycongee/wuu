@@ -771,8 +771,7 @@ func NewSession(opts Options) (*Session, error) {
 			if !binding.IsUser() {
 				connectMCPServers(cfg, activePlugins, toolkit, mcpOAuth)
 			} else if opts.SharedMCPConnectors && isolationMode != UserHostIsolationVerifiedHost {
-				sharedCfg, sharedPlugins := sharedConnectorInputs(cfg, activePlugins)
-				connectMCPServers(sharedCfg, sharedPlugins, toolkit, mcpOAuth)
+				connectMCPServers(cfg, nil, toolkit, mcpOAuth)
 			}
 
 			codeMode := codemode.NewService(codemode.ServiceConfig{NodeExecutable: cfg.PTC.NodeExecutable})
@@ -1002,9 +1001,8 @@ func NewSession(opts Options) (*Session, error) {
 	runtimeSession.DriverProfile = strings.TrimSpace(opts.DriverProfile)
 	if toolkit != nil {
 		runtimeSession.pluginGeneration.mcp = toolkit.MCPManager()
-		if !binding.IsUser() || runtimeSession.sharedMCPConnectors {
-			_, sharedPlugins := sharedConnectorInputs(cfg, activePlugins)
-			runtimeSession.bindSharedMCPAdmission(toolkit.MCPManager(), sharedPlugins)
+		if binding.IsUser() && runtimeSession.sharedMCPConnectors {
+			runtimeSession.bindSharedMCPAdmission(toolkit.MCPManager())
 		}
 	}
 	runtimeSession.pluginGeneration.bindActivityOwnership(activityRegistry)
@@ -2837,25 +2835,6 @@ func startMCPManager(cfg config.Config, plugins []pluginpkg.Plugin, requiredPlug
 			ToolTimeoutMS: mcpCfg.ToolTimeoutMS,
 		}
 	}
-	// Identity probes are package-owned declarations, never editable server metadata.
-	for _, item := range plugins {
-		// Execution roots are temporary generation snapshots. Bind cached identity
-		// to the stable package identity so unrelated graph refreshes retain it.
-		source, _ := json.Marshal([]string{item.ID, item.Source, item.Fingerprint, item.SubjectID, item.WorkspaceID})
-		for localName, declared := range item.MCPServers {
-			if declared.Connector == nil || declared.Connector.IdentityProbe == nil {
-				continue
-			}
-			name := PluginMCPServerName(item.ID, localName)
-			serverCfg, ok := serverConfigs[name]
-			if !ok {
-				continue
-			}
-			serverCfg.IdentityProbe = declared.Connector.IdentityProbe
-			serverCfg.IdentitySource = string(source)
-			serverConfigs[name] = serverCfg
-		}
-	}
 	mcpMgr.Configure(serverConfigs)
 	for name, serverCfg := range serverConfigs {
 		if !requiredServers[name] || !serverCfg.IsEnabled() {
@@ -2962,13 +2941,6 @@ func mcpServersFromConfigAndPlugins(cfg config.Config, plugins []pluginpkg.Plugi
 		}
 		out[name] = server
 	}
-	for name, server := range out {
-		if IsPluginMCPServerName(name) && !server.ConnectorEnabled() {
-			enabled := false
-			server.Enabled = &enabled
-			out[name] = server
-		}
-	}
 	return out
 }
 
@@ -2990,6 +2962,7 @@ func mcpToolOverrides(in map[string]config.MCPToolOverride) map[string]mcp.ToolO
 			ReadOnly:        override.ReadOnly,
 			ConcurrencySafe: override.ConcurrencySafe,
 			Capability:      override.Capability,
+			Guidance:        override.Guidance,
 		}
 	}
 	return out

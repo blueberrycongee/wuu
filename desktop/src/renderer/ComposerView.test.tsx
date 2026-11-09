@@ -898,7 +898,7 @@ describe.each(["main", "split"] as const)("%s composer file selections", (varian
     const input = container.querySelector<HTMLTextAreaElement>("textarea")!;
     expect(input.value).toBe("Follow up");
     if (action !== "send") {
-      const selector = action === "reveal" ? ".composer-document-card-main" : ".composer-attachment-card-remove";
+      const selector = action === "reveal" ? ".composer-collapsed-prompt-main" : ".composer-attachment-card-remove";
       const button = container.querySelector<HTMLButtonElement>(`.composer-collapsed-prompt-card ${selector}`)!;
       if (action === "reveal") editPastedAttachment(button);
       else act(() => button.click());
@@ -1714,6 +1714,32 @@ describe("Composer send control", () => {
     expect(onSend).toHaveBeenLastCalledWith("send with ctrl");
   });
 
+  it("keeps plain Enter for new lines when the send shortcut is Cmd/Ctrl+Enter", async () => {
+    const preferences = { notify_turn_completed: true, notify_questions: true, notification_sound: true, auto_check_updates: true, send_shortcut: "mod_enter" as const, proxy_mode: "system" as const, proxy_url: "", auto_archive_days: 0 as const };
+    let publish: ((next: typeof preferences | (Omit<typeof preferences, "send_shortcut"> & { send_shortcut: "enter" })) => void) | undefined;
+    window.wuu = {
+      ...window.wuu,
+      getDesktopPreferences: async () => preferences,
+      onDesktopPreferencesChanged: handler => { publish = handler; return () => {}; },
+    };
+    const onSend = vi.fn();
+    renderComposer({ prompt: "draft", onSend });
+    await act(async () => { await Promise.resolve(); });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea");
+
+    act(() => {
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    });
+    expect(onSend).not.toHaveBeenCalled();
+
+    act(() => {
+      textarea?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(onSend).toHaveBeenCalledTimes(1);
+
+    act(() => publish?.({ ...preferences, send_shortcut: "enter" }));
+  });
+
   it("does not queue with Cmd/Ctrl+Enter when there is no running draft", () => {
     const onQueue = vi.fn();
     renderComposer({ prompt: "", running: true, onQueue });
@@ -2224,6 +2250,26 @@ describe("Composer send control", () => {
     expect(slashMenu?.classList.contains("composer-plus-menu")).toBe(true);
   });
 
+  it("keeps the slash selection when the command list rebuilds with identical content", () => {
+    const activeContext = { kind: "project" as const, project_id: "repo", cwd: "/repo" };
+    renderComposer({ prompt: "/", activeContext });
+    const textarea = container.querySelector<HTMLTextAreaElement>("textarea")!;
+    const selectedName = () => document.body.querySelector<HTMLElement>(
+      '.slash-command-menu .slash-command-item[aria-selected="true"]',
+    )?.dataset.commandName;
+
+    act(() => {
+      textarea.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }));
+    });
+    const selected = selectedName();
+    expect(selected).not.toBe("review");
+
+    // Stream frames hand the composer fresh objects with identical content;
+    // the visible list is rebuilt but the highlight must not snap back.
+    renderComposer({ prompt: "/", activeContext, initialized: initialized() });
+    expect(selectedName()).toBe(selected);
+  });
+
   it("places the caret after a command inserted from the plus menu", async () => {
     renderStatefulComposer({ activeContext: { kind: "no_project", cwd: "/tmp" } });
 
@@ -2435,8 +2481,8 @@ describe("Composer send control", () => {
     expect(menu?.querySelector<HTMLElement>(".composer-plus-menu")?.style.getPropertyValue("--composer-menu-width"))
       .toBe(`${COMPOSER_COMMAND_MENU_WIDTH}px`);
     expect(menu?.style.left).toBe("80px");
-    expect(menu?.style.bottom).toBe(`${window.innerHeight - 400 + 4}px`);
-    expect(menu?.style.getPropertyValue("--floating-menu-available-height")).toBe("388px");
+    expect(menu?.style.bottom).toBe(`${window.innerHeight - 400 + 8}px`);
+    expect(menu?.style.getPropertyValue("--floating-menu-available-height")).toBe("384px");
     // Every command row names the slash command that runs it.
     const reviewRow = Array.from(menu?.querySelectorAll("button") ?? []).find(
       (button) => button.textContent?.includes(translateCurrent("slash.review.title")),
@@ -2874,7 +2920,7 @@ describe("Composer long text folding", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent?.endsWith(".txt")).toBe(true);
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-collapsed-prompt-main")?.getAttribute("aria-label")?.endsWith(".txt")).toBe(true);
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -2904,7 +2950,7 @@ describe("Composer long text folding", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    editPastedAttachment(container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main"));
+    editPastedAttachment(container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-collapsed-prompt-main"));
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(longText);
@@ -3058,7 +3104,7 @@ describe("Composer long text folding", () => {
     act(() => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
-    editPastedAttachment(container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main"));
+    editPastedAttachment(container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-collapsed-prompt-main"));
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
 
     harness.replacePrompt("另一个 tab 的草稿");
@@ -3075,7 +3121,7 @@ function editPastedAttachment(button: HTMLButtonElement | null | undefined): voi
 }
 
 function foldedPromptButton(title: string): HTMLButtonElement | undefined {
-  return Array.from(container.querySelectorAll<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main")).find((button) =>
+  return Array.from(container.querySelectorAll<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-collapsed-prompt-main")).find((button) =>
     button.textContent?.includes(title),
   );
 }
@@ -3934,7 +3980,7 @@ describe("composer drag and drop", () => {
     });
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).not.toBeNull();
-    expect(container.querySelector(".composer-collapsed-prompt-card .composer-document-card-title")?.textContent?.endsWith(".txt")).toBe(true);
+    expect(container.querySelector(".composer-collapsed-prompt-card .composer-collapsed-prompt-main")?.getAttribute("aria-label")?.endsWith(".txt")).toBe(true);
     expect((textarea as HTMLTextAreaElement).value).toBe("");
     expect((textarea as HTMLTextAreaElement).placeholder).toBe("要求后续变更");
 
@@ -3961,7 +4007,7 @@ describe("composer drag and drop", () => {
       pastePlainText(textarea as HTMLTextAreaElement, longText);
     });
 
-    editPastedAttachment(container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-document-card-main"));
+    editPastedAttachment(container.querySelector<HTMLButtonElement>(".composer-collapsed-prompt-card .composer-collapsed-prompt-main"));
 
     expect(container.querySelector(".composer-collapsed-prompt-card")).toBeNull();
     expect(container.querySelector<HTMLTextAreaElement>("textarea")?.value).toBe(longText);

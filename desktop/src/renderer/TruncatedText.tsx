@@ -26,6 +26,9 @@ export function TruncatedText({
   as = "span",
   children,
   nativeTooltip = false,
+  fade = false,
+  measureKey,
+  measureRef,
   ...rest
 }: {
   text: string;
@@ -33,6 +36,12 @@ export function TruncatedText({
   children?: ReactNode;
   /** Use native overlays when the text is beside an embedded browser. */
   nativeTooltip?: boolean;
+  /** Fade the trailing edge only while the text is actually truncated. */
+  fade?: boolean;
+  /** Optional render-state key for animated children that change their width. */
+  measureKey?: string;
+  /** Optional access to the measured element for callers coordinating animation. */
+  measureRef?: (element: HTMLElement | null) => void;
   className?: string;
   /** Host tag for the text box. Keeps block-level semantics (div/h2/strong). */
   as?: "span" | "div" | "strong" | "h2";
@@ -71,12 +80,21 @@ export function TruncatedText({
       stopObservingAppearance();
       document.fonts?.removeEventListener("loadingdone", measure);
     };
-  }, [text]);
+  }, [text, measureKey]);
 
   const Tag = as as ElementType;
   return (
     <Tooltip asChild content={text} disabled={!truncated} native={nativeTooltip}>
-      <Tag ref={ref} className={className} data-text={text} {...rest}>
+      <Tag
+        ref={(element: HTMLElement | null) => {
+          ref.current = element;
+          measureRef?.(element);
+        }}
+        className={className}
+        data-text={text}
+        data-truncated={fade && truncated ? "true" : undefined}
+        {...rest}
+      >
         {children ?? text}
       </Tag>
     </Tooltip>

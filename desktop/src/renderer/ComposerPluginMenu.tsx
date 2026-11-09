@@ -10,7 +10,7 @@ import { ComposerPluginIcon } from "./ComposerPluginIcon";
 import { ScopedToast, showActionErrorToast } from "./Toast";
 import "./ComposerPluginMenu.css";
 
-// The plus menu mounts on every open. Keep the connector status beside the
+// The plus menu mounts on every open. Keep the MCP server status beside the
 // composer so reopening it never swaps a loading row for the real list.
 const pluginServers = new WeakMap<Pick<ApplicationSettingsControlsV1, "listMCPServers">, MCPServerStatus[]>();
 const pluginServerRequests = new WeakMap<Pick<ApplicationSettingsControlsV1, "listMCPServers">, Promise<MCPServerStatus[]>>();
@@ -79,7 +79,9 @@ export function useComposerPluginMenu(inputRef: RefObject<ComposerInputHandle | 
     if (!open) return false;
     if (event.key === "Escape") { event.preventDefault(); setOpen(false); return true; }
     if (["ArrowDown", "ArrowUp", "Enter", "Tab"].includes(event.key)) {
-      const buttons = document.getElementById(id)?.querySelectorAll<HTMLButtonElement>("[data-plugin-choice]:not(:disabled)");
+      // Any enabled row is reachable, like the slash panel's list: plugin
+      // choices lead the menu, so arrows still land there first.
+      const buttons = document.getElementById(id)?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)");
       const button = event.key === "ArrowUp" ? buttons?.[buttons.length - 1] : buttons?.[0];
       if (button) {
         event.preventDefault();
@@ -129,17 +131,14 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
   // in the plugin catalog, reached from the last row.
   const entries = [
     ...servers.flatMap(server => {
-      const identity = server.identity;
-      const account = identity?.state === "verified" ? [identity.account?.label ?? identity.account?.email ?? identity.account?.id, identity.workspace?.label ?? identity.workspace?.id].filter(Boolean).join(" · ") : "";
-      const name = server.connector?.title ?? server.display_name ?? server.name;
-      const duplicateName = servers.some(other => other.name !== server.name && (other.connector?.title ?? other.display_name ?? other.name) === name);
+      const name = server.display_name ?? server.name;
+      const duplicateName = servers.some(other => other.name !== server.name && (other.display_name ?? other.name) === name);
       const ready = server.connected && server.configuration_enabled !== false && server.state !== "disabled" && server.plugin_active !== false && !!server.tool_names?.length;
       if (!ready) return [];
-      return [{ key: `mcp:${server.name}`, name, description: server.connector?.description ?? inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === server.plugin_id)?.description,
-        // Internal server names appear only to tell same-named connections apart.
-        detail: duplicateName ? [account, server.name].filter(Boolean).join(" · ") : "",
-        plugin: { plugin_id: server.plugin_id, mcp_server: server.name, resource_url: server.resource_url, authorization_id: server.authorization_id,
-          ...(identity?.state === "verified" ? { account_id: identity.account?.id, workspace_id: identity.workspace?.id } : {}) } as PluginReference,
+      return [{ key: `mcp:${server.name}`, name, description: inventory.find(item => item.kind === "plugin" && item.provenance.plugin_id === server.plugin_id)?.description,
+        // Internal server names appear only to tell same-named servers apart.
+        detail: duplicateName ? server.name : "",
+        plugin: { plugin_id: server.plugin_id, mcp_server: server.name, resource_url: server.resource_url, authorization_id: server.authorization_id } as PluginReference,
         server }];
     }),
     ...(services.includePluginTools === false ? [] : inventory).filter(item => item.kind === "plugin" && item.conversation_tools?.length && item.enabled !== false && item.runtime_state === "active").map(item => ({
@@ -153,13 +152,14 @@ export function ComposerPluginChoices({ menu }: { menu: ComposerPluginMenu }): J
   }
   return <div className="composer-plugin-choices">
     {!supported ? <ScopedToast message={t("composer.pluginsEngineUnsupported")} tone="error" dedupeKey="composer-plugins-engine-unsupported" /> : null}
+    <div className="composer-plus-menu-section" role="presentation">{t("composer.plugins")}</div>
     {loading ? <p className="composer-plugin-notice" role="status">{t("composer.pluginsLoading")}</p> : null}
     {error ? <div className="composer-plugin-notice" role="alert">{t("composer.pluginsLoadFailed")} <button type="button" onClick={() => setRevision(value => value + 1)}>{t("settings.errorRetry")}</button></div> : null}
-    {!loading && !error && !entries.length && !menu.query ? <p className="composer-plugin-notice">{t("composer.pluginsEmpty")}</p> : null}
+    {services.includePluginTools !== false && !loading && !error && !entries.length && !menu.query ? <p className="composer-plugin-notice">{t("composer.pluginsEmpty")}</p> : null}
     {entries.map(entry => {
       const secondary = entry.detail || entry.description;
       return <button type="button" role="menuitem" className="composer-plugin-row" key={entry.key} data-plugin-choice data-plugin-key={entry.key}
-        disabled={!supported} title={secondary} onClick={() => menu.choose(`@${entry.name}`, entry.plugin)}>
+        disabled={!supported} onClick={() => menu.choose(`@${entry.name}`, entry.plugin)}>
         <ComposerPluginIcon plugin={entry.plugin} server={entry.server} className="composer-plugin-mark" />
         <span className="composer-plugin-name">{entry.name}</span>
         {secondary ? <span className="composer-plugin-detail">{secondary}</span> : null}

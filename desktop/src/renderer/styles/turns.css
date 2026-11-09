@@ -539,6 +539,27 @@
   gap: 8px;
 }
 
+/*
+ * Images, pasted-text pages, and file pages share one 72px-tall media row.
+ * The message-images/message-files wrappers dissolve so their children sit
+ * side by side in document order; anything wider (expanded paste card,
+ * selection cards) wraps onto its own line.
+ */
+.user-message-media-row {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.user-message-media-row > .message-images,
+.user-message-media-row > .message-files {
+  display: contents;
+}
+
 .user-message-content-parts {
   display: grid;
   min-width: 0;
@@ -561,6 +582,44 @@
   width: 100%;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/*
+ * The collapsed paste is a page thumbnail in the media row — same 72px row
+ * height as image and file pages, same border/radius/shadow family. Its
+ * opening lines double as the preview, like the composer's folded prompt
+ * card.
+ */
+.user-message-pasted-thumb {
+  display: block;
+  width: 56px;
+  height: 72px;
+  padding: 7px 6px 0;
+  overflow: hidden;
+  border: 2px solid var(--hairline-strong);
+  border-radius: var(--radius-media);
+  background: var(--paper);
+  box-shadow: var(--shadow-card);
+  cursor: pointer;
+  transition: border-color var(--motion-fast) var(--ease-out);
+}
+
+.user-message-pasted-thumb:hover {
+  border-color: var(--ink-faint);
+}
+
+.user-message-pasted-thumb:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.user-message-pasted-thumb-lines > span {
+  display: block;
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  font-size: 5px;
+  line-height: 1.9;
+  white-space: nowrap;
 }
 
 .user-message-pasted-text {
@@ -955,10 +1014,22 @@
   margin: 2px 0 8px;
 }
 
-.user-message-attachments > .message-images,
-.user-message-attachments > .message-files {
-  width: 100%;
-  margin: 0;
+/* Videos join the row at the same 72px height, keeping their 16:9 shape. */
+.user-message-media-row .video-attachment {
+  width: 128px;
+  height: 72px;
+  border: 2px solid var(--hairline-strong);
+  box-shadow: var(--shadow-card);
+}
+
+.user-message-media-row .video-attachment-play-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.user-message-media-row .video-attachment-play-icon svg {
+  width: 16px;
+  height: 16px;
 }
 
 .agent-text > .message-images {
@@ -1060,6 +1131,58 @@
   font-weight: var(--weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/*
+ * File page tile (sent user messages): a folded-corner page the size of the
+ * pasted-text page — 72x72 in the shared media row. The filename itself is
+ * the page's content, wrapped in small type across up to three lines; the
+ * kind/size line stays out of the tile and lives on the title tooltip.
+ */
+.message-files-tile .message-file {
+  position: relative;
+  display: flex;
+  width: 72px;
+  height: 72px;
+  max-width: none;
+  padding: 10px 9px 7px;
+  flex-direction: column;
+  gap: 0;
+  border: 2px solid var(--hairline-strong);
+  border-radius: var(--radius-media);
+  background:
+    linear-gradient(135deg, transparent 50%, var(--ink-overlay-8) 50%) right 2px top 2px / 12px 12px no-repeat,
+    var(--paper);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.message-files-tile .message-file > .icon,
+.message-files-tile .message-file-meta {
+  display: none;
+}
+
+.message-files-tile .message-file-details {
+  display: contents;
+}
+
+.message-files-tile .message-file-name {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 9px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+}
+
+.message-files-tile .message-file-name-stem,
+.message-files-tile .message-file-name-extension {
+  display: inline;
+  overflow: visible;
+  text-overflow: clip;
 }
 
 .message-attachment-more,
@@ -4338,6 +4461,14 @@
   opacity: 1;
 }
 
+/* A paused closed body may never have computed a style to transition from. */
+@starting-style {
+  .turn-reasoning-fold[open] > .turn-reasoning-body {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
 .turn-reasoning-body-inner {
   min-height: 0;
   overflow: hidden;
@@ -4867,53 +4998,87 @@ pre {
  * The launch signature shows the same round wuu blobatar as the empty home
  * greeting, centered inside one opaque app-icon surface. The mascot is the
  * color mark itself, and the old monochrome carving plus startup sweep are
- * gone.
+ * gone. A failure keeps the same mark so a stall does not make the icon
+ * vanish; it only stamps a status badge on the corner.
  */
 .wuu-launch {
   display: grid;
   justify-items: center;
-  gap: 24px;
+  gap: var(--space-6);
   width: min(400px, 100%);
-  padding: 16px;
+  padding: var(--space-4);
   text-align: center;
   color: var(--ink);
   font-size: var(--font-ui);
+}
+
+.wuu-launch-mark {
+  position: relative;
+}
+
+.wuu-launch-badge {
+  position: absolute;
+  inset-inline-end: -4px;
+  bottom: -4px;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  aspect-ratio: 1;
+  border: 3px solid var(--paper);
+  border-radius: var(--radius-pill);
+  background: var(--danger);
+  color: var(--paper);
+  --enter-scale: 0.6;
+  animation: wuu-enter var(--motion-base) var(--ease-out) both;
 }
 
 .wuu-launch-message {
   position: relative;
   display: grid;
   justify-items: center;
-  gap: 16px;
+  gap: var(--space-4);
   min-width: 0;
   width: 100%;
 }
 
-.wuu-launch-title,
-.wuu-launch-description {
+.wuu-launch-title {
   margin: 0;
-  line-height: var(--line-body);
+  color: var(--ink-strong);
+  font-size: var(--font-heading);
+  font-weight: var(--weight-semibold);
+  line-height: 1.3;
 }
 
 .wuu-launch-description {
   /* Keep the delayed hint from shifting the centered icon, title and rail. */
   position: absolute;
-  top: calc(100% + 16px);
+  top: calc(100% + var(--space-4));
   inset-inline: 0;
+  margin: 0;
   color: var(--ink-soft);
+  line-height: var(--line-body);
 }
 
+/* A <p> keeps raw error text without picking up the code-block chrome a
+ * <pre> gets globally. */
 .wuu-launch-error {
   margin: 0;
   max-height: 35vh;
   width: 100%;
   overflow: auto;
+  color: var(--ink-soft);
+  line-height: var(--line-body);
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-  font: inherit;
-  line-height: var(--line-body);
-  color: var(--ink-soft);
   user-select: text;
+}
+
+.wuu-launch-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-3);
+  margin-top: var(--space-1);
 }
 
 @container style(--motion-reduced: 1) {
@@ -6168,6 +6333,10 @@ button.turn-edit-summary-overview:focus-visible {
 
 :root[data-message-style="im"] .user-message-attachments {
   justify-items: start;
+}
+
+:root[data-message-style="im"] .user-message-media-row {
+  justify-content: flex-start;
 }
 
 :root[data-message-style="im"] .user-message-block :is(.message-images, .message-files) {

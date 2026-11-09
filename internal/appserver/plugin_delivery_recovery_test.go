@@ -194,9 +194,12 @@ func TestPluginQueueThreadLookupShutdownKeepsReplayPolicy(t *testing.T) {
 			if lifecycle.State != test.state || lifecycle.Retryable != test.shutdown {
 				t.Fatalf("lookup receipt = %+v", lifecycle)
 			}
-			srv.queuedTurnMu.Lock()
-			claims := len(srv.claimedQueuedTurns)
-			srv.queuedTurnMu.Unlock()
+			claims := 0
+			for _, sched := range srv.schedulersSnapshot() {
+				sched.queue.mu.Lock()
+				claims += len(sched.queue.claimed)
+				sched.queue.mu.Unlock()
+			}
 			if claims != 0 {
 				t.Fatalf("unsettled claims = %d", claims)
 			}

@@ -65,7 +65,7 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
         page={settings.activePageId as SettingsPage | undefined}
         onPageChange={pageId => { void application.invoke("settings.open", { pageId }).catch(showErrorToast); }}
         onBack={closeSettings}
-        onSave={(provider, model, effort, connection, variant) => application.invoke("settings.save-provider", { provider, model, effort, connection, variant })}
+        onSave={(provider, model, effort, connection, variant, permissionMode) => application.invoke("settings.save-provider", { provider, model, effort, connection, variant, permissionMode })}
         onRemoveProvider={(provider, options) => application.invoke("settings.remove-provider", { provider, ...options })}
         onRefreshModelCatalog={refreshModelCatalog}
         onProvidersChanged={providers => { void application.invoke("settings.reconcile-connections", { providers }).catch(showErrorToast); }}

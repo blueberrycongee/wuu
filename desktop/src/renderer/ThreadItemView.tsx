@@ -19,7 +19,7 @@ import {
 } from "react";
 import { ArrowUp, ChevronDown, ChevronUp, FileText, Info, LoaderCircle, MessagesSquare, Plus } from "./WuuIcons";
 import type { InputFile, InputImage, MessageContentPart, ThreadItem, Turn } from "../shared/protocol";
-import { CollapsedComposerPromptCard, collapsedComposerPromptTitle } from "./ComposerCollapsedPrompt";
+import { CollapsedComposerPromptCard, collapsedComposerPromptPreviewLines } from "./ComposerCollapsedPrompt";
 import { FileSelectionCards } from "./FileSelectionCards";
 import { buildFileSelectionPart } from "./FileSelectionContext";
 import {
@@ -117,6 +117,9 @@ export const ThreadItemView = memo(function ThreadItemView(props: ThreadItemView
   const threadId = useContext(ArtifactThreadContext);
   const text = useStreamedText(streamTextKey(props.turnID, item.id, "text"), item.text,
     props.streaming && item.status === "in_progress");
+  // Memoizing on the whole props object is deliberate: store-driven re-renders
+  // reuse the same pendingProps, so the built-in subtree is skipped per stream
+  // frame while the slot context below stays current.
   const nativeContent = useMemo(() => <BuiltInThreadItemView {...props} />, [props]);
   if (item.remote_content_ref && item.type !== "tool_call") {
     return <RemoteItemContent key={item.remote_content_ref} item={item} render={complete => <ThreadItemView {...props} item={complete} />} />;
@@ -486,11 +489,13 @@ function UserMessageContent({
       {selectionParts.map((part, index) => <ResponseSelectionReference key={`${part.selection.id}-${index}`} selection={part.selection} />)}
       {hasAttachments ? (
         <div className="user-message-attachments" data-wuu-component="message-attachments">
-          {images.length ? <MessageImageGrid images={images} collapsedLimit={4} /> : null}
-          {files.length ? <MessageFileList files={files} collapsedLimit={3} /> : null}
-          {pastedParts.map((part, index) => (
-            <MessagePastedTextPart key={`${part.type}-${index}`} part={part} />
-          ))}
+          <div className="user-message-media-row">
+            {images.length ? <MessageImageGrid images={images} collapsedLimit={4} /> : null}
+            {files.length ? <MessageFileList files={files} collapsedLimit={3} tile /> : null}
+            {pastedParts.map((part, index) => (
+              <MessagePastedTextPart key={`${part.type}-${index}`} part={part} />
+            ))}
+          </div>
           <FileSelectionCards parts={fileParts} onOpenFile={onOpenFile} />
         </div>
       ) : null}
@@ -524,7 +529,7 @@ function UserMessageContent({
             <div className="user-message-raw-query">{displayedText}</div>
           ) : textParts.some(part => part.type === "plugin_reference") ? (
             <div className="user-message-raw-query">{textParts.map((part, index) => part.type === "plugin_reference"
-              ? <span key={index} className="composer-plugin-reference" title={[part.plugin.plugin_id, part.plugin.mcp_server, part.plugin.account_id, part.plugin.workspace_id].filter(Boolean).join(" · ")}>{part.text}</span>
+              ? <span key={index} className="composer-plugin-reference" title={[part.plugin.plugin_id, part.plugin.mcp_server].filter(Boolean).join(" · ")}>{part.text}</span>
               : <span key={index}>{part.text}</span>)}</div>
           ) : structured ? (
             <div className="user-message-content-parts">
@@ -558,28 +563,56 @@ function UserMessageContent({
   );
 }
 
+// The label names the paste by its own first line — never a synthetic
+// ".txt" filename, which is what the pre-#1291 card did.
+function pastedTextLabel(text: string): string {
+  return text
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .find(Boolean)
+    ?.slice(0, 80) ?? "";
+}
+
+// Collapsed, the paste reads as a page thumbnail in the shared 72px media
+// row; expanded it becomes a full-width card below the thumbs.
 function MessagePastedTextPart({
   part,
 }: {
   part: Extract<MessageContentPart, { type: "pasted_text" }>;
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
-  const title = part.title || collapsedComposerPromptTitle(part.text);
+  const title = part.title || pastedTextLabel(part.text);
+  const previewLines = useMemo(() => collapsedComposerPromptPreviewLines(part.text), [part.text]);
+  if (!expanded) {
+    return (
+      <button
+        type="button"
+        className="user-message-pasted-thumb"
+        aria-expanded={false}
+        title={title}
+        onClick={() => setExpanded(true)}
+      >
+        <span className="user-message-pasted-thumb-lines" aria-hidden="true">
+          {previewLines.map((line, index) => <span key={index}>{line || " "}</span>)}
+        </span>
+      </button>
+    );
+  }
   return (
-    <section className={`user-message-pasted-text${expanded ? " expanded" : ""}`}>
+    <section className="user-message-pasted-text expanded">
       <button
         type="button"
         className="user-message-pasted-text-toggle"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
+        aria-expanded={true}
+        onClick={() => setExpanded(false)}
       >
         <span className="user-message-pasted-text-icon" aria-hidden="true">
           <FileText />
         </span>
         <strong className="user-message-pasted-text-title">{title}</strong>
-        {expanded ? <ChevronUp aria-hidden="true" /> : <ChevronDown aria-hidden="true" />}
+        <ChevronUp aria-hidden="true" />
       </button>
-      {expanded ? <pre className="user-message-pasted-text-content">{part.text}</pre> : null}
+      <pre className="user-message-pasted-text-content">{part.text}</pre>
     </section>
   );
 }

@@ -123,7 +123,7 @@ async function geometry() {
       });
       const rows = [];
       for (const control of controls) if (control.height && !rows.some(y => Math.abs(y - control.y) < 2)) rows.push(control.y);
-      const value = { viewport: { width: innerWidth, height: innerHeight }, pageWidth: document.documentElement.scrollWidth, dpr: devicePixelRatio, pane: rect(document.querySelector('.conversation-pane')), panel: rect(document.querySelector('.workspace-right-panel')), shell: rect(dock.querySelector('.composer-shell')), editor: rect(dock.querySelector('.composer-editor')), footer: rect(footer), footerShell: rect(dock.querySelector('.composer-footer-shell')), workspace: rect(footer?.querySelector('.composer-workspace-bar')), controls, rows: rows.length, inputFont: parseFloat(getComputedStyle(input).fontSize), railControls: document.querySelectorAll('.workspace-composer-controls button').length, collapsed: Boolean(document.querySelector('.workspace-tool-rail-collapsed')) };
+      const value = { viewport: { width: innerWidth, height: innerHeight }, pageWidth: document.documentElement.scrollWidth, dpr: devicePixelRatio, pane: rect(document.querySelector('.conversation-pane')), panel: rect(document.querySelector('.workspace-right-panel')), shell: rect(dock.querySelector('.composer-shell')), editor: rect(dock.querySelector('.composer-editor')), footer: rect(footer), footerShell: rect(dock.querySelector('.composer-footer-shell')), workspace: rect(footer?.querySelector('.composer-workspace-bar')), controls, rows: rows.length, inputFont: parseFloat(getComputedStyle(input).fontSize), railControls: document.querySelectorAll('.workspace-composer-controls button').length, railMounted: Boolean(document.querySelector('[data-wuu-component="workspace-tool-rail"]')), hiddenRailControls: Boolean(document.querySelector('.workspace-composer-controls[hidden]')), collapsed: Boolean(document.querySelector('.workspace-tool-rail-collapsed')) };
       const current = JSON.stringify(value);
       stable = previous === current ? stable + 1 : 0; previous = current;
       const moving = document.getAnimations().some(animation => animation.playState === 'running' && Number.isFinite(animation.effect?.getComputedTiming().endTime));
@@ -134,7 +134,7 @@ async function geometry() {
     requestAnimationFrame(sample);
   }));
 }
-async function capture(label, expectation) {
+async function capture(label, expectation, baseline) {
   const sample = await geometry();
   report.samples.push({ label, expectation, ...sample });
   fs.writeFileSync(path.join(output, `${label}.png`), (await win.webContents.capturePage()).toPNG()); report.screenshots.push(`${label}.png`);
@@ -142,10 +142,19 @@ async function capture(label, expectation) {
   check(sample.inputFont === font, `editor font remains ${font}px, got ${sample.inputFont}`);
   check(sample.pageWidth <= sample.viewport.width, 'page does not overflow horizontally');
   check(sample.editor.x >= sample.pane.x && sample.editor.right <= sample.pane.right + 1, 'editor stays inside conversation');
-  if (expectation === 'rail') {
+  if (expectation === 'rail' || expectation === 'hidden-rail') {
     check(sample.railControls >= 4, 'expanded tool rail owns workspace, branch and runtime controls');
     check(sample.controls.length === 0 && sample.footerShell?.height <= 1, 'expanded tool rail releases the footer');
-  } else {
+  }
+  if (expectation === 'hidden-rail') {
+    check(sample.hiddenRailControls, 'panel open keeps composer controls mounted in a hidden target');
+    check(!sample.railMounted, 'panel open hides the rail instead of collapsing it');
+    if (baseline) {
+      check(Math.abs(sample.editor.height - baseline.editor.height) <= 1, `panel open keeps the editor height (${baseline.editor.height}px -> ${sample.editor.height}px)`);
+      check(Math.abs(sample.shell.height - baseline.shell.height) <= 1, `panel open keeps the composer height (${baseline.shell.height}px -> ${sample.shell.height}px)`);
+    }
+  }
+  if (expectation !== 'rail' && expectation !== 'hidden-rail') {
     const projectControl = sample.controls.find(control => control.project), branchControl = sample.controls.find(control => control.branch);
     check(Boolean(projectControl && branchControl), 'workspace and branch remain available in the collapsed-rail fallback');
     check(sample.rows <= 2, `footer uses at most two compact rows, got ${sample.rows}`);
@@ -165,6 +174,7 @@ async function capture(label, expectation) {
     if (expectation === 'wide') check(sample.rows === 1, 'wide layout keeps a single footer row');
   }
   save();
+  return sample;
 }
 async function run() {
   for (const args of [['init', '-b', branch], ['-c', 'user.name=Footer Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '--allow-empty', '-m', 'Synthetic composer layout fixture']]) {
@@ -192,6 +202,16 @@ async function run() {
     await geometry();
     if (await evaluate(() => document.querySelector('.app-shell').classList.contains('right-panel-open'))) await click('[data-wuu-component="right-sidebar-toggle"]');
     await capture(`${theme}-wide-panel-closed`, 'wide'); await typeDraft(`${theme}-wide`);
+    await toggleRail(`${theme}-expand`);
+    const expanded = await capture(`${theme}-wide-rail-expanded`, 'rail'); await typeDraft(`${theme}-rail`);
+    await click('[data-wuu-component="right-sidebar-toggle"]');
+    await until(() => evaluate(() => document.querySelector('.app-shell').classList.contains('right-panel-open')), 'docked right panel with expanded rail');
+    await capture(`${theme}-wide-rail-expanded-panel-open`, 'hidden-rail', expanded); await typeDraft(`${theme}-rail-panel`);
+    await click('[data-wuu-component="right-sidebar-toggle"]');
+    await until(() => evaluate(() => !document.querySelector('.app-shell').classList.contains('right-panel-open')), 'right panel closed');
+    await capture(`${theme}-wide-rail-restored`, 'rail'); await typeDraft(`${theme}-rail-restored`);
+    await toggleRail(`${theme}-collapse`);
+    await capture(`${theme}-wide-rail-recollapsed`, 'footer'); await typeDraft(`${theme}-recollapsed`);
     await click('[data-wuu-component="right-sidebar-toggle"]');
     await until(() => evaluate(() => Boolean(document.querySelector('.workspace-right-panel-resizer:not([inert])'))), 'docked right panel');
     // Stay just above the product's automatic full-panel threshold while
@@ -207,10 +227,6 @@ async function run() {
     const narrow = await geometry();
     assert.ok(narrow.shell.width <= 320 && narrow.shell.width >= 240, `fixture must reproduce the narrow pane, got ${narrow.shell.width}`);
     await capture(`${theme}-narrow-panel-open`, 'footer'); await typeDraft(`${theme}-narrow`);
-    await toggleRail(`${theme}-expand`);
-    await capture(`${theme}-narrow-rail-expanded`, 'rail'); await typeDraft(`${theme}-rail`);
-    await toggleRail(`${theme}-collapse`);
-    await capture(`${theme}-narrow-rail-recollapsed`, 'footer'); await typeDraft(`${theme}-recollapsed`);
   }
   report.clicks = await evaluate(() => window.footerNativeClicks || []);
   assert.ok(report.clicks.length > 0 && report.clicks.every(click => click.trusted), 'all control clicks are native trusted input');

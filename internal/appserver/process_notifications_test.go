@@ -79,10 +79,8 @@ func TestForwardProcessNotificationsQueuesOnlyNaturalOwnerExit(t *testing.T) {
 	threadID := "thread-owner"
 	thread := &threadState{ID: threadID, running: true}
 	server := &Server{
-		rt:                           newTestRuntime(t, &fakeClient{}),
-		threads:                      map[string]*threadState{threadID: thread},
-		pendingAgentCompletionTurns:  make(map[string][]agentCompletionTurn),
-		drainingAgentCompletionTurns: make(map[string]bool),
+		rt:      newTestRuntime(t, &fakeClient{}),
+		threads: map[string]*threadState{threadID: thread},
 	}
 	events := make(chan process.Event, 4)
 	done := make(chan struct{})
@@ -118,9 +116,10 @@ func TestForwardProcessNotificationsQueuesOnlyNaturalOwnerExit(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		server.agentCompletionMu.Lock()
-		pending := cloneAgentCompletionTurns(server.pendingAgentCompletionTurns[threadID])
-		server.agentCompletionMu.Unlock()
+		completions := server.completionQueue(threadID)
+		completions.mu.Lock()
+		pending := cloneAgentCompletionTurns(completions.pending)
+		completions.mu.Unlock()
 		if len(pending) == 1 {
 			if pending[0].processID != "proc-owned" || pending[0].msg.Name != wuucontext.ProcessNotificationMessageName {
 				t.Fatalf("unexpected queued completion: %+v", pending[0])
@@ -171,10 +170,8 @@ func TestForwardProcessNotificationsPullsPersistedCompletionAfterMissedEvent(t *
 
 	thread := &threadState{ID: threadID, running: true}
 	server := &Server{
-		rt:                           newTestRuntime(t, &fakeClient{}),
-		threads:                      map[string]*threadState{threadID: thread},
-		pendingAgentCompletionTurns:  make(map[string][]agentCompletionTurn),
-		drainingAgentCompletionTurns: make(map[string]bool),
+		rt:      newTestRuntime(t, &fakeClient{}),
+		threads: map[string]*threadState{threadID: thread},
 	}
 	events := make(chan process.Event, 1)
 	done := make(chan struct{})
@@ -192,9 +189,10 @@ func TestForwardProcessNotificationsPullsPersistedCompletionAfterMissedEvent(t *
 
 	deadline = time.Now().Add(2 * time.Second)
 	for {
-		server.agentCompletionMu.Lock()
-		pending := cloneAgentCompletionTurns(server.pendingAgentCompletionTurns[threadID])
-		server.agentCompletionMu.Unlock()
+		completions := server.completionQueue(threadID)
+		completions.mu.Lock()
+		pending := cloneAgentCompletionTurns(completions.pending)
+		completions.mu.Unlock()
 		if len(pending) == 1 && pending[0].processID == started.ID {
 			break
 		}
@@ -416,24 +414,26 @@ func TestProcessCompletionDrainYieldsToQueuedUserWork(t *testing.T) {
 		threads: map[string]*threadState{
 			threadID: {ID: threadID},
 		},
-		pendingAgentCompletionTurns: map[string][]agentCompletionTurn{
-			threadID: {{processID: "proc-later", msg: providers.ChatMessage{Role: "user", Content: "completed"}}},
-		},
-		drainingAgentCompletionTurns: map[string]bool{threadID: true},
-		pendingQueuedTurns: map[string][]queuedTurn{
-			threadID: {{id: "user-first", msg: providers.ChatMessage{Role: "user", Content: "new instruction"}}},
-		},
-		drainingQueuedTurns: map[string]bool{threadID: true},
 	}
+	procCompletions := server.completionQueue(threadID)
+	procCompletions.mu.Lock()
+	procCompletions.pending = []agentCompletionTurn{{processID: "proc-later", msg: providers.ChatMessage{Role: "user", Content: "completed"}}}
+	procCompletions.draining = true
+	procCompletions.mu.Unlock()
+	userQueue := server.turnQueue(threadID)
+	userQueue.mu.Lock()
+	userQueue.pending = []queuedTurn{{id: "user-first", msg: providers.ChatMessage{Role: "user", Content: "new instruction"}}}
+	userQueue.draining = true
+	userQueue.mu.Unlock()
 
 	binding := testRuntimeState(t, server.rt)
 	server.threads[threadID].state = binding
 	server.drainAgentCompletionTurns(binding, threadID)
 
-	server.agentCompletionMu.Lock()
-	pending := cloneAgentCompletionTurns(server.pendingAgentCompletionTurns[threadID])
-	draining := server.drainingAgentCompletionTurns[threadID]
-	server.agentCompletionMu.Unlock()
+	procCompletions.mu.Lock()
+	pending := cloneAgentCompletionTurns(procCompletions.pending)
+	draining := procCompletions.draining
+	procCompletions.mu.Unlock()
 	if len(pending) != 1 || pending[0].processID != "proc-later" {
 		t.Fatalf("automatic completion should remain queued behind user work: %+v", pending)
 	}

@@ -749,7 +749,7 @@ function WorkspacePanelContent({
 
   return (
     <>
-    {!covered && toolsVisible ? (
+    {!covered && toolsVisible && !open ? (
       <nav className={toolRailCollapsed ? "workspace-tool-rail-collapsed" : "workspace-tool-rail"}
         aria-label={t("workspace.tools")} data-wuu-component="workspace-tool-rail">
         <Tooltip content={t(toolRailCollapsed ? "workspace.expandTools" : "workspace.collapseTools")}>
@@ -785,6 +785,11 @@ function WorkspacePanelContent({
         </div>
         </> : null}
       </nav>
+    ) : null}
+    {/* The panel covers an expanded rail, so keep its composer target mounted
+      * while the rail is hidden and preserve the compact input layout. */}
+    {!covered && toolsVisible && open && !toolRailCollapsed ? (
+      <div className="workspace-composer-controls" ref={runtimeControlsRef} hidden />
     ) : null}
     <aside
       ref={panelRef}

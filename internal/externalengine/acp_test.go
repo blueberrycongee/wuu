@@ -772,7 +772,10 @@ func TestACPHelper(t *testing.T) {
 			if scenario == "version" {
 				version = 2
 			}
-			caps := map[string]any{"loadSession": scenario != "no-load"}
+			caps := map[string]any{"loadSession": scenario != "no-load" && scenario != "fork-no-load"}
+			if scenario == "fork" || scenario == "fork-no-load" {
+				caps["sessionCapabilities"] = map[string]any{"fork": map[string]any{}, "close": map[string]any{}}
+			}
 			if scenario == "host-mcp-http" {
 				caps["mcpCapabilities"] = map[string]bool{"http": true}
 			}
@@ -803,6 +806,17 @@ func TestACPHelper(t *testing.T) {
 				result = booleanSession()
 				break
 			}
+			if scenario == "devin-inline-config" {
+				// Current Devin CLI inlines configOptions in session/new and
+				// only re-sends config_option_update when configuration changes.
+				result = map[string]any{
+					"sessionId": "native-session",
+					"configOptions": []any{
+						map[string]any{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "model-a", "options": []any{map[string]string{"value": "model-a", "name": "Model A"}}},
+					},
+				}
+				break
+			}
 			if scenario == "speed" || scenario == "speed-catalog" {
 				result = speedACPSessionResult("model-a", "fast-mode", selectedSpeed)
 				break
@@ -813,6 +827,19 @@ func TestACPHelper(t *testing.T) {
 			}
 			if scenario == "catalog-probe-stall" {
 				result = probeStallSessionResult("model-a")
+				break
+			}
+			if scenario == "large-catalog" {
+				var choices []any
+				for i := 0; i < 60; i++ {
+					choices = append(choices, map[string]string{"value": fmt.Sprintf("model-%02d", i), "name": fmt.Sprintf("Model %02d", i)})
+				}
+				result = map[string]any{
+					"sessionId": "native-session",
+					"configOptions": []any{
+						map[string]any{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": "model-00", "options": choices},
+					},
+				}
 				break
 			}
 			if scenario == "unattended-mode" {
@@ -869,6 +896,25 @@ func TestACPHelper(t *testing.T) {
 			selectedModel = params.ModelID
 			result = map[string]any{}
 		case "session/set_config_option":
+			if scenario == "large-catalog" {
+				var params struct {
+					ConfigID string `json:"configId"`
+					Value    string `json:"value"`
+				}
+				_ = json.Unmarshal(msg.Params, &params)
+				if params.ConfigID == "model" {
+					time.Sleep(100 * time.Millisecond)
+					var choices []any
+					for i := 0; i < 60; i++ {
+						choices = append(choices, map[string]string{"value": fmt.Sprintf("model-%02d", i), "name": fmt.Sprintf("Model %02d", i)})
+					}
+					result = map[string]any{"configOptions": []any{
+						map[string]any{"id": "model", "name": "Model", "category": "model", "type": "select", "currentValue": params.Value, "options": choices},
+						map[string]any{"id": "reasoning_effort", "category": "thought_level", "type": "select", "currentValue": "high", "options": []any{map[string]string{"value": "low"}, map[string]string{"value": "high"}}},
+					}}
+					break
+				}
+			}
 			if scenario == "catalog-probe-stall" {
 				var params struct {
 					ConfigID string `json:"configId"`
@@ -944,6 +990,16 @@ func TestACPHelper(t *testing.T) {
 				}
 				result = configuration
 			}
+		case "session/fork":
+			var params struct {
+				SessionID string `json:"sessionId"`
+			}
+			_ = json.Unmarshal(msg.Params, &params)
+			if params.SessionID != "native-session" {
+				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32602, "message": "unknown source session"}})
+				continue
+			}
+			result = map[string]any{"sessionId": "native-fork"}
 		case "session/load":
 			if scenario == "load-error" {
 				write(map[string]any{"jsonrpc": "2.0", "id": msg.ID, "error": map[string]any{"code": -32000, "message": "session not found"}})
@@ -1149,6 +1205,25 @@ func TestACPChildInheritsParentEnvironment(t *testing.T) {
 				t.Fatalf("ACP child environment = %q, want %q", result.Result.Content, tc.want)
 			}
 		})
+	}
+}
+
+// Current Devin CLI inlines configOptions in the session/new response and
+// does not follow it with a config_option_update notification. The turn must
+// not wait for one that never arrives.
+func TestACPDevinInlineConfigurationDoesNotWaitForNotification(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	session, err := testEngineID(t, "devin", "devin-inline-config").SessionForThread(ctx, testBinding())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := session.RunTurn(ctx, testInput(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Result.Content != "Hello world" {
+		t.Fatalf("result=%+v", result.Result)
 	}
 }
 
@@ -1402,6 +1477,30 @@ func TestACPCatalogKeepsProbingPastAStalledModel(t *testing.T) {
 	}
 	if catalog.Models[2].ID != "model-c" || len(catalog.Models[2].SupportedEfforts) != 1 || catalog.Models[2].SupportedEfforts[0] != "turbo" {
 		t.Fatalf("probe after the stall did not run: %+v", catalog.Models[2])
+	}
+}
+
+// A catalog larger than the discovery budget still publishes every advertised
+// model; the probes that no longer fit leave those models without option
+// metadata instead of failing the whole catalog.
+func TestACPCatalogKeepsUnprobedModelsWhenBudgetRunsOut(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), acpCatalogProbeReserve+450*time.Millisecond)
+	defer cancel()
+	catalog, err := testEngine(t, "large-catalog").DiscoverCatalog(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.Models) != 60 {
+		t.Fatalf("budget-exhausted discovery dropped models: %d listed", len(catalog.Models))
+	}
+	probed := 0
+	for _, model := range catalog.Models {
+		if len(model.SupportedEfforts) > 0 {
+			probed++
+		}
+	}
+	if probed == 0 || probed >= 59 {
+		t.Fatalf("expected a bounded number of probes, got %d of 59", probed)
 	}
 }
 

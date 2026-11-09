@@ -3,6 +3,7 @@ package appserver
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -117,9 +118,9 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 	readonly := true
 	manager.Configure(map[string]mcp.ServerConfig{
 		"docs": {
-			Name:           "docs",
-			URL:            baseURL,
-			IdentitySource: "trusted-fixture", IdentityProbe: &config.MCPIdentityProbe{Tool: "get-self", Arguments: json.RawMessage(`{}`), Result: "structured_content", Account: config.MCPIdentityAccountMapping{ID: "/id", Label: "/name"}}, ToolOverrides: map[string]mcp.ToolOverride{"get-self": {ReadOnly: &readonly}},
+			Name:          "docs",
+			URL:           baseURL,
+			ToolOverrides: map[string]mcp.ToolOverride{"get-self": {ReadOnly: &readonly}},
 			OAuth: &mcp.OAuthConfig{
 				ClientID:    "desktop-client",
 				RedirectURI: "http://127.0.0.1/callback",
@@ -179,16 +180,8 @@ func TestServerMCPAuthLifecycleDoesNotExposeCredentials(t *testing.T) {
 		t.Fatal(response)
 	}
 	verified := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "verified")["result"])
-	if identityCalls.Load() != 1 || verified.Identity == nil || verified.Identity.State != "verified" || verified.Identity.Account.ID != "owner" {
+	if !verified.Authenticated {
 		t.Fatalf("verified=%+v, calls=%d", verified, identityCalls.Load())
-	}
-	identityFailure.Store(true)
-	if err := srv.handleLine(context.Background(), []byte(`{"id":"identity-retry","method":"mcp/identity/refresh","params":{"name":"docs","tool":"unsafe","arguments":{"override":true}}}`)); err != nil {
-		t.Fatal(err)
-	}
-	retry := remarshal[MCPAuthStatusResult](t, responseByID(t, parseOutput(t, out.String()), "identity-retry")["result"])
-	if identityCalls.Load() != 2 || !retry.Authenticated || retry.Identity == nil || retry.Identity.State != "unavailable" || !manager.Status()["docs"].Connected {
-		t.Fatalf("retry=%+v, calls=%d", retry, identityCalls.Load())
 	}
 	if strings.Contains(out.String(), "app-server-secret") || strings.Contains(out.String(), "refresh-secret") {
 		t.Fatalf("OAuth RPC leaked credentials: %s", out.String())
@@ -10741,6 +10734,7 @@ func TestSettingsUsageEngineBreakdownsAttributeAndExcludeBoundSessions(t *testin
 	srv.usageScanner = &engineusage.Scanner{
 		ClaudeDir:  claudeDir,
 		CodexDirs:  []string{filepath.Join(t.TempDir(), "missing")},
+		DevinDB:    filepath.Join(t.TempDir(), "missing-devin.db"),
 		OpenCodeDB: filepath.Join(t.TempDir(), "missing.db"),
 	}
 	raw, err := json.Marshal(map[string]any{"id": "1", "method": MethodSettingsUsage})
@@ -10799,6 +10793,127 @@ func TestSettingsUsageEngineBreakdownsAttributeAndExcludeBoundSessions(t *testin
 		if result.Days[i].Date < result.Days[i-1].Date {
 			t.Fatalf("days must stay date-ascending after merge: %+v", result.Days)
 		}
+	}
+}
+
+func TestSettingsUsageEngineBreakdownsAttributeDevinLedger(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{})
+	now := time.Now().UTC()
+
+	// A thread bound to a Devin session. ACP turns report no token usage, so
+	// the thread has no token_usage rows; the Devin ledger is the only record.
+	devinSess, err := rt.Sessions.CreateWithMetadata("usage-devin", rt.RootDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.SetEngine(devinSess.ID, "devin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Sessions.SetEngineRef(devinSess.ID, "dev-bound"); err != nil {
+		t.Fatal(err)
+	}
+
+	devinDB := filepath.Join(t.TempDir(), "sessions.db")
+	db, err := sql.Open("sqlite", devinDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY);
+		CREATE TABLE message_nodes (
+			row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			node_id INTEGER NOT NULL,
+			parent_node_id INTEGER,
+			chat_message TEXT NOT NULL,
+			created_at INTEGER NOT NULL
+		)`); err != nil {
+		t.Fatal(err)
+	}
+	insertNode := func(sessionID string, nodeID int, at time.Time, requestID string, input, output, cacheRead int) {
+		msg, err := json.Marshal(map[string]any{
+			"message_id": requestID, "role": "assistant", "content": "ok",
+			"metadata": map[string]any{
+				"request_id":       requestID,
+				"generation_model": "swe-2-max",
+				"metrics": map[string]any{
+					"input_tokens": input, "output_tokens": output, "cache_read_tokens": cacheRead,
+				},
+			},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(`INSERT INTO message_nodes (session_id, node_id, chat_message, created_at) VALUES (?, ?, ?, ?)`, sessionID, nodeID, string(msg), at.Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	boundDay := now.Add(-time.Hour)
+	outsideDay := now.Add(-48 * time.Hour)
+	insertNode("dev-bound", 1, boundDay, "req-1", 1000, 400, 200)
+	// A branch copy of the same request must not double count.
+	insertNode("dev-bound", 7, boundDay.Add(time.Minute), "req-1", 1000, 400, 200)
+	insertNode("dev-free", 1, outsideDay, "req-2", 300, 120, 0)
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	out := &lockedBuffer{}
+	srv := New(rt, out)
+	srv.usageScanner = &engineusage.Scanner{
+		ClaudeDir:  filepath.Join(t.TempDir(), "missing-claude"),
+		CodexDirs:  []string{filepath.Join(t.TempDir(), "missing")},
+		DevinDB:    devinDB,
+		OpenCodeDB: filepath.Join(t.TempDir(), "missing.db"),
+	}
+	raw, err := json.Marshal(map[string]any{"id": "1", "method": MethodSettingsUsage})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.handleLine(context.Background(), raw); err != nil {
+		t.Fatalf("handleLine: %v", err)
+	}
+
+	msgs := parseOutput(t, out.String())
+	result := remarshal[SettingsUsageResponse](t, responseByID(t, msgs, "1")["result"])
+
+	breakdowns := make(map[string]SettingsEngineUsage, len(result.EngineBreakdowns))
+	for _, b := range result.EngineBreakdowns {
+		breakdowns[b.Engine] = b
+	}
+	devin, ok := breakdowns["devin"]
+	if !ok {
+		t.Fatalf("devin breakdown missing: %+v", result.EngineBreakdowns)
+	}
+	if devin.Name != "Devin" || devin.InWuu.Sessions != 1 {
+		t.Fatalf("devin breakdown: %+v", devin)
+	}
+	// The bound session's deduped ledger rows are in-Wuu spend.
+	if devin.InWuu.TotalTokens() != 1600 {
+		t.Fatalf("devin in-wuu should hold the bound ledger total once: %+v", devin.InWuu)
+	}
+	if devin.Outside == nil || devin.Outside.TotalTokens() != 420 || devin.Outside.Sessions != 1 {
+		t.Fatalf("devin outside should hold only the unbound session: %+v", devin.Outside)
+	}
+
+	daysByDate := make(map[string]SettingsUsageDay, len(result.Days))
+	for _, day := range result.Days {
+		daysByDate[day.Date] = day
+	}
+	boundDate := boundDay.Format("2006-01-02")
+	day, ok := daysByDate[boundDate]
+	if !ok {
+		t.Fatalf("bound day %s missing from daily series: %+v", boundDate, result.Days)
+	}
+	if day.InputTokens != 1000 || day.OutputTokens != 400 || day.CacheReadTokens != 200 {
+		t.Fatalf("bound day should carry the ledger tokens in its own fields: %+v", day)
+	}
+	if day.Outside != nil {
+		t.Fatalf("bound day must not be labeled outside: %+v", day)
+	}
+	outsideDate := outsideDay.Format("2006-01-02")
+	day, ok = daysByDate[outsideDate]
+	if !ok || day.Outside == nil || day.Outside.TotalTokens() != 420 {
+		t.Fatalf("outside day %s missing its ledger sum: %+v", outsideDate, day)
 	}
 }
 

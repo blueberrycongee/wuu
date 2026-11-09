@@ -5,6 +5,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BackgroundSettings } from "./BackgroundSettings";
+import { clearToasts, ToastViewport } from "../Toast";
 import type { BackgroundPreferences } from "./preferences";
 
 const mocks = vi.hoisted(() => ({
@@ -24,6 +25,7 @@ vi.mock("./preferences", async importOriginal => ({
 let root: Root;
 let container: HTMLDivElement;
 beforeEach(() => {
+  clearToasts();
   container = document.createElement("div");
   document.body.append(container);
   root = createRoot(container);
@@ -36,10 +38,13 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount());
   container.remove();
+  clearToasts();
 });
 
+const notice = () => document.body.querySelector('[data-wuu-component="notice"]');
+
 async function mount() {
-  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<BackgroundSettings />}</SettingsControlsProvider>));
+  await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{<><BackgroundSettings /><ToastViewport /></>}</SettingsControlsProvider>));
 }
 async function remount() {
   await act(async () => root.render(<SettingsControlsProvider controls={createApplicationSettingsControls()}>{null}</SettingsControlsProvider>));
@@ -102,16 +107,16 @@ it.each(["processing", "storage"])("retains the saved image and allows retry aft
   await mount();
   await chooseImage();
   expect(mocks.preferences).toBe(previous);
-  expect(container.querySelector("[role=alert]")).not.toBeNull();
+  expect(notice()).not.toBeNull();
   expect(container.querySelector<HTMLInputElement>("input[type=file]")!.disabled).toBe(false);
   await chooseImage();
   expect(mocks.preferences?.name).toBe("replacement.png");
-  expect(container.querySelector("[role=alert]")).toBeNull();
+  expect(notice()).toBeNull();
 });
 
 it("keeps a retired-authority cancellation quiet while the retained form awaits new controls", async () => {
   mocks.process.mockRejectedValue(new PluginLifecycleCancellationError());
   await mount();
   await chooseImage();
-  expect(container.querySelector("[role=alert]")).toBeNull();
+  expect(notice()).toBeNull();
 });

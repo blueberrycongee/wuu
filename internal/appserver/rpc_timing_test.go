@@ -59,10 +59,12 @@ func TestRPCTimingQueueProtocolIsCorrelatedAndPrivate(t *testing.T) {
 					t.Fatal("opt-in timing was not enabled")
 				}
 				server.rpcTiming.logf = func(format string, args ...any) {
-					if server.queuedTurnMu.TryLock() {
-						server.queuedTurnMu.Unlock()
-					} else {
-						t.Error("diagnostic IO occurred while the queue mutex was held")
+					if queue := server.peekTurnQueue(threadID); queue != nil {
+						if queue.mu.TryLock() {
+							queue.mu.Unlock()
+						} else {
+							t.Error("diagnostic IO occurred while the queue mutex was held")
+						}
 					}
 					if th := server.thread(threadID); th != nil {
 						if th.mu.TryLock() {

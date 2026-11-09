@@ -223,6 +223,7 @@ type PanelFixtureProps = {
   onBrowserUserInteraction?: (inputGeneration?: number) => void | Promise<void>;
   focusedComposer?: React.ReactNode;
   fileRefreshKey?: string;
+  runtimeControlsRef?: (element: HTMLDivElement | null) => void;
 } & { slots?: UICompositionV1 };
 function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
   const previewContent = React.useMemo(() => new ApplicationPreviewContent(window.wuu, {
@@ -268,7 +269,7 @@ function WorkspaceRightPanel(props: PanelFixtureProps): JSX.Element {
     globalized={props.globalized} sheetPhase={props.sheetPhase} onToggleGlobalize={props.onToggleGlobalize}
     canExitGlobalized={props.canExitGlobalized} browserOverlaySuppressed={props.browserOverlaySuppressed}
     onDirtyFileTabsChange={props.onDirtyFileTabsChange} conversationTabVisible={Boolean(props.conversationTab)}
-    documentComposer={Boolean(props.focusedComposer)} pane="primary" />;
+    documentComposer={Boolean(props.focusedComposer)} runtimeControlsRef={props.runtimeControlsRef} pane="primary" />;
 }
 
 function baseProps(): Parameters<typeof WorkspaceRightPanel>[0] {
@@ -310,7 +311,7 @@ describe("WorkspaceRightPanel", () => {
     };
     try {
       await host.activateGeneration({ pluginId: "broken", generation: "one", register });
-      mount(<WorkspaceRightPanel {...baseProps()} slots={slots} />);
+      mount(<WorkspaceRightPanel {...baseProps()} open={false} slots={slots} />);
       const rail = container!.querySelector(".workspace-tool-rail-contributions")!;
       const healthy = rail.querySelector("button");
       expect(rail.textContent).toBe("Healthy");
@@ -333,6 +334,23 @@ describe("WorkspaceRightPanel", () => {
       for (const id of ["broken", "healthy", "wuu.default-preview"]) host.unload(id);
       errorLog.mockRestore();
     }
+  });
+  it("hides the tool rail while the panel is open and restores it on close", async () => {
+    mount(<WorkspaceRightPanel {...baseProps()} />);
+    expect(container!.querySelector('[data-wuu-component="workspace-tool-rail"]')).toBeNull();
+    await act(async () => root!.render(<WorkspaceRightPanel {...baseProps()} open={false} />));
+    expect(container!.querySelector('[data-wuu-component="workspace-tool-rail"]')).not.toBeNull();
+  });
+  it("keeps the expanded rail's composer controls mounted while the panel is open", async () => {
+    const runtimeControlsRef = vi.fn();
+    mount(<WorkspaceRightPanel {...baseProps()} runtimeControlsRef={runtimeControlsRef} />);
+    const hiddenTarget = container!.querySelector<HTMLElement>(".workspace-composer-controls[hidden]");
+    expect(hiddenTarget).not.toBeNull();
+    expect(runtimeControlsRef).toHaveBeenLastCalledWith(hiddenTarget);
+    await act(async () => root!.render(<WorkspaceRightPanel {...baseProps()} runtimeControlsRef={runtimeControlsRef} open={false} />));
+    expect(runtimeControlsRef).toHaveBeenLastCalledWith(
+      container!.querySelector(".workspace-tool-rail .workspace-composer-controls"),
+    );
   });
   it("keeps a legacy provider's conversation tab selectable without offering an unsupported close", () => {
     mount(<WorkspaceRightPanel {...baseProps()} globalized legacyPreview

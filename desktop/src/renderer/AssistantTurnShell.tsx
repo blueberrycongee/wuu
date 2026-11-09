@@ -45,8 +45,10 @@ import {
 import { AnimatedProcessText, ProcessLabel } from "./ProcessTextMotion";
 import { motionDurationMs } from "./motion";
 import {
+  ConversationRenderActivityProvider,
   useConversationRenderActive,
   useConversationRevealSnap,
+  useDisclosureRenderActive,
 } from "./ConversationRenderActivity";
 import { translateCurrent as translate, useI18n } from "./i18n";
 import { useConversationControls } from "./ConversationControlsContext";
@@ -651,6 +653,8 @@ function EntryRenderer({
         activeGray={activeGray}
         turnID={turn.id}
         turnStatus={turn.status}
+        turnProvider={turn.model_provider}
+        turnModel={turn.model}
         cwd={cwd}
         onOpenFile={onOpenFile}
         onOpenAgent={onOpenAgent}
@@ -696,6 +700,8 @@ function ReasoningFold({
   activeGray,
   turnID,
   turnStatus,
+  turnProvider,
+  turnModel,
   cwd,
   onOpenFile,
   onOpenAgent,
@@ -707,6 +713,8 @@ function ReasoningFold({
   activeGray?: boolean;
   turnID: string;
   turnStatus: Turn["status"];
+  turnProvider?: string;
+  turnModel?: string;
   cwd?: string;
   onOpenFile?: (path: string) => void;
   onOpenAgent?: (agentID: string) => void;
@@ -722,6 +730,7 @@ function ReasoningFold({
     activeGray ? " is-live-gray" : ""
   }${streaming ? " is-streaming" : ""}`;
   const [open, setOpen] = useState(false);
+  const bodyActivity = useDisclosureRenderActive(open);
   const reasoningScroll = useAutoFollowScrollContainer({ open, initialAutoFollow: streaming });
 
   const handleReasoningStreamFrame = useCallback((): void => {
@@ -738,10 +747,12 @@ function ReasoningFold({
       open={open}
       onToggle={handleToggle}
     >
-      <summary className="turn-reasoning-summary">
+      <summary className="turn-reasoning-summary" onClick={bodyActivity.onSummaryClick}>
         <ProcessSurfaceMascot
           active={Boolean(activeGray)}
           activity="thinking"
+          provider={turnProvider}
+          model={turnModel}
         />
         <ProcessLabel
           className={textClass}
@@ -766,17 +777,19 @@ function ReasoningFold({
             ref={reasoningScroll.scrollRef}
             {...{ [AUTO_FOLLOW_NESTED_SCROLL_ATTR]: "true" }}
           >
-            <ThreadItemView
-              {...messagePresentation}
-              turnID={turnID}
-              turnStatus={turnStatus}
-              item={item}
-              cwd={cwd}
-              onOpenFile={onOpenFile}
-              onOpenAgent={onOpenAgent}
-              streaming={streaming}
-              onStreamFrame={handleReasoningStreamFrame}
-            />
+            <ConversationRenderActivityProvider active={bodyActivity.active} catchUpMs={bodyActivity.catchUpMs}>
+              <ThreadItemView
+                {...messagePresentation}
+                turnID={turnID}
+                turnStatus={turnStatus}
+                item={item}
+                cwd={cwd}
+                onOpenFile={onOpenFile}
+                onOpenAgent={onOpenAgent}
+                streaming={streaming}
+                onStreamFrame={handleReasoningStreamFrame}
+              />
+            </ConversationRenderActivityProvider>
           </div>
         </div>
       </div>

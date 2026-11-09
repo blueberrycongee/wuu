@@ -454,6 +454,7 @@ func (h *Host) ToolDefinitions() []providers.ToolDefinition {
 			DirectOnly:  tool.Registration.DirectOnly,
 			Description: tool.Registration.Description,
 			InputSchema: cloneSchema(tool.Registration.InputSchema),
+			Guidance:    tool.Registration.Guidance,
 		})
 	}
 	return definitions

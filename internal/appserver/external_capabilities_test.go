@@ -365,26 +365,36 @@ func TestExternalCapabilitiesCloseRetainsAdmittedReceipts(t *testing.T) {
 }
 
 func TestExternalCapabilityInstructions(t *testing.T) {
-	cua := providers.ToolDefinition{Name: "mcp_cua_computer", InputSchema: map[string]any{
-		"type":       "object",
-		"properties": map[string]any{"control_epoch": map[string]any{"type": "string"}},
-	}}
 	plain := providers.ToolDefinition{Name: "wuu_browser", InputSchema: map[string]any{"type": "object"}}
+	artifact := providers.ToolDefinition{Name: "present_artifact", Guidance: "present files to the user", InputSchema: map[string]any{"type": "object"}}
+	cua := providers.ToolDefinition{Name: "mcp_cua_computer", Guidance: "CUA contract", InputSchema: map[string]any{"type": "object"}}
 	if got := externalCapabilityInstructions(nil); got != "" {
 		t.Errorf("nil surface guidance = %q, want empty", got)
 	}
 	if got := externalCapabilityInstructions([]providers.ToolDefinition{plain}); got != "" {
-		t.Errorf("non-CUA surface guidance = %q, want empty", got)
+		t.Errorf("guidance-free surface = %q, want empty", got)
 	}
-	malformed := providers.ToolDefinition{Name: "odd", InputSchema: map[string]any{"properties": "nope"}}
-	if got := externalCapabilityInstructions([]providers.ToolDefinition{malformed}); got != "" {
-		t.Errorf("malformed schema guidance = %q, want empty", got)
+	got := externalCapabilityInstructions([]providers.ToolDefinition{plain, artifact, cua})
+	if !strings.Contains(got, artifact.Guidance) || !strings.Contains(got, cua.Guidance) {
+		t.Fatalf("surface guidance missing declared contracts: %q", got)
 	}
-	got := externalCapabilityInstructions([]providers.ToolDefinition{plain, cua})
-	if got == "" {
-		t.Fatal("CUA surface produced no guidance")
+	if !strings.HasPrefix(got, artifact.Guidance) || !strings.HasSuffix(got, cua.Guidance) {
+		t.Errorf("guidance order does not follow the surface: %q", got)
 	}
-	if !strings.Contains(got, cua.Name) {
-		t.Errorf("guidance does not name the bound tool: %q", got)
+	duplicate := providers.ToolDefinition{Name: "mcp_other_tool", Guidance: artifact.Guidance, InputSchema: map[string]any{"type": "object"}}
+	got = externalCapabilityInstructions([]providers.ToolDefinition{artifact, duplicate})
+	if strings.Count(got, artifact.Guidance) != 1 {
+		t.Errorf("identical guidance was not deduplicated: %q", got)
+	}
+}
+
+func TestExternalCapabilitiesInitializeIncludesGuidance(t *testing.T) {
+	bridge := &externalCapabilities{guidance: "use present_artifact for deliverables"}
+	if got := bridge.instructions(); !strings.Contains(got, "present_artifact") {
+		t.Fatalf("instructions = %q, want collected guidance", got)
+	}
+	bridge.guidance = ""
+	if got := bridge.instructions(); strings.Contains(got, "present_artifact") || !strings.Contains(got, "bound to this conversation") {
+		t.Fatalf("guidance-free instructions = %q, want binding contract only", got)
 	}
 }

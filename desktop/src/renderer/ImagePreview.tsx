@@ -17,6 +17,7 @@ import {
 } from "react";
 import { ChevronLeft, ChevronRight, Download, Maximize2, Minus, Plus, RotateCw } from "./WuuIcons";
 import { useI18n } from "./i18n";
+import { showActionErrorToast } from "./Toast";
 import { imagePreviewSelection } from "./ImagePreviewGallery";
 
 export type ImagePreviewItem =
@@ -85,7 +86,6 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
   const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 });
   const [loadStatus, setLoadStatus] = useState<"loading" | "loaded" | "error">("loading");
-  const [saveError, setSaveError] = useState("");
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const generation = useRef(0);
@@ -142,13 +142,12 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
     if (!artifacts.capabilities.save || savingRef.current) return;
     savingRef.current = true;
     setSaving(true);
-    setSaveError("");
     const savedGeneration = generation.current;
     const saveSource = item.svg == null ? source! : `data:image/svg+xml;charset=utf-8,${encodeURIComponent(item.svg)}`;
     try {
       await artifacts.save({id: "image-preview", name: item.title || (item.svg == null ? "image" : "image.svg"), mimeType: item.svg == null ? "image/png" : "image/svg+xml", uri: saveSource}, {signal: lifetime.current.signal});
     } catch (error) {
-      if (savedGeneration === generation.current) setSaveError(String(error));
+      if (savedGeneration === generation.current) showActionErrorToast(error);
     } finally {
       if (savedGeneration === generation.current) { savingRef.current = false; setSaving(false); }
     }
@@ -163,7 +162,6 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
     setRotation(0);
     setImageSize({ width: 0, height: 0 });
     setLoadStatus("loading");
-    setSaveError("");
     setDragging(false);
     pointers.current.clear();
     suppressClick.current = false;
@@ -277,7 +275,7 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
 
   function backgroundClick(event: ReactMouseEvent<HTMLDivElement>): void {
     const target = event.target as Element;
-    if (!target.closest(".image-preview-image, .image-preview-toolbar-actions, .image-preview-save-error")
+    if (!target.closest(".image-preview-image, .image-preview-toolbar-actions")
       && !suppressClick.current) onClose();
     suppressClick.current = false;
   }
@@ -332,7 +330,6 @@ function ImagePreviewOverlay({ item, index, count, onNavigate, onClose }: {
           </button></Tooltip>
         </div>
       </div>
-      {saveError && <p className="image-preview-save-error" role="alert">{saveError}</p>}
       <div ref={stageRef} className="image-preview-stage"
         style={{ "--image-preview-cursor": dragging ? "grabbing" : canPan ? "grab" : "zoom-in" } as CSSProperties}
         onPointerDown={pointerDown} onPointerMove={pointerMove}

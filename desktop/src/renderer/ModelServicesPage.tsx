@@ -682,9 +682,11 @@ function ServicesOverview({
                       <span className="connection-summary-copy">
                         <span className="connection-summary-heading">
                           <span className="model-service-card-title connection-summary-name">{label}</span>
+                          {isDefault ? <span className="connection-summary-badge">{t("provider.defaultBadge")}</span> : null}
                           <span id={`${summaryID}-${encodeURIComponent(provider.name)}`} className="connection-summary-meta">{plan}</span>
                         </span>
                         <span className="connection-summary-secondary">
+                          <span className="connection-state-dot" data-tone={connected ? "ok" : "warn"} aria-hidden="true" />
                           {connected ? <ConnectionUsageSummary compact id={`${summaryID}-${encodeURIComponent(provider.name)}-quota`} quota={provider.quota} now={now} />
                             : <span id={`${summaryID}-${encodeURIComponent(provider.name)}-status`} className="connection-summary-status">{t("connection.notConnected")}</span>}
                         </span>

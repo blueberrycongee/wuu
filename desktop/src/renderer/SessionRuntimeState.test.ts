@@ -3,6 +3,7 @@ import type { InitializeResult, Thread, Turn } from "../shared/protocol";
 import {
   runtimeViewForConversation,
   runtimeViewForSession,
+  submittedThreadRuntime,
 } from "./SessionRuntimeState";
 
 function workspaceDefaults(): InitializeResult {
@@ -75,5 +76,46 @@ describe("session runtime state", () => {
       variant: "high",
       permissions: { mode: "read_only", approve_for_me: true },
     });
+  });
+});
+
+describe("submitted thread runtime", () => {
+  it("pins the engine id for protocol engines", () => {
+    expect(
+      submittedThreadRuntime(
+        { engine: "devin", provider: "workspace-provider", model: "swe-2" },
+        [{ id: "devin" }],
+        { provider: "workspace-provider", model: "workspace-model" },
+      ),
+    ).toEqual({ provider: "devin", model: "swe-2" });
+  });
+
+  it("pins the selected provider for host-model engines", () => {
+    expect(
+      submittedThreadRuntime(
+        { engine: "wuu", provider: "other-provider", model: "other-model" },
+        [{ id: "wuu", requires_host_model: true }],
+        { provider: "workspace-provider", model: "workspace-model" },
+      ),
+    ).toEqual({ provider: "other-provider", model: "other-model" });
+  });
+
+  it("keeps the workspace default when the draft selection is empty", () => {
+    expect(
+      submittedThreadRuntime(
+        { engine: "wuu", provider: "", model: "" },
+        [{ id: "wuu", requires_host_model: true }],
+        { provider: "workspace-provider", model: "workspace-model" },
+      ),
+    ).toEqual({ provider: "workspace-provider", model: "workspace-model" });
+  });
+
+  it("falls back to workspace defaults without a draft selection", () => {
+    expect(
+      submittedThreadRuntime(undefined, undefined, {
+        provider: "workspace-provider",
+        model: "workspace-model",
+      }),
+    ).toEqual({ provider: "workspace-provider", model: "workspace-model" });
   });
 });

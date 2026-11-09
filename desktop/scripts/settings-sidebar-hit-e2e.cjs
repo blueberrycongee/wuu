@@ -125,11 +125,12 @@ async function run() {
     const narrow = await evaluate(win, () => {
       const panel = document.querySelector(".settings-shell.settings-floating").getBoundingClientRect();
       const nav = document.querySelector(".settings-sidebar").getBoundingClientRect();
-      const close = document.querySelector(".settings-close-button");
-      const closeBox = close.getBoundingClientRect();
-      const closeHit = document.elementFromPoint(closeBox.x + closeBox.width / 2, closeBox.y + closeBox.height / 2);
-      return { panel: panel.toJSON(), nav: nav.toJSON(), close: closeBox.toJSON(),
-        closeHit: close === closeHit || close.contains(closeHit),
+      // The card has no close button: the scrim outside it owns the close hit.
+      const scrim = document.querySelector(".settings-overlay-layer");
+      const scrimPoint = { x: Math.floor(panel.left / 2), y: Math.floor(panel.top + panel.height / 2) };
+      const scrimHit = document.elementFromPoint(scrimPoint.x, scrimPoint.y);
+      return { panel: panel.toJSON(), nav: nav.toJSON(), scrimPoint,
+        scrimHit: scrim === scrimHit,
         navDirection: getComputedStyle(document.querySelector(".settings-floating .settings-nav")).flexDirection,
         borderRadius: getComputedStyle(document.querySelector(".settings-shell.settings-floating")).borderTopLeftRadius,
         labels: [...document.querySelectorAll(".settings-nav-item .settings-nav-label")].map(label => label.textContent),
@@ -139,13 +140,14 @@ async function run() {
     assert.ok(parseFloat(narrow.borderRadius) > 0 && narrow.panel.left > 0 && narrow.panel.top > 0,
       `Narrow windows keep card chrome and scrim margins: ${JSON.stringify(narrow)}`);
     assert.ok(narrow.nav.width > 0 && narrow.nav.height > 0, `Floating settings navigation stays visible: ${JSON.stringify(narrow)}`);
-    assert.ok(narrow.closeHit, `Floating settings close button owns its hit target: ${JSON.stringify(narrow)}`);
+    assert.ok(narrow.scrimHit, `Floating settings scrim owns the outside close hit target: ${JSON.stringify(narrow)}`);
     assert.ok(narrow.labels.length >= 2, `Floating settings destinations remain readable: ${JSON.stringify(narrow)}`);
     assert.ok(narrow.panel.top >= 0 && narrow.panel.bottom <= narrow.viewport.height + 0.1,
       `Floating settings panel stays inside the window: ${JSON.stringify(narrow)}`);
     results.push({ scenario: "floating-settings-narrow", narrow });
     saveResults();
-    await evaluate(win, () => document.querySelector(".settings-close-button").click());
+    win.webContents.sendInputEvent({ type: "mouseDown", button: "left", clickCount: 1, x: narrow.scrimPoint.x, y: narrow.scrimPoint.y });
+    win.webContents.sendInputEvent({ type: "mouseUp", button: "left", clickCount: 1, x: narrow.scrimPoint.x, y: narrow.scrimPoint.y });
     await waitFor(win, () => !document.querySelector(".app-shell[data-settings-open]"), 3000);
     console.log(`PASS: floating settings panel keeps its own navigation and local bounds. Evidence: ${evidenceDir}`);
     win.close();

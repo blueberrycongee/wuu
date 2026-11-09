@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_MESSAGE_FLOW_FONT_SIZE,
   getCodexPetScale,
+  getDesktopPreferences,
+  updateDesktopPreferences,
   getCodexPetSettings,
   getCodexPetSize,
   getMainWindowBounds,
@@ -87,6 +89,29 @@ describe("desktopSettings", () => {
     expect(getLanguagePreference(file)).toBe("en-US");
     setLanguagePreference("zh-CN", file);
     expect(getLanguagePreference(file)).toBe("zh-CN");
+  });
+
+  it("updates desktop preferences without replacing other fields or settings", () => {
+    setThemePreference("dark", file);
+    expect(getDesktopPreferences(file)).toEqual({
+      notify_turn_completed: true,
+      notify_questions: true,
+      notification_sound: true,
+      auto_check_updates: true,
+      send_shortcut: "enter",
+      proxy_mode: "system",
+      proxy_url: "",
+      auto_archive_days: 0,
+    });
+    updateDesktopPreferences({ notify_questions: false }, file);
+    updateDesktopPreferences({ send_shortcut: "mod_enter" }, file);
+    expect(getDesktopPreferences(file)).toMatchObject({ notify_questions: false, notify_turn_completed: true, send_shortcut: "mod_enter" });
+    expect(getThemePreference(file)).toBe("dark");
+  });
+
+  it("restores defaults for malformed desktop preference fields", async () => {
+    await writeFile(file, JSON.stringify({ preferences: { notification_sound: "no", auto_check_updates: false, send_shortcut: "alt_enter", proxy_mode: "pac", proxy_url: "ftp://127.0.0.1:21", auto_archive_days: 3 } }));
+    expect(getDesktopPreferences(file)).toMatchObject({ notification_sound: true, auto_check_updates: false, send_shortcut: "enter", proxy_mode: "system", proxy_url: "", auto_archive_days: 0 });
   });
 
   it("rejects unknown language preferences", async () => {

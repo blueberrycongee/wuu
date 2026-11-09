@@ -74,7 +74,7 @@ export class ApplicationSettings {
       model: initialized.model, effort: initialized.effort, variant: initialized.variant, workspace_root: initialized.workspace_root, core: initialized.core,
       providers: initialized.providers, catalog_providers: initialized.catalog_providers,
       model_aliases: initialized.model_aliases,
-      advanced_settings: initialized.advanced_settings, general_settings: initialized.general_settings,
+      advanced_settings: initialized.advanced_settings, general_settings: initialized.general_settings, permissions: initialized.permissions,
       features: initialized.features,
       extension_inventory: initialized.extension_inventory?.map(plugin => ({
         id: plugin.id, name: plugin.name, description: plugin.description, developer: plugin.developer, kind: plugin.kind,
@@ -132,7 +132,7 @@ export class ApplicationSettings {
     switch (action) {
       case "settings.save-provider": {
         const value = input as ApplicationSettingsActionMapV1["settings.save-provider"]["input"];
-        await runtime.updateProviderSettings(value.provider, value.model, value.effort, value.connection, value.variant); break;
+        await runtime.updateProviderSettings(value.provider, value.model, value.effort, value.connection, value.variant, value.permissionMode); break;
       }
       case "settings.remove-provider": {
         const value = input as ApplicationSettingsActionMapV1["settings.remove-provider"]["input"];
@@ -180,9 +180,18 @@ export class ApplicationSettings {
       case "settings.update-engine": {
         const context = this.engineContext().key;
         ++this.engineRequest;
-        const next = await window.wuu.updateEngines(input as ApplicationSettingsActionMapV1["settings.update-engine"]["input"]);
+        const next = immutable(await window.wuu.updateEngines(input as ApplicationSettingsActionMapV1["settings.update-engine"]["input"]));
         signal?.throwIfAborted();
-        result = context === this.engineContext().key ? await this.refreshEngines(signal) ?? immutable(next) : immutable(next); break;
+        result = next;
+        if (context === this.engineContext().key) {
+          // Publish the edit's own inventory first; discovery refills catalogs
+          // without holding the save that spawned agent CLI probes hostage.
+          this.engines = { context, value: next };
+          this.engineError = { context, message: "" };
+          this.host.changed();
+          void this.refreshEngines(signal).catch(() => { /* Discovery failures publish beside the engine controls. */ });
+        }
+        break;
       }
       case "settings.read-usage":
         if (!window.wuu.getSettingsUsage) throw new Error(translateCurrent("settings.usageUnsupported"));

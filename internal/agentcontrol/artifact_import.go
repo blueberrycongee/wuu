@@ -213,26 +213,10 @@ func copyFileAtomic(source, dest string) error {
 	}
 	defer in.Close()
 
-	tmp, err := os.CreateTemp(filepath.Dir(dest), "."+filepath.Base(dest)+".*.tmp")
-	if err != nil {
+	return securefs.WriteFileAtomicFunc(dest, func(w io.Writer) error {
+		_, err := io.Copy(w, in)
 		return err
-	}
-	tmpName := tmp.Name()
-	_, copyErr := io.Copy(tmp, in)
-	closeErr := tmp.Close()
-	if copyErr != nil {
-		_ = os.Remove(tmpName)
-		return copyErr
-	}
-	if closeErr != nil {
-		_ = os.Remove(tmpName)
-		return closeErr
-	}
-	if err := os.Rename(tmpName, dest); err != nil {
-		_ = os.Remove(tmpName)
-		return err
-	}
-	return nil
+	})
 }
 
 func pathWithinRoot(root, path string) bool {

@@ -30,7 +30,7 @@ import { showArtifactItemMenu } from "./artifactItemMenu";
 import { showContextMenu, dismissContextMenu } from "./contextMenu";
 import type { DesktopZoomAction } from "../shared/DesktopPageZoom";
 import { readCatalogSkill } from "./remoteSkills";
-import { inheritSystemProxy } from "./systemProxy";
+import { configureBackendProxy } from "./systemProxy";
 import { RemoteAppServerBridge } from "./remoteAppServerBridge";
 import { requestTrustedRemote, bindRemoteEventAuthorization } from "./trustedRemoteTransport";
 import { EngineLogin } from "./engineLogin";
@@ -60,7 +60,7 @@ import {
   shell,
   type WebContents,
 } from "electron";
-import { readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -69,6 +69,8 @@ import {
   MESSAGE_FLOW_FONT_SIZE_RANGE,
   isAppLocale,
   isLanguagePreference,
+  isMessageFlowFontSize,
+  type DesktopPreferences,
 } from "../shared/protocol";
 import type {
   ArtifactItemMenuParams,
@@ -199,6 +201,8 @@ import {
   getCodexPetScale,
   getCodexPetSize,
   getMessageFlowFontSize,
+  getDesktopPreferences,
+  updateDesktopPreferences,
   getThemePreference,
   getLanguagePreference,
   getPluginConflictPreferences,
@@ -1630,6 +1634,18 @@ async function directorySize(path: string): Promise<number> {
 
 let desktopRecovery: ReturnType<typeof createDesktopRecovery>;
 let desktopUpdates: ReturnType<typeof installDesktopUpdates>;
+
+// Electron manages login items on macOS and Windows only.
+function loginItemsSupported(): boolean {
+  return process.platform === "darwin" || process.platform === "win32";
+}
+
+function currentDesktopPreferences(): DesktopPreferences {
+  return {
+    ...getDesktopPreferences(),
+    ...(loginItemsSupported() ? { open_at_login: app.getLoginItemSettings().openAtLogin } : {}),
+  };
+}
 app.whenReady().then(async () => {
   desktopRecovery = createDesktopRecovery({
     preloadPath: join(__dirname, "../preload/recovery.cjs"),
@@ -1652,7 +1668,7 @@ app.whenReady().then(async () => {
     }
     return desktopRecovery.open();
   });
-  await inheritSystemProxy();
+  await configureBackendProxy(getDesktopPreferences());
   if (app.isPackaged) configurePackagedCUA(process.env, process.resourcesPath, process.platform);
   setMainLocale(resolveMainLocale(getLanguagePreference(), app.getLocale()));
   installProductionAppShellGuards({
@@ -2064,6 +2080,11 @@ app.whenReady().then(async () => {
       if ((process.platform !== "darwin" && process.platform !== "linux") || !Notification.isSupported()) {
         return { shown: false };
       }
+      const preferences = getDesktopPreferences();
+      if ((params.category === "turn_completed" && !preferences.notify_turn_completed) ||
+        (params.category === "question" && !preferences.notify_questions)) {
+        return { shown: false };
+      }
       const win = BrowserWindow.fromWebContents(event.sender);
       // The in-app surface already shows the event while the window has
       // focus; only reach out of the app when the user is elsewhere.
@@ -2073,6 +2094,7 @@ app.whenReady().then(async () => {
       const notification = new Notification({
         title: params.title,
         body: params.body,
+        silent: !preferences.notification_sound,
       });
       let failedToShow = false;
       activeSystemNotifications.add(notification);
@@ -2109,6 +2131,32 @@ app.whenReady().then(async () => {
       throw new Error("Updates are available from Wuu windows only.");
     }
     return desktopUpdates?.restart();
+  });
+  ipcMain.handle("wuu:desktop-update-check", event => {
+    if (!windowRegistry.windowForID(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+      throw new Error("Updates are available from Wuu windows only.");
+    }
+    return desktopUpdates?.check();
+  });
+  ipcMain.handle("wuu:desktop-preferences-get", () => currentDesktopPreferences());
+  ipcMain.handle("wuu:desktop-preferences-update", (_event, patch: unknown) => {
+    if (typeof patch !== "object" || patch === null || Array.isArray(patch)) throw new Error("Invalid desktop preferences");
+    const { open_at_login: openAtLogin, ...stored } = patch as Partial<DesktopPreferences>;
+    if (openAtLogin !== undefined) {
+      if (!loginItemsSupported() || typeof openAtLogin !== "boolean") throw new Error("Open at login is unavailable");
+      app.setLoginItemSettings({ openAtLogin });
+    }
+    updateDesktopPreferences(stored);
+    const next = currentDesktopPreferences();
+    broadcastToAll("wuu:desktop-preferences-changed", next);
+    return next;
+  });
+  ipcMain.handle("wuu:desktop-folder-open", async (_event, folder: unknown) => {
+    if (folder !== "data" && folder !== "logs") throw new Error("Unknown folder");
+    const path = folder === "data" ? wuuHomePath() : join(wuuHomePath(), "log");
+    await mkdir(path, { recursive: true });
+    const failure = await shell.openPath(path);
+    if (failure) throw new Error(failure);
   });
   ipcMain.handle("wuu:build-info", (): BuildInfoResult => ({
     core: cachedCoreBuildInfo,
@@ -2578,9 +2626,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:mcp-auth-status", (event, name: string) =>
     appServerRequest<MCPAuthStatusResult>(event, "mcp/auth/status", { name }),
   );
-  ipcMain.handle("wuu:mcp-identity-refresh", (event, name: string) =>
-    appServerRequest<MCPAuthStatusResult>(event, "mcp/identity/refresh", { name }),
-  );
   ipcMain.handle("wuu:mcp-auth-finish", (event, name: string, state: string, code: string) =>
     appServerRequest<MCPAuthFinishResult>(event, "mcp/auth/finish", { name, state, code }),
   );
@@ -2803,9 +2848,8 @@ app.whenReady().then(async () => {
     if (event.sender !== mainWindow?.webContents || !value || typeof value !== "object") return;
     const appearance = value as ActivityPreviewAppearance;
     if (typeof appearance.reducedMotion !== "boolean" ||
-      typeof appearance.fontSize !== "number" || !Number.isFinite(appearance.fontSize) ||
-      appearance.fontSize < MESSAGE_FLOW_FONT_SIZE_RANGE.min || appearance.fontSize > MESSAGE_FLOW_FONT_SIZE_RANGE.max ||
-      (appearance.locale !== "en-US" && appearance.locale !== "zh-CN") ||
+      !isMessageFlowFontSize(appearance.fontSize) ||
+      !isAppLocale(appearance.locale) ||
       [appearance.fontFamily, appearance.surface, appearance.text, appearance.muted]
         .some(field => typeof field !== "string" || field.length > 512)) return;
     observationCoordinator.setAppearance(resolvedThemeIsDark(), appearance);
@@ -2887,15 +2931,10 @@ app.whenReady().then(async () => {
   ipcMain.handle(
     "wuu:message-flow-font-size-set",
     (_event, fontSize: unknown) => {
-      // Mirror the renderer's clamp: keep the IPC boundary honest about
-      // the same 13-20 window so a corrupted renderer can't widen it.
-      const valid =
-        typeof fontSize === "number" &&
-        Number.isFinite(fontSize) &&
-        fontSize >= MESSAGE_FLOW_FONT_SIZE_RANGE.min &&
-        fontSize <= MESSAGE_FLOW_FONT_SIZE_RANGE.max;
-      const next: MessageFlowFontSize = valid
-        ? (fontSize as MessageFlowFontSize)
+      // Keep the IPC boundary honest about the same 13-20 window so a
+      // corrupted renderer can't widen it.
+      const next: MessageFlowFontSize = isMessageFlowFontSize(fontSize)
+        ? fontSize
         : MESSAGE_FLOW_FONT_SIZE_RANGE.default;
       setMessageFlowFontSize(next);
       systemPermissions.refreshAppearance(resolvedThemeIsDark());
@@ -3502,7 +3541,7 @@ app.whenReady().then(async () => {
   appContextCapture.start();
   syncNativeThemeSource();
   createWindow();
-  desktopUpdates = installDesktopUpdates(() => prepareToQuit({ reason: "update" }), state => broadcastToAll("wuu:desktop-update-changed", state), desktopRecovery.menuItem());
+  desktopUpdates = installDesktopUpdates(() => prepareToQuit({ reason: "update" }), state => broadcastToAll("wuu:desktop-update-changed", state), () => getDesktopPreferences().auto_check_updates, desktopRecovery.menuItem());
   void phoneAccess.run(() => phoneAccess.restore(projectManager.ensureRuntimeContext().cwd));
 
   app.on("activate", () => {

@@ -12,7 +12,14 @@ import {
 } from "./ImagePreview";
 import { ConversationTurnList } from "./ConversationTurnList";
 import { TurnView } from "./TurnView";
+import { showActionErrorToast, showErrorToast } from "./Toast";
 import type { Turn } from "../shared/protocol";
+
+vi.mock("./Toast", async (importOriginal) => ({
+  ...await importOriginal<typeof import("./Toast")>(),
+  showActionErrorToast: vi.fn(),
+  showErrorToast: vi.fn(),
+}));
 
 let container: HTMLDivElement;
 let root: Root | null = null;
@@ -164,7 +171,8 @@ it("shares the original image through the native host and reports a failed save"
     const button = container.querySelector<HTMLButtonElement>('.image-preview-toolbar-button')!;
     await act(async () => { button.click(); });
     expect(saveArtifactFile).toHaveBeenCalledWith("test.png","data:image/png;base64,aGVsbG8=");
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("Storage full");
+    expect(vi.mocked(showActionErrorToast)).toHaveBeenCalledWith(expect.objectContaining({ message: "Storage full" }));
+    expect(container.textContent).not.toContain("Storage full");
   } finally { window.wuu = previous; }
 });
 
@@ -404,10 +412,11 @@ it("saves the resolved original and fences a failed save after changing the imag
     const probe = renderWithProbe();
     await act(async () => probe.getAPI()!.openPreview({src:"data:image/png;base64,dGh1bWI=", loadSource: async () => "data:image/png;base64,b3JpZ2luYWw=", title:"original.png"}));
     loadImage();
+    vi.mocked(showActionErrorToast).mockClear();
     act(() => container.querySelector<HTMLButtonElement>(".image-preview-toolbar-button")!.click());
     expect(saveArtifactFile).toHaveBeenCalledWith("original.png", "data:image/png;base64,b3JpZ2luYWw=");
     act(() => probe.getAPI()!.openPreview({src:"data:image/png;base64,bmV3"}));
     await act(async () => fail(new Error("old save failed")));
-    expect(container.querySelector('[role="alert"]')).toBeNull();
+    expect(showActionErrorToast).not.toHaveBeenCalled();
   } finally {window.wuu = prior;}
 });

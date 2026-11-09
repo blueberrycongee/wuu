@@ -690,9 +690,12 @@ export function useConversationScrollState({
     primaryTurns?.some(turn => turn.items.some(item => item.id === submissionRef.current?.messageID ||
       (submissionRef.current?.sourceID && item.type === "user_message" && item.source_id === submissionRef.current.sourceID))));
   const submittedMessage = useCallback((messageID = submissionRef.current?.messageID) => {
+    // Runs after every commit; without a submission there is nothing to find,
+    // and scanning every mounted user message grows with the conversation.
+    if (!messageID) return undefined;
     const viewport = conversationViewport();
-    return Array.from(viewport?.querySelectorAll<HTMLElement>("[data-user-message-id]") ?? [])
-      .find(node => node.dataset.userMessageId === messageID && !node.closest('[aria-hidden="true"]'));
+    return Array.from(viewport?.querySelectorAll<HTMLElement>(`[data-user-message-id="${CSS.escape(messageID)}"]`) ?? [])
+      .find(node => !node.closest('[aria-hidden="true"]'));
   }, [activePane, splitConversation]);
   const reconcileSubmittedArrival = useCallback(() => {
     const message = splitConversation ? undefined : submittedMessage();

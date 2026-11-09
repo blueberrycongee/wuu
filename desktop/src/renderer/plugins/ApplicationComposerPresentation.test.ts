@@ -2,7 +2,7 @@ import type { Thread } from "../../shared/protocol";
 import { externalAgentActivityStatusSource, externalAgentActivityStore } from "../ExternalAgentActivityStore";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { initialState, type AppState } from "../AppState";
+import { initialState, reduceServerEvent, type AppState } from "../AppState";
 import { turnTelemetryStore } from "../TurnTelemetryStore";
 import { PluginHost } from "./PluginHost";
 import { ApplicationComposerPresentation } from "./ApplicationComposerPresentation";
@@ -85,6 +85,43 @@ describe("composer presentation host boundary", () => {
     f.set({ ...f.get(), threads: [...f.get().threads] });
     expect(f.service.getSnapshot("draft")).toBe(first);
     expect(second.getSnapshot("draft")).toBe(first);
+    f.helper.dispose();
+  });
+  it("keeps thread-bound views and configuration stable across in-turn item updates", () => {
+    const f = fixture();
+    const baseTurn = { id: "turn-live", status: "in_progress" as const, items_view: "full" as const,
+      items: [{ id: "turn-live:user", type: "user_message" as const, status: "completed" as const, text: "run" }] };
+    withThreadTab(f, threadWith([baseTurn]));
+    f.set({ ...f.get(), activeSessionTabID: "thread-tab" });
+    const first = f.service.getSnapshot("thread-tab");
+    expect(first.configuration).toBeDefined();
+
+    // Streaming replaces the turn object and the turns array for every item
+    // event; the runtime fields the composer reads do not change with them.
+    const withTool = { ...f.get().thread!, turns: [{ ...baseTurn, items: [...baseTurn.items,
+      { id: "tool-1", type: "tool_call" as const, status: "in_progress" as const, name: "shell", arguments: "{}" }] }] };
+    f.set({ ...f.get(), thread: withTool, threads: [withTool] });
+    expect(f.service.getSnapshot("thread-tab")).toBe(first);
+
+    const withMessage = { ...withTool, turns: [{ ...withTool.turns[0], items: [...withTool.turns[0].items,
+      { id: "msg-1", type: "agent_message" as const, status: "in_progress" as const, text: "chunk" }] }] };
+    f.set({ ...f.get(), thread: withMessage, threads: [withMessage] });
+    expect(f.service.getSnapshot("thread-tab")).toBe(first);
+
+    // A real field change rebuilds the view, but the published configuration
+    // keeps its identity so heavy consumer clones do not churn underneath.
+    f.set({ ...f.get(), status: "thinking" });
+    const rebuilt = f.service.getSnapshot("thread-tab");
+    expect(rebuilt).not.toBe(first);
+    expect(rebuilt.configuration).toBe(first.configuration);
+
+    // A committed inventory generation bumps the skill revision so the
+    // composer refetches its slash catalog, even when the inventory records
+    // themselves are byte-identical.
+    f.set(reduceServerEvent(f.get(), { kind: "notification", workdir: "/one",
+      message: { method: "plugin/inventory/changed", params: { epoch: 2, extension_inventory: [], skills: [] } } }));
+    const afterInventory = f.service.getSnapshot("thread-tab");
+    expect(afterInventory.skillRevision).not.toBe(rebuilt.skillRevision);
     f.helper.dispose();
   });
   it("memoizes query history by turn identity and freezes the result", () => {

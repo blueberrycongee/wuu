@@ -102,6 +102,9 @@ async function run() {
     await delay(500);
     const geometry = await evaluate(() => {
       const button = document.querySelector('[data-testid="settings-git-attribution"]');
+      // The general page scrolls: bring the switch into the viewport so the
+      // geometry check and the screenshot cover it.
+      button.scrollIntoView({ block: "center" });
       const r = button.getBoundingClientRect();
       return { viewport: innerWidth, documentWidth: document.documentElement.scrollWidth, x: r.x, right: r.right, y: r.y, bottom: r.bottom, height: innerHeight, nav: [...document.querySelectorAll('.settings-nav-item')].map(item => item.textContent.trim()) };
     });
