@@ -4,7 +4,7 @@
   "name": "Artworks",
   "description": "Public-domain classical paintings as window skins, each with paired light and dark treatment.",
   "icon": { "path": "icon.webp" },
-  "version": "1.0.0",
+  "version": "1.0.1",
   "defaultEnabled": true,
   "author": { "name": "Wuu" },
   "interface": {

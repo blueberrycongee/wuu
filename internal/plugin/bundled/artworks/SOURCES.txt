@@ -5,7 +5,9 @@ file: https://artvee.com/dl/<slug>/
 
 Note: title cartouches, calligraphy, publisher/artist seals, and museum
 collection stamps were retouched out where they read as overlaid text,
-so the images work as backgrounds.
+so the images work as backgrounds. Files are distributed at up to
+1.5 megapixels, webp q80 — enough for window skins and settings previews
+without the full reproduction size.
 
   nihonbashi-snow.webp         Clearing Weather after Snow (Nihonbashi Yukibare)
                                Utagawa Hiroshige (1797–1858)
