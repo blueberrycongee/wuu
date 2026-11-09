@@ -105,7 +105,7 @@ input, textarea {
 }
 
 :root[data-host-kind="web"] .app-shell.compact-navigation .titlebar :is(
-  .sidebar-toggle-button, .compact-conversation-actions > .icon-button
+  .sidebar-toggle-button, .title-actions .icon-button
 ) {
   width: 44px;
   height: 44px;
@@ -121,13 +121,13 @@ input, textarea {
 }
 
 :root[data-host-kind="web"] .app-shell.compact-navigation .titlebar :is(
-  .sidebar-toggle-button, .compact-conversation-actions > .icon-button
+  .sidebar-toggle-button, .title-actions .icon-button
 ):active:not(:disabled) {
   background: var(--surface-1);
 }
 
 :root[data-host-kind="web"] .app-shell.compact-navigation .titlebar :is(
-  .sidebar-toggle-button, .compact-conversation-actions > .icon-button
+  .sidebar-toggle-button, .title-actions .icon-button
 ):focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: -4px;

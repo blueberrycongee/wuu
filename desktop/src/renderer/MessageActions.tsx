@@ -103,7 +103,7 @@ export function MessageTime({ timestamp, className = "" }: { timestamp?: string 
   );
 }
 
-export function MessageForkButton({ onFork }: { onFork?: () => void }): JSX.Element {
+function MessageForkButton({ onFork }: { onFork?: () => void }): JSX.Element {
   const { t } = useI18n();
   return (
     <button
