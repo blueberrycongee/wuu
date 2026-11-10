@@ -271,9 +271,11 @@ function makeSink(): ObservationPiPEventSink & {
 function makeCuaSurface(opts?: {
   bounds?: Rectangle;
   desktopFrame?: Rectangle | ((bounds: Rectangle) => Rectangle);
+  reducedMotion?: boolean;
   snapshot?: () => Promise<string | undefined>;
   onStop?: () => void;
   onContext?: (context: ActivityPiPContentContext) => void;
+  onEvent?: (event: { event: string }) => void;
 }): {
   surface: ActivityPiPSurface;
   win: FakePipWindow;
@@ -282,6 +284,13 @@ function makeCuaSurface(opts?: {
   viewport: (width: number, height: number) => void;
 } {
   const sink = makeSink();
+  if (opts?.onEvent) {
+    const record = sink.onEvent.bind(sink);
+    sink.onEvent = (event) => {
+      record(event);
+      opts.onEvent!(event);
+    };
+  }
   const bounds = opts?.bounds ?? { x: 100, y: 100, width: 260, height: 170 };
   const win = new FakePipWindow(bounds);
   const overlay = new FakeOverlay();
@@ -296,7 +305,7 @@ function makeCuaSurface(opts?: {
     isPackaged: false,
     createWindow: () => win.asHandle(),
     createOverlay: () => overlay.asHandle(),
-    reducedMotion: () => true,
+    reducedMotion: () => opts?.reducedMotion ?? true,
     cursorPosition: () => ({ x: -1000, y: -1000 }),
     desktopFrame: (bounds) => typeof opts?.desktopFrame === "function"
       ? opts.desktopFrame(bounds)
@@ -403,6 +412,73 @@ describe("ActivityPiPSurface desktop docking", () => {
     expect(win.isVisible()).toBe(false);
     surface.stop();
     expect(parent.eventNames()).toEqual([]);
+  });
+
+  it("flies detached cards to their desktop stack along an upward arc when the coordinator restacks", async () => {
+    const layout = {
+      host: { x: 200, y: 100, width: 800, height: 700 },
+      obstacles: [],
+      visibleFrame: { x: 0, y: 0, width: 1440, height: 900 },
+    };
+    let lead!: ReturnType<typeof makeCuaSurface>;
+    let trailing!: ReturnType<typeof makeCuaSurface>;
+    const restackDocked = (): void => {
+      const docked = [lead, trailing].filter((card) => card?.surface.isDesktopDocked());
+      if (!docked[0]) return;
+      docked[0].surface.setStackPosition(0, undefined);
+      const frame = docked[0].surface.stackLead();
+      docked.slice(1).forEach((card, index) => card.surface.setStackPosition(index + 1, frame));
+    };
+    lead = makeCuaSurface({
+      reducedMotion: false,
+      onEvent: (event) => {
+        if (event.event === "desktop_dock" || event.event === "geometry") restackDocked();
+      },
+    });
+    trailing = makeCuaSurface({
+      reducedMotion: false,
+      onEvent: (event) => {
+        if (event.event === "desktop_dock" || event.event === "geometry") restackDocked();
+      },
+    });
+    for (const card of [lead, trailing]) {
+      card.surface.start();
+      card.surface.setHostLayout(layout);
+      card.surface.setVisible(true);
+    }
+    lead.surface.setStackPosition(0);
+    trailing.surface.setStackPosition(1, lead.surface.stackLead());
+    await settle();
+    finishMotion();
+
+    const leadStart = { ...lead.win.getBounds() };
+    expect(leadStart).toEqual({ x: 656, y: 536, width: 320, height: 240 });
+    lead.overlay.navigate("wuu-pip://desktop");
+    expect(lead.win.getBounds()).toEqual(leadStart);
+    vi.advanceTimersByTime(64);
+    const leadMid = lead.win.getBounds();
+    const leadProgress = (leadMid.x - leadStart.x) / (1096 - leadStart.x);
+    const leadChordY = leadStart.y + (636 - leadStart.y) * leadProgress;
+    expect(leadProgress).toBeGreaterThan(0.1);
+    expect(leadProgress).toBeLessThan(0.9);
+    expect(leadMid.y).toBeLessThan(leadChordY - 20);
+    finishMotion();
+    expect(lead.win.getBounds()).toEqual({ x: 1096, y: 636, width: 320, height: 240 });
+
+    const trailingStart = { ...trailing.win.getBounds() };
+    trailing.overlay.navigate("wuu-pip://desktop");
+    expect(trailing.win.getBounds()).toEqual(trailingStart);
+    vi.advanceTimersByTime(64);
+    const trailingMid = trailing.win.getBounds();
+    const trailingProgress = (trailingMid.x - trailingStart.x) / (1068 - trailingStart.x);
+    const trailingChordY = trailingStart.y + (614 - trailingStart.y) * trailingProgress;
+    expect(trailingProgress).toBeGreaterThan(0.1);
+    expect(trailingProgress).toBeLessThan(0.9);
+    expect(trailingMid.y).toBeLessThan(trailingChordY - 20);
+    finishMotion();
+    expect(trailing.win.getBounds()).toEqual({ x: 1068, y: 614, width: 320, height: 240 });
+    lead.surface.stop();
+    trailing.surface.stop();
   });
 
   it("does not detach a browser preview", async () => {
