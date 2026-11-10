@@ -57,9 +57,17 @@ import type { ApplicationServiceV1, UICompositionV1 } from "../../../packages/pl
 import { conversationHeadingTitle } from "./ThreadTitles";
 import { showErrorToast } from "./Toast";
 
-const SettingsView = lazy(() => import("./SettingsView").then((module) => ({
+const loadSettingsView = () => import("./SettingsView").then((module) => ({
   default: module.SettingsView,
-})));
+}));
+
+const SettingsView = lazy(loadSettingsView);
+
+// Warm the settings chunk while the shell is idle so the first open paints
+// the panel directly instead of a Suspense placeholder frame.
+export function preloadSettingsView(): void {
+  void loadSettingsView();
+}
 
 type EnvironmentSideStackProps = ComponentProps<typeof EnvironmentSideStack>;
 type SettingsViewProps = ComponentProps<typeof SettingsView>;

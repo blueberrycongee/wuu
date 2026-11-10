@@ -8,7 +8,7 @@ fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", fs.mkdtempSync(path.join(output, "profile-")));
 
 app.whenReady().then(async () => {
-  const win = new BrowserWindow({ width: 1200, height: 820, show: false, titleBarStyle: "hiddenInset", webPreferences: {
+  const win = new BrowserWindow({ width: 1200, height: 820, show: process.env.WUU_E2E_VISIBLE === "true", titleBarStyle: "hiddenInset", webPreferences: {
     preload: path.join(__dirname, "resize-e2e-preload.cjs"), contextIsolation: true, sandbox: false, backgroundThrottling: false,
   } });
   win.webContents.debugger.attach("1.3");
@@ -82,30 +82,48 @@ app.whenReady().then(async () => {
     await clickToggle();
     const before = await js(`(async () => {
       const shell = document.querySelector('.app-shell');
+      const rail = document.querySelector('.sidebar');
+      // In the ribbon layout the sliding layer is the secondary pane inside
+      // the rail; elsewhere the rail itself slides as the promoted overlay.
+      const pane = document.querySelector('.sidebar-content') ?? rail;
+      const dividerEl = document.querySelector('.sidebar-resizer');
       for (let i = 0; i < 20; i++) {
-        const animation = shell.getAnimations().find(item => item.transitionProperty === 'grid-template-columns');
-        if (animation) {
-          animation.pause();
-          animation.currentTime = animation.effect.getComputedTiming().endTime * 0.25;
+        const slides = [...rail.getAnimations(), ...pane.getAnimations()]
+          .filter(item => item.transitionProperty === 'transform');
+        // A hidden window never advances animations, so transitions from
+        // earlier gestures linger at currentTime 0. The real slide is the
+        // newest one; finish the stragglers so they can't stack on top.
+        slides.sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0));
+        const slide = slides[0];
+        const edge = dividerEl.getAnimations().find(item => item.animationName === 'sidebar-edge-slide-in');
+        if (slide && edge) {
+          const slideInfo = slides.map(a => ({ onRail: a.effect.target === rail, t: a.currentTime, s: a.startTime, end: a.effect.getComputedTiming().endTime }));
+          for (const stale of slides.slice(1)) stale.finish();
+          slide.pause();
+          slide.currentTime = slide.effect.getComputedTiming().endTime * 0.25;
+          edge.pause();
+          edge.currentTime = edge.effect.getComputedTiming().endTime * 0.25;
+          const slideOnRail = slide.effect.target === rail;
           const divider = document.querySelector('.sidebar-resizer');
           const rect = divider.getBoundingClientRect();
           const x = rect.left + rect.width / 2;
           const y = Math.min(rect.bottom - 20, Math.max(rect.top + 80, 180));
           const hit = document.elementFromPoint(x, y);
           const inputHit = document.elementFromPoint(Math.round(x), Math.round(y));
-          return { x, y, targetWidth: parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-open-width')), sidebar: document.querySelector('.sidebar').getBoundingClientRect().toJSON(),
+          return { x, y, targetWidth: parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-open-width')), sidebar: pane.getBoundingClientRect().toJSON(),
             divider: rect.toJSON(), hitsDivider: hit === divider || divider.contains(hit),
             hit: hit ? { tag: hit.tagName, className: hit.className, rect: hit.getBoundingClientRect().toJSON() } : null,
             hitStack: document.elementsFromPoint(x, y).slice(0, 6).map(element => ({
               tag: element.tagName, className: element.className, zIndex: getComputedStyle(element).zIndex,
             })),
             hitsInputTarget: inputHit === divider || divider.contains(inputHit),
+            slideOnRail, slideInfo,
             inputHit: inputHit ? { tag: inputHit.tagName, className: inputHit.className, rect: inputHit.getBoundingClientRect().toJSON() } : null,
             animating: shell.classList.contains('sidebar-animating') };
         }
         await new Promise(requestAnimationFrame);
       }
-      throw new Error('No actual opening grid transition found');
+      throw new Error('No actual opening transform transition found');
     })()`);
     // Preserve geometry and the actual hit target even if a pre-input check fails.
     fs.writeFileSync(path.join(output, "interrupt-resize-hit-" + gesture + ".json"), JSON.stringify(before, null, 2));
@@ -119,7 +137,9 @@ app.whenReady().then(async () => {
     win.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
     await wait(`document.querySelector('.app-shell').classList.contains('resizing-sidebar')`);
     const after = await measure();
-    const evidence = { gesture, before, after, jump: after.sidebar.width - before.sidebar.width };
+    // The rail slides as a promoted overlay, so its box width stays at the open
+    // width mid-flight; the painted boundary is the rect's right edge.
+    const evidence = { gesture, before, after, jump: after.sidebar.right - before.sidebar.right };
     interruptions.push(evidence);
     const save = () => fs.writeFileSync(path.join(output, "interrupt-resize.json"), JSON.stringify(interruptions, null, 2));
     save();
@@ -131,7 +151,7 @@ app.whenReady().then(async () => {
       evidence.moved = await measure();
       save();
       if (gesture === "outward") {
-        assert(Math.abs(evidence.moved.sidebar.width - before.sidebar.width - delta) <= 2,
+        assert(Math.abs(evidence.moved.sidebar.right - before.sidebar.right - delta) <= 2,
           `Outward drag must track the pointer from its displayed width: ${JSON.stringify(evidence)}`);
       } else {
         assert(await js(collapsed), `An intentional inward drag below the collapse threshold still collapses: ${JSON.stringify(evidence)}`);

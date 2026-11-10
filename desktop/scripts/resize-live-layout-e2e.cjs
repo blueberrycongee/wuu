@@ -304,7 +304,10 @@ async function motion(name, action, requireDragging = true) {
   const active = requireDragging ? data.samples.filter(sample => sample.dragging) : data.samples;
   result.motions.push({ name, ...data, browserBounds });
   save();
-  assert.ok(new Set(active.map(sample => sample.width)).size >= (requireDragging ? 8 : 3), `${name}: content changes width during motion`);
+  // Collapse/expand snaps the grid in one frame (the rail slides on the
+  // compositor), so the content reflows exactly once — two distinct widths.
+  // Drags still relayout per pointer step and must show many intermediate widths.
+  assert.ok(new Set(active.map(sample => sample.width)).size >= (requireDragging ? 8 : 2), `${name}: content changes width during motion`);
   assert.ok(new Set(active.map(sample => sample.lines)).size >= 2, `${name}: text wraps during motion`);
   assert.ok(Math.abs(data.initial.width - data.final.width) < 1, `${name}: final width returns`);
   assert.ok(Math.abs(data.initial.top - data.final.top) <= 2, `${name}: final scroll position returns`);

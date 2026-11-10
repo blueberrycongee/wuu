@@ -946,13 +946,19 @@ code,
  * auto-collapse threshold, the sidebar still plays the same shared collapse
  * motion as a manual toggle (user-confirmed expectation, 2026-07: an earlier
  * iteration suppressed this to keep the layout glued to the window edge, but
- * a snapped-away sidebar reads as broken). Only the shell's grid transition
- * is re-enabled, and only while .sidebar-animating is present (bounded by
+ * a snapped-away sidebar reads as broken). The rail's transform slide is
+ * re-enabled, and only while .sidebar-animating is present (bounded by
  * --sidebar-motion-duration), so the drag-performance budget of the blanket
  * rule is unaffected. !important is needed to out-rank the suppression. */
-.window-resizing .app-shell.sidebar-animating {
-  transition: grid-template-columns var(--sidebar-motion-duration)
+.window-resizing :is(.app-shell, .settings-shell).sidebar-animating :is(.sidebar, .settings-sidebar) {
+  transition: transform var(--sidebar-motion-duration)
     var(--sidebar-motion-ease) !important;
+}
+
+/* Same exception for the docked right panel's composited slide. */
+.window-resizing .app-shell.right-panel-animating .workspace-right-panel {
+  transition: transform var(--workspace-panel-motion-duration)
+    var(--workspace-panel-motion-ease) !important;
 }
 
 /* Same exception for the globalize sheet: auto-globalize triggered by a live

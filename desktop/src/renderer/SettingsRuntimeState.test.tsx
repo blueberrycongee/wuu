@@ -23,7 +23,7 @@ import { WuuUIRoot } from "./ui/layers/UILayerHost";
 import { initialState } from "./AppState";
 import type { EngineListResult } from "../shared/protocol";
 
-vi.mock("./ConversationShellRenderers", () => ({ SettingsShellRenderer: vi.fn(() => null) }));
+vi.mock("./ConversationShellRenderers", () => ({ SettingsShellRenderer: vi.fn(() => null), preloadSettingsView: vi.fn() }));
 
 function deferred<T>() {
   let resolve!: (value: T) => void;

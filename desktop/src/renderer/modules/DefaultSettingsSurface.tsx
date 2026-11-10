@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "reac
 import type { ApplicationPresentationAPI, ApplicationServiceV1, UISlotRenderProps } from "../../../../packages/plugin-sdk/src/ui";
 import type { ApplicationSettingsLayoutV1 } from "../../../../packages/plugin-sdk/src/application-settings";
 import type { EngineListResult, InitializeResult } from "../../shared/protocol";
-import { SettingsShellRenderer } from "../ConversationShellRenderers";
+import { preloadSettingsView, SettingsShellRenderer } from "../ConversationShellRenderers";
 import { useArchiveDeletion } from "../useArchiveDeletion";
 import { isPluginLifecycleCancellation } from "../../shared/PluginLifecycle";
 import { useSettingsRuntimeState } from "../SettingsRuntimeState";
@@ -32,6 +32,14 @@ export function DefaultSettingsSurface({ application, ...layout }: ApplicationSe
     setCatalogNotice(undefined);
     return () => { lifetime.active = false; };
   }, [lifetime]);
+  useEffect(() => {
+    const idle = window.requestIdleCallback?.(() => preloadSettingsView(), { timeout: 4000 });
+    const timer = idle === undefined ? window.setTimeout(preloadSettingsView, 1500) : undefined;
+    return () => {
+      if (idle !== undefined) window.cancelIdleCallback(idle);
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
   useEffect(() => {
     if (!settings.open) return;
     const lifetime = new AbortController();

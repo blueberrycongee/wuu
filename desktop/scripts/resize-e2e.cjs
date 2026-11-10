@@ -807,7 +807,9 @@ async function run() {
   assert.ok(during, "Resize probe should capture a shrunken file tree frame during programmatic resize.");
 
   assert.equal(during.resizing, true, "Window resize marker should be set by programmatic BrowserWindow resizing.");
-  assert.equal(during.shellTransitionProperty, during.sidebarAnimating ? "grid-template-columns" : "none",
+  // The sidebar auto-collapse motion lives on the rail's transform slide now;
+  // the shell grid commits in one frame and carries no transition.
+  assert.equal(during.sidebarTransitionProperty, during.sidebarAnimating ? "transform" : "none",
     "Live resize may animate only the bounded sidebar auto-collapse transition.");
   assert.equal(during.animationProbePlayState, "paused", "Targeted resize animations should pause during live window resize.");
   assert.equal(during.animationProbeTransitionProperty, "none", "Targeted resize transitions should be disabled during live window resize.");
@@ -892,7 +894,7 @@ async function evaluate(win, fn) {
         sameTreeHost: host === window.__resizeTreeHost,
         resizing: document.documentElement.classList.contains("window-resizing"),
         sidebarAnimating: document.querySelector(".app-shell")?.classList.contains("sidebar-animating") === true,
-        shellTransitionProperty: getComputedStyle(document.querySelector(".app-shell")).transitionProperty,
+        sidebarTransitionProperty: getComputedStyle(document.querySelector(".app-shell .sidebar") ?? document.querySelector(".app-shell")).transitionProperty,
         scrollHeight: scroll.getBoundingClientRect().height,
         viewportHeight: window.innerHeight,
         viewportWidth: window.innerWidth,
