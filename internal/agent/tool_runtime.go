@@ -27,6 +27,7 @@ const (
 
 type toolRun struct {
 	call                   providers.ToolCall
+	argsBuf                *strings.Builder
 	order                  int
 	finalized              bool
 	concurrencySafe        bool
@@ -272,7 +273,11 @@ func (r *TurnToolRuntime) appendStreamToolDelta(call *providers.ToolCall, delta 
 		run = r.byID[call.ID]
 	}
 	if run != nil {
-		run.call.Arguments += delta
+		if run.argsBuf == nil {
+			run.argsBuf = &strings.Builder{}
+			run.argsBuf.WriteString(run.call.Arguments)
+		}
+		run.argsBuf.WriteString(delta)
 	}
 }
 
@@ -308,8 +313,12 @@ func (r *TurnToolRuntime) finalizeStreamTool(ctx context.Context, call *provider
 	}
 	run.call.Name = call.Name
 	run.call.Kind = call.Kind
+	if run.argsBuf != nil {
+		run.call.Arguments = run.argsBuf.String()
+	}
 	if call.Arguments != "" {
 		run.call.Arguments = call.Arguments
+		run.argsBuf = nil
 	}
 	run.finalized = run.call.Arguments != ""
 	run.concurrencySafe, run.streamSafe = toolSchedulingSafety(r.executor, run.call)
