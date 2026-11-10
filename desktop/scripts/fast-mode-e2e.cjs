@@ -414,7 +414,7 @@ async function run() {
   await waitFor(main, () => document.querySelector('.codex-runtime-trigger')?.getAttribute('aria-expanded') === 'true');
   await openPanel();
   assert.equal(await evaluate(main, () => document.querySelector('.runtime-speed-icon').closest('button').getAttribute('aria-pressed')), 'true');
-  await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {})));
+  await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
   await capturePanel(main, 'codex-inherited-fast');
   const clickEffort = (label) => evaluate(main, name => [...document.querySelectorAll('.runtime-effort-option')].find(option => option.querySelector('.runtime-effort-option-name')?.textContent === name).click(), label);
   for (const [speed, tier, slash, effort] of [['standard', 'default', false, 'high'], ['fast', 'fast', false, 'low'], ['standard', 'default', true, 'low'], ['fast', 'fast', false, 'high']]) {
