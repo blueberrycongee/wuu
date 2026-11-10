@@ -172,7 +172,7 @@ describe("RuntimePicker", () => {
       engines: [{ id: "codex", enabled: true, binary_ok: true, models: [{ id: "gpt-6-astra", fast_mode: true, supported_efforts: ["low", "high"] }] }],
     });
     const segmented = document.querySelector<HTMLElement>('.runtime-speed-segmented[role="group"]');
-    expect(segmented?.getAttribute("aria-label")).toBe("Fast mode");
+    expect(segmented?.getAttribute("aria-label")).toBe("速度");
     const options = Array.from(segmented?.querySelectorAll<HTMLButtonElement>("button") ?? []);
     expect(options).toHaveLength(2);
     expect(options.every(option => option.disabled === false)).toBe(true);
@@ -806,7 +806,7 @@ describe("RuntimePicker", () => {
       .toBe(variantLabel("xhigh"));
   });
 
-  it("selects a discrete effort from the level list and marks the model's own default", () => {
+  it("selects a discrete effort from the level list and resolves the model's own default beside Default", () => {
     const onSelectEffort = vi.fn();
     const initialized = runtimeWithEffort();
     initialized.providers![0].models![0].default_effort = "medium";
@@ -815,8 +815,10 @@ describe("RuntimePicker", () => {
     const option = (name: string): HTMLButtonElement =>
       Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-effort-option"))
         .find((button) => button.querySelector(".runtime-effort-option-name")?.textContent === name)!;
-    expect(option(variantLabel("medium")).querySelector(".runtime-effort-option-tag")).not.toBeNull();
-    expect(option(variantLabel("low")).querySelector(".runtime-effort-option-tag")).toBeNull();
+    expect(option(variantLabel("")).querySelector(".runtime-effort-option-hint")?.textContent)
+      .toBe(variantLabel("medium"));
+    expect(option(variantLabel("medium")).querySelector(".runtime-effort-option-hint")).toBeNull();
+    expect(option(variantLabel("low")).querySelector(".runtime-effort-option-hint")).toBeNull();
 
     act(() => option(variantLabel("high")).click());
     expect(onSelectEffort).toHaveBeenCalledExactlyOnceWith("high");
