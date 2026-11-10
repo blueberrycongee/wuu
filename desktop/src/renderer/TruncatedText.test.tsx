@@ -140,4 +140,23 @@ describe("TruncatedText", () => {
     hover(element);
     expect(tooltipLayer()).toBeNull();
   });
+
+  it("publishes the sweep geometry for scrollReveal only while horizontally clipped", () => {
+    let element: HTMLElement | undefined;
+    act(() => {
+      root = createRoot(container);
+      root!.render(<TruncatedText text="完整的长文本内容" className="subject" scrollReveal />);
+    });
+    element = container.querySelector<HTMLElement>(".subject") ?? undefined;
+    expect(element?.querySelector(".truncated-text-runner")?.textContent).toBe("完整的长文本内容");
+    expect(element?.dataset.scrollReveal).toBeUndefined();
+
+    remeasure(element!, { scrollWidth: 320, clientWidth: 120 });
+    expect(element?.dataset.scrollReveal).toBe("true");
+    expect(element?.style.getPropertyValue("--scroll-reveal-distance")).toBe("-200px");
+
+    // Vertical clamp alone has nothing to sweep sideways.
+    remeasure(element!, { scrollWidth: 120, scrollHeight: 96, clientHeight: 40 });
+    expect(element?.dataset.scrollReveal).toBeUndefined();
+  });
 });
