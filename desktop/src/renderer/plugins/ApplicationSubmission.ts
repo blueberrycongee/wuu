@@ -530,7 +530,8 @@ export class ApplicationSubmission {
     if (this.disposed || !operation.view.draftPending) return;
     operation.view = { ...operation.view, draftPending: false };
     const owner = operation.thread ? threadSessionTabID(operation.thread.id) : operation.source.id;
-    // Another shell or an edit made while waiting owns its new content.
+    // Another shell or an edit made while waiting owns its new content, minus
+    // what the delivered message already took.
     if (this.ownsDraft(operation, owner)) this.options.setDraft(owner, emptyComposerDraft());
     else this.releaseSubmittedContent(operation, owner);
     this.publish();
@@ -539,19 +540,19 @@ export class ApplicationSubmission {
   // new draft, not part of the sent message. Strip the submitted content so the
   // remainder survives without replaying text that already went out.
   private releaseSubmittedContent(operation: Operation, owner: string): void {
-    const draft = operation.draft;
-    if (!draft) return;
+    // draftPending implies the operation captured its draft at submit time.
+    const draft = operation.draft!;
     const current = this.options.getDraft(owner);
     const prompt = current.prompt.startsWith(draft.prompt)
       ? current.prompt.slice(draft.prompt.length)
       : current.prompt;
-    const images = new Set(draft.images.map(row => row.id));
-    const files = new Set(draft.files.map(row => row.id));
-    const selections = new Set((draft.selections ?? []).map(row => row.id));
-    const keptSelections = (current.selections ?? []).filter(row => !selections.has(row.id));
+    const sentImageIds = new Set(draft.images.map(row => row.id));
+    const sentFileIds = new Set(draft.files.map(row => row.id));
+    const sentSelectionIds = new Set((draft.selections ?? []).map(row => row.id));
+    const keptSelections = (current.selections ?? []).filter(row => !sentSelectionIds.has(row.id));
     const next: ComposerDraftState = { ...current, prompt,
-      images: current.images.filter(row => !images.has(row.id)),
-      files: current.files.filter(row => !files.has(row.id)),
+      images: current.images.filter(row => !sentImageIds.has(row.id)),
+      files: current.files.filter(row => !sentFileIds.has(row.id)),
       selections: keptSelections.length ? keptSelections : undefined };
     if (next.prompt === current.prompt
       && next.images.length === current.images.length
