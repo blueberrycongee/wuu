@@ -198,17 +198,6 @@ export function lastEffortForRuntimeModel(provider: string, model: string): stri
   return remembered?.effort;
 }
 
-/**
- * Model the composer last used with this provider. The caller still validates it
- * against the provider's live catalog; a provider with no memory (or a model that
- * disappeared) falls back to the provider's configured model.
- */
-export function lastModelForProvider(provider: string): string | undefined {
-  const name = provider.trim();
-  if (!name) return undefined;
-  return recentDraftRuntimeSelections().find((entry) => entry.provider === name)?.model;
-}
-
 export function seedDraftRuntimeFromMemory(state: AppState): AppState {
   if (!state.initialized || activeThreadForState(state)) return state;
   const next = applyDraftRuntimeMemory(state.initialized);

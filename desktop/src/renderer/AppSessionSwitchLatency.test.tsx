@@ -75,6 +75,7 @@ vi.mock("./WorkspaceMonacoEditor", () => ({
 
 import { createConversationTestView, createDefaultApplicationTestView } from "./test-support/DefaultApplication";
 import { requestOpenThreadInSplit } from "./ConversationSplitBridge";
+import { variantLabel } from "./RuntimeHelpers";
 import * as ComposerMessages from "./ComposerMessages";
 import { mockAnimationFrames } from "./AnimationFrameTestHarness";
 import { ConfirmDialogHost } from "./ConfirmDialog";
@@ -186,6 +187,16 @@ function completedThread({
       ],
     })),
   };
+}
+
+// The flat picker lists effort levels as radio rows rather than a slider.
+function effortOption(variant: string): HTMLButtonElement {
+  return Array.from(document.querySelectorAll<HTMLButtonElement>(".runtime-effort-option"))
+    .find(option => option.querySelector(".runtime-effort-option-name")?.textContent === variantLabel(variant))!;
+}
+
+function effortChecked(variant: string): string | null {
+  return effortOption(variant).getAttribute("aria-checked");
 }
 
 function threadA(turns = 1): Thread {
@@ -568,7 +579,7 @@ describe("session tab switch latency", () => {
     expect(toggle.getAttribute("aria-pressed")).toBe(String(!dismiss));
   });
 
-  it("persists the latest mounted effort-slider choice before the previous request settles", async () => {
+  it("persists the latest mounted effort choice before the previous request settles", async () => {
     const { threadsByID } = installWuuApi();
     threadsByID.set(threadAID, { ...threadA(), model_variant: "high", model_effort: "high" });
     const workspaceDefaults = initialized();
@@ -580,26 +591,18 @@ describe("session tab switch latency", () => {
     await act(async () => { root = createRoot(container); root.render(await createConversationTestView(threadAID)); });
     await flushAsync();
     await act(async () => { container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click(); });
-    const slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
-    expect(slider).not.toBeNull();
-    const choose = async (value: string, key: string): Promise<void> => {
-      await act(async () => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, value);
-        slider.dispatchEvent(new Event("input", { bubbles: true }));
-        slider.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true }));
-      });
-    };
-    await choose(slider.min, "Home");
-    await choose(slider.max, "End");
+    expect(effortChecked("high")).toBe("true");
+    await act(async () => { effortOption("").click(); });
+    await act(async () => { effortOption("high").click(); });
     await act(async () => { first.resolve(workspaceDefaults); });
     await flushAsync();
 
     expect(update.mock.calls.map(call => call[4])).toEqual(["", "high"]);
     expect(update.mock.calls.every(call => call[6] === threadAID)).toBe(true);
-    expect(slider.value).toBe(slider.max);
+    expect(effortChecked("high")).toBe("true");
   });
 
-  it("preserves Home after reopening the effort picker while End is still pending", async () => {
+  it("preserves the default choice after reopening the effort picker while high is still pending", async () => {
     const { threadsByID } = installWuuApi();
     threadsByID.set(threadAID, { ...threadA(), model_variant: "", model_effort: "" });
     const workspaceDefaults = initialized();
@@ -612,28 +615,22 @@ describe("session tab switch latency", () => {
     await flushAsync();
     const toggle = () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click();
     await act(async () => { toggle(); });
-    let slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
-    expect(slider.value).toBe(slider.min);
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, slider.max);
-      slider.dispatchEvent(new Event("input", { bubbles: true }));
-      slider.dispatchEvent(new KeyboardEvent("keyup", { key: "End", bubbles: true }));
-    });
+    expect(effortChecked("")).toBe("true");
+    await act(async () => { effortOption("high").click(); });
     expect(update.mock.calls.map(call => call[4])).toEqual(["high"]);
     await act(async () => { toggle(); });
     await act(async () => { toggle(); });
-    slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
-    expect(slider.value).toBe(slider.max);
-    // The reopened picker retains the optimistic request; Home supersedes it.
+    // The reopened picker retains the optimistic request; the default choice
+    // supersedes it.
+    expect(effortChecked("high")).toBe("true");
     await act(async () => {
-      slider.focus();
-      slider.dispatchEvent(new KeyboardEvent("keydown", { key: "Home", bubbles: true }));
-      slider.dispatchEvent(new KeyboardEvent("keyup", { key: "Home", bubbles: true }));
+      effortOption("").focus();
+      effortOption("").click();
     });
     await act(async () => { first.resolve(workspaceDefaults); });
     await flushAsync();
     expect(update.mock.calls.map(call => call[4])).toEqual(["high", ""]);
-    expect(slider.value).toBe(slider.min);
+    expect(effortChecked("")).toBe("true");
   });
 
   it.each(["switch", "away-and-back"])("does not reopen a related-session split after newer cached navigation: %s", async (navigation) => {
@@ -1666,10 +1663,10 @@ describe("session tab switch latency", () => {
   });
 
   it.each([
-    { key: "End", initial: "high", pending: "", responseBeforeKeyUp: false },
-    { key: "Home", initial: "", pending: "high", responseBeforeKeyUp: true },
-    { key: "End", initial: "high", pending: "", responseBeforeKeyUp: true },
-  ])("preserves $key after reopening while an earlier effort response arrives before keyup=$responseBeforeKeyUp", async ({ key, initial, pending, responseBeforeKeyUp }) => {
+    { initial: "high", pending: "", settleBeforeSecondClick: false },
+    { initial: "", pending: "high", settleBeforeSecondClick: true },
+    { initial: "high", pending: "", settleBeforeSecondClick: true },
+  ])("keeps the reopened effort choice ordered when an earlier response settles mid-way (initial=$initial pending=$pending settleBetween=$settleBeforeSecondClick)", async ({ initial, pending, settleBeforeSecondClick }) => {
     const { threadsByID } = installWuuApi();
     threadsByID.set(threadAID, { ...threadA(), model_variant: initial, model_effort: initial });
     const workspaceDefaults = initialized();
@@ -1682,35 +1679,26 @@ describe("session tab switch latency", () => {
     await flushAsync();
     const toggle = () => container.querySelector<HTMLButtonElement>(".codex-runtime-trigger")!.click();
     await act(async () => { toggle(); });
-    let slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
-    const endpoint = (): string => key === "Home" ? slider.min : slider.max;
-    expect(slider.value).toBe(endpoint());
-    await act(async () => {
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(slider, key === "Home" ? slider.max : slider.min);
-      slider.dispatchEvent(new Event("input", { bubbles: true }));
-      slider.dispatchEvent(new KeyboardEvent("keyup", { key: key === "Home" ? "End" : "Home", bubbles: true }));
-    });
+    expect(effortChecked(initial)).toBe("true");
+    await act(async () => { effortOption(pending).click(); });
     expect(update.mock.calls.map(call => call[4])).toEqual([pending]);
     await act(async () => { toggle(); });
     await act(async () => { toggle(); });
     await flushAsync();
-    slider = document.querySelector<HTMLInputElement>('.codex-effort-slider input[type="range"]')!;
-    expect(slider.value).not.toBe(endpoint());
-    // Capture the new endpoint before an older response can settle.
-    await act(async () => {
-      slider.focus();
-      slider.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true }));
-    });
-    if (responseBeforeKeyUp) {
+    // The reopened picker still marks the in-flight request; the row stays
+    // focusable so the next click supersedes instead of racing it.
+    expect(effortChecked(pending)).toBe("true");
+    if (settleBeforeSecondClick) {
       await act(async () => { first.resolve(workspaceDefaults); });
       await flushAsync();
-      expect(slider.value).not.toBe(endpoint());
-      expect(document.activeElement).toBe(slider);
     }
-    await act(async () => { slider.dispatchEvent(new KeyboardEvent("keyup", { key, bubbles: true })); });
-    if (!responseBeforeKeyUp) await act(async () => { first.resolve(workspaceDefaults); });
+    const endpoint = effortOption(initial);
+    endpoint.focus();
+    await act(async () => { endpoint.click(); });
+    if (!settleBeforeSecondClick) await act(async () => { first.resolve(workspaceDefaults); });
     await flushAsync();
     expect(update.mock.calls.map(call => call[4])).toEqual([pending, initial]);
-    expect(slider.value).toBe(endpoint());
+    expect(effortChecked(initial)).toBe("true");
+    expect(document.activeElement).toBe(endpoint);
   });
 });

@@ -20,6 +20,12 @@ import {
   isWindowResizing,
 } from "./WindowResizeState";
 
+/* scrollReveal sweeps at this speed, clamped so short reveals don't crawl
+ * and long titles stay readable instead of whipping past. */
+const SCROLL_REVEAL_PX_PER_SECOND = 40;
+const SCROLL_REVEAL_MIN_SECONDS = 1.2;
+const SCROLL_REVEAL_MAX_SECONDS = 12;
+
 export function TruncatedText({
   text,
   className,
@@ -27,6 +33,7 @@ export function TruncatedText({
   children,
   nativeTooltip = false,
   fade = false,
+  scrollReveal = false,
   measureKey,
   measureRef,
   ...rest
@@ -38,6 +45,13 @@ export function TruncatedText({
   nativeTooltip?: boolean;
   /** Fade the trailing edge only while the text is actually truncated. */
   fade?: boolean;
+  /**
+   * Publish the overflow geometry and wrap the text in a runner so hover CSS
+   * can slide the clipped tail into view. The transform lives on the child
+   * because transforms never feed back into scrollWidth — animating the box
+   * itself would corrupt the measurement that armed it.
+   */
+  scrollReveal?: boolean;
   /** Optional render-state key for animated children that change their width. */
   measureKey?: string;
   /** Optional access to the measured element for callers coordinating animation. */
@@ -48,6 +62,9 @@ export function TruncatedText({
 } & Record<string, unknown>): JSX.Element {
   const ref = useRef<HTMLElement | null>(null);
   const [truncated, setTruncated] = useState(false);
+  // scrollReveal arms on horizontal overflow alone; a line-clamped block has
+  // nothing to sweep sideways.
+  const [scrollable, setScrollable] = useState(false);
 
   useLayoutEffect(() => {
     const element = ref.current;
@@ -63,11 +80,22 @@ export function TruncatedText({
         settle.schedule();
         return;
       }
+      sync();
+    };
+    const sync = (): void => {
+      if (scrollReveal) {
+        const overflow = Math.max(0, element.scrollWidth - element.clientWidth);
+        const seconds = Math.min(
+          Math.max(overflow / SCROLL_REVEAL_PX_PER_SECOND, SCROLL_REVEAL_MIN_SECONDS),
+          SCROLL_REVEAL_MAX_SECONDS,
+        );
+        element.style.setProperty("--scroll-reveal-distance", `${-overflow}px`);
+        element.style.setProperty("--scroll-reveal-duration", `${seconds}s`);
+        setScrollable(overflow > 1);
+      }
       setTruncated(readTruncation());
     };
-    const settle = createWindowResizeSettleScheduler(() => {
-      setTruncated(readTruncation());
-    });
+    const settle = createWindowResizeSettleScheduler(sync);
     measure();
     // Font changes can alter text overflow without changing the grid cell's box.
     const stopObservingAppearance = observeAppearance(measure);
@@ -80,7 +108,7 @@ export function TruncatedText({
       stopObservingAppearance();
       document.fonts?.removeEventListener("loadingdone", measure);
     };
-  }, [text, measureKey]);
+  }, [text, measureKey, scrollReveal]);
 
   const Tag = as as ElementType;
   return (
@@ -93,9 +121,14 @@ export function TruncatedText({
         className={className}
         data-text={text}
         data-truncated={fade && truncated ? "true" : undefined}
+        data-scroll-reveal={scrollReveal && scrollable ? "true" : undefined}
         {...rest}
       >
-        {children ?? text}
+        {scrollReveal ? (
+          <span className="truncated-text-runner">{children ?? text}</span>
+        ) : (
+          children ?? text
+        )}
       </Tag>
     </Tooltip>
   );

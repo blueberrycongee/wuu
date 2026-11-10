@@ -4,7 +4,6 @@ import { initialState } from "./AppState";
 import {
   applyDraftRuntimeMemory,
   lastEffortForRuntimeModel,
-  lastModelForProvider,
   readDraftApproveForMeMemory,
   readDraftPermissionMemory,
   readDraftRuntimeMemory,
@@ -187,13 +186,10 @@ describe("draft runtime memory", () => {
     writeDraftRuntimeMemory({ provider: "tokenhub", model: "gpt-5.6-sol", effort: "high" });
     writeDraftRuntimeMemory({ provider: "work", model: "claude-opus", effort: "medium" });
 
-    expect(lastModelForProvider("tokenhub")).toBe("gpt-5.6-sol");
     expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-sol")).toBe("high");
-    expect(lastModelForProvider("work")).toBe("claude-opus");
     // A provider's earlier model keeps its own effort instead of inheriting the
     // one picked for its sibling.
     expect(lastEffortForRuntimeModel("work", "claude-sonnet")).toBe("low");
-    expect(lastModelForProvider("unused-provider")).toBeUndefined();
     expect(readDraftRuntimeMemory()).toEqual({
       provider: "work",
       model: "claude-opus",
@@ -212,7 +208,6 @@ describe("draft runtime memory", () => {
       model: "gpt-5.6-sol",
       effort: "high",
     });
-    expect(lastModelForProvider("tokenhub")).toBe("gpt-5.6-sol");
     expect(lastEffortForRuntimeModel("tokenhub", "gpt-5.6-sol")).toBe("high");
   });
 

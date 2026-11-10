@@ -66,6 +66,37 @@ describe("DesktopPluginRuntime", () => {
       expect(host.getGenerationDiagnostics(plugin.id, plugin.fingerprint!)).toEqual([]);
     } finally { release(); act(() => root.unmount()); await runtime.shutdown(); host.unload("fixture"); errors.mockRestore(); }
   });
+  it("keeps a dependent's declared navigation entry live through a graph-only rotation", async () => {
+    installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
+    const host = new PluginHost({ react: React });
+    let signalStarted!: () => void, release!: () => void;
+    const started = new Promise<void>(resolve => { signalStarted = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let speedActivations = 0;
+    const runtime = new DesktopPluginRuntime(host, async id => ({ async activate(api: PluginGenerationApi) {
+      if (id !== "user:speed") return;
+      api.registerViewType({ id: "speed.main", title: "Speed", render: () => null });
+      if (++speedActivations === 2) { signalStarted(); await gate; }
+    } }));
+    const provider = { ...dependencyPlugin("business"), graph_generation: "one" };
+    const dependent = { ...dependencyPlugin("speed", ["business"]), graph_generation: "one",
+      contributions: { navigation: [{ id: "speed", title: "Speed", view: "speed.main" }] } };
+    expect(await runtime.sync([provider, dependent])).toEqual([]);
+    const entries = () => host.getNavigationEntries().map(entry => entry.id);
+    expect(entries()).toContain("speed");
+    let pending: ReturnType<DesktopPluginRuntime["sync"]> | undefined;
+    try {
+      await act(async () => {
+        pending = runtime.sync([{ ...provider, graph_generation: "two" }, { ...dependent, graph_generation: "two" }]);
+        await started;
+      });
+      // The replacement is still registering: the last good generation must
+      // keep serving the entry or the ribbon destination visibly disappears.
+      expect(entries()).toContain("speed");
+      await act(async () => { release(); expect(await pending).toEqual([]); });
+      expect(entries()).toContain("speed");
+    } finally { release(); await pending; await runtime.shutdown(); }
+  });
   it("preserves message relations and connection identity in the authenticated renderer input receipt", async () => {
     const request = vi.fn().mockResolvedValue({ ok: true, value: { result: { state: "accepted" } } });
     window.wuu = { ...originalWuu, requestPluginRuntime: request, reportPluginDesktopActivation: vi.fn(async () => {}), cancelPluginRuntime: vi.fn().mockResolvedValue({}) };
@@ -412,7 +443,7 @@ describe("DesktopPluginRuntime", () => {
     }
   });
 
-  it.each(["connection", "graph"])("reactivates on a fresh %s after retained consumers finish cleanup", async (change) => {
+  const retainedConsumerFixture = async () => {
     installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
     const report = vi.fn<WuuDesktopApi["reportPluginDesktopActivation"]>(async () => {});
     const invoke = vi.fn(async () => "result");
@@ -428,35 +459,56 @@ describe("DesktopPluginRuntime", () => {
     await runtime.sync(inventory, false, 0);
     await host.flushActivationReports();
     await runtime.sync(inventory, false, 0);
-    expect(handles).toHaveLength(2);
+    return { host, runtime, events, handles, report, invoke, inventory };
+  };
+
+  it("reactivates on a fresh connection after retained consumers finish cleanup", async () => {
+    const { host, runtime, events, handles, report, invoke, inventory } = await retainedConsumerFixture();
     const release = host.retainGeneration("user:consumer", "fingerprint-one");
-    const connection = change === "connection" ? 1 : 0;
-    const replacement = inventory.map(plugin => ({ ...plugin, graph_generation: change === "graph" ? "new-graph" : "same-graph" }));
-    const reconnect = runtime.sync(replacement, false, connection);
+    const reconnect = runtime.sync(inventory, false, 1);
     await vi.waitFor(() => expect(handles[1].signal.aborted).toBe(true));
-    const overlapping = change === "connection" ? runtime.sync(replacement, false, connection) : Promise.resolve([]);
+    const overlapping = runtime.sync(inventory, false, 1);
     expect(handles[0].signal.aborted).toBe(false);
     expect(handles).toHaveLength(2);
     release();
     expect(await reconnect).toEqual([]);
     expect(await overlapping).toEqual([]);
     await host.flushActivationReports();
-    if (change === "connection") {
-      expect(events).toEqual(["start:user:provider", "start:user:consumer", "stop:user:consumer", "stop:user:provider", "start:user:provider", "start:user:consumer"]);
-    } else {
-      expect(events.filter(event => event === "start:user:provider")).toHaveLength(2);
-      expect(events.filter(event => event === "stop:user:provider")).toHaveLength(1);
-      expect(events.indexOf("stop:user:consumer")).toBeLessThan(events.indexOf("stop:user:provider"));
-      expect(events.at(-1)).toBe("start:user:consumer");
-    }
+    expect(events).toEqual(["start:user:provider", "start:user:consumer", "stop:user:consumer", "stop:user:provider", "start:user:provider", "start:user:consumer"]);
     expect(report.mock.calls.map(([value]) => [value.phase, value.activation, value.graph_generation])).toEqual([
       ["registration", 1, "same-graph"], ["registration", 1, "same-graph"],
-      ["registration", 2, replacement[0].graph_generation], ["registration", 2, replacement[0].graph_generation],
+      ["registration", 2, "same-graph"], ["registration", 2, "same-graph"],
     ]);
     await expect(handles[1].invokeService({ service: "catalog", method: "read" })).rejects.toThrow("no longer active");
     expect(invoke).not.toHaveBeenCalled();
     await expect(handles[3].invokeService({ service: "catalog", method: "read" })).resolves.toBe("result");
-    await runtime.sync([], false, connection);
+    await runtime.sync([], false, 1);
+  });
+
+  it("swaps generations on a graph-only rotation without waiting for retained consumers", async () => {
+    const { host, runtime, events, handles, report, invoke, inventory } = await retainedConsumerFixture();
+    const release = host.retainGeneration("user:consumer", "fingerprint-one");
+    const replacement = inventory.map(plugin => ({ ...plugin, graph_generation: "new-graph" }));
+    // A graph-only rotation does not fence dependents: identical provider code
+    // swaps atomically, and calls from a retired generation are fenced by the
+    // inventory graph instead of teardown ordering. The retained consumer
+    // finishes its own cleanup after the swap.
+    expect(await runtime.sync(replacement, false, 0)).toEqual([]);
+    expect(handles[0].signal.aborted).toBe(true);
+    expect(handles[1].signal.aborted).toBe(true);
+    expect(handles).toHaveLength(4);
+    release();
+    await vi.waitFor(() => expect(events).toContain("stop:user:consumer"));
+    await host.flushActivationReports();
+    expect(events).toEqual(["start:user:provider", "start:user:consumer", "start:user:provider", "stop:user:provider", "start:user:consumer", "stop:user:consumer"]);
+    expect(report.mock.calls.map(([value]) => [value.phase, value.activation, value.graph_generation])).toEqual([
+      ["registration", 1, "same-graph"], ["registration", 1, "same-graph"],
+      ["registration", 2, "new-graph"], ["registration", 2, "new-graph"],
+    ]);
+    await expect(handles[1].invokeService({ service: "catalog", method: "read" })).rejects.toThrow("no longer active");
+    expect(invoke).not.toHaveBeenCalled();
+    await expect(handles[3].invokeService({ service: "catalog", method: "read" })).resolves.toBe("result");
+    await runtime.sync([], false, 0);
   });
 
   it.each([false, true])("activates independent plugins while another is pending, then safe mode=%s", async (safeMode) => {

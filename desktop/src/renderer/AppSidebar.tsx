@@ -2574,7 +2574,7 @@ function AttentionThreadRow({
         aria-label={label}
         onClick={() => onSelect(thread.id)}
       >
-        <span className="thread-row-title">{label}</span>
+        <TruncatedText text={label} className="thread-row-title" fade scrollReveal aria-hidden="true" />
       </button>
     </div>
   );

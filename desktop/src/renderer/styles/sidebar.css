@@ -2469,6 +2469,35 @@ html[data-focus-modality="keyboard"] .thread-row:focus-within:has(.thread-row-fo
   padding-right: calc(var(--sidebar-thread-actions-width) + var(--sidebar-row-action-size) + var(--sidebar-action-gap) + var(--sidebar-accessory-gap));
 }
 
+/* scrollReveal titles (TruncatedText): the runner slides the clipped tail
+ * into view while the row is hovered or keyboard-focused. JS publishes the
+ * live overflow as --scroll-reveal-distance/-duration on the title; the
+ * keyframes dwell at both ends and overshoot one fade width so the last
+ * glyphs land clear of the truncation mask instead of settling inside it. */
+.truncated-text-runner {
+  display: inline-block;
+}
+
+@keyframes truncated-text-scroll {
+  0%,
+  18% {
+    transform: translateX(0);
+  }
+  82%,
+  100% {
+    transform: translateX(calc(var(--scroll-reveal-distance, 0px) - var(--space-5, 0px)));
+  }
+}
+
+.thread-row:hover:not(.dragging) .thread-row-title[data-scroll-reveal="true"] > .truncated-text-runner,
+html[data-focus-modality="keyboard"]
+  .thread-row:focus-within
+  .thread-row-title[data-scroll-reveal="true"]
+  > .truncated-text-runner {
+  animation: truncated-text-scroll var(--scroll-reveal-duration, 2s) ease-in-out
+    infinite alternate;
+}
+
 /* The fork marker stays between the title and right-edge accessories. */
 .thread-row-fork-icon {
   width: var(--sidebar-fork-icon-size);
@@ -2570,6 +2599,16 @@ html[data-focus-modality="keyboard"] .thread-row:focus-within .thread-row-action
 @container style(--motion-reduced: 1) {
   .thread-row-main > .thread-row-title {
     transition: none;
+  }
+
+  /* Must carry the full trigger selectors' specificity to win over the
+   * hover/focus rule above; container queries add none of their own. */
+  .thread-row:hover:not(.dragging) .thread-row-title[data-scroll-reveal="true"] > .truncated-text-runner,
+  html[data-focus-modality="keyboard"]
+    .thread-row:focus-within
+    .thread-row-title[data-scroll-reveal="true"]
+    > .truncated-text-runner {
+    animation: none;
   }
 
   .thread-row-actions {

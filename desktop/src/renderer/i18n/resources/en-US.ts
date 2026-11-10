@@ -366,6 +366,8 @@ export const enUS = {
   "runtime.fastModeOff": "Fast mode off · Standard speed",
   "runtime.fastModeHint": "Faster responses may cost more or use more credits",
   "runtime.fastModeDefault": "Follow the engine default",
+  "runtime.speedStandard": "Standard",
+  "runtime.speedFast": "Fast",
   "runtime.engineDefaultModel": "Agent default",
   "runtime.engineDefaultOption": "Default",
   "runtime.modelsEmpty": "This engine reports no available models.",

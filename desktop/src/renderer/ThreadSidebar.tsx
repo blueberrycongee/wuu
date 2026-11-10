@@ -1189,6 +1189,7 @@ export function ThreadRowTitle({ title }: { title: string }): JSX.Element {
         elementRef.current = element as HTMLSpanElement | null;
       }}
       fade
+      scrollReveal
       aria-hidden="true"
     >
       {displayed}

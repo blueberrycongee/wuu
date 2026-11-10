@@ -1,5 +1,3 @@
-import type { RuntimePanelView } from "./ComposerRuntimeMenus";
-
 export type HandoffTargetStatus = "pending" | "resolved" | "unverified" | "unavailable";
 
 export type HandoffDraft = {
@@ -12,7 +10,6 @@ export type HandoffDraft = {
   status: HandoffTargetStatus;
   targetLabel: string;
   filterQuery: string;
-  pickerView: RuntimePanelView;
 };
 
 export type HandoffCatalog = {
@@ -35,7 +32,6 @@ export function emptyHandoffDraft(revision = 1): HandoffDraft {
     status: "pending",
     targetLabel: "",
     filterQuery: "",
-    pickerView: "summary",
   };
 }
 
@@ -103,7 +99,6 @@ export function reduceHandoffDraft(raw: string, catalog: HandoffCatalog, revisio
       status = "unavailable";
     }
   }
-  const pickerView = handoffPickerView(parsed, providerId, modelId);
   const targetLabel = providerId && modelId
     ? `${provider?.label ?? providerId} / ${modelId}`
     : provider?.label ?? parsed.providerPrefix;
@@ -116,8 +111,9 @@ export function reduceHandoffDraft(raw: string, catalog: HandoffCatalog, revisio
     intent: parsed.intent,
     status,
     targetLabel,
-    filterQuery: pickerView === "models" ? parsed.modelPrefix : parsed.providerPrefix,
-    pickerView,
+    // A provider/model path has moved past provider filtering, so the flat
+    // picker filters by the model prefix; a bare prefix still narrows providers.
+    filterQuery: parsed.hasSlash ? parsed.modelPrefix : parsed.providerPrefix,
   };
 }
 
@@ -157,20 +153,6 @@ export function parseRequestedHandoffIntent(payload: string): string | null {
   } catch {
     return null;
   }
-}
-
-function handoffPickerView(
-  parsed: { providerPrefix: string; modelPrefix: string; hasSlash: boolean },
-  providerId: string,
-  modelId: string,
-): RuntimePanelView {
-  if (modelId || parsed.hasSlash) {
-    return "models";
-  }
-  if (parsed.providerPrefix) {
-    return "providers";
-  }
-  return "summary";
 }
 
 function stripOptionalModelToken(text: string): string {

@@ -78,29 +78,33 @@ async function settlePanel(win) {
     frame = requestAnimationFrame(check);
   }));
 }
+// Selector helpers for the flat picker: engine rail icons, flat model rows,
+// effort radio rows, and the segmented speed footer.
 async function capturePanel(win, name, fastSupported = true) {
   await settlePanel(win);
   const state = await evaluate(win, () => {
     const panel = document.querySelector('.runtime-panel');
-    const context = panel.querySelector('.runtime-panel-context');
-    const source = panel.querySelector('.runtime-panel-context-source');
-    const fast = panel.querySelector('.runtime-panel-fast');
-    const model = panel.querySelector('.runtime-panel-model');
-    const slider = panel.querySelector('.runtime-panel-effort');
-    const track = panel.querySelector('.codex-effort-track');
-    const knob = panel.querySelector('.codex-effort-knob');
-    const range = panel.querySelector('.codex-effort-slider input');
-    const effort = panel.querySelector('.runtime-panel-effort-value');
+    const rail = panel.querySelector('.runtime-engine-rail');
+    const fast = panel.querySelector('.runtime-speed-icon')?.closest('button');
+    const footer = panel.querySelector('.runtime-flat-footer');
+    const content = footer ?? panel.querySelector('.runtime-flat');
+    const model = panel.querySelector('.codex-model-item[aria-checked="true"]');
+    const column = panel.querySelector('.runtime-effort-column');
+    const efforts = [...panel.querySelectorAll('.runtime-effort-option')];
+    const effort = panel.querySelector('.runtime-effort-option[aria-checked="true"]');
     const rect = node => { const r = node.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, height: r.height, left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
     const p = rect(panel);
     return {
-      panel: p, context: rect(context), source: rect(source), fast: fast ? rect(fast) : null, model: rect(model), slider: slider ? rect(slider) : null,
-      track: rect(track), knob: rect(knob), endpoint: range.value === range.min ? 'min' : range.value === range.max ? 'max' : 'middle',
+      panel: p, rail: rail ? rect(rail) : null, fast: fast ? rect(fast) : null, footer: footer ? rect(footer) : null,
+      content: rect(content), model: model ? rect(model) : null, column: column ? rect(column) : null,
+      endpoint: effort ? (efforts.indexOf(effort) === 0 ? 'min' : efforts.indexOf(effort) === efforts.length - 1 ? 'max' : 'middle') : null,
       effort: effort ? rect(effort) : null,
-      effortText: effort?.textContent, sliderText: range.getAttribute('aria-valuetext'),
-      modelOutlineOffset: getComputedStyle(model).outlineOffset, knobOutlineOffset: getComputedStyle(knob).outlineOffset,
+      effortText: effort?.querySelector('.runtime-effort-option-name')?.textContent ?? null,
+      triggerLabel: document.querySelector('.codex-runtime-trigger')?.getAttribute('aria-label') ?? '',
+      modelOutlineOffset: model ? getComputedStyle(model).outlineOffset : null,
+      effortOutlineOffset: effort ? getComputedStyle(effort).outlineOffset : null,
       pressed: fast?.getAttribute('aria-pressed') ?? null,
-      bottomInset: parseFloat(getComputedStyle(panel.querySelector('.runtime-panel-summary')).paddingBottom) + parseFloat(getComputedStyle(panel).borderBottomWidth),
+      bottomInset: parseFloat(getComputedStyle(panel).paddingBottom) + parseFloat(getComputedStyle(panel).borderBottomWidth),
       fastColor: fast ? getComputedStyle(fast).color : null, fastBackground: fast ? getComputedStyle(fast).backgroundColor : null,
       font: getComputedStyle(panel).getPropertyValue('--font-ui').trim(), theme: document.documentElement.dataset.theme,
       viewport: { width: innerWidth, height: innerHeight },
@@ -115,27 +119,23 @@ async function capturePanel(win, name, fastSupported = true) {
   layoutEvidence.push({ name, ...state });
   fs.writeFileSync(path.join(output, 'layout-evidence.json'), JSON.stringify(layoutEvidence, null, 2));
   assert.equal(Boolean(state.fast), fastSupported, 'Only supported models show speed controls.');
-  assert(!state.nestedButton, 'Speed must be independent of the model navigation button.');
+  assert(!state.nestedButton, 'Speed must be independent of the model rows.');
   if (state.fast) {
     // Browser geometry can differ by a fractional CSS pixel at non-integer zoom.
-    assert(state.fast.width >= 27.5 && state.fast.height >= 27.5, `The compact speed toggle retains a usable hit target: ${JSON.stringify(state.fast)}`);
-    assert(state.fast.top >= state.context.top - 1 && state.fast.bottom <= state.context.bottom + 1, 'Fast mode shares the existing context header.');
-    assert(state.source.right <= state.fast.left + 0.5, 'Header labels and speed must not overlap.');
-    assert(state.fast.bottom <= state.model.top + 1, 'Speed controls must not cover the model row.');
+    assert(state.fast.width >= 27.5 && state.fast.height >= 27.5, `The segmented speed option retains a usable hit target: ${JSON.stringify(state.fast)}`);
+    assert(state.footer && state.fast.top >= state.footer.top - 1 && state.fast.bottom <= state.footer.bottom + 1, 'Speed lives in the panel footer.');
+    assert(state.model && state.fast.top >= state.model.bottom - 1, 'Speed controls must not cover the model rows.');
   }
-  assert.equal(state.effortText, state.sliderText, 'The visible effort matches the accessible slider value.');
-  for (const control of [state.context, state.effort, state.model, state.slider].filter(Boolean)) {
+  if (state.effortText) assert(state.triggerLabel.includes(state.effortText), 'The checked effort row matches the trigger label.');
+  for (const control of [state.rail, state.effort, state.model, state.column].filter(Boolean)) {
     assert(control.left >= state.panel.left && control.right <= state.panel.right
-      && control.top >= state.panel.top && control.bottom <= state.panel.bottom, 'Summary content stays inside the popover.');
+      && control.top >= state.panel.top && control.bottom <= state.panel.bottom, 'Panel content stays inside the popover.');
   }
-  if (state.endpoint === 'min') assert(Math.abs(state.knob.left - state.track.left) <= 0.5, 'The thumb outer edge reaches the leading guide.');
-  if (state.endpoint === 'max') assert(Math.abs(state.knob.right - state.track.right) <= 0.5, 'The thumb reaches the end of the track.');
-  assert(Number.parseFloat(state.modelOutlineOffset) <= 0 && Number.parseFloat(state.knobOutlineOffset) <= 0,
+  assert(Number.parseFloat(state.modelOutlineOffset ?? '0') <= 0 && Number.parseFloat(state.effortOutlineOffset ?? '0') <= 0,
     'Focus rings must not move the visible edges outside the alignment guides.');
   assert(state.panel.left >= 0 && state.panel.right <= state.viewport.width && state.panel.top >= 0 && state.panel.bottom <= state.viewport.height, 'The popover stays inside the window.');
-  const last = state.slider || state.model;
-  assert(last.bottom <= state.panel.bottom + 0.5 && Math.abs(state.panel.bottom - last.bottom - state.bottomInset) <= 1,
-    'The summary ends at its normal inset without a leftover speed row.');
+  assert(state.content.bottom <= state.panel.bottom + 0.5 && Math.abs(state.panel.bottom - state.content.bottom - state.bottomInset) <= 1,
+    'The panel ends at its normal inset.');
   // DOM rectangles use CSS pixels; Electron capture rectangles use DIP.
   const crop = Object.fromEntries(Object.entries(state.crop).map(([key, value]) => [key, Math.round(value * state.zoomFactor)]));
   fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage(crop)).toPNG());
@@ -176,15 +176,13 @@ async function run() {
   // the full refresh after its aborted first attempt.
   await waitFor(main, () => document.querySelector('.codex-runtime-trigger:not(:disabled)'));
   await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
-  await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)'));
-  await evaluate(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)').click());
-  await waitFor(main, () => document.querySelector('.runtime-engine-option'));
-  await evaluate(main, () => [...document.querySelectorAll('.runtime-engine-option')].find(button => button.querySelector('.runtime-engine-option-name').textContent === 'Codex').click());
-  await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)')?.textContent.includes('Codex'));
-  assert.equal(await evaluate(main, () => Boolean(document.querySelector('.codex-effort-slider input'))), false,
+  await waitFor(main, () => document.querySelector('.runtime-engine-icon[aria-label="Codex"]'));
+  await evaluate(main, () => document.querySelector('.runtime-engine-icon[aria-label="Codex"]').click());
+  await waitFor(main, () => document.querySelector('.runtime-engine-icon[aria-label="Codex"]')?.getAttribute('aria-checked') === 'true');
+  assert.equal(await evaluate(main, () => Boolean(document.querySelector('.runtime-effort-option'))), false,
     'The gated Codex catalog must not have loaded before the gate opens.');
   fs.writeFileSync(process.env.WUU_TEST_CODEX_MODEL_LIST_GATE, '');
-  await waitFor(main, () => document.querySelector('.codex-effort-slider input'), null, 15000);
+  await waitFor(main, () => document.querySelector('.runtime-effort-option'), null, 15000);
   await settlePanel(main);
   const panelCrop = () => evaluate(main, () => {
     const p = document.querySelector('.runtime-panel').getBoundingClientRect();
@@ -192,22 +190,21 @@ async function run() {
       width: Math.min(innerWidth - Math.max(0, Math.floor(p.x - 8)), Math.ceil(p.width + 16)),
       height: Math.min(innerHeight - Math.max(0, Math.floor(p.y - 8)), Math.ceil(p.height + 16)) };
   }).then(crop => Object.fromEntries(Object.entries(crop).map(([key, value]) => [key, Math.round(value * main.webContents.getZoomFactor())])));
-  const deferredCatalog = await evaluate(main, () => ({ effort: document.querySelector('.codex-effort-slider input')?.getAttribute('aria-valuetext') }));
+  const deferredCatalog = await evaluate(main, () => ({ effort: document.querySelector('.runtime-effort-option[aria-checked="true"] .runtime-effort-option-name')?.textContent }));
   fs.writeFileSync(path.join(output, 'deferred-catalog-summary.png'), (await main.webContents.capturePage(await panelCrop())).toPNG());
-  // The model name itself is only listed on the panel's model page.
-  await evaluate(main, () => document.querySelector('.runtime-panel-model').click());
   await waitFor(main, () => [...document.querySelectorAll('.codex-model-item-name')].some(item => item.textContent === 'GPT-6 Astra'), null, 15000);
   await settlePanel(main);
   deferredCatalog.models = await evaluate(main, () => [...document.querySelectorAll('.codex-model-item-name')].map(item => item.textContent));
   fs.writeFileSync(path.join(output, 'deferred-catalog-models.png'), (await main.webContents.capturePage(await panelCrop())).toPNG());
+  // Escape closes the flat panel — there is no page stack to step back through.
   await key(main, 'Escape');
-  await waitFor(main, () => document.querySelector('.runtime-panel.is-summary .runtime-panel-model'));
+  await waitFor(main, () => !document.querySelector('.runtime-panel'));
   // Leave the draft on the default engine and close the panel for the rest.
-  await evaluate(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)').click());
-  await waitFor(main, () => document.querySelector('.runtime-engine-option'));
-  await evaluate(main, () => [...document.querySelectorAll('.runtime-engine-option')].find(button => button.querySelector('.runtime-engine-option-name').textContent === 'Wuu').click());
-  await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)')?.textContent.includes('Wuu')
-    && document.querySelector('.codex-effort-slider input'));
+  await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+  await waitFor(main, () => document.querySelector('.runtime-engine-icon[aria-label="Wuu"]'));
+  await evaluate(main, () => document.querySelector('.runtime-engine-icon[aria-label="Wuu"]').click());
+  await waitFor(main, () => document.querySelector('.runtime-engine-icon[aria-label="Wuu"]')?.getAttribute('aria-checked') === 'true'
+    && document.querySelector('.runtime-effort-option'));
   await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
   await waitFor(main, () => !document.querySelector('.runtime-panel'));
   // Keep native keyboard checks independent of other desktop windows.
@@ -226,17 +223,19 @@ async function run() {
     return input && !input.disabled && !input.readOnly && document.querySelector('.codex-runtime-trigger:not(:disabled)');
   });
   await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
-  await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]'));
-  assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'false');
+  await waitFor(main, () => document.querySelector('.runtime-speed-icon'));
+  assert.equal(await evaluate(main, () => document.querySelector('.runtime-speed-icon').closest('button').getAttribute('aria-pressed')), 'false');
   main.focus(); main.webContents.focus();
   const beforeToggle = await capturePanel(main, 'provider-standard');
-  await evaluate(main, () => document.querySelector('.runtime-panel-model').focus());
-  await key(main, 'Up');
-  assert(await evaluate(main, () => document.activeElement === document.querySelector('.runtime-panel-fast')), 'Keyboard navigation reaches the speed control.');
+  // The speed options are the last focusable rows in the flat panel; End lands
+  // on the fast button from any model or effort row.
+  await evaluate(main, () => document.querySelector('.codex-model-item[aria-checked="true"]').focus());
+  await key(main, 'End');
+  assert(await evaluate(main, () => document.activeElement === document.querySelector('.runtime-speed-icon').closest('button')), 'Keyboard navigation reaches the speed control.');
   await key(main, 'Space');
   // Freeze the live browser animations to keep fill and shake evidence repeatable.
   const chargeDuration = await evaluate(main, () => {
-    window.__speedAnimations = document.querySelector('.runtime-panel-speed-icon').getAnimations({ subtree: true });
+    window.__speedAnimations = document.querySelector('.runtime-speed-icon').getAnimations({ subtree: true });
     for (const animation of window.__speedAnimations) animation.pause();
     return Math.max(0, ...window.__speedAnimations.map(animation => animation.effect.getComputedTiming().endTime));
   });
@@ -258,23 +257,15 @@ async function run() {
   assert.equal(afterToggle.pressed, 'true');
   assert.deepEqual(afterToggle.fast, beforeToggle.fast, 'Toggling speed must not move its target.');
   assert.notEqual(afterToggle.fastColor, beforeToggle.fastColor, 'Fast mode has a distinct enabled icon.');
-  assert(await evaluate(main, () => document.activeElement === document.querySelector('.runtime-panel-fast') && getComputedStyle(document.activeElement).outlineStyle !== 'none'), 'Keyboard activation retains a visible focus ring.');
-  await evaluate(main, () => document.querySelector('.runtime-panel-effort-value').click());
-  assert(await evaluate(main, () => Boolean(document.querySelector('.runtime-panel.is-summary'))), 'The effort readout does not navigate to model selection.');
-  const pointer = await evaluate(main, () => {
-    const rect = document.querySelector('.codex-effort-slider input').getBoundingClientRect();
-    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  });
-  const position = Object.fromEntries(Object.entries(pointer).map(([axis, value]) => [axis, Math.round(value * main.webContents.getZoomFactor())]));
-  main.webContents.sendInputEvent({ type: 'mouseMove', ...position });
-  main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...position });
-  await waitFor(main, () => document.querySelector('.codex-effort-slider input').value === '1');
-  assert.equal(await evaluate(main, async id => (await window.wuu.resumeThread(id)).thread.model_variant, threadID), 'high', 'Pointer preview must not persist intermediate effort.');
-  await capturePanel(main, 'effort-drag-preview');
-  main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...position });
+  assert(await evaluate(main, () => document.activeElement === document.querySelector('.runtime-speed-icon').closest('button') && getComputedStyle(document.activeElement).outlineStyle !== 'none'), 'Keyboard activation retains a visible focus ring.');
+  // The effort column is a readout plus radio rows, not a navigation step.
+  assert(await evaluate(main, () => Boolean(document.querySelector('.runtime-effort-column')) && !document.querySelector('.runtime-flat-side-title button')), 'The effort readout does not navigate to model selection.');
+  // A click on an effort row commits immediately; there is no drag preview.
+  await evaluate(main, () => [...document.querySelectorAll('.runtime-effort-option')].find(option => option.querySelector('.runtime-effort-option-name')?.textContent === 'Low').click());
+  await waitFor(main, () => document.querySelector('.runtime-effort-option[aria-checked="true"] .runtime-effort-option-name')?.textContent === 'Low');
   await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model_variant === 'low', threadID);
-  await capturePanel(main, 'effort-drag-committed');
-  await key(main, 'End');
+  await capturePanel(main, 'effort-click-committed');
+  await evaluate(main, () => [...document.querySelectorAll('.runtime-effort-option')].find(option => option.querySelector('.runtime-effort-option-name')?.textContent === 'High').click());
   await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model_variant === 'high', threadID);
   async function turn(marker, expectedTier) {
     await evaluate(main, async ({ id, marker }) => {
@@ -312,21 +303,21 @@ async function run() {
       main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...position });
       main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...position });
     }
-    await waitFor(main, () => document.querySelector('.runtime-panel.is-summary .runtime-panel-model'));
-    if (fastSupported) await waitFor(main, () => document.querySelector('button[aria-label="Fast mode"]:not(:disabled)'));
-    // Opening schedules model autofocus; finish that frame before choosing a
-    // slider endpoint or the initial focus can overwrite the test's input.
+    await waitFor(main, () => document.querySelector('.runtime-flat-panel .codex-model-item'));
+    if (fastSupported) await waitFor(main, () => document.querySelector('.runtime-speed-icon')?.closest('button:not(:disabled)'));
+    // Opening schedules model autofocus; finish that frame before choosing an
+    // effort row or the initial focus can overwrite the test's input.
     await evaluate(main, () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   }
   await openPanel();
-  await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').focus());
+  await evaluate(main, () => document.querySelector('.runtime-speed-icon').closest('button').focus());
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
   const lightFast = await capturePanel(main, 'light-wide-fast');
   await evaluate(main, () => document.activeElement.blur());
   main.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round((lightFast.fast.x + lightFast.fast.width / 2) * lightFast.zoomFactor), y: Math.round((lightFast.fast.y + lightFast.fast.height / 2) * lightFast.zoomFactor) });
-  await waitFor(main, () => document.querySelector('.runtime-panel-fast').matches(':hover'));
+  await waitFor(main, () => document.querySelector('.runtime-speed-icon').closest('button').matches(':hover'));
   await capturePanel(main, 'light-wide-fast-hover');
-  await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').click());
+  await evaluate(main, () => [...document.querySelectorAll('.runtime-speed-option')].find(option => !option.querySelector('.runtime-speed-icon')).click());
   await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.speed === 'standard', threadID);
   await capturePanel(main, 'light-wide-standard-hover');
   await turn('fast-mode-standard', 'default');
@@ -352,17 +343,15 @@ async function run() {
     document.documentElement.style.removeProperty('--conversation-message-font-size');
     document.documentElement.style.removeProperty('--appearance-scale');
   });
-  // Exercise the live slider at both endpoints, with and without speed support.
+  // Exercise the effort column's first and last rows, with and without speed support.
   for (const fastSupported of [true, false]) {
     if (!fastSupported) {
       await openPanel();
-      await evaluate(main, () => document.querySelector('.runtime-panel-model').click());
-      await waitFor(main, () => [...document.querySelectorAll('.codex-model-item')].some(item => item.textContent.includes('Basic fixture model')));
-      await evaluate(main, () => [...document.querySelectorAll('.codex-model-item')].find(item => item.textContent.includes('Basic fixture model')).click());
+      await evaluate(main, () => [...document.querySelectorAll('.codex-model-item')].find(item => item.querySelector('.codex-model-item-name')?.textContent === 'Basic fixture model').click());
       // The label updates optimistically; reopening the panel needs the committed model.
       await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model === 'fixture-basic', threadID);
-      await waitFor(main, () => document.querySelector('.runtime-panel-model-name')?.textContent === 'Basic fixture model'
-        && !document.querySelector('.runtime-panel-fast'));
+      await waitFor(main, () => document.querySelector('.codex-model-item[aria-checked="true"] .codex-model-item-name')?.textContent === 'Basic fixture model'
+        && !document.querySelector('.runtime-speed-icon'));
     }
     for (const theme of ['light', 'dark']) for (const font of [14, 20]) for (const width of [1280, 760]) {
       await evaluate(main, () => { if (document.querySelector('.runtime-panel')) document.querySelector('.codex-runtime-trigger').click(); });
@@ -372,15 +361,22 @@ async function run() {
         document.documentElement.style.setProperty('--conversation-message-font-size', `${font}px`);
       }, { theme, font });
       await openPanel(fastSupported);
-      for (const endpoint of ['Home', 'End']) {
+      for (const endpoint of ['min', 'max']) {
         endpointCase = { fastSupported, theme, font, width, endpoint };
-        await evaluate(main, () => document.querySelector('.codex-effort-slider input').focus());
-        await key(main, endpoint);
-        await waitFor(main, endpoint => {
-          const input = document.querySelector('.codex-effort-slider input');
-          return input.value === (endpoint === 'Home' ? input.min : input.max);
+        await evaluate(main, endpoint => {
+          const options = document.querySelectorAll('.runtime-effort-option');
+          options[endpoint === 'min' ? 0 : options.length - 1].click();
         }, endpoint);
-        await capturePanel(main, `aligned-${fastSupported ? 'fast' : 'basic'}-${theme}-${font}-${width}-${endpoint.toLowerCase()}`, fastSupported);
+        await waitFor(main, endpoint => {
+          const options = [...document.querySelectorAll('.runtime-effort-option')];
+          const option = options[endpoint === 'min' ? 0 : options.length - 1];
+          const name = option?.querySelector('.runtime-effort-option-name')?.textContent;
+          // aria-checked is optimistic; the trigger label only catches up once
+          // the app-server commits the new variant.
+          return option?.getAttribute('aria-checked') === 'true'
+            && Boolean(name) && document.querySelector('.codex-runtime-trigger')?.getAttribute('aria-label')?.includes(name);
+        }, endpoint);
+        await capturePanel(main, `aligned-${fastSupported ? 'fast' : 'basic'}-${theme}-${font}-${width}-${endpoint}`, fastSupported);
       }
     }
   }
@@ -422,16 +418,16 @@ async function run() {
   main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...nativePoint });
   await waitFor(main, () => document.querySelector('.codex-runtime-trigger')?.getAttribute('aria-expanded') === 'true');
   await openPanel();
-  assert.equal(await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').getAttribute('aria-pressed')), 'true');
+  assert.equal(await evaluate(main, () => document.querySelector('.runtime-speed-icon').closest('button').getAttribute('aria-pressed')), 'true');
   await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
   await capturePanel(main, 'codex-inherited-fast');
+  const clickEffort = (label) => evaluate(main, name => [...document.querySelectorAll('.runtime-effort-option')].find(option => option.querySelector('.runtime-effort-option-name')?.textContent === name).click(), label);
   for (const [speed, tier, slash, effort] of [['standard', 'default', false, 'high'], ['fast', 'fast', false, 'low'], ['standard', 'default', true, 'low'], ['fast', 'fast', false, 'high']]) {
     await openPanel();
-    await evaluate(main, () => document.querySelector('.codex-effort-slider input').focus());
-    await key(main, 'End');
+    await clickEffort('High');
     await waitFor(main, async id => (await window.wuu.resumeThread(id)).thread.model_effort === 'high'
-      && document.querySelector('.codex-effort-slider input')?.getAttribute('aria-busy') !== 'true', native);
-    if (effort === 'low') await key(main, 'Left');
+      && document.querySelector('.runtime-effort-option[aria-busy="true"]') === null, native);
+    if (effort === 'low') await clickEffort('Low');
     await waitFor(main, async ({ id, effort }) => (await window.wuu.resumeThread(id)).thread.model_effort === effort, { id: native, effort });
     if (slash) {
       await evaluate(main, () => {
@@ -443,7 +439,8 @@ async function run() {
       await waitFor(main, () => Boolean(document.querySelector('.slash-command-item[data-command-name="fast"]')));
       await evaluate(main, () => document.querySelector('.composer textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
     } else {
-      await evaluate(main, () => document.querySelector('button[aria-label="Fast mode"]').click());
+      await evaluate(main, next => [...document.querySelectorAll('.runtime-speed-option')]
+        .find(option => Boolean(option.querySelector('.runtime-speed-icon')) === (next === 'fast')).click(), speed);
     }
     await waitFor(main, async ({ id, speed }) => ((await window.wuu.resumeThread(id)).thread.speed || '') === speed, { id: native, speed });
     await evaluate(main, async id => {
@@ -462,7 +459,7 @@ async function run() {
     if (speed === 'fast') {
       await openPanel();
       await evaluate(main, () => Promise.all(document.querySelector('.runtime-panel').getAnimations({ subtree: true }).map(animation => animation.finished.catch(() => {}))));
-      const visual = await evaluate(main, () => { const button = document.querySelector('button[aria-label="Fast mode"]'); return { pressed: button.getAttribute('aria-pressed'), disabled: button.disabled, color: getComputedStyle(button.querySelector('svg')).color, accent: getComputedStyle(button).getPropertyValue('--interaction-accent') }; });
+      const visual = await evaluate(main, () => { const button = document.querySelector('.runtime-speed-icon').closest('button'); return { pressed: button.getAttribute('aria-pressed'), disabled: button.disabled, color: getComputedStyle(button.querySelector('svg')).color, accent: getComputedStyle(button).getPropertyValue('--interaction-accent') }; });
       console.log('CODEX_VISUAL', JSON.stringify(visual));
       assert.equal(visual.pressed, 'true');
       await capturePanel(main, 'codex-fast');
@@ -492,34 +489,28 @@ async function run() {
     && document.querySelector('.codex-runtime-trigger[aria-expanded="false"]:not(:disabled)')
     && !document.querySelector('.runtime-panel'));
   await openPanel(false);
-  await waitFor(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)'));
+  await waitFor(main, () => document.querySelector('.runtime-engine-icon[aria-label]'));
+  const panelState = () => evaluate(main, () => ({
+    model: document.querySelector('.codex-model-item[aria-checked="true"] .codex-model-item-name')?.textContent,
+    effort: [...document.querySelectorAll('.runtime-effort-option')].findIndex(option => option.getAttribute('aria-checked') === 'true'),
+  }));
   for (const engine of ['Wuu', 'Codex']) {
-    await evaluate(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)').click());
-    await waitFor(main, () => document.querySelector('.runtime-engine-option'));
-    await evaluate(main, engine => [...document.querySelectorAll('.runtime-engine-option')].find(button => button.querySelector('.runtime-engine-option-name').textContent === engine).click(), engine);
-    await waitFor(main, engine => document.querySelector('.runtime-panel-context button:has(.engine-icon)')?.textContent.includes(engine)
-      && document.querySelector('.codex-effort-slider input'), engine);
+    await evaluate(main, engine => document.querySelector(`.runtime-engine-icon[aria-label="${engine}"]`).click(), engine);
+    await waitFor(main, engine => document.querySelector(`.runtime-engine-icon[aria-label="${engine}"]`)?.getAttribute('aria-checked') === 'true'
+      && document.querySelector('.runtime-effort-option'), engine);
     // A project draft restores its own remembered model, not the last thread's.
     // Choose the unsupported provider model explicitly for this reopen check.
     if (engine === 'Wuu') {
-      await evaluate(main, () => document.querySelector('.runtime-panel-model').click());
-      await waitFor(main, () => [...document.querySelectorAll('.codex-model-item')].some(item => item.textContent.includes('Basic fixture model')));
-      await evaluate(main, () => [...document.querySelectorAll('.codex-model-item')].find(item => item.textContent.includes('Basic fixture model')).click());
-      await waitFor(main, () => document.querySelector('.runtime-panel-model-name')?.textContent === 'Basic fixture model'
-        && !document.querySelector('.runtime-panel-fast'));
+      await evaluate(main, () => [...document.querySelectorAll('.codex-model-item')].find(item => item.querySelector('.codex-model-item-name')?.textContent === 'Basic fixture model').click());
+      await waitFor(main, () => document.querySelector('.codex-model-item[aria-checked="true"] .codex-model-item-name')?.textContent === 'Basic fixture model'
+        && !document.querySelector('.runtime-speed-icon'));
     }
-    const selection = await evaluate(main, () => ({
-      model: document.querySelector('.runtime-panel-model-name').textContent,
-      effort: document.querySelector('.codex-effort-slider input').value,
-    }));
-    await evaluate(main, () => document.querySelector('.runtime-panel-context button:has(.engine-icon)').click());
-    await waitFor(main, () => document.querySelector('.runtime-engine-option[aria-checked="true"]'));
-    await evaluate(main, () => document.querySelector('.runtime-engine-option[aria-checked="true"]').click());
-    await waitFor(main, () => document.querySelector('.runtime-panel.is-summary'));
-    assert.deepEqual(await evaluate(main, () => ({
-      model: document.querySelector('.runtime-panel-model-name').textContent,
-      effort: document.querySelector('.codex-effort-slider input').value,
-    })), selection, 'Reopening the current engine preserves its model and effort.');
+    const selection = await panelState();
+    // Closing and reopening the panel restores the committed selection.
+    await evaluate(main, () => document.querySelector('.codex-runtime-trigger').click());
+    await waitFor(main, () => !document.querySelector('.runtime-panel'));
+    await openPanel(engine === 'Codex');
+    assert.deepEqual(await panelState(), selection, 'Reopening the current engine preserves its model and effort.');
     await capturePanel(main, `current-engine-${engine.toLowerCase()}`, engine === 'Codex');
   }
   fs.writeFileSync(path.join(output, 'results.json'), JSON.stringify({ threadID, nativeThreadID: native, nativeRuntime, deferredCatalog, requests, persisted, layoutEvidence }, null, 2));
@@ -530,13 +521,13 @@ run().catch(async error => {
   console.error(error, 'FIXTURE', fixture);
   fs.writeFileSync(path.join(output, 'failure.txt'), String(error.stack));
   if (main && !main.isDestroyed()) {
-    const slider = await evaluate(main, () => {
-      const input = document.querySelector('.codex-effort-slider input');
-      return { value: input?.value, min: input?.min, max: input?.max, disabled: input?.disabled,
-        focused: document.activeElement === input, activeTag: document.activeElement?.tagName,
-        activeClass: document.activeElement?.className };
+    const effort = await evaluate(main, () => {
+      const checked = document.querySelector('.runtime-effort-option[aria-checked="true"]');
+      return { checked: checked?.querySelector('.runtime-effort-option-name')?.textContent,
+        options: [...document.querySelectorAll('.runtime-effort-option .runtime-effort-option-name')].map(node => node.textContent),
+        activeTag: document.activeElement?.tagName, activeClass: document.activeElement?.className };
     });
-    fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify({ endpointCase, slider }, null, 2));
+    fs.writeFileSync(path.join(output, 'failure-state.json'), JSON.stringify({ endpointCase, effort }, null, 2));
     fs.writeFileSync(path.join(output, 'failure.png'), (await main.webContents.capturePage()).toPNG());
   }
   server.close(); app.exit(1);

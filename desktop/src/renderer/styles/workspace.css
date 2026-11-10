@@ -2613,34 +2613,63 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   padding: var(--menu-inset);
 }
 
-.codex-runtime-menu .runtime-engine-option:disabled {
+/* The engine column mirrors the workspace tool rail in miniature: square
+ * icon buttons on the same grid, so docking next to the rail reads as a
+ * second column of it rather than a second unrelated rail. */
+.runtime-engine-rail {
+  display: flex;
+  min-height: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-1);
+  border-inline-end: 1px solid var(--hairline-soft);
+  overflow-y: auto;
+}
+
+.runtime-flat-panel.from-rail .runtime-engine-rail {
+  border-inline-end: 0;
+  border-inline-start: 1px solid var(--hairline-soft);
+}
+
+.codex-runtime-menu .runtime-engine-icon {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border-radius: var(--radius-sm);
+  color: var(--ink-secondary);
+}
+
+.codex-runtime-menu .runtime-engine-icon > svg.engine-icon {
+  width: var(--icon-size);
+  height: var(--icon-size);
+}
+
+.codex-runtime-menu .runtime-engine-icon[aria-checked="true"] {
+  background: var(--menu-hover);
+  color: var(--ink);
+}
+
+.codex-runtime-menu .runtime-engine-icon:disabled {
   cursor: default;
   opacity: 1;
 }
 
-.codex-runtime-menu .runtime-engine-option:disabled:not([aria-checked="true"]) {
-  opacity: 0.52;
+.runtime-engine-rail.is-locked .runtime-engine-icon:not([aria-checked="true"]) {
+  opacity: 0.45;
 }
 
-.runtime-engine-option .runtime-engine-option-name {
-  min-width: 0;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: inherit;
-  font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
-}
-
-.runtime-engine-option > svg {
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-}
-
-.runtime-engine-option > svg.engine-icon {
-  color: inherit;
+.codex-runtime-menu .runtime-engine-icon > svg:not(.engine-icon) {
+  position: absolute;
+  inset-inline-end: 3px;
+  bottom: 3px;
+  width: 9px;
+  height: 9px;
+  color: var(--ink-tertiary);
 }
 
 .codex-model-groups {
@@ -2653,112 +2682,6 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   padding-bottom: 2px;
 }
 
-/* The one control in the panel that is dragged, so it is the one with weight:
- * a capsule that fills with ink as the level rises, a dot for every level the
- * model offers, and a knob that reaches the capsule endpoints. The knob stands
- * proud of the track so it reads as the handle, not a hole in the fill. */
-.codex-effort-slider {
-  --effort-knob: 28px;
-  --effort-track: 24px;
-  --effort-edge: 0px;
-  --effort-at: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-ratio, 0));
-  position: relative;
-  height: var(--runtime-effort-block);
-  touch-action: none;
-}
-
-.codex-effort-track {
-  position: absolute;
-  top: calc(50% - var(--effort-track) / 2);
-  left: 0;
-  right: 0;
-  height: var(--effort-track);
-  overflow: hidden;
-  border-radius: var(--radius-pill);
-  background: var(--surface-4);
-  pointer-events: none;
-}
-
-.codex-effort-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  /* Center the rounded fill cap on the knob at every stop. */
-  width: calc(var(--effort-at) + var(--effort-track) / 2);
-  border-radius: inherit;
-  background: var(--interaction-accent);
-  transition: width var(--motion-base) var(--ease-out);
-}
-
-.codex-effort-stops {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.codex-effort-stops > span {
-  position: absolute;
-  top: calc(50% - 2px);
-  left: calc(var(--effort-edge) + var(--effort-knob) / 2 + (100% - var(--effort-knob) - var(--effort-edge) * 2) * var(--effort-stop));
-  width: 4px;
-  height: 4px;
-  border-radius: var(--radius-circle);
-  background: var(--ink-muted);
-  opacity: 0.5;
-  transform: translateX(-50%);
-  transition: background-color var(--motion-fast) var(--ease-out);
-}
-
-.codex-effort-stops > span.is-filled {
-  background: var(--ink-on-accent);
-}
-
-.codex-effort-knob {
-  position: absolute;
-  top: calc(50% - var(--effort-knob) / 2);
-  left: var(--effort-at);
-  width: var(--effort-knob);
-  height: var(--effort-knob);
-  box-sizing: border-box;
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-circle);
-  background: var(--slider-thumb-bg);
-  box-shadow: var(--shadow-soft);
-  transform: translateX(-50%);
-  pointer-events: none;
-  transition: left var(--motion-base) var(--ease-out), scale var(--motion-fast) var(--ease-out);
-}
-
-/* The knob gives under the pointer while a level is being chosen. */
-.codex-effort-slider:not(.is-disabled):active .codex-effort-knob {
-  scale: 0.9;
-}
-
-.codex-effort-slider input[type="range"] {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-}
-
-html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) .codex-effort-knob {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visible) input {
-  outline: none;
-}
-
-.codex-effort-slider.is-disabled {
-  opacity: 0.45;
-}
-
-.codex-effort-slider input:disabled {
-  cursor: default;
-}
 
 .hero-composer-wrap .codex-runtime-menu {
   top: calc(100% + 8px);
@@ -2801,325 +2724,257 @@ html[data-focus-modality="keyboard"] .codex-effort-slider:has(input:focus-visibl
   white-space: nowrap;
 }
 
-/* Runtime choice is a compact overview with drill-in pages, not a settings
-   form. Heights must match each page's stack so leftover space cannot collect
-   at the bottom; the popover still morphs in place as pages change.
-   Row metrics are drawn for the default 14.5px UI size and grow with larger
-   UI text, the same proportion the panel width follows in
-   ComposerRuntimeMenus.tsx. --runtime-rows is the row count of a list page;
-   the summary reports its context, selection and slider groups. Model and
-   effort share one selection row without sharing a click target. */
+/* The runtime picker is one flat panel: an engine icon column, a searchable
+   model list grouped by provider, and the selected model's level list. When
+   the composer controls live in the workspace tool rail the panel mirrors so
+   its engine column docks to that edge. Rows follow the font-scaled menu
+   metric so larger UI text grows heights with the same proportion the panel
+   width follows in ComposerRuntimeMenus.tsx. */
 .codex-model-menu.runtime-panel {
-  --runtime-row: max(36px, calc(var(--font-ui) * 36 / 14.5));
-  --runtime-context-row: max(28px, calc(var(--font-ui) * 28 / 14));
-  --runtime-selection-row: var(--runtime-context-row);
-  --runtime-summary-padding-top: calc(var(--space-1) * 2.5);
-  --runtime-summary-padding-bottom: var(--space-2);
-  --runtime-header: max(40px, calc(var(--font-ui) * 40 / 14.5));
-  --runtime-effort-block: 36px;
-  --runtime-summary-gap: var(--space-2);
-  --runtime-model-group-gap: var(--space-1);
-  --runtime-list: calc(var(--runtime-rows, 1) * (var(--runtime-row) + 1px) - 1px);
-  --runtime-summary: calc(
-    2px + var(--runtime-summary-padding-top) + var(--runtime-summary-padding-bottom)
-    + var(--runtime-summary-context, 1) * var(--runtime-context-row)
-    + var(--runtime-selection-row)
-    + var(--runtime-summary-effort, 0) * var(--runtime-effort-block)
-    + var(--runtime-summary-context, 1) * var(--runtime-summary-gap)
-    + var(--runtime-summary-effort, 0) * var(--runtime-model-group-gap)
-  );
+  --runtime-row: max(34px, calc(var(--font-ui) * 34 / 14.5));
   position: relative;
-  display: block;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
   width: min(var(--runtime-panel-width), calc(100vw - 16px));
-  height: var(--runtime-summary);
-  --runtime-max-height: min(
+  max-height: min(
     var(--floating-menu-available-height, 999px),
-    max(320px, calc(var(--runtime-row) * 8.5)),
-    calc(100vh - 180px)
+    420px,
+    calc(100vh - 64px)
   );
-  max-height: var(--runtime-max-height);
   overflow: hidden;
   padding: 0;
   border-color: var(--hairline-soft);
   box-shadow: var(--menu-shadow);
-  transition: height var(--motion-base) var(--ease-out);
 }
 
-.codex-model-menu.runtime-panel.is-engines {
-  height: calc(2px + var(--runtime-header) + var(--runtime-list) + var(--menu-inset));
+.runtime-flat {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
 }
 
-/* Provider rows already return to the summary, so that page has no back
- * header and takes the inset on both sides. */
-.codex-model-menu.runtime-panel.is-providers {
-  height: calc(2px + var(--runtime-list) + var(--menu-inset) * 2);
+.runtime-flat-panel.from-rail .runtime-flat {
+  flex-direction: row-reverse;
 }
 
-.codex-model-menu.runtime-panel.is-models {
-  --runtime-models-search-row: var(--control-field-height);
-  height: calc(2px + var(--runtime-models-search-row) + var(--runtime-list) + var(--menu-inset));
-}
-
-/* Without a search field the rows reach the top of the page, so the shell adds
- * nothing above them. */
-.codex-model-menu.runtime-panel.is-models:not(:has(.select-menu-search)) {
-  --runtime-models-search-row: 0px;
-}
-
-.runtime-panel-page {
-  position: absolute;
-  inset: 0;
+.runtime-flat-main {
   display: flex;
   min-width: 0;
   min-height: 0;
+  flex: 1 1 auto;
   flex-direction: column;
-  overflow: hidden;
-  will-change: opacity, translate;
 }
 
-/* Empty states have text height, not model-row height. */
-.codex-model-menu.runtime-panel.is-models:has(.composer-menu-empty) {
-  height: auto;
+.runtime-flat-models {
+  align-content: start;
+  padding: var(--menu-inset);
 }
 
-.codex-model-menu.runtime-panel.is-models:has(.composer-menu-empty) > .runtime-panel-page {
-  position: relative;
-  max-height: calc(var(--runtime-max-height) - 2px);
+.runtime-flat-models .codex-model-group + .codex-model-group {
+  margin-top: 4px;
 }
 
-.codex-model-menu.engine-runtime-panel.is-summary {
-  height: auto;
+.runtime-provider-head {
+  display: flex;
+  height: 24px;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 10px;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-medium);
 }
 
-.engine-runtime-panel.is-summary > .runtime-panel-page {
-  position: relative;
-  max-height: calc(var(--runtime-max-height) - 2px);
+.codex-runtime-menu .runtime-provider-head.is-action {
+  width: 100%;
+  height: 24px;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+}
+
+.codex-runtime-menu .runtime-provider-head.is-action:hover:not(:disabled) {
+  color: var(--ink);
+}
+
+.codex-runtime-menu .runtime-provider-head .provider-mark {
+  display: inline-flex;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+}
+
+.runtime-provider-head .provider-mark svg {
+  width: 100%;
+  height: 100%;
+}
+
+.runtime-provider-head .provider-mark-monogram {
+  font-size: 9px;
+  font-weight: var(--weight-semibold);
+}
+
+.codex-runtime-menu .runtime-model-kbd {
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 0 3px;
+  border: 1px solid var(--hairline-soft);
+  border-radius: 3px;
+  color: var(--ink-muted);
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.runtime-flat-side {
+  display: flex;
+  min-height: 0;
+  flex: 0 0 auto;
+  flex-direction: column;
+  width: max(168px, calc(var(--font-ui) * 168 / 14.5));
+  border-inline-start: 1px solid var(--hairline-soft);
   overflow-y: auto;
+}
+
+.runtime-flat-panel.from-rail .runtime-flat-side {
+  border-inline-start: 0;
+  border-inline-end: 1px solid var(--hairline-soft);
+}
+
+.runtime-effort-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: var(--menu-inset);
+}
+
+.runtime-flat-side-title {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 9px;
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+}
+
+.runtime-flat-side-model {
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink-muted);
+}
+
+.codex-runtime-menu .runtime-effort-option {
+  height: var(--runtime-row);
+}
+
+.codex-runtime-menu .runtime-effort-option-tag {
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
+  color: var(--ink-tertiary);
+  font-size: 10px;
+  font-weight: var(--weight-medium);
+  line-height: 14px;
+}
+
+.runtime-flat-footer {
+  display: flex;
+  min-height: 40px;
+  flex: 0 0 auto;
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--hairline-soft);
+}
+
+.codex-runtime-menu .runtime-speed-segmented button {
+  width: auto;
+  height: var(--control-size-inline);
+  min-height: var(--control-size-inline);
+  flex: 0 0 auto;
+  gap: 4px;
+  padding: 0 var(--space-2);
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  font-weight: var(--weight-regular);
+}
+
+.codex-runtime-menu .runtime-speed-segmented button:hover:not(:disabled) {
+  background: transparent;
+  color: var(--ink-strong);
+}
+
+/* Pressed keeps regular weight: a medium label is wider, so the emphasis
+ * would resize the option and shift the neighboring target mid-toggle. */
+.codex-runtime-menu .runtime-speed-segmented button[aria-pressed="true"] {
+  background: var(--segmented-thumb);
+  color: var(--ink-strong);
+  font-weight: var(--weight-regular);
+  box-shadow: var(--shadow-soft);
+}
+
+.codex-runtime-menu .runtime-speed-icon {
+  position: relative;
+  display: block;
+  min-width: 0;
+  width: var(--icon-size-xs);
+  height: var(--icon-size-xs);
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.codex-runtime-menu .runtime-speed-icon > svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.runtime-speed-outline > path {
+  fill: none;
+  stroke: currentColor;
+}
+
+.runtime-speed-fill {
+  clip-path: inset(100% 0 0);
+  transition: clip-path var(--motion-slow) var(--ease-out);
+}
+
+.codex-runtime-menu .runtime-speed-option[aria-pressed="true"] .runtime-speed-fill {
+  clip-path: inset(0);
+}
+
+.runtime-speed-icon[data-charging="true"] {
+  animation: runtime-speed-charge var(--motion-slower) var(--ease-out);
 }
 
 .runtime-model-options {
   display: grid;
   gap: var(--space-2);
-  padding: 0 var(--space-2) var(--space-2);
+  padding: 0 var(--menu-inset) var(--menu-inset);
 }
 
 .runtime-model-option {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: center;
-  gap: var(--space-2);
+  gap: 4px;
 }
 
 .runtime-model-option > span {
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
   overflow-wrap: anywhere;
 }
 
-.runtime-panel-page.is-forward {
-  --enter-x: 18px;
-  animation: wuu-enter var(--motion-base) var(--ease-out) both;
-}
-
-.runtime-panel-page.is-back {
-  --enter-x: -18px;
-  animation: wuu-enter var(--motion-base) var(--ease-out) both;
-}
-
-.runtime-panel-summary {
-  --runtime-content-inset: var(--space-1);
-  display: flex;
-  height: 100%;
-  min-height: 0;
-  flex-direction: column;
-  justify-content: flex-start;
-  gap: var(--runtime-summary-gap);
-  padding: var(--runtime-summary-padding-top) var(--space-2) var(--runtime-summary-padding-bottom);
-}
-
-/* The model and its effort control form one group beneath the source path. */
-.runtime-panel-model-group {
-  display: flex;
-  min-width: 0;
-  min-height: 0;
-  flex: 0 0 auto;
-  flex-direction: column;
-  gap: var(--runtime-model-group-gap);
-}
-
-/* Where the model comes from, as a quiet path above it. */
-.runtime-panel-context {
-  display: flex;
-  min-width: 0;
-  height: var(--runtime-context-row);
-  flex: 0 0 auto;
-  align-items: center;
-  gap: 4px;
-  color: var(--ink-tertiary);
-}
-
-.runtime-panel-context-source {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 4px;
-}
-
-.codex-runtime-menu .runtime-panel-context button,
-.runtime-panel-context-item {
-  display: inline-flex;
-  width: auto;
-  height: var(--runtime-context-row);
-  min-width: 0;
-  flex: 0 1 auto;
-  align-items: center;
-  gap: 4px;
-  padding: 0 var(--runtime-content-inset);
-  border-radius: var(--radius-xs);
-  color: var(--ink-secondary);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-regular);
-  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
-}
-
-.runtime-panel-context-item > span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* Engine names are a word long; the provider beside them can be any length,
- * so it alone gives way when the row runs short. */
-.runtime-panel-context :is(button, .runtime-panel-context-item):has(> .engine-icon) {
-  flex-shrink: 0;
-}
-
-.codex-runtime-menu .runtime-panel-context button:hover {
-  color: var(--ink);
-}
-
-.runtime-panel-context :is(button, .runtime-panel-context-item) > svg {
-  width: var(--icon-size-xs);
-  height: var(--icon-size-xs);
-  flex: 0 0 auto;
-  color: inherit;
-}
-
-.runtime-panel-context-separator {
-  flex: 0 0 auto;
-  padding: 0;
-  color: var(--ink-muted);
-}
-
-.runtime-panel-selection {
-  display: flex;
-  align-items: center;
-  height: var(--runtime-selection-row);
-  min-width: 0;
-  flex: 0 0 auto;
-  gap: var(--space-2);
-}
-
-.codex-runtime-menu .runtime-panel-model {
-  width: auto;
-  height: 100%;
-  flex: 1 1 auto;
-  justify-content: flex-start;
-  gap: var(--space-1);
-  padding: 0 var(--runtime-content-inset);
-  border-radius: var(--radius-xs);
-  font-size: var(--font-ui);
-  font-weight: var(--weight-medium);
-  color: var(--ink);
-}
-
-.runtime-panel-model .runtime-panel-model-name {
-  flex: 0 1 auto;
-}
-
-.runtime-panel-model > svg:last-child {
-  color: var(--ink-tertiary);
-}
-
-/* The track and model button share outer guides; labels and icons keep their
- * own reading inset. The thumb stays inside the track, including its focus ring. */
-.runtime-panel-effort {
-  height: var(--runtime-effort-block);
-  flex: 0 0 auto;
-}
-
-/* Focus stays within the painted control edge so keyboard use does not move
- * either visual guide. The slider keeps its full input hit area. */
-html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
-  button:focus-visible,
-  .codex-effort-slider:has(input:focus-visible) .codex-effort-knob
-) {
-  outline-offset: -2px;
-}
-
-.codex-runtime-menu .runtime-panel-effort-value {
-  min-width: 0;
-  max-width: 40%;
-  flex: 0 0 auto;
-  padding-inline: var(--runtime-content-inset);
-  color: var(--ink-soft);
-  font-size: var(--font-sm);
-  font-weight: var(--weight-regular);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.runtime-panel-header {
-  position: relative;
-  display: flex;
-  height: var(--runtime-header);
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  padding: 0 40px;
-  font-size: var(--font-menu);
-  font-weight: var(--weight-medium);
-}
-
-.codex-runtime-menu .runtime-panel-back {
-  position: absolute;
-  top: calc((var(--runtime-header) - 32px) / 2);
-  left: 8px;
-  width: 32px;
-  height: 32px;
-  justify-content: center;
-  padding: 0;
-  color: var(--ink-secondary);
-}
-
-.runtime-panel.is-models:not(:has(.select-menu-search)) .codex-model-groups {
-  padding-top: var(--menu-inset);
-}
-
-.runtime-panel-list,
-.runtime-panel .codex-model-groups {
-  min-height: 0;
-  flex: 1 1 auto;
-  align-content: start;
-  overflow-y: auto;
-  padding: 0 var(--menu-inset) var(--menu-inset);
-}
-
-.runtime-panel-list.runtime-provider-options {
-  padding-top: var(--menu-inset);
-}
-
-.runtime-panel .runtime-engine-options,
-.runtime-provider-options {
-  display: grid;
-  align-content: start;
-  grid-auto-rows: var(--runtime-row);
-  gap: 1px;
-}
-
-.codex-runtime-menu .runtime-engine-option,
-.codex-runtime-menu .runtime-provider-option,
 .runtime-panel .codex-model-item {
   width: 100%;
   height: var(--runtime-row);
@@ -3130,8 +2985,6 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   font-weight: var(--weight-medium);
 }
 
-.runtime-panel .runtime-engine-option[aria-checked="true"] > svg:not(.engine-icon),
-.runtime-panel .runtime-provider-option[aria-checked="true"] > svg,
 .runtime-panel .codex-model-item[aria-checked="true"] > svg {
   color: var(--ink-secondary);
 }
@@ -3139,25 +2992,41 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
 .runtime-panel .codex-model-group {
   display: grid;
   align-content: start;
-  grid-auto-rows: var(--runtime-row);
   gap: 1px;
 }
 
-@container style(--motion-reduced: 1) {
-  .codex-model-menu.runtime-panel {
-    transition: none;
-  }
+/* In the mobile sheet the columns stack: the engine rail becomes a top row,
+ * effort folds below the list, and the model column keeps the remaining
+ * height. */
+.composer-mobile-sheet-content .runtime-flat,
+.composer-mobile-sheet-content .runtime-flat-panel.from-rail .runtime-flat {
+  flex-direction: column;
+}
 
-  .runtime-panel-page.is-forward,
-  .runtime-panel-page.is-back,
+.composer-mobile-sheet-content .runtime-engine-rail {
+  flex-direction: row;
+  border-inline-end: 0;
+  border-inline-start: 0;
+  border-block-end: 1px solid var(--hairline-soft);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.composer-mobile-sheet-content .runtime-flat-side {
+  width: auto;
+  border-inline-start: 0;
+  border-inline-end: 0;
+  border-block-start: 1px solid var(--hairline-soft);
+}
+
+@container style(--motion-reduced: 1) {
   .codex-runtime-label.is-changed {
     animation: none;
   }
 
   .codex-runtime-trigger,
   .codex-runtime-trigger > svg.icon,
-  .codex-effort-fill,
-  .codex-effort-knob {
+  .runtime-speed-fill {
     transition: none;
   }
 }
@@ -3385,57 +3254,7 @@ html[data-focus-modality="keyboard"] .runtime-panel-summary :is(
   scrollbar-gutter: stable both-edges;
 }
 
-/* Only the glyph moves; the speed toggle keeps a stable hit target. */
-.codex-runtime-menu .runtime-panel-context .runtime-panel-fast {
-  width: var(--runtime-context-row);
-  height: var(--runtime-context-row);
-  flex: 0 0 auto;
-  margin-inline-end: calc(-1 * var(--runtime-content-inset));
-  justify-content: center;
-  padding: 0;
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--ink-tertiary);
-}
-
-.codex-runtime-menu .runtime-panel-speed-icon {
-  position: relative;
-  display: block;
-  flex: 0 0 auto;
-  overflow: visible;
-  width: var(--icon-size);
-  height: var(--icon-size);
-}
-
-.codex-runtime-menu .runtime-panel-speed-icon > svg {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-}
-
-.runtime-panel-speed-outline > path {
-  fill: none;
-  stroke: currentColor;
-}
-
-.runtime-panel-speed-fill {
-  clip-path: inset(100% 0 0);
-  transition: clip-path var(--motion-slow) var(--ease-out);
-}
-
-.codex-runtime-menu .runtime-panel-context .runtime-panel-fast[aria-pressed="true"] {
-  color: var(--interaction-accent);
-}
-
-.runtime-panel-fast[aria-pressed="true"] .runtime-panel-speed-fill {
-  clip-path: inset(0);
-}
-
-.runtime-panel-speed-icon[data-charging="true"] {
-  animation: runtime-speed-charge var(--motion-slower) var(--ease-out);
-}
-
+/* Only the glyph moves; the segmented option keeps a stable hit target. */
 @keyframes runtime-speed-charge {
   0%, 45%, 100% { transform: translateX(0) rotate(0); }
   60% { transform: translateX(-1px) rotate(-10deg); }

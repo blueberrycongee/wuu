@@ -255,7 +255,14 @@ export class DesktopPluginRuntime {
         // A never-started optional provider may keep failing without disturbing
         // consumers. Replacing a live provider still fences its consumers first.
         const available = !plugin.desktop || (live ? generation === desktopGeneration(plugin) : generation !== undefined);
-        graph.set(provider, [provider, available ? desktopGeneration(plugin) : null, providers]);
+        // Fencing answers whether a dependent's providers changed contractually:
+        // provider identity, code fingerprint, and wiring. graph_generation is
+        // the committed graph's key, not a contract — a graph-only rotation
+        // re-activates identical code. Keeping the dependent's last good
+        // generation live until its own replacement commits preserves the
+        // provider ordering contract without tearing its declared contributions
+        // (ribbon destinations, sidebar sections) down for a visible gap.
+        graph.set(provider, [provider, available ? plugin.fingerprint ?? null : null, providers]);
         providers.forEach(visit);
       };
       const providers = dependencies.get(id) ?? [];
