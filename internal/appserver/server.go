@@ -185,6 +185,11 @@ type threadState struct {
 	activeSteerContextSet          bool
 	steerDocumentOverrides         []activeDocumentOverride
 	interrupting                   bool
+	// interruptResumeTurnID and interruptResumeSteerIDs mark steer input that
+	// asked an interrupt-restart engine to stop the active turn. When that turn
+	// settles, the held steer messages rejoin the queue and start immediately.
+	interruptResumeTurnID   string
+	interruptResumeSteerIDs []string
 	// Worker-tree freeze (turn/interrupt): while set, agent-completion drains
 	// hold their pending synthetic turns. The next user-initiated turn folds
 	// the whole-tree snapshot into its request (frozenTreeContext) and marks

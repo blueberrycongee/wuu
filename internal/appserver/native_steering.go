@@ -133,17 +133,24 @@ func (s *Server) startNativeSteering(ctx context.Context, th *threadState, turnI
 	return func() { close(stop); <-done }
 }
 
-func (s *Server) steerDeliveryModeLocked(th *threadState) string {
+// steerDeliveryModeLocked reports how steer input reaches the provider. The
+// second result marks engines that can only be redirected by stopping the
+// active turn and resuming the same native session with the input.
+func (s *Server) steerDeliveryModeLocked(th *threadState) (string, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	descriptor, err := s.engineDescriptorForState(ctx, th.state, agentengine.NormalizeEngineID(th.EngineID))
-	if err == nil {
-		if slices.Contains(descriptor.Capabilities, "host-managed-steering") {
-			return "active_turn"
-		}
-		if th.PersistHistory && !th.nativeSteerUnsupported && slices.Contains(descriptor.Capabilities, "active-turn-steering") {
-			return "active_turn"
-		}
+	if err != nil {
+		return "queued", false
 	}
-	return "queued"
+	if slices.Contains(descriptor.Capabilities, "host-managed-steering") {
+		return "active_turn", false
+	}
+	if th.PersistHistory && !th.nativeSteerUnsupported && slices.Contains(descriptor.Capabilities, "active-turn-steering") {
+		return "active_turn", false
+	}
+	if th.PersistHistory && slices.Contains(descriptor.Capabilities, "interrupt-restart-steering") {
+		return "queued", true
+	}
+	return "queued", false
 }

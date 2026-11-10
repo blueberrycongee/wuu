@@ -237,6 +237,40 @@ func (s *Server) pendingUserMessageSummaries(threadID string, timings ...*rpcReq
 	return heldUserMessageSummaries(threadID, turns)
 }
 
+// resumeInterruptedSteers returns steer input held by an interrupt back to the
+// queue in submission order, so the next turn starts with that guidance instead
+// of leaving it frozen behind the stopped turn.
+func (s *Server) resumeInterruptedSteers(binding *runtime.State, threadID string, ids []string) {
+	if s == nil || s.rt == nil || len(ids) == 0 {
+		return
+	}
+	held, err := s.loadHeldUserTurns(binding, threadID)
+	if err != nil {
+		providers.DebugLogf("load held input after interrupted turn %q: %v", threadID, err)
+		return
+	}
+	byID := make(map[string]queuedTurn, len(held))
+	for _, entry := range held {
+		byID[entry.id] = entry
+	}
+	var entries []queuedTurn
+	for _, id := range ids {
+		entry, ok := byID[id]
+		if !ok || entry.origin != session.HeldUserWorkOriginSteer {
+			continue
+		}
+		previous := entry
+		entry.origin = session.HeldUserWorkOriginQueue
+		entry.msg.Steered = false
+		if err := s.persistUpdatedUserTurn(binding, threadID, previous, entry); err != nil {
+			providers.DebugLogf("requeue interrupted steer %q: %v", id, err)
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	s.prependQueuedUserTurns(threadID, entries)
+}
+
 func (s *Server) notifyHeldUserTurns(threadID string, turns []queuedTurn) {
 	s.notifyHeldUserTurnsWithError(threadID, turns, "")
 }

@@ -951,7 +951,7 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 		}
 		th.mu.Lock()
 		turnID := th.currentTurn
-		delivery := s.steerDeliveryModeLocked(th)
+		delivery, _ := s.steerDeliveryModeLocked(th)
 		th.mu.Unlock()
 		if remaining, err := s.loadHeldUserTurns(binding, params.ThreadID); err == nil {
 			s.notifyHeldUserTurns(params.ThreadID, remaining)
@@ -966,10 +966,18 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	turnID := th.currentTurn
-	delivery := s.steerDeliveryModeLocked(th)
+	delivery, interruptRestart := s.steerDeliveryModeLocked(th)
+	joiningRestart := interruptRestart && th.interrupting
+	if joiningRestart {
+		// The stop is already in flight; this input joins its held set.
+		interruptRestart = false
+	}
 	for _, pendingSteer := range th.pendingSteers {
 		if strings.TrimSpace(pendingSteer.ClientID) == clientID {
 			th.mu.Unlock()
+			if interruptRestart || joiningRestart {
+				delivery = "interrupt_restart"
+			}
 			return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID, Delivery: delivery}, nil)
 		}
 	}
@@ -1006,6 +1014,12 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 		steerID: clientID, document: cloneActiveDocument(steerDocument),
 	})
 	th.applyLatestSteerDocumentOverrideLocked()
+	if interruptRestart {
+		th.interruptResumeTurnID = turnID
+		if !slices.Contains(th.interruptResumeSteerIDs, clientID) {
+			th.interruptResumeSteerIDs = append(th.interruptResumeSteerIDs, clientID)
+		}
+	}
 	th.mu.Unlock()
 	if removedQueued {
 		s.notifyPluginTurnDiscarded(binding, params.ThreadID, removedQueuedTurn, "queued turn was converted to steering input")
@@ -1026,7 +1040,30 @@ func (s *Server) handleTurnSteer(ctx context.Context, req Request) error {
 			origin:   session.HeldUserWorkOriginSteer,
 		}),
 	})
-	return s.writeResponse(req.ID, TurnSteerResult{TurnID: turnID, Delivery: delivery}, nil)
+	result := TurnSteerResult{TurnID: turnID, Delivery: delivery}
+	if joiningRestart {
+		result.Delivery = "interrupt_restart"
+	}
+	if interruptRestart {
+		// The engine cannot take input mid-turn; stopping it and resuming the
+		// same native session with this message is its steering path. The held
+		// input rejoins the queue when the interrupted turn settles.
+		turnActive, interruptErr := s.interruptThreadExecution(binding, params.ThreadID, "", turnID)
+		if interruptErr != nil {
+			providers.DebugLogf("interrupt for steering thread %q: %v", params.ThreadID, interruptErr)
+		}
+		if turnActive {
+			result.Delivery = "interrupt_restart"
+		} else {
+			th.mu.Lock()
+			if th.interruptResumeTurnID == turnID {
+				th.interruptResumeTurnID = ""
+				th.interruptResumeSteerIDs = nil
+			}
+			th.mu.Unlock()
+		}
+	}
+	return s.writeResponse(req.ID, result, nil)
 }
 
 func (th *threadState) validateSteerTargetLocked(expectedTurnID string) error {
@@ -3853,6 +3890,12 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	// the next turn cannot observe a half-restored runtime.
 	var nativeHeld []queuedTurn
 	th.interrupting = false
+	resumeSteerIDs := th.interruptResumeSteerIDs
+	if th.interruptResumeTurnID != turnID {
+		resumeSteerIDs = nil
+	}
+	th.interruptResumeTurnID = ""
+	th.interruptResumeSteerIDs = nil
 	s.pruneRevokedSteersLocked(th)
 	unconsumedSteers := th.drainPendingSteersLocked()
 	if nativeSteering && th.PersistHistory && !th.nativeSteerUnsupported {
@@ -3951,6 +3994,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	}
 	th.releaseTurnExecutionLocked(turnID)
 	th.mu.Unlock()
+	s.resumeInterruptedSteers(binding, th.ID, resumeSteerIDs)
 	if len(nativeHeld) > 0 {
 		s.notifyHeldUserTurnsWithError(th.ID, nativeHeld, "native turn ended before steering input was accepted")
 	}
