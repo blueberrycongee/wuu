@@ -532,7 +532,32 @@ export class ApplicationSubmission {
     const owner = operation.thread ? threadSessionTabID(operation.thread.id) : operation.source.id;
     // Another shell or an edit made while waiting owns its new content.
     if (this.ownsDraft(operation, owner)) this.options.setDraft(owner, emptyComposerDraft());
+    else this.releaseSubmittedContent(operation, owner);
     this.publish();
+  }
+  // Input added on top of the retained draft while delivery was pending is a
+  // new draft, not part of the sent message. Strip the submitted content so the
+  // remainder survives without replaying text that already went out.
+  private releaseSubmittedContent(operation: Operation, owner: string): void {
+    const draft = operation.draft;
+    if (!draft) return;
+    const current = this.options.getDraft(owner);
+    const prompt = current.prompt.startsWith(draft.prompt)
+      ? current.prompt.slice(draft.prompt.length)
+      : current.prompt;
+    const images = new Set(draft.images.map(row => row.id));
+    const files = new Set(draft.files.map(row => row.id));
+    const selections = new Set((draft.selections ?? []).map(row => row.id));
+    const keptSelections = (current.selections ?? []).filter(row => !selections.has(row.id));
+    const next: ComposerDraftState = { ...current, prompt,
+      images: current.images.filter(row => !images.has(row.id)),
+      files: current.files.filter(row => !files.has(row.id)),
+      selections: keptSelections.length ? keptSelections : undefined };
+    if (next.prompt === current.prompt
+      && next.images.length === current.images.length
+      && next.files.length === current.files.length
+      && keptSelections.length === (current.selections ?? []).length) return;
+    this.options.setDraft(owner, next);
   }
   private recover(operation: Operation): void {
     if (this.disposed) return;
