@@ -369,7 +369,12 @@ async function run() {
         }, endpoint);
         await waitFor(main, endpoint => {
           const options = [...document.querySelectorAll('.runtime-effort-option')];
-          return options[endpoint === 'min' ? 0 : options.length - 1]?.getAttribute('aria-checked') === 'true';
+          const option = options[endpoint === 'min' ? 0 : options.length - 1];
+          const name = option?.querySelector('.runtime-effort-option-name')?.textContent;
+          // aria-checked is optimistic; the trigger label only catches up once
+          // the app-server commits the new variant.
+          return option?.getAttribute('aria-checked') === 'true'
+            && Boolean(name) && document.querySelector('.codex-runtime-trigger')?.getAttribute('aria-label')?.includes(name);
         }, endpoint);
         await capturePanel(main, `aligned-${fastSupported ? 'fast' : 'basic'}-${theme}-${font}-${width}-${endpoint}`, fastSupported);
       }
@@ -434,7 +439,8 @@ async function run() {
       await waitFor(main, () => Boolean(document.querySelector('.slash-command-item[data-command-name="fast"]')));
       await evaluate(main, () => document.querySelector('.composer textarea').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })));
     } else {
-      await evaluate(main, () => document.querySelector('.runtime-speed-icon').closest('button').click());
+      await evaluate(main, next => [...document.querySelectorAll('.runtime-speed-option')]
+        .find(option => Boolean(option.querySelector('.runtime-speed-icon')) === (next === 'fast')).click(), speed);
     }
     await waitFor(main, async ({ id, speed }) => ((await window.wuu.resumeThread(id)).thread.speed || '') === speed, { id: native, speed });
     await evaluate(main, async id => {
