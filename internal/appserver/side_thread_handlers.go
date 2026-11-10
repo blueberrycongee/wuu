@@ -238,7 +238,10 @@ func (p *sideThreadItemProjector) apply(event providers.StreamEvent, now time.Ti
 		return nil, false
 	}
 	changed := len(p.thread.applyStreamEventLocked(p.turnID, event, now)) > 0
-	return p.items(), changed
+	if !changed {
+		return nil, false
+	}
+	return p.items(), true
 }
 
 func (p *sideThreadItemProjector) finish(status TurnStatus, runErr error, now time.Time) []ThreadItem {

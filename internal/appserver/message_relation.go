@@ -30,7 +30,7 @@ func (th *threadState) applyStreamEventWithRelationLocked(turnID string, ev prov
 	if index := th.turnIndexLocked(turnID); index >= 0 {
 		for i := range th.Turns[index].Items {
 			item := &th.Turns[index].Items[i]
-			if item.Type == ThreadItemAgentMessage {
+			if item.Type == ThreadItemAgentMessage && item.Relation == nil {
 				item.Relation = providers.CloneMessageRelation(relation)
 			}
 		}

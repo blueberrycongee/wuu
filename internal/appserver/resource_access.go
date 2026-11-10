@@ -333,13 +333,17 @@ func requestResources(req Request) ([]access.Resource, error) {
 // Event envelopes carry authoritative thread ids at the envelope or typed
 // wrapper, never inferred from arbitrary message bodies or tool output.
 func notificationResources(params any) ([]access.Resource, error) {
-	raw, err := json.Marshal(params)
-	if err != nil {
-		return nil, err
-	}
 	var fields map[string]json.RawMessage
-	if json.Unmarshal(raw, &fields) != nil {
-		return nil, errors.New("invalid notification")
+	if raw, ok := params.(map[string]json.RawMessage); ok {
+		fields = raw
+	} else {
+		raw, err := json.Marshal(params)
+		if err != nil {
+			return nil, err
+		}
+		if json.Unmarshal(raw, &fields) != nil {
+			return nil, errors.New("invalid notification")
+		}
 	}
 	var resources []access.Resource
 	collect := func(fields map[string]json.RawMessage, keys ...string) error {
