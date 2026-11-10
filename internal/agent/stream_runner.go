@@ -1212,6 +1212,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		completedMessages []providers.ChatMessage
 		providerItems     []providers.ProviderItem
 		pendingTools      = map[int]*providers.ToolCall{}
+		pendingArgs       = map[*providers.ToolCall]*strings.Builder{}
 		usage             *providers.TokenUsage
 		stopReason        string
 		finishReason      providers.FinishReason
@@ -1307,7 +1308,7 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		}
 		return nil
 	}
-	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &completedMessages, &reasoningBlocks, &providerItems, &images, pendingTools, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
+	if err := s.runReliableStream(ctx, req, &contentBuf, &thinkingBuf, &completedMessages, &reasoningBlocks, &providerItems, &images, pendingTools, pendingArgs, &messagePhase, &providerItemID, &providerItemModel, &usage, &stopReason, &finishReason, &truncated, resetRuntime, replayGuard, observeEvent); err != nil {
 		if rt := currentToolRuntime(); rt != nil {
 			rt.Cancel()
 		}
@@ -1319,6 +1320,9 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 		partialToolCalls := make([]providers.ToolCall, 0, len(pendingTools))
 		for i := 0; i < len(pendingTools); i++ {
 			if tc, ok := pendingTools[i]; ok {
+				if buf := pendingArgs[tc]; buf != nil {
+					tc.Arguments = buf.String()
+				}
 				partialToolCalls = append(partialToolCalls, *tc)
 			}
 		}
@@ -1376,6 +1380,9 @@ func (s *streamStep) Execute(ctx context.Context, req providers.ChatRequest) (St
 	toolCalls := make([]providers.ToolCall, 0, len(pendingTools))
 	for i := 0; i < len(pendingTools); i++ {
 		if tc, ok := pendingTools[i]; ok {
+			if buf := pendingArgs[tc]; buf != nil {
+				tc.Arguments = buf.String()
+			}
 			toolCalls = append(toolCalls, *tc)
 		}
 	}
@@ -1594,6 +1601,7 @@ func (s *streamStep) runReliableStream(
 	providerItems *[]providers.ProviderItem,
 	images *[]providers.InputImage,
 	pendingTools map[int]*providers.ToolCall,
+	pendingArgs map[*providers.ToolCall]*strings.Builder,
 	messagePhase *providers.MessagePhase,
 	providerItemID *string,
 	providerItemModel *string,
@@ -1670,6 +1678,9 @@ func (s *streamStep) runReliableStream(
 		// history. Clear the map before starting a fresh provider attempt.
 		for k := range pendingTools {
 			delete(pendingTools, k)
+		}
+		for k := range pendingArgs {
+			delete(pendingArgs, k)
 		}
 		if onAttemptStart != nil {
 			onAttemptStart()
@@ -1787,7 +1798,13 @@ func (s *streamStep) runReliableStream(
 						}
 					}
 					if owner != nil {
-						owner.Arguments += event.Content
+						buf := pendingArgs[owner]
+						if buf == nil {
+							buf = &strings.Builder{}
+							buf.WriteString(owner.Arguments)
+							pendingArgs[owner] = buf
+						}
+						buf.WriteString(event.Content)
 					}
 				}
 
@@ -1813,6 +1830,7 @@ func (s *streamStep) runReliableStream(
 							}
 							if toolCall.Arguments != "" {
 								tc.Arguments = toolCall.Arguments
+								delete(pendingArgs, tc)
 							}
 							if toolCall.Kind != "" {
 								tc.Kind = toolCall.Kind
@@ -1851,6 +1869,9 @@ func (s *streamStep) runReliableStream(
 					resetPartialOutput()
 					for k := range pendingTools {
 						delete(pendingTools, k)
+					}
+					for k := range pendingArgs {
+						delete(pendingArgs, k)
 					}
 					if onAttemptStart != nil {
 						onAttemptStart()

@@ -558,7 +558,7 @@ func (m *Manager) runTurn(ctx context.Context, cancel context.CancelFunc, sa *Su
 	// UI, so the callback short-circuits when the derived phrase
 	// matches what's already set — the observer only sees changes.
 	onEvent := func(ev providers.StreamEvent) {
-		m.notifyStream(sa, ev)
+		m.notifyStream(ctx, sa, ev)
 		act := deriveWorkerActivity(ev)
 		if act == "" {
 			return
@@ -968,7 +968,7 @@ func (m *Manager) BroadcastSnapshot(sa *SubAgent) {
 	m.notify(sa, sa.Snapshot().Status)
 }
 
-func (m *Manager) notifyStream(sa *SubAgent, ev providers.StreamEvent) {
+func (m *Manager) notifyStream(ctx context.Context, sa *SubAgent, ev providers.StreamEvent) {
 	if sa == nil {
 		return
 	}
@@ -982,8 +982,15 @@ func (m *Manager) notifyStream(sa *SubAgent, ev providers.StreamEvent) {
 	streams := append([]chan<- StreamNotification(nil), m.streams...)
 	m.mu.Unlock()
 
+	// Stream notifications stay lossless: a full channel back-pressures the
+	// producer rather than dropping deltas. The run context bounds that wait
+	// so cancellation can still unwind a wedged subscriber.
 	for _, ch := range streams {
-		ch <- n
+		select {
+		case ch <- n:
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 

@@ -242,10 +242,13 @@ func (h *UserHost) WriteAuthorized(p []byte, guard func() error) (int, error) {
 		connections = append(connections, c)
 	}
 	h.mu.Unlock()
+	// The params payload is identical for every recipient; decode it once
+	// instead of paying a full generic decode per connection per frame.
+	var params map[string]json.RawMessage
+	paramsErr := json.Unmarshal(envelope["params"], &params)
 	for _, c := range connections {
-		var params any
-		if err := json.Unmarshal(envelope["params"], &params); err != nil {
-			continue
+		if paramsErr != nil {
+			break
 		}
 		_, recipientGuard, allowed := h.server.authorizeOutbound(c.ctx, Notification{Method: method, Params: params})
 		if !allowed {
