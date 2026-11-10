@@ -813,6 +813,9 @@ var personalDesktop = (() => {
         return previous && { x: previous.left - position.left, y: previous.top - position.top };
       };
       place();
+      const bubble = copy2.querySelector(".user-message");
+      const content = bubble?.firstElementChild;
+      const textX = content && flight.textLeft !== void 0 ? (flight.textLeft - content.getBoundingClientRect().left) / zoom - x : void 0;
       const tracks = [];
       const play = (target, frames, options) => {
         const track = target.animate(frames, options);
@@ -832,7 +835,6 @@ var personalDesktop = (() => {
         { offset: 0.9, scale: "1 1" },
         { offset: 1, scale: "1 1" }
       ], { duration: travelMS });
-      const bubble = copy2.querySelector(".user-message");
       const extra = bubble ? Math.max(0, (flight.origin.width - bubble.getBoundingClientRect().width) / zoom) : 0;
       if (bubble && extra > 0) {
         const style = getComputedStyle(bubble);
@@ -845,8 +847,10 @@ var personalDesktop = (() => {
         const borderLeft = style.borderLeftWidth;
         bubble.setAttribute("data-send-shaping", "");
         const shape = play(bubble, [{ left: `${-extra - parseFloat(borderLeft)}px` }, { left: `-${borderLeft}` }], { duration: shapeMS, easing: shapeCurve, pseudoElement: "::before" });
-        for (const child of bubble.children) play(child, [{ translate: `${-extra}px 0` }, { translate: "0px 0px" }], { duration: shapeMS, easing: shapeCurve });
         shape.addEventListener("finish", () => bubble.removeAttribute("data-send-shaping"), { once: true });
+      }
+      if (bubble && (extra > 0 || textX !== void 0)) {
+        for (const child of bubble.children) play(child, [{ translate: `${textX ?? -extra}px 0` }, { translate: "0px 0px" }], { duration: shapeMS, easing: shapeCurve });
       }
       let frame;
       const stop = () => {
@@ -911,7 +915,10 @@ var personalDesktop = (() => {
         const view = [...rootRef.current?.querySelectorAll(".plugin-conversation") || []].find((node) => node.dataset.conversationId === conversationID);
         const composer = view?.querySelector(".composer-frame");
         if (!composer || view.closest('[hidden],[inert],[aria-hidden="true"]')) return;
-        flights.current.set(requestID, { requestID, view, origin: composer.getBoundingClientRect() });
+        const input = composer.querySelector("textarea, .composer-rich-input");
+        const style = input && getComputedStyle(input);
+        const textLeft = input && input.getBoundingClientRect().left + (parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft) - input.scrollLeft) * view.currentCSSZoom;
+        flights.current.set(requestID, { requestID, view, origin: composer.getBoundingClientRect(), textLeft: textLeft ?? void 0 });
       }
     };
   }

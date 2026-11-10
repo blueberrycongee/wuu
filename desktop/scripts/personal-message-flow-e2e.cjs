@@ -70,6 +70,38 @@ app.whenReady().then(async () => {
     report.cases.push({name,layout});
   }
   win.setSize(1128, 900);
+  // The draft starts after the Plus button in a short composer and on its own
+  // row in a multiline composer. Sending must not first jump the text left.
+  for (const text of ['111', 'A multiline draft keeps its original text origin. '.repeat(8)]) {
+    await load({ sendScenario: 'sending' });
+    await win.webContents.executeJavaScript(`(() => {
+      const input = document.querySelector('.mosaic-main textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, ${JSON.stringify(text)});
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`, true);
+    await evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await evaluate(() => {
+      const input = document.querySelector('.mosaic-main textarea');
+      const style = getComputedStyle(input), zoom = input.currentCSSZoom;
+      window.__draftTextLeft = input.getBoundingClientRect().left + (parseFloat(style.borderLeftWidth) + parseFloat(style.paddingLeft) - input.scrollLeft) * zoom;
+      const observer = new MutationObserver(() => {
+        const overlay = document.querySelector('.mosaic-send-overlay');
+        if (!overlay) return;
+        observer.disconnect();
+        for (const track of overlay.getAnimations({subtree:true})) { track.pause(); track.currentTime = 0; }
+        window.__originFlight = overlay;
+      });
+      observer.observe(document.querySelector('.mosaic-main'), {childList:true, subtree:true});
+    });
+    await evaluate(() => document.querySelector('.mosaic-main .composer-send-button').click());
+    await until(() => window.__originFlight);
+    const origin = await evaluate(() => ({ draft: window.__draftTextLeft,
+      flight: window.__originFlight.querySelector('.user-message').firstElementChild.getBoundingClientRect().left }));
+    assert(Math.abs(origin.flight - origin.draft) < 1, `Draft text must retain its horizontal origin: ${JSON.stringify(origin)}`);
+    await evaluate(() => { for (const track of window.__originFlight.getAnimations({subtree:true})) track.play(); window.__receiptScenario.release(); });
+    await until(() => !document.querySelector('.mosaic-send-overlay, [data-personal-send-source]'));
+    report.cases.push({name:'draft-text-origin', textLength:text.length, origin});
+  }
   await load({ sendScenario: 'sending' });
   const recording = [];
   recordingActive = true;
