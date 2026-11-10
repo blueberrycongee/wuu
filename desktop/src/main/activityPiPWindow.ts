@@ -1353,6 +1353,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const card = sharedSize
       ? layout ? browserPiPCardSize(layout.host, sharedSize) : sharedSize
       : win.getBounds();
+    // A card entering the desktop stack — or already flying — keeps its arc.
     const fly = (entering && this.desktopDocked) || Boolean(this.motion?.arc);
     if (index === 0 && !lead?.dragging) {
       if (wasLead) return;
