@@ -2885,7 +2885,7 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
  * concrete level. */
 .codex-runtime-menu .runtime-effort-option-hint {
   min-width: 0;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   color: var(--ink-tertiary);
   font-size: var(--font-sm);
   font-weight: var(--weight-regular);

@@ -358,7 +358,6 @@ export const zhCN = {
   "settings.codexLoginVerified": "登录验证成功",
   "settings.subscriptionRefreshFailed": "订阅刷新失败，请重试。",
   "settings.subscriptionModelFailed": "模型保存失败，请重试。",
-  "runtime.fastMode": "Fast mode",
   "runtime.fastModeOn": "Fast mode 已开启",
   "runtime.fastModeOff": "Fast mode 已关闭 · 普通速度",
   "runtime.fastModeHint": "更快响应，可能增加费用或额度消耗",

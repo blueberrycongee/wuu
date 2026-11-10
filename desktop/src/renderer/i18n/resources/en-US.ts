@@ -361,7 +361,6 @@ export const enUS = {
   "settings.codexLoginVerified": "Login verified",
   "settings.subscriptionRefreshFailed": "Could not refresh subscriptions. Try again.",
   "settings.subscriptionModelFailed": "Could not save the model. Try again.",
-  "runtime.fastMode": "Fast mode",
   "runtime.fastModeOn": "Fast mode on",
   "runtime.fastModeOff": "Fast mode off · Standard speed",
   "runtime.fastModeHint": "Faster responses may cost more or use more credits",
