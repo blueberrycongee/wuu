@@ -98,7 +98,13 @@ func (e *Engine) acpEnvironment() []string {
 
 func (e *Engine) Descriptor(context.Context) (agentengine.Descriptor, error) {
 	requiresHostModel := false
-	return agentengine.Descriptor{ID: agentengine.EngineID(e.entry.ID), Version: "1", RequiresHostModel: &requiresHostModel, Capabilities: []string{"native-tool-loop", "native-session-resume", "interactive-approval", "model-options", "default-permission-unconfined", e.entry.Protocol}}, nil
+	capabilities := []string{"native-tool-loop", "native-session-resume", "interactive-approval", "model-options", "default-permission-unconfined", e.entry.Protocol}
+	if e.entry.Protocol == "acp" {
+		// ACP sessions resume by id after the agent process exits, so a steer can
+		// stop the active prompt and continue the same session with the new input.
+		capabilities = append(capabilities, "interrupt-restart-steering")
+	}
+	return agentengine.Descriptor{ID: agentengine.EngineID(e.entry.ID), Version: "1", RequiresHostModel: &requiresHostModel, Capabilities: capabilities}, nil
 }
 
 func (e *Engine) Open(ctx context.Context, req agentengine.OpenRequest) (agentengine.Session, error) {

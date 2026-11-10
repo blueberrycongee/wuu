@@ -190,6 +190,8 @@ func copyEphemeralAdmissionProjectionLocked(th *threadState) *threadState {
 // must not unfreeze an interrupted worker tree or lose pending steer context.
 func copyThreadAdmissionContextLocked(next, th *threadState) {
 	next.nativeSteerUnsupported = th.nativeSteerUnsupported
+	next.interruptResumeTurnID = th.interruptResumeTurnID
+	next.interruptResumeSteerIDs = slices.Clone(th.interruptResumeSteerIDs)
 	next.activeSteerContextSet = th.activeSteerContextSet
 	next.workerTreeFrozen = th.workerTreeFrozen
 	next.pendingSteers = cloneHistory(th.pendingSteers)
