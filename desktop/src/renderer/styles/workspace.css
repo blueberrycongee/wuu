@@ -2897,8 +2897,8 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
 
 .codex-runtime-menu .runtime-speed-segmented button {
   width: auto;
-  height: 24px;
-  min-height: 24px;
+  height: var(--control-size-inline);
+  min-height: var(--control-size-inline);
   flex: 0 0 auto;
   gap: 4px;
   padding: 0 var(--space-2);
@@ -2914,10 +2914,12 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   color: var(--ink-strong);
 }
 
+/* Pressed keeps regular weight: a medium label is wider, so the emphasis
+ * would resize the option and shift the neighboring target mid-toggle. */
 .codex-runtime-menu .runtime-speed-segmented button[aria-pressed="true"] {
   background: var(--segmented-thumb);
   color: var(--ink-strong);
-  font-weight: var(--weight-medium);
+  font-weight: var(--weight-regular);
   box-shadow: var(--shadow-soft);
 }
 
