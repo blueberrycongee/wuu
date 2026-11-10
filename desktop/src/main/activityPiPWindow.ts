@@ -785,21 +785,27 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
 
   // Layout changes place the card at once; a flight carries a visible card
   // there instead.
-  private placeCommitted(fly = false): void {
+  private placeCommitted(fly = Boolean(this.motion?.arc)): void {
     const layout = this.placementLayout();
     const win = this.win;
     // A trailing card rests relative to its lead, never at a corner of its own.
     if (!layout || !win || win.isDestroyed() || this.stackIndex > 0) return;
-    this.cancelSnap();
     const card = this.userSize
       ? this.activity.kind === "cua" ? browserPiPCardSize(layout.host, this.userSize) : browserPiPFitCard(layout.host, this.userSize)
       : browserPiPCardSize(layout.host, browserPiPSizeForAspect(this.initialAspect ?? 4 / 3));
     const anchor = browserPiPAnchors(layout.host, layout.obstacles, card)
       .find((item) => item.alignment === this.alignment);
-    if (!anchor) return;
+    if (!anchor) {
+      this.cancelSnap();
+      return;
+    }
     const origin = browserPiPOrigin(anchor, card);
-    if (fly && win.isVisible() && !this.transition) this.flyTo(origin, card);
-    else this.applyBounds({ x: origin.x, y: origin.y, width: card.width, height: card.height });
+    if (fly && win.isVisible() && !this.transition) {
+      this.flyTo(origin, card);
+      return;
+    }
+    this.cancelSnap();
+    this.applyBounds({ x: origin.x, y: origin.y, width: card.width, height: card.height });
   }
 
   private followViewportAspect(): boolean {
@@ -1266,6 +1272,11 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
   private flyTo(origin: PipPoint, card: { width: number; height: number }): void {
     const win = this.win;
     if (!win || win.isDestroyed()) return;
+    if (this.motion?.arc && this.snapTimer !== undefined
+      && this.motion.origin.x === origin.x && this.motion.origin.y === origin.y
+      && this.motion.card.width === card.width && this.motion.card.height === card.height) {
+      return;
+    }
     this.cancelSnap();
     if (this.reducedMotion()) {
       this.applyBounds({ ...origin, ...card });
@@ -1333,6 +1344,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     if (this.desktopDocked && index > 0 && lead) this.refreshDesktopFrame(lead.frame);
     const hostShifted = this.hostShifted;
     this.hostShifted = false;
+    const entering = this.stackIndex < 0;
     const wasLead = this.stackIndex === 0;
     this.stackIndex = index;
     if (lead) this.stackMaxEdge = Math.max(lead.frame.width, lead.frame.height);
@@ -1341,6 +1353,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const card = sharedSize
       ? layout ? browserPiPCardSize(layout.host, sharedSize) : sharedSize
       : win.getBounds();
+    const fly = (entering && this.desktopDocked) || Boolean(this.motion?.arc);
     if (index === 0 && !lead?.dragging) {
       if (wasLead) return;
       if (lead) {
@@ -1348,7 +1361,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         this.userSize = { width: card.width, height: card.height };
       }
       if (layout || !lead) {
-        this.placeCommitted();
+        this.placeCommitted(fly);
         return;
       }
       const origin = {
@@ -1356,6 +1369,7 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
         y: lead.alignment.startsWith("bottom") ? lead.frame.y + lead.frame.height - card.height : lead.frame.y,
       };
       if (!win.isVisible() || this.transition) this.applyBounds({ ...origin, width: card.width, height: card.height });
+      else if (fly) this.flyTo(origin, { width: card.width, height: card.height });
       else this.animateTo(origin, { width: card.width, height: card.height }, { x: 0, y: 0 }, LEAD_SPRING);
       return;
     }
@@ -1374,6 +1388,10 @@ export class ActivityPiPSurface implements ObservationPiPHandle {
     const origin = frame ? browserPiPClampOrigin(desired, card, frame) : desired;
     if (!win.isVisible() || this.transition || (hostShifted && !this.motion)) {
       this.applyBounds({ ...origin, ...card });
+      return;
+    }
+    if (fly && !lead.dragging) {
+      this.flyTo(origin, card);
       return;
     }
     // Cards farther back trail on softer springs.
