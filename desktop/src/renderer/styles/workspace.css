@@ -2850,40 +2850,45 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   padding: var(--menu-inset);
 }
 
+/* The side column header stacks its label over the model the levels belong
+ * to; two squeezed one-line fields wrapped or clipped into noise. */
 .runtime-flat-side-title {
-  display: flex;
-  min-height: 28px;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: 0 9px;
-  color: var(--ink-tertiary);
+  display: grid;
+  gap: 1px;
+  padding: 5px 9px 6px;
   font-size: var(--font-sm);
+  line-height: 1.25;
+}
+
+.runtime-flat-side-heading {
+  overflow: hidden;
+  color: var(--ink-tertiary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .runtime-flat-side-model {
   min-width: 0;
-  max-width: 55%;
   overflow: hidden;
+  color: var(--ink);
+  font-weight: var(--weight-medium);
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: var(--ink-muted);
 }
 
 .codex-runtime-menu .runtime-effort-option {
   height: var(--runtime-row);
 }
 
-.codex-runtime-menu .runtime-effort-option-tag {
+/* The resolved default trails the "Default" row as plain metadata, the same
+ * place kbd hints sit on model rows — not a second "Default" pill on the
+ * concrete level. */
+.codex-runtime-menu .runtime-effort-option-hint {
   min-width: 0;
-  flex: 0 0 auto;
-  padding: 1px 4px;
-  border-radius: var(--radius-xs);
-  background: var(--surface-3);
+  flex: 0 1 auto;
   color: var(--ink-tertiary);
-  font-size: 10px;
-  font-weight: var(--weight-medium);
-  line-height: 14px;
+  font-size: var(--font-sm);
+  font-weight: var(--weight-regular);
 }
 
 .runtime-flat-footer {
@@ -2895,9 +2900,21 @@ html[data-focus-modality="keyboard"] .workspace-review-row:focus-visible {
   border-top: 1px solid var(--hairline-soft);
 }
 
+.runtime-flat-footer-label {
+  flex: 0 0 auto;
+  margin-inline-end: var(--space-2);
+  padding-inline-start: var(--space-1);
+  color: var(--ink-tertiary);
+  font-size: var(--font-sm);
+  white-space: nowrap;
+}
+
+/* Options stretch to fill the field-height track; a shorter pinned height
+ * left them top-aligned inside it and below the row hit target. The inline
+ * size stays as the floor for narrower tracks. */
 .codex-runtime-menu .runtime-speed-segmented button {
   width: auto;
-  height: var(--control-size-inline);
+  height: auto;
   min-height: var(--control-size-inline);
   flex: 0 0 auto;
   gap: 4px;

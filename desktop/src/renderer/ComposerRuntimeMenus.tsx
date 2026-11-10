@@ -229,7 +229,8 @@ function RuntimeEngineRail({
 }
 
 // The level list replaces the drag slider on the flat panel: radio rows share
-// the menu's arrow-key navigation and can mark the model's own default.
+// the menu's arrow-key navigation. The model's own default level trails the
+// "Default" row as the value it resolves to, so "Default" appears once.
 function RuntimeEffortColumn({
   model,
   options,
@@ -251,7 +252,7 @@ function RuntimeEffortColumn({
   return (
     <div className="runtime-effort-column" role="group" aria-label={t("runtime.reasoningEffort")}>
       <div className="runtime-flat-side-title">
-        <span>{t("runtime.reasoningEffort")}</span>
+        <span className="runtime-flat-side-heading">{t("runtime.reasoningEffort")}</span>
         <TruncatedText className="runtime-flat-side-model" text={model} />
       </div>
       {options.map((option) => {
@@ -268,8 +269,8 @@ function RuntimeEffortColumn({
             onClick={() => onSelect(option)}
           >
             <span className="runtime-effort-option-name">{variantLabel(option)}</span>
-            {option !== "" && option === defaultId ? (
-              <span className="runtime-effort-option-tag">{t("runtime.effort.default")}</span>
+            {option === "" && defaultId !== "" ? (
+              <span className="runtime-effort-option-hint">{variantLabel(defaultId)}</span>
             ) : null}
             {isSelected ? <Check className="icon-lg" aria-hidden="true" /> : null}
           </button>
@@ -337,12 +338,15 @@ function RuntimeSpeedControl({
     </button>
   );
   return (
-    <Tooltip content={fastModeHint}>
-      <div className="theme-segmented runtime-speed-segmented" role="group" aria-label={t("runtime.fastMode")}>
-        {renderOption("standard")}
-        {renderOption("fast")}
-      </div>
-    </Tooltip>
+    <>
+      <span className="runtime-flat-footer-label">{t("runtime.speed")}</span>
+      <Tooltip content={fastModeHint}>
+        <div className="theme-segmented runtime-speed-segmented" role="group" aria-label={t("runtime.speed")}>
+          {renderOption("standard")}
+          {renderOption("fast")}
+        </div>
+      </Tooltip>
+    </>
   );
 }
 
