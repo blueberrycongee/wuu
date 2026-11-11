@@ -161,6 +161,78 @@ describe("application submission ownership",()=>{
     await vi.waitFor(()=>expect(f.submission.getSnapshot().operations).toEqual([]));
     expect(window.wuu.queueTurn).toHaveBeenCalledOnce();
   });
+  // The retained draft stays editable while delivery is pending. Typing into it
+  // must survive as a new draft without replaying the text already sent.
+  it.each([["hello continued"," continued"],["replaced hello","replaced hello"]])("releases only the submitted content from an in-flight edit (%s)",async(edited,kept)=>{
+    const starting=deferred<{turn:Thread["turns"][number]}>();
+    window.wuu={startTurn:vi.fn(()=>starting.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture(thread());
+    f.submission.submit({ownerTabId:"thread:created"});
+    await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalledOnce());
+    f.setState({...f.getState(),sessionTabs:f.getState().sessionTabs.map(tab=>({...tab,prompt:edited}))});
+    starting.resolve({turn:{id:"accepted",status:"in_progress",items_view:"full",items:[]}});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
+    expect(f.getDraft("thread:created").prompt).toBe(kept);
+  });
+  it("strips the sent prefix on event-first admission while creation binds the tab",async()=>{
+    const creating=deferred<{thread:Thread}>();
+    const starting=deferred<{turn:Thread["turns"][number]}>();
+    window.wuu={startThread:vi.fn(()=>creating.promise),startTurn:vi.fn(()=>starting.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture(undefined,true);
+    const submitted=f.submission.submit({ownerTabId:"draft:a"});
+    creating.resolve({thread:thread()});
+    await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalledOnce());
+    f.setState({...f.getState(),sessionTabs:f.getState().sessionTabs.map(tab=>({...tab,prompt:"hello kept"}))});
+    const accepted={id:"accepted",status:"in_progress",items_view:"full",items:[{type:"user_message",id:"u",source_id:submitted.operationID,text:"hello"}]} as Thread["turns"][number];
+    f.setState(reduceServerEvent(f.getState(),{kind:"notification",workdir:context.cwd,message:{method:"turn/started",params:{thread_id:"created",turn:accepted}}}));
+    f.submission.reconcile();
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.draftPending).toBe(false));
+    expect(f.getDraft("thread:created").prompt).toBe(" kept");
+    starting.resolve({turn:accepted});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
+    expect(f.getDraft("thread:created").prompt).toBe(" kept");
+  });
+  it("strips the sent prefix after queue admission while a turn runs",async()=>{
+    const queued=deferred<{queued:{id:string}}>();
+    window.wuu={queueTurn:vi.fn(()=>queued.promise)} as unknown as WuuDesktopApi;
+    const f=fixture({...thread(),status:"in_progress",turns:[{id:"running",status:"in_progress",items_view:"full",items:[]}]});
+    f.submission.submit({ownerTabId:"thread:created",mode:"queue"});
+    await vi.waitFor(()=>expect(window.wuu.queueTurn).toHaveBeenCalledOnce());
+    const messageID=vi.mocked(window.wuu.queueTurn).mock.calls[0][3]!;
+    f.setState({...f.getState(),sessionTabs:f.getState().sessionTabs.map(tab=>({...tab,prompt:"hello kept"}))});
+    queued.resolve({queued:{id:messageID}});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
+    expect(f.getDraft("thread:created").prompt).toBe(" kept");
+  });
+  it("keeps text typed during an attachment-only delivery",async()=>{
+    const starting=deferred<{turn:Thread["turns"][number]}>();
+    window.wuu={startTurn:vi.fn(()=>starting.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture(thread());
+    const sent={id:"sent-image",media_type:"image/png",data:"aGVsbG8="};
+    f.setState({...f.getState(),sessionTabs:f.getState().sessionTabs.map(tab=>({...tab,prompt:"",images:[sent]}))});
+    f.submission.submit({ownerTabId:"thread:created"});
+    await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalledOnce());
+    f.setState({...f.getState(),sessionTabs:f.getState().sessionTabs.map(tab=>({...tab,prompt:"typed after"}))});
+    starting.resolve({turn:{id:"accepted",status:"in_progress",items_view:"full",items:[]}});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
+    expect(f.getDraft("thread:created").prompt).toBe("typed after");
+    expect(f.getDraft("thread:created").images).toEqual([]);
+  });
+  it("keeps attachments added during delivery without retaining the sent ones",async()=>{
+    const starting=deferred<{turn:Thread["turns"][number]}>();
+    window.wuu={startTurn:vi.fn(()=>starting.promise),queueTurn:vi.fn()} as unknown as WuuDesktopApi;
+    const f=fixture(thread());
+    const sent={id:"sent-image",media_type:"image/png",data:"aGVsbG8="};
+    f.setState({...f.getState(),sessionTabs:f.getState().sessionTabs.map(tab=>({...tab,images:[sent]}))});
+    f.submission.submit({ownerTabId:"thread:created"});
+    await vi.waitFor(()=>expect(window.wuu.startTurn).toHaveBeenCalledOnce());
+    const added={id:"new-image",media_type:"image/png",data:"bmV3"};
+    f.setState({...f.getState(),sessionTabs:f.getState().sessionTabs.map(tab=>({...tab,prompt:"hello again",images:[sent,added]}))});
+    starting.resolve({turn:{id:"accepted",status:"in_progress",items_view:"full",items:[]}});
+    await vi.waitFor(()=>expect(f.submission.getSnapshot().operations[0]?.phase).toBe("completed"));
+    expect(f.getDraft("thread:created").prompt).toBe(" again");
+    expect(f.getDraft("thread:created").images.map(row=>row.id)).toEqual(["new-image"]);
+  });
   it("releases retired queue preparation without waiting for an attachment encoder",async()=>{
     const encoding=deferred<[]>();vi.spyOn(composerMessages,"awaitComposerImages").mockImplementationOnce(()=>encoding.promise);
     window.wuu={queueTurn:vi.fn()} as unknown as WuuDesktopApi;
