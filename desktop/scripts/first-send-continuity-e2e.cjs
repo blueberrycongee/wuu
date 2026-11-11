@@ -135,6 +135,33 @@ async function type(text) {
 }
 async function capture(name) { await frames(2); fs.writeFileSync(path.join(output, `${name}.png`), (await win.webContents.capturePage()).toPNG()); report.screenshots.push(`${name}.png`); }
 async function phase(name) { await evaluate(name => { window.firstSend.phase = name; }, name); await frames(); if (!fast || name === 'completed') await capture(name); }
+async function retainedAttachmentGeometry() {
+  return evaluate(async () => {
+    const list = document.querySelector('.composer-attachment-tray-list');
+    const card = list?.querySelector('.composer-document-card');
+    const title = card?.querySelector('.composer-document-card-title');
+    const icon = card?.querySelector('.composer-document-card-icon');
+    const remove = card?.querySelector('.composer-attachment-card-remove');
+    if (!list || !card || !title || !icon || !remove) throw new Error('Retained attachment controls are missing');
+    // The fixture retains both an image and a file. Inspect the document
+    // card after revealing it in the horizontal tray, not the last image.
+    card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const box = node => { const r = node.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
+    const r = remove.getBoundingClientRect();
+    return { list: box(list), card: box(card), title: box(title), icon: box(icon), remove: box(remove),
+      titleWidth: title.clientWidth, titleContentWidth: title.scrollWidth,
+      removeHit: remove.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
+  });
+}
+function assertRetainedAttachmentGeometry(geometry) {
+  for (const part of ['card', 'title', 'icon', 'remove']) {
+    assert.ok(geometry[part].width > 0 && geometry[part].left >= geometry.list.left - 1
+      && geometry[part].right <= geometry.list.right + 1, `Retained attachment ${part} fits the visible tray`);
+  }
+  assert.ok(geometry.titleContentWidth <= geometry.titleWidth + 1, 'Short retained attachment name stays readable');
+  assert.ok(geometry.removeHit, 'Retained attachment remove control stays hit-testable');
+}
 async function run() {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   fs.writeFileSync(path.join(home, 'config.json'), JSON.stringify({ default_provider: 'fixture', engines: Object.fromEntries(['codex', 'claude', 'cursor', 'devin', 'dsh', 'grok', 'hermes', 'pi', 'opencode', 'antigravity'].map(id => [id, { enabled: false }])), providers: { fixture: { type: 'openai-compatible', base_url: `http://127.0.0.1:${server.address().port}/v1`, api_key: 'fixture-only', model: 'fixture' } } }));
@@ -191,6 +218,13 @@ async function run() {
   if (newer) await type('Newer draft 内容 remains mine');
   creation.resolve(); await until(() => admitting, 'real turn admission requested'); await phase('identity-bound-admission-held');
   assert.equal(await evaluate(() => document.querySelectorAll('[data-user-message-id]').length), 0, 'binding the thread does not display an unaccepted message');
+  if (process.env.WUU_FIRST_SEND_ATTACHMENT === '1') {
+    // The retained draft still owns the tray while delivery is held; admission
+    // is what releases its sent attachments.
+    report.attachmentGeometry = await retainedAttachmentGeometry();
+    assertRetainedAttachmentGeometry(report.attachmentGeometry);
+    report.checks.push('Retained attachment name, icon and remove control fit the visible tray while delivery is held');
+  }
   enter(); await frames(3);
   assert.equal(report.ipc.filter(row => row.channel === 'wuu:turn-start').length, 1, 'double Enter admits once');
   await evaluate(phase => { window.firstSend.phase = phase; }, order === 'rejected' ? 'rejected-recoverable' : 'admission-requested');
@@ -254,32 +288,17 @@ async function run() {
   }
   const finalDraft = await evaluate(selector => document.querySelector(selector)?.value, composer);
   assert.equal(finalDraft, newer ? 'Newer draft 内容 remains mine' : order === 'rejected' ? prompt : '', 'admission only releases the draft it owns');
-  if (process.env.WUU_FIRST_SEND_ATTACHMENT === '1' && (newer || order === 'rejected')) {
-    report.attachmentGeometry = await evaluate(async () => {
-      const list = document.querySelector('.composer-attachment-tray-list');
-      const card = list?.querySelector('.composer-document-card');
-      const title = card?.querySelector('.composer-document-card-title');
-      const icon = card?.querySelector('.composer-document-card-icon');
-      const remove = card?.querySelector('.composer-attachment-card-remove');
-      if (!list || !card || !title || !icon || !remove) throw new Error('Retained attachment controls are missing');
-      // The fixture retains both an image and a file. Inspect the document
-      // card after revealing it in the horizontal tray, not the last image.
-      card.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      const box = node => { const r = node.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
-      const r = remove.getBoundingClientRect();
-      return { list: box(list), card: box(card), title: box(title), icon: box(icon), remove: box(remove),
-        titleWidth: title.clientWidth, titleContentWidth: title.scrollWidth,
-        removeHit: remove.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)) };
-    });
-    const geometry = report.attachmentGeometry;
-    for (const part of ['card', 'title', 'icon', 'remove']) {
-      assert.ok(geometry[part].width > 0 && geometry[part].left >= geometry.list.left - 1
-        && geometry[part].right <= geometry.list.right + 1, `Retained attachment ${part} fits the visible tray`);
-    }
-    assert.ok(geometry.titleContentWidth <= geometry.titleWidth + 1, 'Short retained attachment name stays readable');
-    assert.ok(geometry.removeHit, 'Retained attachment remove control stays hit-testable');
-    report.checks.push('Retained attachment name, icon and remove control fit the visible tray without horizontal clipping');
+  if (process.env.WUU_FIRST_SEND_ATTACHMENT === '1' && order !== 'rejected') {
+    // Admission releases delivered attachments with the submitted text, even
+    // when newer input survives as the next draft.
+    const trayItems = await evaluate(() => document.querySelectorAll('.composer-attachment-tray-item:not([data-exiting])').length);
+    assert.equal(trayItems, 0, 'admission releases sent attachments with the submitted content');
+    report.checks.push('Admission releases sent attachments even while newer input remains');
+  }
+  if (process.env.WUU_FIRST_SEND_ATTACHMENT === '1' && order === 'rejected') {
+    report.rejectedAttachmentGeometry = await retainedAttachmentGeometry();
+    assertRetainedAttachmentGeometry(report.rejectedAttachmentGeometry);
+    report.checks.push('Rejected admission keeps retained attachment controls fit to the visible tray');
   }
   if (order === 'rejected' && newer) {
     // Recovery is durable composer state, not a transient root error banner.
