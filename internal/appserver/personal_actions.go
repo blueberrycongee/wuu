@@ -528,7 +528,7 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 		case <-wake:
 		case <-ctx.Done():
 			if p.ctx.Err() == nil {
-				_ = p.engine.CancelExecution(context.WithoutCancel(ctx), scope.SpaceID, scope.SessionID, scope)
+				_ = p.cancelExecution(context.WithoutCancel(ctx), scope.SessionID, scope)
 			}
 			return toolresult.Result{}, ctx.Err()
 		case <-p.ctx.Done():

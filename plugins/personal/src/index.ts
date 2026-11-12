@@ -1018,16 +1018,35 @@ export class PersonalPlugin implements RuntimePlugin {
     });
   }
   private async stopTask(input: Record<string, unknown>) {
+    const original = await this.task(text(input, "task_id", true));
+    if (input.expected_revision !== undefined && number(input, "expected_revision") !== original.revision) throw new Error(`revision_conflict: current revision ${original.revision}`);
+    // Executing effects retain the task-state inspection. Interrupt the exact
+    // admitted run before trying to write through that inspection's fence.
+    let interruptionError: unknown;
+    if (!terminalTask(original) && original.execution.session_id) {
+      try {
+        const inspected = await this.inspectExecution(original.execution);
+        const turnID = inspected.turn?.state === "queued" ? undefined : inspected.turn?.turn_id || original.execution.turn_id;
+        await this.cancelExecutionRequest(original.execution, turnID, inspected.turn?.queue_id || original.execution.queue_id);
+      } catch (error) {
+        interruptionError = error;
+      }
+    }
     const main = await this.main();
-    const destination = await this.deliverySession(await this.task(text(input, "task_id", true)), main);
+    const destination = await this.deliverySession(original, main);
     const task = await this.change<PersonalTask>("task", text(input, "task_id", true), current => {
       if (!current) throw new Error("task not found");
+      if (current.requirements_revision !== original.requirements_revision || current.execution.request_id !== original.execution.request_id) throw new Error("revision_conflict: task execution changed during cancellation");
       const pendingDelivery = current.delivery && ["pending", "submitted"].includes(current.delivery.status);
       if (terminalTask(current) && !pendingDelivery) return current;
       return { ...current, ...(terminalTask(current) ? {} : { cancel_requested: true, state: "waiting_external" as const }),
         previous_deliveries: [...current.previous_deliveries ?? [], ...(pendingDelivery ? [{ controller_review:current.delivery!.kind === "review", authorization:current.delivery!.authorization, request_id: current.delivery!.request_id, create_request_id: "", session_id: current.delivery!.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted" as const, cancel_pending: true }] : [])],
         delivery: terminalTask(current) && current.delivery ? { ...current.delivery, status: "suppressed" } : undefined };
-    }, input.expected_revision === undefined ? undefined : number(input, "expected_revision"));
+    });
+    if (interruptionError && !terminalTask(task)) {
+      if (authorizationRequired(interruptionError)) return { task: await this.requireTaskAuthorization(task) };
+      return { task: await this.change<PersonalTask>("task", task.task_id, current => current?.execution.request_id === task.execution.request_id ? { ...current, reconciliation_required: true, error: String(interruptionError) } : current!) };
+    }
     const stopped = terminalTask(task) ? task : await this.cancelExecution(task);
     return { task: pendingCancellation(stopped) ? await this.settlePrevious(stopped) : stopped };
   }

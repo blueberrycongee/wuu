@@ -546,6 +546,23 @@ try {
       await r.close();
     }
   });
+  await scenario('stop interrupts an executing effect before waiting for its task-state write fence', async () => {
+    const h = new Host(), r = await new Runtime(h).start();
+    const a = (await r.client('agents.ensure_default')).agent;
+    const task = (await r.client('tasks.create', { agent_id:a.agent_id, request_id:'held-effect', title:'Held effect', goal:'Isolated cancellation' })).task;
+    let cancelled = false;
+    h.intercept = (service, params) => {
+      if (service === 'host.session.cancel' && params.session_id === task.execution.session_id) cancelled = true;
+      if (service === 'host.storage.compare-exchange' && params.key.includes(task.task_id) && !cancelled) throw new Error('task state is held by the running effect');
+    };
+    try {
+      await assert.rejects(r.client('tasks.stop', {task_id:task.task_id,expected_revision:task.revision-1}));
+      assert.equal(cancelled, false, 'stale stop must not reach the native execution');
+      const stopped = (await r.client('tasks.stop', {task_id:task.task_id,expected_revision:task.revision})).task;
+      assert.equal(stopped.state, 'stopped');
+      assert.equal(cancelled, true);
+    } finally { await r.close(); }
+  });
   await scenario('cancellation survives process loss before a delayed dispatch admission', async () => {
     const h = new Host(), r = await new Runtime(h).start();
     const a = (await r.client('agents.ensure_default')).agent;
