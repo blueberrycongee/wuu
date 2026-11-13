@@ -2444,17 +2444,23 @@ var personalDesktop = (() => {
       };
       const loadTasks = async () => {
         const result = await call("tasks.list");
-        if (mounted.current) setTasks((current) => (result.tasks || []).map((item) => {
-          const previous = current.find((value) => value.task_id === item.task_id);
-          return previous?.revision > item.revision ? previous : item;
-        }));
+        if (mounted.current) setTasks((current) => {
+          const byID = new Map(current.map((item) => [item.task_id, item]));
+          return (result.tasks || []).map((item) => {
+            const previous = byID.get(item.task_id);
+            return previous?.revision >= item.revision ? previous : item;
+          });
+        });
       };
       const loadRoutines = async () => {
         const result = await call("routines.list");
-        if (mounted.current) setRoutines((current) => (result.routines || []).map((item) => {
-          const previous = current.find((value) => value.routine_id === item.routine_id);
-          return previous?.revision > item.revision ? previous : item;
-        }));
+        if (mounted.current) setRoutines((current) => {
+          const byID = new Map(current.map((item) => [item.routine_id, item]));
+          return (result.routines || []).map((item) => {
+            const previous = byID.get(item.routine_id);
+            return previous?.revision >= item.revision ? previous : item;
+          });
+        });
       };
       const loadConversation = async (identity) => {
         if (!identity) return;

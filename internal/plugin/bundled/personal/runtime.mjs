@@ -2705,12 +2705,12 @@ var PersonalPlugin = class {
         } catch {
         }
       }
-      for (const task of await this.list("task")) {
+      for (const task of tasks) {
         if (!this.active || this.lifetime?.aborted) break;
         if (routedOnly && !task.existing_session) continue;
         if (taskNeedsRecovery(task)) {
           try {
-            await this.reconcile(task);
+            await this.reconcile(await this.task(task.task_id));
           } catch {
           }
         }
@@ -2756,9 +2756,10 @@ var PersonalPlugin = class {
   async list(kind) {
     const { keys } = await this.host.call("host.storage.keys", { scope: "user" });
     const prefix = this.key(kind, ""), values = [];
-    for (const key of keys.filter((k) => k.startsWith(prefix))) {
-      const { value } = await this.host.call("host.storage.get", { scope: "user", key });
-      if (value !== null) values.push(JSON.parse(value));
+    const matching = keys.filter((k) => k.startsWith(prefix));
+    for (let offset = 0; offset < matching.length; offset += 16) {
+      const batch = await Promise.all(matching.slice(offset, offset + 16).map((key) => this.host.call("host.storage.get", { scope: "user", key })));
+      for (const { value } of batch) if (value !== null) values.push(JSON.parse(value));
     }
     return values;
   }

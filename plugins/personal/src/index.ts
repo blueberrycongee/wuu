@@ -256,11 +256,12 @@ export class PersonalPlugin implements RuntimePlugin {
       for (const agent of await this.list<NamedAgent>("agent")) if (!routedOnly && agent.status === "stopping" || ["stopping", "paused", "archived"].includes(agent.status) && tasks.some(task => task.agent_id === agent.agent_id && task.existing_session && taskNeedsRecovery(task))) {
         try { await this.settleAgent(agent.agent_id); } catch { /* Retry the durable stop intent on the next bounded recovery tick. */ }
       }
-      for (const task of await this.list<PersonalTask>("task")) {
+      for (const task of tasks) {
         if (!this.active || this.lifetime?.aborted) break;
         if (routedOnly && !task.existing_session) continue;
         if (taskNeedsRecovery(task)) {
-          try { await this.reconcile(task); } catch { /* The durable outbox remains pending for the next reconciliation. */ }
+          // Agent settlement may have changed this candidate since enumeration.
+          try { await this.reconcile(await this.task(task.task_id)); } catch { /* The durable outbox remains pending for the next reconciliation. */ }
         }
       }
       if (!routedOnly) {
@@ -300,9 +301,12 @@ export class PersonalPlugin implements RuntimePlugin {
   private async list<T>(kind: string): Promise<T[]> {
     const { keys } = await this.host.call("host.storage.keys", { scope: "user" });
     const prefix = this.key(kind, ""), values: T[] = [];
-    for (const key of keys.filter(k => k.startsWith(prefix))) {
-      const { value } = await this.host.call("host.storage.get", { scope: "user", key });
-      if (value !== null) values.push(JSON.parse(value) as T);
+    const matching = keys.filter(k => k.startsWith(prefix));
+    // Fresh reads see other runtime instances without a separately committed index.
+    // Bound host pressure while avoiding one transport round trip per record in series.
+    for (let offset = 0; offset < matching.length; offset += 16) {
+      const batch = await Promise.all(matching.slice(offset, offset + 16).map(key => this.host.call("host.storage.get", { scope: "user", key })));
+      for (const { value } of batch) if (value !== null) values.push(JSON.parse(value) as T);
     }
     return values;
   }

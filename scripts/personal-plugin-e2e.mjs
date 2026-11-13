@@ -1946,7 +1946,41 @@ try {
       (evidence.measurements ??= []).push({ case: 'long-history', selector, records: records.length, history_reads: reads.length, elapsed_ms: performance.now() - started });
     }
   });
-
+  await scenario('large task lists are complete, fresh across runtime instances and use bounded concurrent reads', async () => {
+    const h = new Host(), r = await new Runtime(h).start();
+    let peer;
+    try {
+      const owner = (await r.client('agents.ensure_default')).agent;
+      const template = (await r.client('tasks.create', { agent_id: owner.agent_id, request_id: 'scale-template', title: 'Scale template', goal: 'Read tasks' })).task;
+      await r.client('tasks.stop', { task_id: template.task_id, expected_revision: template.revision });
+      const originalKey = [...h.storage.keys()].find(key => key.endsWith(`task.${template.task_id}`));
+      const stopped = JSON.parse(h.storage.get(originalKey));
+      for (let i = 0; i < 1024; i++) h.storage.set(originalKey.replace(template.task_id, `scale-${i}`), JSON.stringify({ ...stopped, task_id: `scale-${i}`, title: `Scale ${i}`, request_id: `scale-${i}` }));
+      await r.stopBackground();
+      peer = await new Runtime(h).start();
+      await Promise.all([r.stopBackground(), peer.stopBackground()]);
+      let inFlight = 0, maximum = 0, reads = 0;
+      h.intercept = async (service, params) => {
+        if (service !== 'host.storage.get' || !params.key.includes('.task.')) return;
+        reads++; maximum = Math.max(maximum, ++inFlight);
+        // Model asynchronous host latency; assertions use counts, not wall time.
+        await new Promise(resolve => setTimeout(resolve, 2));
+        inFlight--;
+      };
+      const started = performance.now();
+      const tasks = (await r.client('tasks.list')).tasks;
+      const elapsed = performance.now() - started;
+      assert.equal(tasks.length, 1025); assert.equal(new Set(tasks.map(task => task.task_id)).size, 1025);
+      assert.equal(reads, 1025); assert(maximum > 1 && maximum <= 16, `read concurrency ${maximum}`);
+      (evidence.measurements ??= []).push({ case: 'task-list', tasks: tasks.length, storage_reads: reads, maximum_in_flight: maximum, simulated_get_latency_ms: 2, elapsed_ms: elapsed });
+      h.intercept = undefined;
+      const updated = (await peer.client('tasks.resume', { task_id: 'scale-1023', expected_revision: stopped.revision, goal: 'Changed by another runtime' })).task;
+      const found = (await r.client('tasks.list', { query: 'Changed by another runtime' })).tasks;
+      assert.equal(found.length, 1); assert.equal(found[0].revision, updated.revision); assert.equal(found[0].task_id, updated.task_id);
+      const removedKey = originalKey.replace(template.task_id, 'scale-0'); h.storage.delete(removedKey);
+      assert.equal((await r.client('tasks.list')).tasks.length, 1024, 'removed external records cannot remain cached');
+    } finally { h.intercept = undefined; if (peer) await peer.close(); await r.close(); }
+  });
   await runtime.close(); evidence.passed = true;
 } catch (error) { evidence.passed = false; evidence.error = error.stack; console.error(error); throw error; }
 finally { for (const runtime of active) runtime.process.kill(); await mkdir(evidencePath, { recursive: true }); await writeFile(join(evidencePath, 'evidence.json'), JSON.stringify(evidence, null, 2)); await rm(scratch, { recursive: true, force: true }); }
