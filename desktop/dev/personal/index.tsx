@@ -65,6 +65,12 @@ const tasks = [
   {task_id:"dinner",agent_id:"mosaic",title:"周五和朋友吃饭",goal:"在三家安静的餐厅中选一家，确认后再预订。",state:"waiting_user",requirements_revision:1,revision:2,updated_at:now,result:{summary:"找到了三家合适的餐厅，等你选一个更方便的地点。"}},
   {task_id:"reading",agent_id:"mosaic",title:"这个月的阅读清单",goal:"整理最近提到的三本书。",state:"completed",requirements_revision:1,revision:4,updated_at:"2026-10-17T10:00:00Z",result:{summary:"三本书已整理好：先从你最感兴趣的城市生活开始，再读设计和自然。每本都保留了推荐来源。"}},
 ];
+const taskScale = Math.min(10000, Math.max(0, Number(new URLSearchParams(location.search).get("taskScale") || 0)));
+const taskScaleControl = { tasks, reads: 0, refresh: () => host.publishHostEvent({ kind: "notification", message: { method: "fixture/tasks/changed", params: {} } }) };
+if (taskScale) {
+  tasks.splice(0, tasks.length, ...Array.from({ length: taskScale }, (_, index) => ({ task_id: `scale-${index}`, agent_id: "mosaic", title: `Scale task ${index}`, goal: `Scale goal ${index}`, state: "running", requirements_revision: 1, revision: 1, updated_at: now })));
+  Object.assign(window, { __taskScale: taskScaleControl });
+}
 // Existing-session control is synthetic here: no transport, grant or worker runs.
 const existingSessionScenario = new URLSearchParams(location.search).get("existingSession");
 if (existingSessionScenario) {
@@ -319,7 +325,7 @@ const invokeRuntime: NonNullable<PluginHostOptions["invokeRuntime"]> = async({me
     case "tasks.attachments.read":return {data:"aGVsbG8=",offset:0,total:8,content_type:"text/plain",name:"合成示例.txt",sha256:syntheticDigest};
     case "tasks.get":return {task:tasks.find(task=>task.task_id===data.task_id)||routineTaskRecords.get(data.task_id)};
     case "tasks.reconcile":return {task:tasks.find(task=>task.task_id===data.task_id)||routineTaskRecords.get(data.task_id)};
-    case "tasks.list":return {tasks:empty?[]:tasks};
+    case "tasks.list":taskScaleControl.reads++;return {tasks:empty?[]:structuredClone(tasks)};
     case "tasks.stop":{const task=tasks.find(t=>t.task_id===data.task_id)||routineTaskRecords.get(data.task_id)!;task.state="stopped";task.revision++;return {task};}
     case "memory.query":return {records:empty?[]:memories.filter(m=>m.status!=="forgotten")};
     case "memory.correct":{const memory=memories.find(m=>m.id===data.id)!;memory.content=data.content;memory.revision++;return {record:memory};}

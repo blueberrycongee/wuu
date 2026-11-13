@@ -272,6 +272,11 @@ export function userFacingErrorForMessage(
     };
   }
 
+  if (hasExhaustedCredits(message)) {
+    return { category: "provider", tone: "error", title: t("error.creditsExhausted"),
+      detail: recoveryDetail(structured, t("error.creditsExhaustedDetail")) ?? t("error.creditsExhaustedDetail"), diagnostic: message || undefined };
+  }
+
   // Category: prefer the wire value, fall back to the legacy classifier.
   // A wire value we do not recognize (a newer Go core added a category
   // before this renderer learned it) degrades to the internal-error
@@ -422,6 +427,11 @@ function specificDetailForMessage(
     return t("error.responseIncompleteDetail");
   }
   return undefined;
+}
+
+function hasExhaustedCredits(message: string): boolean {
+  const lower = message.toLowerCase();
+  return ["no credits remaining", "credit balance is too low", "insufficient balance", "余额不足"].some(reason => lower.includes(reason));
 }
 
 export function classifyUserFacingError(message: string, context: UserFacingErrorContext): UserFacingErrorCategory {

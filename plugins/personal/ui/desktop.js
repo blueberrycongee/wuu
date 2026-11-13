@@ -231,10 +231,10 @@ export async function activate(api) {
     .mosaic-profile-copy .mosaic-status { margin-top:4px;font-size:calc(var(--font-ui) * 1.067);line-height:1.25; }
     .mosaic-profile-trigger { position:relative;width:${IDENTITY_AVATAR_SIZE}px;height:${IDENTITY_AVATAR_SIZE}px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
     .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:0;padding-top:4px;width:max-content;max-width:min(240px,100%);z-index:31; }
-    .mosaic-identity::before { content:"";position:absolute;inset:-8px -12px;z-index:-1;border-radius:999px;background:var(--paper);filter:blur(10px);pointer-events:none; }
-    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:100%;box-sizing:border-box;padding:4px 12px;border:1px solid color-mix(in srgb,var(--hairline) 50%,transparent);border-radius:999px;background:var(--paper);box-shadow:0 1px 2px #00000008;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
+    .mosaic-identity::before { content:"";position:absolute;inset:-8px -12px;z-index:-1;border-radius:999px;background:color-mix(in srgb,var(--paper) 45%,transparent);filter:blur(10px);pointer-events:none; }
+    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:100%;box-sizing:border-box;padding:4px 12px;border:1px solid color-mix(in srgb,var(--hairline) 50%,transparent);border-radius:999px;background:color-mix(in srgb,var(--paper) 65%,transparent);box-shadow:0 1px 2px #00000008;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
     .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--font-ui);line-height:1.4;font-weight:500;color:light-dark(#000,#fff); }
-    .mosaic-identity-label:hover { background:var(--surface-1); }
+    .mosaic-identity-label:hover { background:color-mix(in srgb,var(--surface-1) 80%,transparent); }
     .mosaic-identity-label:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
     .mosaic-identity-label small { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:16px;color:var(--ink-muted); }
     .mosaic[data-panel-open="true"] .mosaic-identity { visibility:hidden; }
@@ -664,7 +664,7 @@ export async function activate(api) {
     stream.version++;
     if (method === "turn/queued") { const id = params.message?.id || params.queued?.id; if (id && !draftFor(session).dequeuedIds.has(id)) queues.add(id); }
     if (["turn/started", "turn/dequeued"].includes(method) && params.queue_id) { queues.delete(params.queue_id); draftFor(session).dequeuedIds.add(params.queue_id); }
-    if (method === "turn/started") { stream.running = true; stream.activeTurnID = params.turn?.id || params.turn_id; }
+    if (method === "turn/started") { stream.failure = undefined; stream.running = true; stream.activeTurnID = params.turn?.id || params.turn_id; }
     if (["turn/completed", "turn/error"].includes(method)) {
       const turnID = params.turn?.id || params.turn_id;
       if (liveScope && turnID) {
@@ -674,6 +674,9 @@ export async function activate(api) {
           tool.status = interrupted ? "interrupted" : tool.status === "failed" ? "failed" : "completed";
         }
       }
+      const status = params.turn?.status || (method === "turn/error" ? "failed" : "completed");
+      const failure = params.turn?.error || params.error;
+      if (!stream.activeTurnID || stream.activeTurnID === turnID) stream.failure = ["failed", "interrupted"].includes(status) ? { status, message: typeof failure === "string" ? failure : failure?.message || "" } : undefined;
       stream.completedTurns.add(turnID);
       // Durable sequence IDs are stamped after item/completed. The terminal
       // turn is the persistence barrier and owns the final item identities.
@@ -1100,8 +1103,8 @@ export async function activate(api) {
         setHistoryInfo(current => current?.first_seq === boundary.first_seq ? { first_seq: history.first_seq, has_earlier: history.has_earlier } : current);
       } finally { historyFillRef.current = false; }
     };
-    const loadTasks = async () => { const result = await call("tasks.list"); if (mounted.current) setTasks(current => (result.tasks || []).map(item => { const previous = current.find(value => value.task_id === item.task_id); return previous?.revision > item.revision ? previous : item; })); };
-    const loadRoutines = async () => { const result = await call("routines.list"); if (mounted.current) setRoutines(current => (result.routines || []).map(item => { const previous = current.find(value => value.routine_id === item.routine_id); return previous?.revision > item.revision ? previous : item; })); };
+    const loadTasks = async () => { const result = await call("tasks.list"); if (mounted.current) setTasks(current => { const byID = new Map(current.map(item => [item.task_id, item])); return (result.tasks || []).map(item => { const previous = byID.get(item.task_id); return previous?.revision >= item.revision ? previous : item; }); }); };
+    const loadRoutines = async () => { const result = await call("routines.list"); if (mounted.current) setRoutines(current => { const byID = new Map(current.map(item => [item.routine_id, item])); return (result.routines || []).map(item => { const previous = byID.get(item.routine_id); return previous?.revision >= item.revision ? previous : item; }); }); };
 
     const loadConversation = async identity => {
       if (!identity) return;
@@ -1158,6 +1161,7 @@ export async function activate(api) {
         for (const [id, tool] of stream.tools) if ((history.records || []).some(record => record.ui_resources?.some(resource => resource.tool_call_id === tool.call_id))) stream.tools.delete(id);
         const state = opened.session?.state;
         if (version === stream.version) {
+          if (opened.turn) stream.failure = ["failed", "interrupted"].includes(opened.turn.state) ? { status: opened.turn.state, message: opened.turn.error || "" } : undefined;
           stream.running = ["running", "queued"].includes(state);
           stream.activeTurnID = opened.turn?.state === "running" ? opened.turn.turn_id : undefined;
           const pending = draftFor(identity.main_session_id);
@@ -1611,7 +1615,7 @@ export async function activate(api) {
       !replySelection && agent && draftNotice(conversationID, draft),
       error && h("div", { className: "mosaic-error", role: "alert" }, h("span", null, error), h(Button, { onClick: agent ? () => { setError(""); Promise.all([loadConversation(agent), loadTasks(), loadRoutines()]).catch(report); } : initialize }, t("retry"))),
       !agent ? loading ? h(LoadingState, { label: "twin" }) : h(EmptyState, { title: t("hostUnavailable") }) : h(ConversationView, {
-        presentation: "bubbles", conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
+        presentation: "bubbles", turnFailure: streamFor(conversationID).failure, conversationId: conversationID, sessionId: conversationID, sessionScope: route, onQuestionReply: replyToQuestion, title: "twin", loading,
         actions: h("div", { ref: setIdentityNode, className: "mosaic-identity" }, h("div", { className: "mosaic-avatar-editable", inert: panelOpen, "aria-hidden": panelOpen }, h("button", { ref: profileTrigger, type: "button", className: "mosaic-profile-trigger", "data-action": "toggle-personal-panel", "aria-label": `${t("profile")} · ${displayName} · ${statusText}`, "aria-hidden": panelOpen, inert: panelOpen, "data-queued-count": queuedCount, "aria-haspopup": "dialog", "aria-controls": panelID, "aria-expanded": panelOpen, onClick: () => { if (panelOpen) closePanel(); else openPanel(); } }, avatar()), editAvatar()), h("button", { type: "button", className: "mosaic-identity-label", "data-action": "edit-personal-name", "aria-label": `${locale.startsWith("zh") ? "编辑 twin" : "Edit twin"} · ${displayName}`, tabIndex: panelOpen ? -1 : 0, onClick: openIdentity }, h("strong", null, displayName))),
         showHistorySearch: false, showJumpToLatest: !replySelection, searchLabel: t("historySearch"), searchContent: h(AgentHistorySearch, { key: conversationID, agentId: agent.agent_id, name: "twin", t }),
         composer: h("div", { style: { visibility: replySelection ? "hidden" : undefined } }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, { ...commandProps, sessionScope: route, conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles || draft.attachmentsMissing,

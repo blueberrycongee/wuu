@@ -17,6 +17,10 @@ export interface PersonalExecutionFacts {
     source_session_id: string;
     /** Zero when no exact, original human source is eligible for intent review. */
     source_message_seq: number;
+    /** Ordered evidence for every requirement revision. The host resolves active
+     * human messages; zero/missing references never grant intent authority.
+     * Legacy providers may omit this only for a single-revision source. */
+    requirement_sources?: Array<{ revision: number; session_id: string; message_seq: number }>;
     routine_id?: string;
     routine_revision?: number;
   };

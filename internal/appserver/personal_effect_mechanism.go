@@ -313,7 +313,11 @@ func (b *PersonalEffectBridge) execute(ctx context.Context, id, owner string, se
 	if err := r.ctx.Err(); err != nil {
 		return toolresult.Result{}, err
 	}
-	return r.use(ctx)
+	result, err := r.use(ctx)
+	if err == nil {
+		err = ctx.Err()
+	}
+	return result, err
 }
 func (b *PersonalEffectBridge) release(id, owner string) error {
 	return b.releaseContext(context.Background(), id, owner)

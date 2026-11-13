@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/clientauthority"
+	"github.com/blueberrycongee/wuu/internal/persistence"
 	"github.com/blueberrycongee/wuu/internal/personalhost"
 	"github.com/blueberrycongee/wuu/internal/personalreview"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
@@ -193,6 +194,14 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 				t.Fatal("original invocation did not resume")
 			}
 			records := kit.ToolTelemetry()
+			if outcome != "cancel" {
+				if err := f.host.actionsForTest(t).drain(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+				if got := f.provider.resumes.Load(); got != 0 {
+					t.Fatalf("live waiter result also scheduled %d continuation turns", got)
+				}
+			}
 			if len(records) != 1 || records[0].CallID != f.call().ID || records[0].Success != (outcome == "approve") {
 				t.Fatalf("original invocation evidence lost: %+v", records)
 			}
@@ -207,8 +216,9 @@ func TestPersonalWorkerApprovalKeepsOriginalInvocation(t *testing.T) {
 
 type personalReceiptServiceClient struct {
 	pluginClientRequestTestRuntime
-	calls atomic.Int32
-	facts func(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error)
+	calls   atomic.Int32
+	resumes atomic.Int32
+	facts   func(context.Context, pluginhost.ServiceInvokeParams) (json.RawMessage, error)
 }
 
 func (c *personalReceiptServiceClient) ProvidedServices() []pluginhost.ServiceDescriptor {
@@ -220,7 +230,128 @@ func (c *personalReceiptServiceClient) InvokeService(ctx context.Context, params
 		return c.facts(ctx, params)
 	}
 	c.calls.Add(1)
+	if params.Method == "actions.resume" {
+		c.resumes.Add(1)
+	}
 	return json.RawMessage(`{"accepted":true}`), nil
+}
+
+// A synchronous action result belongs to the still-running worker. A later
+// drain must not schedule another turn and invalidate that worker's run grant.
+func TestPersonalSynchronousWorkerResultDoesNotResumeAgain(t *testing.T) {
+	for _, tool := range []string{"file", "command"} {
+		t.Run(tool, func(t *testing.T) {
+			f := newPersonalBoundaryFixture(t, nil)
+			f.setReviewMode(true)
+			worker := "synchronous-worker"
+			_, err := f.rt.Sessions.CreateInitialized(session.Session{ID: worker, ParentID: f.id, AgentID: "main", UserSpaceID: f.rt.UserSpaceID, ProductDomain: "personal", Owner: "plugin:personal", Visibility: "plugin", CWD: f.rt.RootDir}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = pluginsettings.UpdateState(f.rt.DataRoot, f.rt.RootDir, "plugin:bundled:personal", pluginsettings.ScopeUser, func(values map[string]string) error {
+				facts := personalExecutionFacts{SessionID: worker, AgentID: "main", MainSessionID: f.id, Active: true, Task: &personalTaskFacts{ID: "synchronous-task", Revision: 1, RunID: "original-run", Active: true, Goal: "Save requested note", SourceSessionID: f.id, SourceMessageSeq: f.sourceSeq}}
+				raw, _ := json.Marshal(facts)
+				values["fixture.facts."+worker] = string(raw)
+				return nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit, err := f.rt.Toolkit.CloneForRoot(f.rt.RootDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			kit.SetSessionID(worker)
+			call := f.call()
+			if tool == "command" {
+				call = providers.ToolCall{ID: "synchronous-command", Name: "bash", Arguments: `{"command":"printf 'saved once' > note.txt"}`}
+			}
+			p := f.host.actionsForTest(t)
+			// Force the scheduler ordering observed in the real failure: the gate
+			// returns before the next drain can claim the terminal receipt.
+			p.drainMu.Lock()
+			_, err = kit.Execute(f.owner, call)
+			p.drainMu.Unlock()
+			if err != nil {
+				t.Fatal(err)
+			}
+			for range 2 {
+				if err := p.drain(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := f.provider.resumes.Load(); got != 0 {
+				t.Fatalf("synchronous worker was resumed %d additional times", got)
+			}
+			data, err := os.ReadFile(filepath.Join(f.rt.RootDir, "note.txt"))
+			if err != nil || string(data) != "saved once" {
+				t.Fatalf("native result: %q %v", data, err)
+			}
+		})
+	}
+}
+
+type personalResultBarrierDocuments struct {
+	*persistence.Service
+	committed chan struct{}
+	release   chan struct{}
+	blocked   atomic.Bool
+}
+
+func (d *personalResultBarrierDocuments) InvokeService(ctx context.Context, input pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	result, err := d.Service.InvokeService(ctx, input)
+	if err != nil || input.Method != "commit" {
+		return result, err
+	}
+	var tx persistence.Transaction
+	if err := json.Unmarshal(input.Params, &tx); err != nil {
+		return nil, err
+	}
+	for _, write := range tx.Writes {
+		var r personalreview.Record
+		if write.Namespace == "wuu.personal_review_actions.v1" && json.Unmarshal(write.Value, &r) == nil && r.Status == personalreview.Succeeded && d.blocked.CompareAndSwap(false, true) {
+			close(d.committed)
+			select {
+			case <-d.release:
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+	}
+	return result, nil
+}
+
+// A main-conversation gate does not suspend for owner approval, but still owns
+// its synchronous result until the native invocation has returned.
+func TestPersonalMainResultPublicationDoesNotResumeLiveReceiver(t *testing.T) {
+	barrier := &personalResultBarrierDocuments{committed: make(chan struct{}), release: make(chan struct{})}
+	f := newPersonalBoundaryFixture(t, nil, func(service *persistence.Service) pluginhost.Client { barrier.Service = service; return barrier })
+	f.setReviewMode(true)
+	done := make(chan error, 1)
+	go func() { _, err := f.kit.Execute(f.sourceContext(), f.call()); done <- err }()
+	defer func() {
+		close(barrier.release)
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Error("live receiver did not finish")
+		}
+	}()
+	select {
+	case <-barrier.committed:
+	case <-time.After(30 * time.Second):
+		t.Fatal("native result was not committed")
+	}
+	p := f.host.actionsForTest(t)
+	if err := p.drain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.provider.resumes.Load(); got != 0 {
+		t.Fatalf("main result still has a live receiver, but resumed %d times", got)
+	}
 }
 
 // Recovery follows the selected service, while the receipt's durable session

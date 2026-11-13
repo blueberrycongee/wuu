@@ -173,13 +173,15 @@ type UI = {
   Select: React.ComponentType<PluginUISelectProps>;
 };
 
+const reviewResponseWaitMs = 10000;
+
 const copy = {
   en: {
     mode: "Auto Review", modeHelp: "Actions that match your request run without asking.", 
     receipt: "Execution receipt", recentResults: "Recent action results",
     pending: "Waiting for you", recent: "Recent activity", refresh: "Refresh", approve: "Allow once", reject: "Don’t allow", revoke: "Withdraw approval", withdraw: "Withdraw action",
     account: "Account", target: "Destination", effect: "Effect", task: "Task version", parameters: "Technical details", expires: "Expires", digest: "Action digest",
-    working: "Saving…", failed: "Could not save. Refresh to check the current state.", invalidData: "Action data could not be verified. Refresh to check the saved state.",
+    checking: "Checking approval status…", readFailed: "Could not check the saved status. Refresh when the connection returns.", unknown: "The submission result is not yet confirmed. Refresh checks its status without submitting again.", working: "Saving…", failed: "Could not save. Refresh to check the current state.", invalidData: "Action data could not be verified. Refresh to check the saved state.",
     remember: "Handle this automatically…", ruleTitle: "Remember this permission?", ruleScope: "This exact scope applies to future tasks in this Personal space.", saveRule: "Save and allow once", cancel: "Cancel", ruleSaved: "Rule saved. This action still needs your decision.", ruleSaveFailed: "The rule save could not be confirmed. Refresh to check it; you can then allow just this action.", rules: "Saved rules", askRule: "Always ask first", allowRule: "Allow automatically", deleteRule: "Remove", pausedRule: "Paused", changes: "View changes", before: "Before", after: "After", newContent: "Content to save", replaceAll: "Replace every matching occurrence", ruleDetails: "Exact permission scope", originalUnavailable: "The full original content is not included in this request. Replacing the file overwrites its current contents.", writeTitle: "Save this file?", replaceTitle: "Replace this file?", editTitle: "Update this file?", commandTitle: "Run this task step?", commandBody: "Personal wants to run a program. Review its exact command and working folder in the details before allowing it.", reason: "Why confirmation is needed", pendingCount: "waiting for you", fromRequest: "From your request: ", noExpiry: "Until this task changes or you cancel",
     states: { proposed:"Awaiting review",ready:"Authorized · awaiting execution",awaiting_confirmation:"Needs your decision",approved:"Allowed once · waiting to start",blocked:"Review unavailable · not executed",denied:"Denied · not executed",revoked:"Withdrawn · not executed",expired:"Expired · not executed",stale:"Task changed · not executed",executing:"Started · result pending",succeeded:"Completed",uncertain:"Result unknown · will not retry" },
     effects: { internal_bookkeeping:"Internal bookkeeping",read_only:"Read only",data_write:"Changes data",external_write:"Sends outside twin",sensitive_authority:"Account or lasting authority",unknown:"Unknown effect" },
@@ -189,7 +191,7 @@ const copy = {
     receipt:"执行回执",recentResults:"最近动作结果",
     pending:"等你决定",recent:"最近记录",refresh:"刷新",approve:"允许这次",reject:"不允许",revoke:"撤回批准",withdraw:"撤回动作",
     account:"账号",target:"目标",effect:"影响",task:"需求版本",parameters:"技术详情",expires:"有效期至",digest:"动作摘要",
-    working:"正在保存…",failed:"保存失败，请刷新核对当前状态。",invalidData:"动作数据格式无法验证，请刷新核对保存状态。",
+    checking:"正在核对审批结果…",readFailed:"暂时无法核对后台状态，请在连接恢复后刷新。",unknown:"提交结果暂未确认。刷新只核对状态，不会重复提交。",working:"正在保存…",failed:"保存失败，请刷新核对当前状态。",invalidData:"动作数据格式无法验证，请刷新核对保存状态。",
     remember:"以后自动处理…",ruleTitle:"记住这项许可？",ruleScope:"仅对下列范围生效，适用于此 Personal 空间今后的任务。",saveRule:"保存并允许这次",cancel:"取消",ruleSaved:"规则已保存；这次操作仍需要你的决定。",ruleSaveFailed:"未能确认规则是否保存。请刷新核对，之后也可以只允许这次操作。",rules:"已保存的规则",askRule:"每次先问我",allowRule:"自动允许",deleteRule:"移除",pausedRule:"已暂停",changes:"查看修改内容",before:"修改前",after:"修改后",newContent:"将保存的内容",replaceAll:"替换每一处匹配的内容",ruleDetails:"查看许可范围",originalUnavailable:"这次请求没有包含完整原文。替换文件会覆盖它现有的内容。",writeTitle:"保存这个文件？",replaceTitle:"替换这个文件？",editTitle:"修改这个文件？",commandTitle:"执行这一步操作？",commandBody:"运行一段程序，可能在已授权范围内读取或修改文件。请确认这符合当前任务。",reason:"为什么需要确认",pendingCount:"项等你确认",fromRequest:"来自你的请求：",noExpiry:"直到任务变化或你取消",
     states:{proposed:"等待审核",ready:"授权匹配，等待执行",awaiting_confirmation:"需要你确认",approved:"已允许这次，等待开始",blocked:"审核不可用，未执行",denied:"已拒绝，未执行",revoked:"已撤回，未执行",expired:"已过期，未执行",stale:"任务已变化，未执行",executing:"已经开始，等待结果",succeeded:"已完成",uncertain:"结果未知，不会自动重试"},
     effects:{internal_bookkeeping:"内部记账",read_only:"只读",data_write:"修改数据",external_write:"向外发送",sensitive_authority:"账号或长期权限",unknown:"未知影响"},
@@ -266,35 +268,49 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
     const preview = rulePreview?.service === service ? rulePreview : undefined;
     const [notice, setNotice] = react.useState("");
     const [now, setNow] = react.useState(Date.now);
+    const pendingAction = react.useRef<{record: ReviewRecord; started: number} | undefined>(undefined);
     const active = react.useRef(true), epoch = react.useRef(0), submitting = react.useRef(false), refreshing = react.useRef(false);
     const refresh = async () => {
-      if (submitting.current || refreshing.current) return;
+      if ((submitting.current && !pendingAction.current) || refreshing.current) return;
       refreshing.current = true;
       const generation = ++epoch.current;
       try {
-        const next = decodeReviewSnapshot(await service.list());
-        const nextRules = !conversation && service.rules ? decodeReviewRules(await service.rules()) : undefined;
-        if (active.current && generation === epoch.current) { setSnapshot(next); if (nextRules) setSavedRules({service,value:nextRules}); setUnverified(false); setError(""); }
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const next = decodeReviewSnapshot(await Promise.race([
+          service.list(),
+          new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error(words.unknown)), reviewResponseWaitMs); }),
+        ]).finally(() => clearTimeout(timeout)));
+        const nextRules = !pendingAction.current && !conversation && service.rules ? decodeReviewRules(await service.rules()) : undefined;
+        if (active.current && generation === epoch.current) {
+          const pending = pendingAction.current;
+          const saved = pending && next.kind === "ready" ? next.requests.find(item => item.action.id === pending.record.action.id && item.action.scope.space_id === pending.record.action.scope.space_id && item.action.digest === pending.record.action.digest && item.action.scope.requirements_revision === pending.record.action.scope.requirements_revision) : undefined;
+          // A still-pending row does not prove that an in-flight write was rejected.
+          if (pending && saved && saved.revision > pending.record.revision && !["proposed", "awaiting_confirmation"].includes(saved.status)) {
+            pendingAction.current = undefined; submitting.current = false; setBusy(undefined);
+          }
+          setSnapshot(next); if (nextRules) setSavedRules({service,value:nextRules}); setUnverified(false); setError(""); }
       }
-      catch (cause) { if (active.current && generation === epoch.current) { setUnverified(true); showFailure(cause); } }
+      catch (cause) { if (active.current && generation === epoch.current) { setUnverified(true); if (pendingAction.current && !(cause instanceof ReviewContractError)) setError(words.readFailed); else showFailure(cause); } }
       finally { if (active.current && generation === epoch.current) refreshing.current = false; }
     };
     react.useEffect(() => {
-      active.current = true; hadActions.current = false; submitting.current = false; refreshing.current = false; setBusy(undefined); setUnverified(false); setSnapshot(undefined); setSavedRules(undefined); setRulePreview(undefined); setNotice(""); void refresh();
+      active.current = true; pendingAction.current = undefined; hadActions.current = false; submitting.current = false; refreshing.current = false; setBusy(undefined); setUnverified(false); setSnapshot(undefined); setSavedRules(undefined); setRulePreview(undefined); setNotice(""); void refresh();
       const timer = setInterval(() => setNow(Date.now()), 1000);
       const poll = setInterval(() => { void refresh(); }, 5000);
-      return () => { active.current = false; epoch.current++; clearInterval(timer); clearInterval(poll); };
+      return () => { active.current = false; pendingAction.current = undefined; epoch.current++; clearInterval(timer); clearInterval(poll); };
     }, [service]);
     const decide = async (record: ReviewRecord, choice: "approve_once" | "reject" | "revoke") => {
       if (submitting.current || unverified || (record.action.expires_at !== null && Date.now() >= Date.parse(record.action.expires_at))) return;
       submitting.current = true; setBusy(record.action.id); setError("");
-      const generation = ++epoch.current;
+      ++epoch.current; refreshing.current = false;
+      const pending = {record, started: Date.now()};
+      pendingAction.current = pending;
       const command = actionBinding(record);
       try {
         const next = decodeReviewSnapshot(choice === "revoke" ? await service.revoke(command) : await service.resolve({ ...command, choice }));
-        if (active.current && generation === epoch.current) { setSnapshot(next); setUnverified(false); }
-      } catch (cause) { if (active.current && generation === epoch.current) { setUnverified(true); showFailure(cause); } }
-      finally { if (active.current && generation === epoch.current) { submitting.current = false; refreshing.current = false; setBusy(undefined); } }
+        if (active.current && pendingAction.current === pending) { ++epoch.current; setSnapshot(next); setUnverified(false); }
+      } catch (cause) { if (active.current && pendingAction.current === pending) { ++epoch.current; setUnverified(true); showFailure(cause); } }
+      finally { if (active.current && pendingAction.current === pending) { pendingAction.current = undefined; submitting.current = false; refreshing.current = false; setBusy(undefined); } }
     };
     const changeSettings = async () => {
       if (submitting.current || unverified || snapshot?.kind !== "ready" || !snapshot.settings || !service.settings) return;
@@ -327,8 +343,8 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
         const value = decodeReviewRules(await service.rules({expected_revision:preview.value.revision,action:"save",source:actionBinding(preview.record),decision:"allow"}));
         if (!active.current || generation !== epoch.current) return;
         saved = true; setSavedRules({service,value}); setRulePreview(undefined); setNotice(words.ruleSaved);
-        const next = decodeReviewSnapshot(await service.resolve({...actionBinding(preview.record),choice:"approve_once"}));
-        if (active.current && generation === epoch.current) { setSnapshot(next); setUnverified(false); setNotice(""); }
+        submitting.current = false; setNotice("");
+        await decide(preview.record, "approve_once");
       } catch (cause) {
         if (active.current && generation === epoch.current) { setUnverified(true); setError(saved ? words.ruleSaved : words.ruleSaveFailed); }
       } finally { if (active.current && generation === epoch.current) { submitting.current = false; refreshing.current = false; setBusy(undefined); } }
@@ -358,7 +374,7 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
       const title = fileAction ? `${action.operation === "write_file" ? (parameters.exists === true ? words.replaceTitle : words.writeTitle) : words.editTitle} ${fileLabel}` : commandAction ? words.commandTitle : action.summary.title;
       const disabled = Boolean(busy) || unverified || expired;
       return h("article", { key:action.id,className:"personal-review-item","data-review-id":action.id,"data-review-state":record.status },
-        h("h4",null,title),h("span",{className:"personal-review-status",role:"status"},words.states[expired && canConfirm ? "expired" : record.status]),
+        h("h4",null,title),h("span",{className:"personal-review-status",role:"status"},pendingAction.current?.record.action.id === action.id ? words.checking : words.states[expired && canConfirm ? "expired" : record.status]),
         action.summary.source && h("p",{className:"personal-review-muted personal-review-consequence","data-review-source":true},`${words.fromRequest}${action.summary.source}`),
         h("p",{className:"personal-review-consequence"},commandAction ? words.commandBody : action.summary.consequence),
         canConfirm && h("p",{className:"personal-review-muted"},reviewReason(record.reason,locale)),
@@ -367,7 +383,7 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
         h("details",{className:"personal-review-parameters"},h("summary",null,words.parameters),h("p",{className:"personal-review-muted"},record.reason),h("dl",{className:"personal-review-fields"},fields.flatMap(([label,value])=>[h("dt",{key:`${label}-label`},label),h("dd",{key:label},value)])),h("pre",null,action.arguments_json),h("p",{className:"personal-review-muted",style:{overflowWrap:"anywhere"}},`${words.digest}: ${action.digest}`)),
         record.receipt_json && h("details",{className:"personal-review-parameters","data-review-receipt":true},h("summary",null,words.receipt),h("pre",null,record.receipt_json)),
         (canConfirm || canRevoke) && h("div",{className:"personal-review-actions"},
-          canConfirm && h(ui.Button,{variant:"primary",disabled:Boolean(busy)||unverified||expired,"data-review-choice":"approve_once",onClick:()=>void decide(record,"approve_once")},busy===action.id?words.working:words.approve),
+          canConfirm && h(ui.Button,{variant:"primary",disabled:Boolean(busy)||unverified||expired,"data-review-choice":"approve_once",onClick:()=>void decide(record,"approve_once")},busy===action.id?(pendingAction.current && now - pendingAction.current.started >= reviewResponseWaitMs ? words.checking : words.working):words.approve),
           canConfirm && service.previewRule && service.rules && h(ui.Button,{variant:"secondary",disabled,"data-review-choice":"remember",onClick:()=>void remember(record)},words.remember),
           canConfirm && h(ui.Button,{variant:"secondary",disabled:Boolean(busy)||unverified||expired,"data-review-choice":"reject",onClick:()=>void decide(record,"reject")},words.reject),
           canRevoke && h(ui.Button,{variant:"secondary",disabled:Boolean(busy)||unverified||expired,"data-review-choice":"revoke",onClick:()=>void decide(record,"revoke")},record.status === "blocked" ? words.withdraw : words.revoke)),
@@ -376,17 +392,18 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
           h("div",{className:"personal-review-actions"},h(ui.Button,{variant:"primary",disabled:disabled || record.revision !== preview.record.revision,"data-review-choice":"save_rule",onClick:()=>void saveRule()},words.saveRule),h(ui.Button,{variant:"secondary",disabled:Boolean(busy),onClick:()=>setRulePreview(undefined)},words.cancel))));
     };
     const records = snapshot?.kind === "ready" ? snapshot.requests.filter(record=>!conversation || ["data_write", "external_write"].includes(record.action.effect)) : [];
-    const pending = records.filter(record=>["awaiting_confirmation", "approved", "ready", "blocked", "executing"].includes(record.status));
+    const pending = records.filter(record=>["awaiting_confirmation", "approved", "ready", "blocked", "executing", "uncertain"].includes(record.status));
     const history = records.filter(record=>!pending.includes(record)).sort((a,b)=>(b.action.expires_at === null ? 0 : Date.parse(b.action.expires_at))-(a.action.expires_at === null ? 0 : Date.parse(a.action.expires_at)));
     const settings = snapshot?.kind === "ready" ? snapshot.settings : undefined;
     // Chat only carries decisions that still need the owner. Completed action
     // history remains in Personal settings instead of trailing every reply.
-    if (conversation && !pending.length && (!error || !hadActions.current)) return null;
-    const failureRow = error && h("div",{className:"personal-review-failure"},h("p",{role:"alert",className:"personal-review-error"},error),h(ui.Button,{variant:"ghost",disabled:Boolean(busy),"data-review-refresh":true,onClick:()=>void refresh()},words.refresh));
+    if (conversation && !pendingAction.current && !pending.length && (!error || !hadActions.current)) return null;
+    const failureRow = error && h("div",{className:"personal-review-failure"},h("p",{role:"alert",className:"personal-review-error"},error),h(ui.Button,{variant:"ghost",disabled:Boolean(busy)&&!pendingAction.current,"data-review-refresh":true,onClick:()=>void refresh()},words.refresh));
     if (conversation) {
-      const awaiting = pending.filter(record=>record.status === "awaiting_confirmation").length;
+      const awaiting = pending.filter(record=>record.status === "awaiting_confirmation" && record.action.id !== pendingAction.current?.record.action.id).length;
       return h("div",{className:"personal-review personal-review-conversation","data-personal-action-review":true,"data-review-variant":variant},h("style",null,personalReviewStyles),
-        h("div",{className:"personal-review-heading"},h("h3",null,awaiting ? `${awaiting} ${words.pendingCount}` : words.recentResults),h(ui.Button,{variant:"ghost",disabled:Boolean(busy),"data-review-refresh":true,onClick:()=>void refresh()},words.refresh)),
+        h("div",{className:"personal-review-heading"},h("h3",null,awaiting ? `${awaiting} ${words.pendingCount}` : words.recentResults),h(ui.Button,{variant:"ghost",disabled:Boolean(busy)&&!pendingAction.current,"data-review-refresh":true,onClick:()=>void refresh()},words.refresh)),
+        pendingAction.current && now - pendingAction.current.started >= reviewResponseWaitMs && h("p",{role:"status","data-review-reconciling":true},words.unknown),
         notice && h("p",{role:"status"},notice),
         error && h("p",{role:"alert",className:"personal-review-error"},error),
         pending.length>0 && h("section",{className:"personal-review-list","aria-label":words.pending},pending.map(renderRecord)));
@@ -398,6 +415,7 @@ export function createPersonalReviewPanel(react: typeof React, ui: UI) {
         settings && service.settings ? h(ui.Checkbox,{label:words.mode,description:words.modeHelp,role:"switch","aria-checked":settings.auto_review_enabled,checked:settings.auto_review_enabled,disabled:Boolean(busy)||unverified||(!settings.auto_review_enabled&&settings.scope.length===0),onChange:()=>void changeSettings()})
           : h(ui.Checkbox,{label:words.mode,description:snapshot?.kind === "unavailable" ? snapshot.reason : undefined,checked:false,disabled:true})),
       failureRow,
+      pendingAction.current && now - pendingAction.current.started >= reviewResponseWaitMs && h("p",{role:"status","data-review-reconciling":true},words.unknown,h(ui.Button,{variant:"ghost","data-review-refresh":true,onClick:()=>void refresh()},words.refresh)),
       notice && h("p",{role:"status",className:"personal-review-notice"},notice),
       rules && rules.rules.length>0 && h(ui.Section,{title:words.rules,"aria-label":words.rules},h(ui.Card,null,
         rules.rules.map(rule=>h("div",{key:rule.id,className:"personal-review-rule","data-review-rule":rule.id},

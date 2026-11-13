@@ -237,6 +237,8 @@ lifetime and does not need a self-dependency.
 
 ### Error feedback
 
+`ConversationView.turnFailure` accepts `{ status: "failed" | "interrupted", message: string }` for the latest terminal reply failure. The host uses the same expandable notice as Coding and suppresses ordinary cancellation. The contribution owns restoration from session state and clearing the notice when a new turn starts; this prop never retries a request.
+
 Choose the surface from the failed operation, not from the exception type:
 
 | Situation | Presentation |

@@ -127,6 +127,42 @@ describe("Personal action approval component",()=>{
     const saved=structuredClone(snapshot);saved.settings!.auto_review_enabled=true;saved.settings!.revision++;
     await React.act(async()=>save?.(saved));expect(button('[role="switch"]').getAttribute("aria-checked")).toBe("true");
   });
+  // An accepted write can outlive its acknowledgement. Reads must recover without replay.
+  it("reconciles an accepted action while its acknowledgement is pending and ignores its late snapshot",async()=>{
+    vi.useFakeTimers();
+    let finish: (value:ReviewSnapshot)=>void = ()=>{throw new Error("not submitted")};
+    const original=ready();
+    let current=ready();
+    const resolve=vi.fn(()=>new Promise<ReviewSnapshot>(yes=>{finish=yes}));
+    const list=vi.fn(async()=>current);
+    await render({list,resolve,revoke:async()=>ready()});
+    await React.act(async()=>button('[data-review-choice="approve_once"]').click());
+    if(current.kind!=="ready")throw new Error("fixture");
+    current.requests[0].status="succeeded";current.requests[0].revision=5;
+    await React.act(async()=>vi.advanceTimersByTimeAsync(5000));
+    expect(list).toHaveBeenCalledTimes(2);
+    expect(container.querySelector('[data-review-choice="approve_once"]')).toBeNull();
+    await React.act(async()=>finish(original));
+    expect(container.querySelector('[data-review-choice="approve_once"]')).toBeNull();
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+  it("keeps an unresolved submission locked while allowing reads after a disconnected status check",async()=>{
+    vi.useFakeTimers();
+    let offline=false;
+    const resolve=vi.fn(()=>new Promise(()=>{}));
+    const list=vi.fn(async()=>{if(offline)throw new Error("offline");return ready()});
+    await render({list,resolve,revoke:async()=>ready()},"conversation");
+    await React.act(async()=>button('[data-review-choice="approve_once"]').click());
+    offline=true;
+    await React.act(async()=>vi.advanceTimersByTimeAsync(15000));
+    expect(button('[data-review-refresh]').disabled).toBe(false);
+    expect(button('[data-review-choice="approve_once"]').disabled).toBe(true);
+    offline=false;
+    await React.act(async()=>button('[data-review-refresh]').click());
+    expect(button('[data-review-choice="approve_once"]').disabled).toBe(true);
+    expect(resolve).toHaveBeenCalledTimes(1);
+  });
+
   it("locks all mutations after a lost acknowledgement until a read verifies the state",async()=>{
     const snapshot=ready();if(snapshot.kind!=="ready")throw new Error("ready fixture");
     snapshot.settings={auto_review_enabled:false,revision:4,policy_version:"personal.v1",scope:["synthetic.send"]};

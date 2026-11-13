@@ -339,6 +339,8 @@ export interface PluginUIConversationResourceProps {
 export interface PluginUIConversationMessageProps { resources?: readonly PluginUIConversationResourceProps[]; interactive?: readonly PluginUIInteractiveAnswerProps[]; footer?: React.ReactNode; reaction?: { emoji?: string; label: string; pending?: boolean; error?: string; onChange?(emoji: string | null): void }; replyPreview?: React.ReactNode; onReply?(): void; replyLabel?: string; role: "user" | "assistant"; content: string; className?: string; linkPolicy?: "external-only"; timestamp?: string; id?: string; latest?: boolean; attachments?: React.ReactNode; streaming?: boolean; turnId?: string; turnStatus?: "in_progress" | "completed" | "failed" | "interrupted"; process?: { label: string; content?: string; details?: React.ReactNode }; messageActions?: "copy-only" | "none" }
 
 export interface PluginUIConversationViewProps {
+  /** Latest terminal failure; the host renders the shared conversation notice. */
+  turnFailure?: { status: "failed" | "interrupted"; message: string };
   presentation?: "standard" | "bubbles";
   /** Submit an offer reply to this conversation with stable admission identity. */
   onQuestionReply?: (requestId: string, prompt: string, relation?: MessageRelation) => Promise<void>;

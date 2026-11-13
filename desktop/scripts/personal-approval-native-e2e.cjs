@@ -23,8 +23,24 @@ const [origin,output] = process.argv.slice(2);
   await card.locator('[data-review-choice="remember"]').click();
   await card.locator('[data-review-rule-preview]').waitFor();
   await page.screenshot({path:path.join(output,'native-rule-preview.png')});
+  let offline=true;
+  await page.route('**/native-review',route=>{
+   if(offline && route.request().postDataJSON()?.method==='review.list')return route.abort('internetdisconnected');
+   return route.continue();
+  });
   await card.locator('[data-review-choice="save_rule"]').click();
   await expect.poll(async()=> (await (await page.request.get(origin+'/native-effect')).json()).content).toBe('once');
+  await expect(card.locator('[data-review-reconciling]')).toBeVisible({timeout:15000});
+  await expect(card.locator('[data-review-refresh]')).toBeEnabled();
+  await expect(card.locator('[data-review-choice="approve_once"]')).toBeDisabled();
+  for(const [theme,width,font] of [['light',1100,15],['dark',720,20]]){
+   await page.setViewportSize({width,height:950});
+   await page.evaluate(({theme,font})=>{document.documentElement.dataset.theme=theme;document.documentElement.style.setProperty('--conversation-message-font-size',font+'px')},{theme,font});
+   await card.scrollIntoViewIfNeeded();
+   await page.screenshot({path:path.join(output,`native-unknown-${theme}.png`)});
+  }
+  offline=false;
+  await card.locator('[data-review-refresh]').click();
   const request=async(method,input={})=>{
    const response=await page.request.post(origin+'/native-review',{data:{method,input}});
    assert.equal(response.ok(),true,await response.text());return (await response.json()).value;
@@ -33,14 +49,17 @@ const [origin,output] = process.argv.slice(2);
   const snapshot=await request('review.list');
   const action=snapshot.requests[0];
   assert.equal(action.status,'succeeded');
+  // The host has accepted and executed, but the submit response is still held.
+  await expect(card.locator('[data-review-choice="approve_once"]')).toHaveCount(0,{timeout:15000});
+  await page.screenshot({path:path.join(output,'native-ack-pending-recovered.png')});
+  await page.request.post(origin+'/release-ack');
   const rules=await request('review.rules');
   assert.equal(rules.rules.length,1);
   await request('review.resolve',{space_id:action.action.scope.space_id,id:action.action.id,digest:action.action.digest,expected_revision:initial.value.requests[0].revision,choice:'approve_once'});
   assert.equal((await (await page.request.get(origin+'/native-effect')).json()).content,'once','duplicate click repeated effect');
-  await card.locator('[data-review-refresh]').click();
-  if(await card.locator('.personal-review-history').count())await card.locator('.personal-review-history').evaluate(node=>node.open=true);
+  await expect(card).toHaveCount(0);
   await page.screenshot({path:path.join(output,'native-completed.png')});
   assert.deepEqual(errors,[]);
-  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({verified:true,browser:browser.version(),cases:['pending has no effect','rule preview','save and allow once','native shell executed once','duplicate owner choice does not replay'],action_id:action.action.id,rule_count:rules.rules.length},null,2));
+  fs.writeFileSync(path.join(output,'report.json'),JSON.stringify({verified:true,browser:browser.version(),cases:['pending has no effect','rule preview','save and allow once','native shell executed once','duplicate owner choice does not replay','UI recovers while accepted response is held','read outage retains unknown state and locks resubmission','light/default/wide and dark/large/narrow recovery view'],action_id:action.action.id,rule_count:rules.rules.length},null,2));
  } finally {await browser.close();}
 })().catch(error=>{console.error(error);process.exitCode=1;});

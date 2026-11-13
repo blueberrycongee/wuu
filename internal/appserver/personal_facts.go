@@ -19,16 +19,22 @@ type personalExecutionFacts struct {
 	Active        bool               `json:"active"`
 	Task          *personalTaskFacts `json:"task,omitempty"`
 }
+type personalRequirementSource struct {
+	Revision   int64  `json:"revision"`
+	SessionID  string `json:"session_id"`
+	MessageSeq int    `json:"message_seq"`
+}
 type personalTaskFacts struct {
-	ID               string `json:"id"`
-	Revision         int64  `json:"revision"`
-	RunID            string `json:"run_id"`
-	Active           bool   `json:"active"`
-	Goal             string `json:"goal"`
-	SourceSessionID  string `json:"source_session_id"`
-	SourceMessageSeq int    `json:"source_message_seq"`
-	RoutineID        string `json:"routine_id,omitempty"`
-	RoutineRevision  int64  `json:"routine_revision,omitempty"`
+	ID                 string                      `json:"id"`
+	Revision           int64                       `json:"revision"`
+	RunID              string                      `json:"run_id"`
+	Active             bool                        `json:"active"`
+	Goal               string                      `json:"goal"`
+	SourceSessionID    string                      `json:"source_session_id"`
+	SourceMessageSeq   int                         `json:"source_message_seq"`
+	RequirementSources []personalRequirementSource `json:"requirement_sources,omitempty"`
+	RoutineID          string                      `json:"routine_id,omitempty"`
+	RoutineRevision    int64                       `json:"routine_revision,omitempty"`
 }
 
 func (p *personalActions) executionFacts(ctx context.Context, state *runtime.State, sessionID string) (personalExecutionFacts, error) {

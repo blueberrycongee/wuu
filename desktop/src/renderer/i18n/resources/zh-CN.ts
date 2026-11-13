@@ -1155,6 +1155,8 @@ export const zhCN = {
   "error.cancelledTitle": "已停止",
   "error.networkTitle": "网络异常",
   "error.authTitle": "认证失败",
+  "error.creditsExhausted": "模型账户额度不足",
+  "error.creditsExhaustedDetail": "请充值或切换模型后再发送。",
   "error.providerTitle": "模型服务异常",
   "error.engineUnresponsive": "Agent 没有响应",
   "error.requestTooLargeTitle": "请求超出大小限制",

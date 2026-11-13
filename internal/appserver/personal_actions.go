@@ -50,9 +50,10 @@ type personalActions struct {
 	wake            chan struct{}
 	done            chan struct{}
 	drainMu         sync.Mutex
-	delivered       map[string]bool
+	delivered       map[string]bool // guarded with waiters by waitMu
 	waitMu          sync.Mutex
 	waiters         map[string]chan struct{}
+	receivers       map[string]int // live native invocations, guarded by waitMu
 	admissionsMu    sync.Mutex
 	admissions      map[personalreview.Key]personalActionAdmission
 	admissionEpoch  uint64
@@ -75,7 +76,7 @@ func newPersonalActionsForState(s *Server, state *runtime.State) (*personalActio
 	if state.Host == nil {
 		return nil, errors.New("selected Personal review provider is unavailable")
 	}
-	p := &personalActions{server: s, kits: map[string]*tools.Toolkit{}, effects: map[string]string{}, wake: make(chan struct{}, 1), done: make(chan struct{}), delivered: map[string]bool{}, waiters: map[string]chan struct{}{}, admissions: map[personalreview.Key]personalActionAdmission{}, effectGate: make(chan struct{}, 1)}
+	p := &personalActions{server: s, kits: map[string]*tools.Toolkit{}, effects: map[string]string{}, wake: make(chan struct{}, 1), done: make(chan struct{}), delivered: map[string]bool{}, waiters: map[string]chan struct{}{}, receivers: map[string]int{}, admissions: map[personalreview.Key]personalActionAdmission{}, effectGate: make(chan struct{}, 1)}
 	documents := persistence.NewClient(func(ctx context.Context, method string, raw json.RawMessage) (json.RawMessage, error) {
 		// Each operation pins its invocation before entering the ledger. New
 		// requests use the published graph; admitted actions keep their capture.
@@ -338,31 +339,60 @@ func (p *personalActions) authorityWithFacts(ctx context.Context, state *runtime
 		}
 		a.Scope.TaskID, a.Scope.RequirementsRevision = prefix+strconv.Itoa(sourceSeq), 1
 	}
-	if sourceSeq > 0 {
-		sourceMeta, ok, err := state.Sessions.Find(sourceSession)
+	sources := []personalRequirementSource{{Revision: 1, SessionID: sourceSession, MessageSeq: sourceSeq}}
+	if facts.Task != nil {
+		if facts.Task.RequirementSources != nil {
+			sources = facts.Task.RequirementSources
+		} else if facts.Task.Revision != 1 {
+			sources = nil
+		}
+		if int64(len(sources)) != facts.Task.Revision {
+			sources = nil
+		}
+	}
+	seen := make(map[string]bool)
+	for i, source := range sources {
+		if source.Revision != int64(i+1) || source.MessageSeq <= 0 || i > 0 && source.MessageSeq < sources[i-1].MessageSeq {
+			a.UserMessages = nil
+			break
+		}
+		sourceMeta, ok, err := state.Sessions.Find(source.SessionID)
 		if err != nil {
 			return a, err
 		}
-		if !ok || sourceMeta.UserSpaceID != b.UserSpaceID || sourceMeta.ProductDomain != "personal" || sourceMeta.Owner != owner || sourceMeta.ParentID != "" {
+		if !ok || source.SessionID != facts.MainSessionID || sourceMeta.AgentID != facts.AgentID || sourceMeta.UserSpaceID != b.UserSpaceID || sourceMeta.ProductDomain != "personal" || sourceMeta.Owner != owner || sourceMeta.ParentID != "" || sourceMeta.ArchivedAt != nil {
+			a.UserMessages = nil
 			a.BoundaryReason = "source is not the owning Personal conversation"
-		} else {
-			// Physical audit rows survive logical edits. Only the exact active
-			// source can authorize this task, including at guarded dispatch.
-			page, err := state.Sessions.WithContext(ctx).ReadActiveHistoryQuery(session.HistoryReadQuery{SessionID: sourceSession, StartSeq: sourceSeq, EndSeq: sourceSeq, Limit: 1})
-			if err != nil {
-				return a, err
-			}
-			if len(page.Records) == 1 {
-				r := page.Records[0]
-				if r.Seq == sourceSeq && r.Role == "user" && r.Origin == "user" && !r.Hidden && !r.ReadOnly && !r.Truncated && strings.TrimSpace(r.Content) != "" {
-					a.UserMessages = []personalreview.HumanMessage{{ID: fmt.Sprintf("%s:%d", sourceSession, sourceSeq), Text: r.Content}}
-				}
-			}
-			if len(a.UserMessages) == 0 {
-				a.BoundaryReason = "source is no longer an active original user message"
-			}
+			break
+		}
+		// Physical audit rows survive edits; only the active human source is authority.
+		page, err := state.Sessions.WithContext(ctx).ReadActiveHistoryQuery(session.HistoryReadQuery{SessionID: source.SessionID, StartSeq: source.MessageSeq, EndSeq: source.MessageSeq, Limit: 1})
+		if err != nil {
+			return a, err
+		}
+		if len(page.Records) != 1 {
+			a.UserMessages = nil
+			a.BoundaryReason = "source is no longer an active original user message"
+			break
+		}
+		r := page.Records[0]
+		if r.Seq != source.MessageSeq || r.Role != "user" || r.Origin != "user" || r.Hidden || r.ReadOnly || r.Truncated || strings.TrimSpace(r.Content) == "" {
+			a.UserMessages = nil
+			a.BoundaryReason = "source is no longer an active original user message"
+			break
+		}
+		id := fmt.Sprintf("%s:%d", source.SessionID, source.MessageSeq)
+		if !seen[id] {
+			a.UserMessages = append(a.UserMessages, personalreview.HumanMessage{ID: id, Text: r.Content})
+			seen[id] = true
 		}
 	}
+	// Bind the ordered revision chain as well as the resolved text to this action.
+	if facts.Task != nil && facts.Task.RequirementSources != nil {
+		chain, _ := json.Marshal(sources)
+		contextParts = append(contextParts, string(chain))
+	}
+
 	raw, _ := json.Marshal(struct {
 		Parts  []string
 		Source []personalreview.HumanMessage
@@ -450,22 +480,27 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 	}
 	key := personalreview.Key{SpaceID: scope.SpaceID, ID: prefix + personalHash(identity)}
 	var wake chan struct{}
+	p.waitMu.Lock()
+	p.receivers[key.ID]++
 	if !strings.HasPrefix(scope.TaskID, "conversation:") {
-		p.waitMu.Lock()
 		wake = p.waiters[key.ID]
 		if wake == nil {
 			wake = make(chan struct{})
 			p.waiters[key.ID] = wake
 		}
-		p.waitMu.Unlock()
-		defer func() {
-			p.waitMu.Lock()
-			if p.waiters[key.ID] == wake {
-				delete(p.waiters, key.ID)
-			}
-			p.waitMu.Unlock()
-		}()
 	}
+	p.waitMu.Unlock()
+	defer func() {
+		p.waitMu.Lock()
+		p.receivers[key.ID]--
+		if p.receivers[key.ID] == 0 {
+			delete(p.receivers, key.ID)
+		}
+		if wake != nil && p.waiters[key.ID] == wake {
+			delete(p.waiters, key.ID)
+		}
+		p.waitMu.Unlock()
+	}()
 	p.fileAdmissionMu.Lock()
 	admitted := false
 	preparedToken := ""
@@ -528,7 +563,7 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 		case <-wake:
 		case <-ctx.Done():
 			if p.ctx.Err() == nil {
-				_ = p.engine.CancelExecution(context.WithoutCancel(ctx), scope.SpaceID, scope.SessionID, scope)
+				_ = p.cancelExecution(context.WithoutCancel(ctx), scope.SessionID, scope)
 			}
 			return toolresult.Result{}, ctx.Err()
 		case <-p.ctx.Done():
@@ -549,6 +584,11 @@ func (p *personalActions) gate(ctx context.Context, kit *tools.Toolkit, call pro
 		if err = json.Unmarshal(r.Result, &result); err != nil {
 			return toolresult.Result{}, err
 		}
+		// The live invocation receives this result directly. Claim delivery before
+		// its waiter disappears so a later drain cannot also resume the worker.
+		p.waitMu.Lock()
+		p.delivered[r.Action.ID] = true
+		p.waitMu.Unlock()
 		return result.ToolResult, nil
 	}
 	if r.Status == personalreview.Executing || r.Status == personalreview.Uncertain {
@@ -926,15 +966,22 @@ func (p *personalActions) drain(ctx context.Context) error {
 		}
 		p.waitMu.Lock()
 		wake := p.waiters[r.Action.ID]
+		// Main-conversation calls have no approval waiter, but may still be
+		// receiving a synchronous result whose ledger commit is already visible.
+		if wake == nil && p.receivers[r.Action.ID] > 0 {
+			p.waitMu.Unlock()
+			continue
+		}
 		if wake != nil {
 			delete(p.waiters, r.Action.ID)
 			close(wake)
 		}
-		p.waitMu.Unlock()
 		if wake != nil {
 			p.delivered[r.Action.ID] = true
 		}
-		if p.delivered[r.Action.ID] {
+		delivered := p.delivered[r.Action.ID]
+		p.waitMu.Unlock()
+		if delivered {
 			if err := p.releaseAdmission(key, admitted.epoch); err != nil {
 				return err
 			}
@@ -945,7 +992,9 @@ func (p *personalActions) drain(ctx context.Context) error {
 		// stale or stopped workers must never be resumed by a generic send.
 		err = p.productAction(actionCtx, "actions.resume", r)
 		if err == nil {
+			p.waitMu.Lock()
 			p.delivered[r.Action.ID] = true
+			p.waitMu.Unlock()
 			if err := p.releaseAdmission(key, admitted.epoch); err != nil {
 				return err
 			}

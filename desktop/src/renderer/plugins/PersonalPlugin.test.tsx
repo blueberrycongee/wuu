@@ -1598,3 +1598,28 @@ it("preserves reply order while the user message is pending", async () => {
  const rows=[...ui.container.querySelectorAll('.mosaic-replies [data-role]')].map(n=>n.textContent);
  expect(rows.findIndex(t=>t?.includes('My pending reply'))).toBeLessThan(rows.findIndex(t=>t?.includes('Response to my reply')));
 });
+
+// Terminal failures must remain visible without an assistant message or a new submission.
+it.each(["You have no credits remaining.", "HTTP 401: invalid API key", "HTTP 429: rate limit", "connection reset", "model_not_found", "unexpected execution failure"])("restores a terminal failure from the owner session: %s", async error => {
+  const ui = await mount(undefined, main, [], { open: async () => ({ agent: main, session: { state: "failed" }, turn: { turn_id: "failed-turn", state: "failed", error } }) });
+  expect(ui.container.querySelectorAll(".turn-notice")).toHaveLength(1);
+  expect(ui.container.querySelector(".turn-notice")?.textContent).toContain(error);
+  await ui.remount();
+  expect(ui.container.querySelectorAll(".turn-notice")).toHaveLength(1);
+  expect(ui.invoke.mock.calls.some(([request]) => request.method === "agents.send")).toBe(false);
+});
+
+it("shows a live failure once, preserves partial output, and clears it for the next turn", async () => {
+  const ui = await mount(undefined, main, [{ seq: 1, role: "assistant", content: "Partial answer" }]);
+  const event = { kind: "notification", message: { method: "turn/error", params: { thread_id: "s-private", turn: { id: "failed-turn", status: "failed", error: { message: "You have no credits remaining." } } } } };
+  await act(async () => { ui.publish(event); ui.publish(event); });
+  expect(ui.container.querySelectorAll(".turn-notice")).toHaveLength(1);
+  expect(ui.container.textContent).toContain("Partial answer");
+  await act(async () => ui.publish({ kind: "notification", message: { method: "turn/started", params: { thread_id: "s-private", turn: { id: "next-turn" } } } }));
+  expect(ui.container.querySelector(".turn-notice")).toBeNull();
+});
+
+it("does not present a manual cancellation as a failure", async () => {
+  const ui = await mount(undefined, main, [], { open: async () => ({ agent: main, session: { state: "interrupted" }, turn: { turn_id: "stopped-turn", state: "interrupted", error: "context canceled" } }) });
+  expect(ui.container.querySelector(".turn-notice")).toBeNull();
+});

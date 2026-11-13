@@ -373,7 +373,7 @@ func (p *personalCoordinationProvider) InvokeService(ctx context.Context, call p
 		}
 		return json.Marshal(value)
 	case "cancel":
-		if err := actions.engine.CancelExecution(ctx, scope.server.rt.UserBinding().UserSpaceID, input.SessionID, input.Scopes...); err != nil {
+		if err := actions.cancelExecution(ctx, input.SessionID, input.Scopes...); err != nil {
 			return nil, err
 		}
 		actions.signal()

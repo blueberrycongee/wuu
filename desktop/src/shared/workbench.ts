@@ -334,6 +334,8 @@ export interface PluginUIConversationMessageProps {
 }
 
 export interface PluginUIConversationViewProps {
+  /** Latest terminal failure; the host renders the shared conversation notice. */
+  turnFailure?: { status: "failed" | "interrupted"; message: string };
   /** Opt-in messaging bubbles; standard preserves Coding-style presentation. */
   presentation?: "standard" | "bubbles";
   conversationId: string;

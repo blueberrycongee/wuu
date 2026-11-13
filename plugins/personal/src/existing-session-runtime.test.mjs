@@ -82,7 +82,7 @@ test('Personal process controls an exact existing target across lost replies, fo
     }
     if(request.operation==='inspect')return result({session:targetMetadata,turn:turns.get(p.request_id)});
     assert.equal(request.operation,'cancel');assert(p.turn_id||p.queue_id,'never whole-session stop');
-    const turn=[...turns.values()].find(turn=>p.turn_id?turn.turn_id===p.turn_id:turn.queue_id===p.queue_id);assert(turn);turn.state='interrupted';cancels++;return result({session_id:target.session_id,cancelled:true});
+    const turn=[...turns.values()].find(turn=>p.turn_id?turn.turn_id===p.turn_id:turn.queue_id===p.queue_id);assert(turn);if(turn.state!=='interrupted'){turn.state='interrupted';cancels++;}return result({session_id:target.session_id,cancelled:true});
    }
    default:throw Error(`Unexpected service ${service}/${method}`);
   }
@@ -115,6 +115,14 @@ test('Personal process controls an exact existing target across lost replies, fo
  const accept=(request_id,revision=task.revision)=>runtime.call('tool.execute',{tool_id:'accept_task_result',session_id:'personal-main',thread_id:'personal-main',turn_id:'controller-review',call_id:'accept-result',execution_id:'accept-result',arguments:{task_id:task.task_id,expected_revision:revision,request_id,summary:'Controller assessed the work against the goal',evidence:['The worker response addresses the requested follow-up']}}).then(r=>JSON.parse(r.result.content[0].text));
  await assert.rejects(accept('stale-run'),/no longer current/);
  ({task}=await accept(secondRun));assert.equal(task.state,'completed');assert.equal(task.result.origin,'controller_review');assert.equal(task.result.verified_at,undefined);assert.equal(task.controller_decision.request_id,secondRun);assert.equal(task.worker_result.text,'Reviewed work completed with evidence.');
+
+ const attentionInput={session_id:agent.main_session_id,agent_id:agent.agent_id,turn_id:'reviewed-result-turn',request_id:task.delivery.request_id,outcome:'completed',user_space_id:'local',product_domain:'personal'};
+ const attention=async input=>(await runtime.call('capability.invoke',{capability:'session.attention',input:{...attentionInput,...input}})).output;
+ assert.equal((await attention({request_id:'personal-chat-baseline'})).allowed,true);
+ assert.equal((await attention({})).allowed,true,'accepted existing-session result must notify its owner');
+ assert.equal((await attention({request_id:'personal-reviewed-result-unknown'})).allowed,false);
+ assert.equal((await attention({session_id:'another-session'})).allowed,false);
+ await assert.rejects(runtime.client('tasks.resume',{task_id:task.task_id,expected_revision:task.revision,session_policy:'new'}),/target cannot be replaced/);
  ({task}=await runtime.client('tasks.resume',{task_id:task.task_id,expected_revision:task.revision,goal:'One more bounded follow-up'}));assert.equal(sends,3);
  ({task}=await runtime.client('tasks.stop',{task_id:task.task_id,expected_revision:task.revision}));assert.equal(task.state,'stopped');assert.equal(cancels,1);assert.deepEqual(targetMetadata,original);
  unavailable=true;({task}=await runtime.client('tasks.resume',{task_id:task.task_id,expected_revision:task.revision,goal:'Check the existing target again'}));assert.equal(task.state,'waiting_external');assert.match(task.error,/unavailable/);assert.equal(created,1);assert.equal(task.execution.dispatch_pending,false);

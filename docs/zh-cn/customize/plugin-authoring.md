@@ -817,6 +817,14 @@ agent、任务、需求版本、run、活动/取消状态、所属 routine 和�
 宿主独立验证 session 所有权、真实历史、选中的 generation 和执行授权。业务事实本身
 不授予执行权限。
 
+修订过的任务通过 `task.requirement_sources` 按顺序返回每版需求的
+`{revision, session_id, message_seq}`，不能遗漏版本。引用必须来自宿主绑定的真实
+用户输入，不能来自模型参数或 goal 摘要。恢复任务可以重复引用同一条消息，但序号
+不能倒退。宿主在所属 agent 的主会话中读取有效用户历史，核对完整来源链并绑定到
+动作摘要；后续限制覆盖早先许可。证据缺失时禁用意图自动审批，撤回或其他会话的
+来源不能授权执行。旧的单条来源格式仅在第 1 版有效。不能从缓存文本补造来源，
+也不能静默丢弃某版需求。
+
 使用现有 Personal review/memory coordinator 时，应将这些持久化事实存放在 provider
 自己的**用户域 host storage** 中；键和值的格式由 provider 决定。执行副作用时，
 coordinator 保留选中的 provider，并对该不透明存储、session 和 review 状态持有

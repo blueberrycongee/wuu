@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -58,8 +59,16 @@ func TestPersonalApprovalBrowserToNativeEffect(t *testing.T) {
 	if _, err = f.kit.Execute(f.sourceContext(), call); err == nil || !strings.Contains(err.Error(), "personal_action_pending") {
 		t.Fatalf("command did not wait: %v", err)
 	}
+	ack := make(chan struct{})
+	var release sync.Once
+	defer release.Do(func() { close(ack) })
 	var handler http.HandlerFunc = func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
+		if r.URL.Path == "/release-ack" {
+			release.Do(func() { close(ack) })
+			w.WriteHeader(204)
+			return
+		}
 		if r.URL.Path == "/" {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write(html)
@@ -99,10 +108,17 @@ func TestPersonalApprovalBrowserToNativeEffect(t *testing.T) {
 			http.Error(w, err.Error(), 409)
 			return
 		}
+		if input.Method == "review.resolve" {
+			select {
+			case <-ack:
+			case <-r.Context().Done():
+				return
+			}
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "value": result})
 	}
 	server := httptest.NewServer(handler)
-	defer server.Close()
+	defer func() { release.Do(func() { close(ack) }); server.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, "node", filepath.Join(root, "desktop/scripts/personal-approval-native-e2e.cjs"), server.URL, output)
