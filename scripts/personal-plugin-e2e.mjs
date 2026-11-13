@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { build } = createRequire(join(root, 'plugins/package.json'))('esbuild');
@@ -271,15 +273,63 @@ class Runtime {
     }
     await this.call('prepare'); await this.call('activate'); return this;
   }
-  async close() { for (const job of this.background) this.send({id:`cancel-${job.execution_id}`,method:'execution.cancel',params:{execution_id:job.execution_id}}); await Promise.all(this.background.map(job => job.done)); await this.call('shutdown'); this.process.stdin.end(); }
+  async stopBackground() {
+    for (const job of this.background) this.send({id:`cancel-${job.execution_id}`,method:'execution.cancel',params:{execution_id:job.execution_id}});
+    for (const outcome of await Promise.allSettled(this.background.map(job => job.done))) {
+      if (outcome.status === 'rejected' && outcome.reason.message !== 'This operation was aborted') throw outcome.reason;
+    }
+    this.background = [];
+  }
+  async close() { await this.stopBackground(); await this.call('shutdown'); this.process.stdin.end(); }
 }
 async function scenario(name, fn) { await fn(); evidence.scenarios.push({ name, passed: true }); console.log(`PASS ${name}`); }
 try {
   if (!bundled) await build({ stdin: { contents: `import plugin from '${join(root, 'plugins/personal/src/index.ts')}'; import {runJSONLRuntime} from '@wuu/plugin-sdk'; await runJSONLRuntime(plugin,{input:process.stdin,output:process.stdout});`, resolveDir: root, loader: 'ts' }, alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', target: 'node22.7', format: 'esm', outfile: runtimePath });
+  evidence.runtime_sha256 = createHash('sha256').update(await readFile(runtimePath)).digest('hex');
+  evidence.source_commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+  evidence.platform = `${process.platform}/${process.arch}`;
   const schedulerPath = join(scratch, 'scheduler.mjs');
   await build({ entryPoints: [join(root, 'plugins/automation/src/user-routines.ts')], alias: { '@wuu/plugin-sdk': join(root, 'packages/plugin-sdk/src/index.ts') }, bundle: true, platform: 'node', format: 'esm', outfile: schedulerPath });
   ({ UserRoutineScheduler } = await import(schedulerPath));
   const host = new Host(); let runtime = await new Runtime(host).start(); let main, specialist, task;
+  await scenario('reply context restores the quoted message outside the retained model history', async () => {
+    const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+    const original = 'Choose the blue sample; budget 7319; deliver Friday.';
+    h.histories.set(a.main_session_id, [{ seq: 1, role: 'assistant', content: original }]);
+    const relation = { reply_to: { session_id: a.main_session_id, seq: 1 } };
+    const context = async () => (await r.call('capability.invoke', { capability: 'agent.pre_step', input: { session_id: a.main_session_id, messages: [{ role: 'user', content: 'Use this one' }], message_relation: relation } })).output;
+    assert(JSON.stringify(await context()).includes(original), 'quoted data must survive model history compaction');
+    h.histories.set(a.main_session_id, [{ seq: 1, role: 'assistant', content: original, hidden: true }]);
+    await assert.rejects(context(), /visible/);
+    await r.close();
+  });
+  await scenario('executor receives exact evidence identities without exposing them to the main conversation', async () => {
+    const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+    const t = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'evidence-identities', title: 'Read evidence', goal: 'Read a file and summarize' })).task;
+    const messages = [{ role: 'tool', name: 'read_file', tool_call_id: 'actual-read-id', has_tool_result: true, content: 'file data' }];
+    const context = async session_id => (await r.call('capability.invoke', { capability: 'agent.pre_step', input: { session_id, step_index: 1, messages } })).output;
+    assert(JSON.stringify(await context(t.execution.session_id)).includes('actual-read-id'), 'executor must be able to copy a real evidence identity');
+    assert(!JSON.stringify(await context(a.main_session_id)).includes('actual-read-id'), 'main conversation must not receive executor evidence instructions');
+    await r.close();
+  });
+  await scenario('finished tasks without submissions fail visibly once and recover across restart', async () => {
+    const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+    let t = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'missing-submission', title: 'Research', goal: 'Research a proposal' })).task;
+    h.turns.get(t.execution.request_id).state = 'completed';
+    await r.lifecycle(t, 'completed', 'A response without a completion submission');
+    for (let i = 0; i < 3; i++) t = (await r.client('tasks.reconcile', { task_id: t.task_id })).task;
+    assert.equal(t.state, 'failed'); assert.equal(t.reconciliation_required, false); assert.equal(t.result, undefined);
+    assert.equal(t.delivery.kind, 'failure');
+    assert.equal(h.calls.filter(c => c.service === 'host.session.send' && c.params.request_id === t.delivery.request_id).length, 1);
+    // Recover the legacy stuck state with the durable terminal receipt already present.
+    const [key] = [...h.storage].find(([, raw]) => JSON.parse(raw).task_id === t.task_id);
+    h.storage.set(key, JSON.stringify({ ...t, state: 'waiting_external', reconciliation_required: true, delivery: undefined, error: undefined }));
+    await r.close(); const restarted = await new Runtime(h).start();
+    t = (await restarted.client('tasks.reconcile', { task_id: t.task_id })).task;
+    assert.equal(t.state, 'failed'); assert.equal(t.reconciliation_required, false); assert.equal(t.delivery.kind, 'failure');
+    assert.equal(h.calls.filter(c => c.service === 'host.session.send' && c.params.cause === 'personal.task').length, 1, 'recovery must not rerun the worker');
+    await restarted.close();
+  });
   await scenario('selected Personal prompt is complete and preserves explicit section metadata', async () => {
     assert(runtime.definition.provided_services.some(service => service.name === 'agent.prompt'));
     const marker = 'explicit-context-' + Date.now();
@@ -289,6 +339,63 @@ try {
     assert(assembled.content.includes("catalog-"+marker));
     assert(assembled.sections.some(section => section.key === 'test.contribution' && section.bytes === Buffer.byteLength('你好 '+marker) && section.hash.length > 0 && section.static === false));
     await assert.rejects(runtime.call('service.invoke', {service:'agent.prompt',method:'assemble',caller:'session-execution',execution_id:'prompt-bad-role',params:{...request,role:'assistant'}}), /role/);
+  });
+  await scenario('preserved pending execution dispatches after asynchronous cancellation without unauthenticated inspection', async () => {
+    const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+    const old = (await r.client('tasks.create',{agent_id:a.agent_id,request_id:'preserve-pending',title:'Preserve pending',goal:'Original'})).task;
+    let hold = true;
+    h.intercept = (service,p) => {
+      if(service==='host.session.cancel' && hold && p.session_id===old.execution.session_id) return {cancelled:true};
+      if(service==='host.session.inspect' && p.session_id===old.execution.session_id && !p.execution_authorization) throw new Error('worker inspection requires execution authorization');
+    };
+    let revised = (await r.client('tasks.update',{task_id:old.task_id,expected_revision:old.revision,session_policy:'preserve',goal:'Updated'})).task;
+    assert.equal(revised.execution.status,'pending'); assert.equal(revised.execution.session_id,old.execution.session_id);
+    assert(!h.turns.has(revised.execution.request_id));
+    hold = false;
+    revised = (await r.client('tasks.reconcile',{task_id:old.task_id})).task;
+    assert(h.turns.has(revised.execution.request_id),'recovery must dispatch the pending preserved run');
+    assert(revised.execution.authorization); assert.equal(revised.execution.session_id,old.execution.session_id);
+    await r.client('tasks.reconcile',{task_id:old.task_id});
+    assert.equal(h.calls.filter(call=>call.service==='host.session.send' && call.params.request_id===revised.execution.request_id).length,1);
+    assert.equal(h.calls.filter(call=>call.service==='host.session.create').length,2);
+    await r.close();
+  });
+  await scenario('unknown execution without a grant recovers by authorized receipt lookup without replaying admitted work', async () => {
+    for (const outcome of ['absent','admitted','denied']) {
+      const admitted=outcome==='admitted';
+      const h=new Host(), r=await new Runtime(h).start(), a=(await r.client('agents.ensure_default')).agent;
+      const task=(await r.client('tasks.create',{agent_id:a.agent_id,request_id:`unknown-grant-${admitted}`,title:'Recovery',goal:'Recover'})).task;
+      await r.close();
+      const [key]=[...h.storage].find(([,raw])=>JSON.parse(raw).task_id===task.task_id);
+      const record=JSON.parse(h.storage.get(key));
+      record.execution.status='unknown'; delete record.execution.authorization;
+      record.state='waiting_external'; record.reconciliation_required=true;
+      h.storage.set(key,JSON.stringify(record));
+      if (!admitted) h.turns.delete(task.execution.request_id);
+      const sends=h.calls.filter(c=>c.service==='host.session.send' && c.params.request_id===task.execution.request_id).length;
+      h.intercept=(service,p)=>{
+        if(outcome==='denied' && service==='host.execution.authorization' && p.operation==='issue' && p.parent) throw Object.assign(new Error('selected grant revoked'),{code:'execution_authorization_required'});
+        if(service==='host.session.inspect' && p.session_id===task.execution.session_id && !p.execution_authorization) throw new Error('authenticated user-host principal is required');
+      };
+      const restarted=await new Runtime(h).start();
+      const recovered=(await restarted.client('tasks.reconcile',{task_id:task.task_id})).task;
+      if(outcome==='denied') {
+        assert.equal(recovered.authorization_state,'needs_authorization');
+        assert.equal(h.calls.filter(c=>c.service==='host.session.send' && c.params.request_id===task.execution.request_id).length,sends);
+        await restarted.close(); continue;
+      }
+      assert.equal(recovered.state,'running','unknown recovery must authorize receipt lookup');
+      assert(recovered.execution.authorization);
+      const issued=h.calls.filter(c=>c.service==='host.execution.authorization' && c.params.operation==='issue' && c.params.request_id===task.execution.request_id).at(-1).params;
+      assert.equal(issued.kind,'exact-run'); assert.equal(issued.session_id,task.execution.session_id);
+      assert.equal(issued.task_id,task.task_id); assert.deepEqual(issued.parent,task.authorization.reference);
+      assert.equal(h.calls.filter(c=>c.service==='host.session.send' && c.params.request_id===task.execution.request_id).length,sends+(admitted?0:1));
+      h.intercept=(service,p)=>{if(service==='host.session.inspect' && p.session_id===task.execution.session_id)throw new Error('stable transport failure');};
+      const failed=(await restarted.client('tasks.reconcile',{task_id:task.task_id})).task;
+      const repeated=(await restarted.client('tasks.reconcile',{task_id:task.task_id})).task;
+      assert.equal(repeated.revision,failed.revision,'unchanged recovery errors must not invalidate owner revisions');
+      await restarted.close();
+    }
   });
   await scenario('owner revision admits its new root while retired work drains but cannot derive or dispatch early', async () => {
     const h = new Host(), r = await new Runtime(h).start();
@@ -305,7 +412,7 @@ try {
     };
     old = (await r.client('tasks.create', {agent_id:agent.agent_id, request_id:'revision-live-owner', title:'Scoped revision', goal:'Original requirement'})).task;
     holdCancellation = true;
-    const revised = (await r.client('tasks.update', {task_id:old.task_id, expected_revision:old.revision, goal:'Explicit new requirement'})).task;
+    const revised = (await r.client('tasks.update', {task_id:old.task_id, expected_revision:old.revision, session_policy:'new', goal:'Explicit new requirement'})).task;
     assert.equal(revised.requirements_revision, 2); assert.notDeepEqual(revised.authorization.reference, old.authorization.reference);
     assert(revised.previous_executions.some(execution => execution.cancel_pending));
     assert.equal(revised.execution.session_id, undefined); assert(!h.turns.has(revised.execution.request_id));
@@ -364,13 +471,13 @@ try {
     assert.equal(restored.state, 'waiting_user'); assert.equal(restored.question, undefined); assert.equal(restored.delivery, undefined);
     assert.equal(h.calls.filter(call => call.service === 'host.session.send').length, sendsBefore); await restarted.close();
   });
-  await scenario('successful action receipt resumes the exact task and session once and supplies authoritative completion evidence', async () => {
+  for (const actionKind of ['command', 'file']) await scenario(`successful ${actionKind} receipt resumes the exact task and session once and supplies authoritative completion evidence`, async () => {
     const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
     let task = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'action-success', title: 'Save artifact', goal: 'Save exactly this artifact' })).task;
-    const original = task, pending = actionRecord(task); h.reviews.set(task.execution.session_id, [pending]);
+    const original = task, pending = actionRecord(task); pending.action.id = actionKind + '-' + 'a'.repeat(64); h.reviews.set(task.execution.session_id, [pending]);
     await r.client('actions.sync', { session_id: task.execution.session_id, action_id: pending.action.id });
     h.turns.get(task.execution.request_id).state = 'completed'; await r.lifecycle(task, 'completed');
-    const record = actionRecord(task, 'succeeded'); h.reviews.set(task.execution.session_id, [record]);
+    const record = actionRecord(task, 'succeeded'); record.action.id = pending.action.id; h.reviews.set(task.execution.session_id, [record]);
     const input = { session_id: task.execution.session_id, action_id: record.action.id };
     assert.deepEqual(await r.client('actions.resume', input), { accepted: true });
     assert.deepEqual(await r.client('actions.resume', input), { accepted: true });
@@ -378,6 +485,8 @@ try {
     assert.equal(task.task_id, original.task_id); assert.equal(task.requirements_revision, original.requirements_revision);
     assert.equal(task.execution.session_id, original.execution.session_id); assert.equal(task.state, 'running'); assert.equal(task.question, undefined);
     assert.equal(task.review_resume_pending, undefined); assert.deepEqual(task.review_resumed, [record.action.id]);
+    const step = (await r.call('capability.invoke', { capability: 'agent.pre_step', input: { session_id: task.execution.session_id, messages: [] } })).output;
+    for (const message of step.append_messages) assert(Buffer.byteLength(message.id) <= 96 && /^[a-z0-9._-]+$/.test(message.id), 'pre-step ID must satisfy host protocol');
     assert.equal(actionSends(h).length, 1); assert.equal(actionSends(h)[0].params.session_id, original.execution.session_id);
     assert.equal(actionSends(h)[0].params.request_id, task.execution.request_id); assert.notEqual(actionSends(h)[0].params.disable_tools, true);
     const completed = (await r.tool('complete_task', { task_id: task.task_id, requirements_revision: task.requirements_revision, summary: 'Local artifact saved', evidence: [{ action_id: record.action.id, action_digest: 'forged-client-digest', description: 'Host save receipt' }] }, task.execution.session_id)).task;
@@ -495,7 +604,7 @@ try {
     let waiting = (await r.tool('report_task', { task_id: aTask.task_id, requirements_revision: 2, state: 'waiting_user', progress: 'Which date?' }, aTask.execution.session_id)).task;
     const delivered = h.calls.filter(call => call.service === 'host.session.send' && call.params.cause === 'personal.task.question').at(-1).params;
     assert.equal(delivered.relation.metadata.task_links[0].question_request_id, waiting.question.request_id);
-    assert.deepEqual(delivered.relation.reply_to, source);
+    assert.deepEqual(delivered.relation.reply_to, { session_id: sid, seq: 2 });
     h.histories.get(sid).push({ seq: 3, role: 'assistant', content: 'Which date?', relation: delivered.relation });
     const history = await r.client('agents.history', { agent_id: a.agent_id });
     assert.deepEqual(history.records.at(-1).relation, delivered.relation);
@@ -503,6 +612,9 @@ try {
     await r.client('agents.send', { agent_id: a.agent_id, request_id: 'answer-a', prompt: 'Sunday', relation: answerRelation });
     waiting = (await r.tool('resume_task', { task_id: waiting.task_id, expected_revision: waiting.revision, answer: 'Sunday' }, sid, { source_message: { session_id: sid, seq: 2 }, message_relation: answerRelation })).task;
     assert.equal(waiting.requirements_revision, 3);
+    const revisedSource = (await r.client('agents.history', { agent_id: a.agent_id })).records.find(record => record.seq === 2);
+    assert.equal(revisedSource.relation.metadata.task_links.length, 1);
+    assert.equal(revisedSource.relation.metadata.task_links[0].requirements_revision, 3);
     await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'stale-question', prompt: 'Monday', relation: answerRelation }), /question|stale/);
     await assert.rejects(r.client('agents.send', { agent_id: a.agent_id, request_id: 'stripped-question', prompt: 'Monday', relation: { reply_to: answerRelation.reply_to, metadata: { task_links: [{ task_id: waiting.task_id, requirements_revision: 2 }] } } }), /question|relation|stale/);
     await assert.rejects(r.tool('update_task', { task_id: bTask.task_id, expected_revision: bTask.revision, goal: 'Bypass target' }, sid, { source_message: { session_id: sid, seq: 2 }, message_relation: { reply_to: { session_id: sid, seq: 3 }, metadata: { task_links: [] } } }), /question|target|relation/);
@@ -1042,13 +1154,29 @@ try {
     const retry = await runtime.client('agents.stop_reply', { agent_id: main.agent_id, turn_id: second.turn_id });
     assert.equal(retry.cancelled, false); assert.equal([...host.turns.values()].find(turn => turn.turn_id === third.turn_id).state, 'running');
   });
-  await scenario('terminal turn without verified result remains pending reconciliation', async () => {
+  await scenario('terminal turn without verified result reports an incomplete task', async () => {
     await runtime.lifecycle(task, 'completed'); task = (await runtime.client('tasks.get', { task_id: task.task_id })).task;
-    assert.notEqual(task.state, 'completed'); assert.equal(task.reconciliation_required, true);
+    assert.equal(task.state, 'failed'); assert.equal(task.reconciliation_required, false); assert.equal(task.delivery.kind, 'failure');
+  });
+  await scenario('preserved executor history remains append-only across requirement revisions', async () => {
+    const h = new Host(), r = await new Runtime(h).start(), a = (await r.client('agents.ensure_default')).agent;
+    let t = (await r.client('tasks.create', { agent_id: a.agent_id, request_id: 'preserved-history', title: 'Keep context', goal: 'Read original context' })).task;
+    const session = t.execution.session_id;
+    h.histories.set(session, [{ seq: 1, role: 'assistant', content: 'Original context: budget.py exists' }]);
+    await r.lifecycle(t, 'failed'); t = (await r.client('tasks.get', {task_id:t.task_id})).task;
+    t = (await r.client('tasks.resume', {task_id:t.task_id,expected_revision:t.revision,session_policy:'preserve',goal:'Continue using original context'})).task;
+    assert.equal(t.execution.session_id, session);
+    h.histories.get(session).push({seq:2,role:'assistant',content:'Continued with original context'});
+    const history = await r.client('tasks.history',{task_id:t.task_id});
+    assert.deepEqual(history.records.map(row=>row.content), ['Original context: budget.py exists','Continued with original context']);
+    assert.equal(h.calls.filter(call=>call.service==='host.session.create').length, 2, 'only main and original executor are created');
+    await r.close();
   });
   await scenario('revised requirements reject old completion and deliver verified result once', async () => {
     const previous = task;
-    task = (await runtime.client('tasks.update', { task_id: task.task_id, expected_revision: task.revision, goal: 'Research vegetarian supper' })).task;
+    await assert.rejects(runtime.client('tasks.resume', { task_id: task.task_id, expected_revision: task.revision, session_policy: 'invalid' }), /session_policy/);
+    task = (await runtime.client('tasks.resume', { task_id: task.task_id, expected_revision: task.revision, goal: 'Research vegetarian supper' })).task;
+    assert.equal(task.execution.session_id, previous.execution.session_id, 'default resume preserves the executor session');
     await runtime.lifecycle(previous, 'completed'); assert.notEqual((await runtime.client('tasks.get', { task_id: task.task_id })).task.state, 'completed');
     host.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_result: '{"result":"verified menu source"}' }]);
     await runtime.tool('complete_task', { task_id: task.task_id, requirements_revision: task.requirements_revision, summary: 'Vegetarian supper options', evidence: [{ seq: 1, description: 'Menu source' }] }, task.execution.session_id);
@@ -1089,7 +1217,8 @@ try {
     const creating = runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'create-edit', title: 'Revise creation', goal: 'Old requirement' });
     await reached;
     const pending = (await runtime.client('tasks.list')).tasks.find(t => t.request_id === 'create-edit');
-    const edited = (await runtime.client('tasks.update', { task_id: pending.task_id, expected_revision: pending.revision, goal: 'New requirement' })).task;
+    await assert.rejects(runtime.client('tasks.update', { task_id: pending.task_id, expected_revision: pending.revision, goal: 'New requirement' }), /execution session unavailable/);
+    const edited = (await runtime.client('tasks.update', { task_id: pending.task_id, expected_revision: pending.revision, session_policy: 'new', goal: 'New requirement' })).task;
     release(); await creating; host.intercept = undefined;
     const current = (await runtime.client('tasks.get', { task_id: pending.task_id })).task;
     assert.equal(current.state, 'running'); assert.equal(current.requirements_revision, 2); assert.equal(current.execution.request_id, edited.execution.request_id);
@@ -1574,9 +1703,11 @@ try {
     await runtime.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Artifact saved', evidence: [{ tool_call_id: 'write-artifact', description: 'Artifact write result' }] }, task.execution.session_id);
     task = (await runtime.client('tasks.get', { task_id: task.task_id })).task;
     assert(task.completion_intent); assert(!task.result); assert.notEqual(task.state, 'completed');
+    host.intercept = (service, params) => service === 'host.session.inspect' && params.request_id === task.execution.request_id && params.wait === 'terminal' ? { session: host.sessions.get(task.execution.session_id), turn: host.turns.get(task.execution.request_id), timed_out: true } : undefined;
     host.turns.get(task.execution.request_id).state = 'completed'; await runtime.lifecycle(task, 'completed');
     task = (await runtime.client('tasks.get', { task_id: task.task_id })).task; assert.equal(task.state, 'waiting_external'); assert(!task.delivery);
     await runtime.close(); runtime = await new Runtime(host).start();
+    host.intercept = undefined;
     host.histories.set(task.execution.session_id, [{ seq: 1, role: 'user', content: 'Save artifact' }, { seq: 2, role: 'tool', tool_call_id: 'write-artifact', tool_result: '{"saved":true,"path":"artifact.txt"}' }]);
     task = (await runtime.client('tasks.reconcile', { task_id: task.task_id })).task;
     assert.equal(task.state, 'completed'); assert.equal(task.result.evidence[0].seq, 2); assert.equal(task.result.evidence[0].session_id, task.execution.session_id); assert(!task.completion_intent);
@@ -1586,7 +1717,7 @@ try {
     await runtime.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Claimed success', evidence: [{ tool_call_id: 'failed-write', description: 'Write claim' }] }, task.execution.session_id);
     host.histories.set(task.execution.session_id, [{ seq: 1, role: 'tool', tool_call_id: 'failed-write', tool_result: '{"is_error":true,"content":[{"type":"text","text":"write failed"}]}' }]);
     host.turns.get(task.execution.request_id).state = 'completed'; await runtime.lifecycle(task, 'completed');
-    task = (await runtime.client('tasks.get', { task_id: task.task_id })).task; assert.equal(task.state, 'waiting_external'); assert(!task.result); assert(!task.delivery);
+    task = (await runtime.client('tasks.get', { task_id: task.task_id })).task; assert.equal(task.state, 'failed'); assert(!task.result); assert.equal(task.delivery.kind, 'failure'); assert.equal(task.reconciliation_required, false);
   });
   await scenario('foreground chat preserves exact user input and rejects model-forged user provenance', async () => {
     await runtime.client('agents.send', { agent_id: main.agent_id, request_id: 'verbatim-user-input', prompt: '  Keep my exact text\n' });
@@ -1598,7 +1729,7 @@ try {
     let task = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: 'history-versions', title: 'Trace revisions', goal: 'First requirement' })).task;
     const firstSession = task.execution.session_id;
     host.histories.set(firstSession, [{ seq: 1, role: 'assistant', content: 'First version evidence' }]);
-    task = (await runtime.client('tasks.update', { task_id: task.task_id, expected_revision: task.revision, goal: 'Second requirement' })).task;
+    task = (await runtime.client('tasks.update', { task_id: task.task_id, expected_revision: task.revision, session_policy: 'new', goal: 'Second requirement' })).task;
     host.histories.set(task.execution.session_id, [{ seq: 1, role: 'assistant', content: 'Second version evidence' }]);
     assert.equal((await runtime.client('tasks.history', { task_id: task.task_id, requirements_revision: 1 })).records[0].content, 'First version evidence');
     task = (await runtime.client('tasks.stop', { task_id: task.task_id, expected_revision: task.revision })).task;
@@ -1796,6 +1927,26 @@ try {
     assert.equal(search.matches[0].at, at); assert.equal(search.next_cursor, 'next-owned-cursor'); assert.equal(search.has_more, true); host.intercept = undefined;
     await runtime.client('agents.search', { agent_id: main.agent_id, query: 'conversation' });
   });
+  await scenario('completion evidence beyond 5000 records remains complete and rejects missing or failed receipts', async () => {
+    for (const selector of ['seq', 'tool_call_id', 'missing', 'failed']) {
+      let task = (await runtime.client('tasks.create', { agent_id: main.agent_id, request_id: `long-history-${selector}`, title: 'Long history evidence', goal: 'Verify persisted results' })).task;
+      const records = Array.from({ length: 6000 }, (_, i) => ({ seq: i + 1, role: 'user', content: 'Earlier context' }));
+      records.push({ seq: 6001, role: 'tool', tool_call_id: 'late-receipt', tool_result: JSON.stringify({ is_error: selector === 'failed', saved: true }) });
+      host.histories.set(task.execution.session_id, records);
+      const before = host.calls.length, started = performance.now();
+      await runtime.tool('complete_task', { task_id: task.task_id, requirements_revision: 1, summary: 'Late artifact', evidence: [selector === 'seq' ? { seq: 6001, description: 'Persisted artifact' } : { tool_call_id: selector === 'missing' ? 'absent-receipt' : 'late-receipt', description: 'Persisted artifact' }] }, task.execution.session_id);
+      host.turns.get(task.execution.request_id).state = 'completed';
+      await runtime.lifecycle(task, 'completed');
+      task = (await runtime.client('tasks.get', { task_id: task.task_id })).task;
+      if (selector === 'missing' || selector === 'failed') { assert.equal(task.state, 'failed'); assert(!task.result); }
+      else { assert.equal(task.state, 'completed'); assert.equal(task.result.evidence[0].seq, 6001); }
+      const reads = host.calls.slice(before).filter(call => call.service === 'host.session.history.read' && call.params.session_id === task.execution.session_id);
+      if (selector === 'seq') assert(reads.length <= 2, 'sequence evidence must use exact reads');
+      else { assert.equal(reads.length, 121); assert(reads.slice(1).every(call => call.params.snapshot_seq === 6001), 'pagination must retain the original snapshot'); }
+      (evidence.measurements ??= []).push({ case: 'long-history', selector, records: records.length, history_reads: reads.length, elapsed_ms: performance.now() - started });
+    }
+  });
+
   await runtime.close(); evidence.passed = true;
 } catch (error) { evidence.passed = false; evidence.error = error.stack; console.error(error); throw error; }
 finally { for (const runtime of active) runtime.process.kill(); await mkdir(evidencePath, { recursive: true }); await writeFile(join(evidencePath, 'evidence.json'), JSON.stringify(evidence, null, 2)); await rm(scratch, { recursive: true, force: true }); }
