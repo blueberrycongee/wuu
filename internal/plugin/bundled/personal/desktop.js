@@ -274,6 +274,7 @@ var personalDesktop = (() => {
     if (reason.startsWith("Frozen file action cannot be validated; no effect was dispatched: ")) return "\u6587\u4EF6\u6216\u64CD\u4F5C\u5185\u5BB9\u5DF2\u7ECF\u53D8\u5316\uFF0C\u6587\u4EF6\u6CA1\u6709\u4FEE\u6539\u3002";
     return reason;
   }
+  var reviewResponseWaitMs = 1e4;
   var copy = {
     en: {
       mode: "Auto Review",
@@ -294,6 +295,9 @@ var personalDesktop = (() => {
       parameters: "Technical details",
       expires: "Expires",
       digest: "Action digest",
+      checking: "Checking approval status\u2026",
+      readFailed: "Could not check the saved status. Refresh when the connection returns.",
+      unknown: "The submission result is not yet confirmed. Refresh checks its status without submitting again.",
       working: "Saving\u2026",
       failed: "Could not save. Refresh to check the current state.",
       invalidData: "Action data could not be verified. Refresh to check the saved state.",
@@ -347,6 +351,9 @@ var personalDesktop = (() => {
       parameters: "\u6280\u672F\u8BE6\u60C5",
       expires: "\u6709\u6548\u671F\u81F3",
       digest: "\u52A8\u4F5C\u6458\u8981",
+      checking: "\u6B63\u5728\u6838\u5BF9\u5BA1\u6279\u7ED3\u679C\u2026",
+      readFailed: "\u6682\u65F6\u65E0\u6CD5\u6838\u5BF9\u540E\u53F0\u72B6\u6001\uFF0C\u8BF7\u5728\u8FDE\u63A5\u6062\u590D\u540E\u5237\u65B0\u3002",
+      unknown: "\u63D0\u4EA4\u7ED3\u679C\u6682\u672A\u786E\u8BA4\u3002\u5237\u65B0\u53EA\u6838\u5BF9\u72B6\u6001\uFF0C\u4E0D\u4F1A\u91CD\u590D\u63D0\u4EA4\u3002",
       working: "\u6B63\u5728\u4FDD\u5B58\u2026",
       failed: "\u4FDD\u5B58\u5931\u8D25\uFF0C\u8BF7\u5237\u65B0\u6838\u5BF9\u5F53\u524D\u72B6\u6001\u3002",
       invalidData: "\u52A8\u4F5C\u6570\u636E\u683C\u5F0F\u65E0\u6CD5\u9A8C\u8BC1\uFF0C\u8BF7\u5237\u65B0\u6838\u5BF9\u4FDD\u5B58\u72B6\u6001\u3002",
@@ -451,15 +458,29 @@ var personalDesktop = (() => {
       const preview = rulePreview?.service === service ? rulePreview : void 0;
       const [notice, setNotice] = react.useState("");
       const [now, setNow] = react.useState(Date.now);
+      const pendingAction = react.useRef(void 0);
       const active = react.useRef(true), epoch = react.useRef(0), submitting = react.useRef(false), refreshing = react.useRef(false);
       const refresh = async () => {
-        if (submitting.current || refreshing.current) return;
+        if (submitting.current && !pendingAction.current || refreshing.current) return;
         refreshing.current = true;
         const generation = ++epoch.current;
         try {
-          const next = decodeReviewSnapshot(await service.list());
-          const nextRules = !conversation && service.rules ? decodeReviewRules(await service.rules()) : void 0;
+          let timeout;
+          const next = decodeReviewSnapshot(await Promise.race([
+            service.list(),
+            new Promise((_, reject) => {
+              timeout = setTimeout(() => reject(new Error(words.unknown)), reviewResponseWaitMs);
+            })
+          ]).finally(() => clearTimeout(timeout)));
+          const nextRules = !pendingAction.current && !conversation && service.rules ? decodeReviewRules(await service.rules()) : void 0;
           if (active.current && generation === epoch.current) {
+            const pending2 = pendingAction.current;
+            const saved = pending2 && next.kind === "ready" ? next.requests.find((item) => item.action.id === pending2.record.action.id && item.action.scope.space_id === pending2.record.action.scope.space_id && item.action.digest === pending2.record.action.digest && item.action.scope.requirements_revision === pending2.record.action.scope.requirements_revision) : void 0;
+            if (pending2 && saved && saved.revision > pending2.record.revision && !["proposed", "awaiting_confirmation"].includes(saved.status)) {
+              pendingAction.current = void 0;
+              submitting.current = false;
+              setBusy(void 0);
+            }
             setSnapshot(next);
             if (nextRules) setSavedRules({ service, value: nextRules });
             setUnverified(false);
@@ -468,7 +489,8 @@ var personalDesktop = (() => {
         } catch (cause) {
           if (active.current && generation === epoch.current) {
             setUnverified(true);
-            showFailure(cause);
+            if (pendingAction.current && !(cause instanceof ReviewContractError)) setError(words.readFailed);
+            else showFailure(cause);
           }
         } finally {
           if (active.current && generation === epoch.current) refreshing.current = false;
@@ -476,6 +498,7 @@ var personalDesktop = (() => {
       };
       react.useEffect(() => {
         active.current = true;
+        pendingAction.current = void 0;
         hadActions.current = false;
         submitting.current = false;
         refreshing.current = false;
@@ -492,6 +515,7 @@ var personalDesktop = (() => {
         }, 5e3);
         return () => {
           active.current = false;
+          pendingAction.current = void 0;
           epoch.current++;
           clearInterval(timer);
           clearInterval(poll);
@@ -502,21 +526,27 @@ var personalDesktop = (() => {
         submitting.current = true;
         setBusy(record.action.id);
         setError("");
-        const generation = ++epoch.current;
+        ++epoch.current;
+        refreshing.current = false;
+        const pending2 = { record, started: Date.now() };
+        pendingAction.current = pending2;
         const command = actionBinding(record);
         try {
           const next = decodeReviewSnapshot(choice === "revoke" ? await service.revoke(command) : await service.resolve({ ...command, choice }));
-          if (active.current && generation === epoch.current) {
+          if (active.current && pendingAction.current === pending2) {
+            ++epoch.current;
             setSnapshot(next);
             setUnverified(false);
           }
         } catch (cause) {
-          if (active.current && generation === epoch.current) {
+          if (active.current && pendingAction.current === pending2) {
+            ++epoch.current;
             setUnverified(true);
             showFailure(cause);
           }
         } finally {
-          if (active.current && generation === epoch.current) {
+          if (active.current && pendingAction.current === pending2) {
+            pendingAction.current = void 0;
             submitting.current = false;
             refreshing.current = false;
             setBusy(void 0);
@@ -584,12 +614,9 @@ var personalDesktop = (() => {
           setSavedRules({ service, value });
           setRulePreview(void 0);
           setNotice(words.ruleSaved);
-          const next = decodeReviewSnapshot(await service.resolve({ ...actionBinding(preview.record), choice: "approve_once" }));
-          if (active.current && generation === epoch.current) {
-            setSnapshot(next);
-            setUnverified(false);
-            setNotice("");
-          }
+          submitting.current = false;
+          setNotice("");
+          await decide(preview.record, "approve_once");
         } catch (cause) {
           if (active.current && generation === epoch.current) {
             setUnverified(true);
@@ -643,7 +670,7 @@ var personalDesktop = (() => {
           "article",
           { key: action.id, className: "personal-review-item", "data-review-id": action.id, "data-review-state": record.status },
           h("h4", null, title),
-          h("span", { className: "personal-review-status", role: "status" }, words.states[expired && canConfirm ? "expired" : record.status]),
+          h("span", { className: "personal-review-status", role: "status" }, pendingAction.current?.record.action.id === action.id ? words.checking : words.states[expired && canConfirm ? "expired" : record.status]),
           action.summary.source && h("p", { className: "personal-review-muted personal-review-consequence", "data-review-source": true }, `${words.fromRequest}${action.summary.source}`),
           h("p", { className: "personal-review-consequence" }, commandAction ? words.commandBody : action.summary.consequence),
           canConfirm && h("p", { className: "personal-review-muted" }, reviewReason(record.reason, locale)),
@@ -658,7 +685,7 @@ var personalDesktop = (() => {
           (canConfirm || canRevoke) && h(
             "div",
             { className: "personal-review-actions" },
-            canConfirm && h(ui.Button, { variant: "primary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "approve_once", onClick: () => void decide(record, "approve_once") }, busy === action.id ? words.working : words.approve),
+            canConfirm && h(ui.Button, { variant: "primary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "approve_once", onClick: () => void decide(record, "approve_once") }, busy === action.id ? pendingAction.current && now - pendingAction.current.started >= reviewResponseWaitMs ? words.checking : words.working : words.approve),
             canConfirm && service.previewRule && service.rules && h(ui.Button, { variant: "secondary", disabled, "data-review-choice": "remember", onClick: () => void remember(record) }, words.remember),
             canConfirm && h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "reject", onClick: () => void decide(record, "reject") }, words.reject),
             canRevoke && h(ui.Button, { variant: "secondary", disabled: Boolean(busy) || unverified || expired, "data-review-choice": "revoke", onClick: () => void decide(record, "revoke") }, record.status === "blocked" ? words.withdraw : words.revoke)
@@ -675,18 +702,19 @@ var personalDesktop = (() => {
         );
       };
       const records = snapshot?.kind === "ready" ? snapshot.requests.filter((record) => !conversation || ["data_write", "external_write"].includes(record.action.effect)) : [];
-      const pending = records.filter((record) => ["awaiting_confirmation", "approved", "ready", "blocked", "executing"].includes(record.status));
+      const pending = records.filter((record) => ["awaiting_confirmation", "approved", "ready", "blocked", "executing", "uncertain"].includes(record.status));
       const history = records.filter((record) => !pending.includes(record)).sort((a, b) => (b.action.expires_at === null ? 0 : Date.parse(b.action.expires_at)) - (a.action.expires_at === null ? 0 : Date.parse(a.action.expires_at)));
       const settings = snapshot?.kind === "ready" ? snapshot.settings : void 0;
-      if (conversation && !pending.length && (!error || !hadActions.current)) return null;
-      const failureRow = error && h("div", { className: "personal-review-failure" }, h("p", { role: "alert", className: "personal-review-error" }, error), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), "data-review-refresh": true, onClick: () => void refresh() }, words.refresh));
+      if (conversation && !pendingAction.current && !pending.length && (!error || !hadActions.current)) return null;
+      const failureRow = error && h("div", { className: "personal-review-failure" }, h("p", { role: "alert", className: "personal-review-error" }, error), h(ui.Button, { variant: "ghost", disabled: Boolean(busy) && !pendingAction.current, "data-review-refresh": true, onClick: () => void refresh() }, words.refresh));
       if (conversation) {
-        const awaiting = pending.filter((record) => record.status === "awaiting_confirmation").length;
+        const awaiting = pending.filter((record) => record.status === "awaiting_confirmation" && record.action.id !== pendingAction.current?.record.action.id).length;
         return h(
           "div",
           { className: "personal-review personal-review-conversation", "data-personal-action-review": true, "data-review-variant": variant },
           h("style", null, personalReviewStyles),
-          h("div", { className: "personal-review-heading" }, h("h3", null, awaiting ? `${awaiting} ${words.pendingCount}` : words.recentResults), h(ui.Button, { variant: "ghost", disabled: Boolean(busy), "data-review-refresh": true, onClick: () => void refresh() }, words.refresh)),
+          h("div", { className: "personal-review-heading" }, h("h3", null, awaiting ? `${awaiting} ${words.pendingCount}` : words.recentResults), h(ui.Button, { variant: "ghost", disabled: Boolean(busy) && !pendingAction.current, "data-review-refresh": true, onClick: () => void refresh() }, words.refresh)),
+          pendingAction.current && now - pendingAction.current.started >= reviewResponseWaitMs && h("p", { role: "status", "data-review-reconciling": true }, words.unknown),
           notice && h("p", { role: "status" }, notice),
           error && h("p", { role: "alert", className: "personal-review-error" }, error),
           pending.length > 0 && h("section", { className: "personal-review-list", "aria-label": words.pending }, pending.map(renderRecord))
@@ -705,6 +733,7 @@ var personalDesktop = (() => {
           settings && service.settings ? h(ui.Checkbox, { label: words.mode, description: words.modeHelp, role: "switch", "aria-checked": settings.auto_review_enabled, checked: settings.auto_review_enabled, disabled: Boolean(busy) || unverified || !settings.auto_review_enabled && settings.scope.length === 0, onChange: () => void changeSettings() }) : h(ui.Checkbox, { label: words.mode, description: snapshot?.kind === "unavailable" ? snapshot.reason : void 0, checked: false, disabled: true })
         ),
         failureRow,
+        pendingAction.current && now - pendingAction.current.started >= reviewResponseWaitMs && h("p", { role: "status", "data-review-reconciling": true }, words.unknown, h(ui.Button, { variant: "ghost", "data-review-refresh": true, onClick: () => void refresh() }, words.refresh)),
         notice && h("p", { role: "status", className: "personal-review-notice" }, notice),
         rules && rules.rules.length > 0 && h(ui.Section, { title: words.rules, "aria-label": words.rules }, h(
           ui.Card,
