@@ -65,16 +65,17 @@ async function capture(name) {
     ['chat-uncertain','uncertain',{},1000,950],['chat-stale','stale',{},1000,950],
     ['chat-denied','denied',{},1000,950],['chat-revoked','revoked',{},1000,950],['chat-succeeded','succeeded',{},1000,950]]) {
     await open(scenario,extra);await page.setViewportSize({width,height});
-    const terminal=['uncertain','stale','denied','revoked','succeeded'].includes(scenario);
+    const terminal=['stale','denied','revoked','succeeded'].includes(scenario);
     if(terminal)await wait('.mosaic-main textarea');else await wait('[data-review-variant="conversation"]');
     if(await page.locator('.personal-review-history').count())await page.locator('.personal-review-history').evaluate(node=>node.open=true);
     if(await page.locator('[data-personal-action-review]').count())await page.locator('[data-personal-action-review]').scrollIntoViewIfNeeded();
     await capture(name);
     if(terminal)assert.equal(await page.locator('[data-personal-action-review]').count(),0,`${scenario}: completed action history must stay out of chat`);
     else assert.equal(await page.locator('[data-personal-action-review] [role="switch"]').count(),0,'chat cannot opt into AutoReview');
+    if(scenario==='uncertain'){assert.equal(await page.locator('[data-review-variant="conversation"]').count(),1,'unknown execution outcomes must remain visible for reconciliation');assert(await page.locator('[data-review-refresh]').isEnabled(),'unknown outcomes must permit a read-only refresh');}
     if(['expired','uncertain','stale','denied','revoked','succeeded'].includes(scenario))assert.equal(await page.locator('[data-review-choice="approve_once"]:enabled').count(),0);
   }
-  report.cases.push('Main chat renders consequential file approval; expired/stale/unknown action history stays out of chat and is not confirmable');
+  report.cases.push('Main chat renders consequential file approval; expired/stale action history stays out of chat; unknown outcomes stay visible for reconciliation and are not confirmable');
   for(const [scenario,name] of [['empty','home-empty-actions'],['unavailable','home-no-approval-service']]){
     for(const narrow of [false,true]){
       await open(scenario,narrow?{font:'20'}:{},narrow?{width:430,height:1100}:{width:1100,height:950});await wait('.mosaic-main textarea');
