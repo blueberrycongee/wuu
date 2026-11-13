@@ -231,10 +231,10 @@ export async function activate(api) {
     .mosaic-profile-copy .mosaic-status { margin-top:4px;font-size:calc(var(--font-ui) * 1.067);line-height:1.25; }
     .mosaic-profile-trigger { position:relative;width:${IDENTITY_AVATAR_SIZE}px;height:${IDENTITY_AVATAR_SIZE}px;border:0;background:transparent;color:inherit;display:grid;place-items:center;padding:0;border-radius:50%;cursor:pointer;font:inherit;-webkit-app-region:no-drag; }
     .mosaic-identity { position:relative;display:flex;flex-direction:column;align-items:center;gap:0;padding-top:4px;width:max-content;max-width:min(240px,100%);z-index:31; }
-    .mosaic-identity::before { content:"";position:absolute;inset:-8px -12px;z-index:-1;border-radius:999px;background:var(--paper);filter:blur(10px);pointer-events:none; }
-    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:100%;box-sizing:border-box;padding:4px 12px;border:1px solid color-mix(in srgb,var(--hairline) 50%,transparent);border-radius:999px;background:var(--paper);box-shadow:0 1px 2px #00000008;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
+    .mosaic-identity::before { content:"";position:absolute;inset:-8px -12px;z-index:-1;border-radius:999px;background:color-mix(in srgb,var(--paper) 45%,transparent);filter:blur(10px);pointer-events:none; }
+    .mosaic-identity-label { position:relative;display:flex;flex-direction:column;align-items:center;gap:2px;width:max-content;min-width:0;max-width:100%;box-sizing:border-box;padding:4px 12px;border:1px solid color-mix(in srgb,var(--hairline) 50%,transparent);border-radius:999px;background:color-mix(in srgb,var(--paper) 65%,transparent);box-shadow:0 1px 2px #00000008;color:var(--ink);font:inherit;cursor:pointer;-webkit-app-region:no-drag; }
     .mosaic-identity-label strong { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--font-ui);line-height:1.4;font-weight:500;color:light-dark(#000,#fff); }
-    .mosaic-identity-label:hover { background:var(--surface-1); }
+    .mosaic-identity-label:hover { background:color-mix(in srgb,var(--surface-1) 80%,transparent); }
     .mosaic-identity-label:focus-visible { outline:2px solid var(--accent);outline-offset:2px; }
     .mosaic-identity-label small { max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;line-height:16px;color:var(--ink-muted); }
     .mosaic[data-panel-open="true"] .mosaic-identity { visibility:hidden; }
