@@ -404,7 +404,7 @@ test("Personal reactions keep ordinary feedback quiet and negative feedback boun
   assert.equal(locatedStep.output.append_messages.filter(m => m.id.startsWith("personal.reaction-guidance.")).length, 1);
   const agentKey = [...storage.keys()].find(key => key.includes(".agent.") && JSON.parse(storage.get(key)).agent_id === mainAgent);
   const workerKey = agentKey.slice(0, agentKey.indexOf(".agent.")) + ".task.guidance-worker";
-  storage.set(workerKey, JSON.stringify({ agent_id: mainAgent, task_id: "guidance-worker", state: "running", execution: { session_id: "worker" }, cancel_requested: false, requirements_revision: 1 }));
+  storage.set(workerKey, JSON.stringify({ agent_id: mainAgent, task_id: "guidance-worker", state: "running", execution: { session_id: "worker", request_id: "guidance-worker-run" }, cancel_requested: false, requirements_revision: 1 }));
   const workerStep = await runtime.call("capability.invoke", { capability: "agent.pre_step", input: { session_id: "worker", step_index: 1, messages: [] }, execution_id: "worker-step" });
   assert(!workerStep.output.append_messages.some(m => m.id.startsWith("personal.reaction-guidance.") || m.id.startsWith("personal.reactions.")));
   await assert.rejects(runtime.tool("react_to_message", toolInput, "worker"), /only the main/);
