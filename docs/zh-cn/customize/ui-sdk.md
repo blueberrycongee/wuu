@@ -203,6 +203,8 @@ JSONL 响应保留 code 与 message，嵌套服务调用同样如此。具有非
 
 ### 错误反馈
 
+`ConversationView.turnFailure` 接收 `{ status: "failed" | "interrupted", message: string }`，用于展示最近一次回复的终止错误。宿主复用 Coding 的可展开提示，并隐藏普通的手动取消。贡献方负责从会话状态恢复错误，以及在新一轮开始时清除提示；此属性不会触发重试。
+
 根据失败的操作选择位置，不要按异常类型机械决定：
 
 | 场景 | 呈现方式 |

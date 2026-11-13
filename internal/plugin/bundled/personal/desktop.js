@@ -1771,6 +1771,7 @@ var personalDesktop = (() => {
         draftFor(session).dequeuedIds.add(params.queue_id);
       }
       if (method === "turn/started") {
+        stream.failure = void 0;
         stream.running = true;
         stream.activeTurnID = params.turn?.id || params.turn_id;
       }
@@ -1783,6 +1784,9 @@ var personalDesktop = (() => {
             tool.status = interrupted ? "interrupted" : tool.status === "failed" ? "failed" : "completed";
           }
         }
+        const status = params.turn?.status || (method === "turn/error" ? "failed" : "completed");
+        const failure = params.turn?.error || params.error;
+        if (!stream.activeTurnID || stream.activeTurnID === turnID) stream.failure = ["failed", "interrupted"].includes(status) ? { status, message: typeof failure === "string" ? failure : failure?.message || "" } : void 0;
         stream.completedTurns.add(turnID);
         if (params.turn?.items_view === "full") {
           const retained = new Set(params.turn.items.map((item2) => `${turnID}:${item2.id}`));
@@ -2517,6 +2521,7 @@ var personalDesktop = (() => {
           for (const [id, tool] of stream2.tools) if ((history.records || []).some((record) => record.ui_resources?.some((resource) => resource.tool_call_id === tool.call_id))) stream2.tools.delete(id);
           const state = opened.session?.state;
           if (version === stream2.version) {
+            if (opened.turn) stream2.failure = ["failed", "interrupted"].includes(opened.turn.state) ? { status: opened.turn.state, message: opened.turn.error || "" } : void 0;
             stream2.running = ["running", "queued"].includes(state);
             stream2.activeTurnID = opened.turn?.state === "running" ? opened.turn.turn_id : void 0;
             const pending = draftFor(identity.main_session_id);
@@ -3226,6 +3231,7 @@ var personalDesktop = (() => {
           ConversationView,
           {
             presentation: "bubbles",
+            turnFailure: streamFor(conversationID).failure,
             conversationId: conversationID,
             sessionId: conversationID,
             sessionScope: route,

@@ -1156,6 +1156,8 @@ export const enUS = {
   "error.cancelledTitle": "Stopped",
   "error.networkTitle": "Network error",
   "error.authTitle": "Authentication failed",
+  "error.creditsExhausted": "Model account credits exhausted",
+  "error.creditsExhaustedDetail": "Add credits or switch models before sending again.",
   "error.providerTitle": "Model provider error",
   "error.engineUnresponsive": "Agent did not respond",
   "error.requestTooLargeTitle": "Request too large",

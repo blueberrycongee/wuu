@@ -78,7 +78,7 @@ describe("userFacingErrorForMessage", () => {
       {
         message: "Credit balance is too low",
         category: "provider",
-        title: t("error.providerTitle"),
+        title: t("error.creditsExhausted"),
       },
       {
         message: "OpenCode server exited: exit status 1: rate limit exceeded",
@@ -583,4 +583,11 @@ describe("TurnEvents", () => {
     expect(event?.presentation).toBe("context_compaction");
   });
 
+});
+
+it("identifies explicit exhausted credits without mislabeling rate limits as billing", () => {
+  const exhausted = userFacingErrorForMessage("stream request failed: You have no credits remaining.", "turn");
+  expect(exhausted.category).toBe("provider");
+  expect(exhausted.title).toBe(t("error.creditsExhausted"));
+  expect(userFacingErrorForMessage("HTTP 429: rate limit", "turn").title).not.toBe(exhausted.title);
 });

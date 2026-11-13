@@ -1,3 +1,5 @@
+import { turnEventForTurn } from "../TurnEvents";
+import { TurnEventNotice } from "../TurnNotice";
 import { usePluginConversationLifetime, usePluginConversationSource, usePluginConversationApplication } from "./PluginConversationScope";
 import { useScopedContentRuntime } from "./ScopedContentRuntime";
 import { useConversationControls } from "../ConversationControlsContext";
@@ -74,8 +76,9 @@ class ConversationReadingBoundary extends Component<ReadingBoundaryProps> {
   render(): React.ReactNode { return this.props.children; }
 }
 
-export function PluginConversationView({ presentation = "standard", conversationId, sessionId, sessionScope, onQuestionReply, actions, title, subtitle, avatar, status, loading = false, searchLabel, searchContent, showHistorySearch = true, showJumpToLatest = true, children, composer }: PluginUIConversationViewProps): JSX.Element {
+export function PluginConversationView({ turnFailure, presentation = "standard", conversationId, sessionId, sessionScope, onQuestionReply, actions, title, subtitle, avatar, status, loading = false, searchLabel, searchContent, showHistorySearch = true, showJumpToLatest = true, children, composer }: PluginUIConversationViewProps): JSX.Element {
   const { t } = useI18n();
+  const failureEvent = turnFailure ? turnEventForTurn({ id: conversationId, status: turnFailure.status, items_view: "full", items: [], error: { message: turnFailure.message } }) : undefined;
   const controller = useAutoFollowScrollContainer({ observeKey: conversationId });
   const rootRef = useRef<HTMLElement>(null);
   const [conversationVisible, setConversationVisible] = useState(true);
@@ -142,7 +145,7 @@ export function PluginConversationView({ presentation = "standard", conversation
         style={bubbles ? { "--bubble-time-progress": gesture.progress } as React.CSSProperties : undefined}>
         {bubbles && <button type="button" className="bubble-time-toggle" aria-pressed={gesture.revealed} aria-keyshortcuts="Alt+ArrowLeft Alt+ArrowRight" onClick={gesture.toggle}>{t(gesture.revealed ? "message.hideTimes" : "message.showTimes")}</button>}
         <ConversationBubbleContext.Provider value={bubbleContext}>
-        <ConversationFlow className="plugin-conversation-flow" role="log" aria-live="polite" aria-busy={loading}>{children}{sessionId && sessionScope && <PluginConversationQuestions sessionId={sessionId} scope={sessionScope} onReply={onQuestionReply} />}</ConversationFlow>
+        <ConversationFlow className="plugin-conversation-flow" role="log" aria-live="polite" aria-busy={loading}>{children}{failureEvent && <TurnEventNotice event={failureEvent} />}{sessionId && sessionScope && <PluginConversationQuestions sessionId={sessionId} scope={sessionScope} onReply={onQuestionReply} />}</ConversationFlow>
         </ConversationBubbleContext.Provider>
       </div>
     </ConversationReadingBoundary>
