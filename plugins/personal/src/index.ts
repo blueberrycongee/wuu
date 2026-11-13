@@ -751,7 +751,7 @@ export class PersonalPlugin implements RuntimePlugin {
   private async captureTaskSource(source: MessageRef): Promise<PersonalTask["source"]> {
     const page = await this.host.call("host.session.history.read", {session_id:source.session_id,start_seq:source.seq,end_seq:source.seq,limit:1});
     const record = page.records?.find(record => record.seq === source.seq);
-    if (!record || record.role !== "user" || record.origin && record.origin !== "user" || record.hidden || record.read_only || record.truncated) throw new Error("Original user request is unavailable; delegation was not sent");
+    if (!record || record.role !== "user" || record.origin !== "user" || record.hidden || record.read_only || record.truncated) throw new Error("Original user request is unavailable; delegation was not sent");
     const captured: PersonalTask["source"] = {session_id:source.session_id,message_seq:source.seq,message_binding:"host_turn",original_text:record.content || record.display_content || ""};
     if (!record.attachments?.length) return captured;
     if (record.attachments.length > 16 || record.attachments.some(a => !Number.isSafeInteger(a.size) || a.size <= 0) || record.attachments.reduce((total,a)=>total+a.size,0) > MAX_SESSION_HANDOFF_BYTES) throw new Error("Attachment handoff exceeds 20 MiB or 16 files; nothing was sent");
@@ -978,7 +978,7 @@ export class PersonalPlugin implements RuntimePlugin {
       return { ...current, ...(source ? {source,attachment_snapshot:source.attachment_snapshot ?? current.attachment_snapshot ?? current.source.attachment_snapshot} : {}), goal, title: text(input, "title") || current.title,
         authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), requirements_revision: revision,
         input_mutations: [...current.input_mutations ?? [], ...(mutationKey ? [{ key: mutationKey, fingerprint, requirements_revision: revision }] : [])],
-        requirements: [...current.requirements.map(item=>({...item,source:item.source ?? current.source})), { revision, goal, source:source ?? current.source, attachment_snapshot:source?.attachment_snapshot ?? current.attachment_snapshot ?? current.source.attachment_snapshot, authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), changed_at: now() }],
+        requirements: [...current.requirements, { revision, goal, source:source ?? current.source, attachment_snapshot:source?.attachment_snapshot ?? current.attachment_snapshot ?? current.source.attachment_snapshot, authorization_refs: input.authorization_refs === undefined ? current.authorization_refs : this.authorizations(input), changed_at: now() }],
         previous_executions: [...current.previous_executions, { ...current.execution, cancel_pending: Boolean(current.execution.session_id && !current.execution.finished_state && !(current.execution.existing_session && current.execution.status === "pending" && !current.execution.dispatch_pending)) }], execution: { ...this.execution(taskID, revision), ...(current.existing_session ? {existing_session: current.existing_session, controller_session_id: current.execution.controller_session_id, session_id: current.existing_session.session_id} : {}) }, state: "queued", cancel_requested: false,
         previous_deliveries: [...current.previous_deliveries ?? [], ...(current.delivery && ["pending", "submitted"].includes(current.delivery.status) ? [{ controller_review:current.delivery.kind === "review", authorization:current.delivery.authorization, request_id: current.delivery.request_id, create_request_id: "", session_id: current.delivery.session_id || destination, requirements_revision: current.requirements_revision, status: "submitted" as const, cancel_pending: true }] : [])],
         reconciliation_required: false, waiting_reason: undefined, question: undefined, result: undefined, worker_result: undefined, controller_decision: undefined, completion_intent: undefined, delivery: undefined, error: undefined, progress: undefined };
@@ -1672,6 +1672,11 @@ export class PersonalPlugin implements RuntimePlugin {
       active: !task.cancel_requested && task.requirements_revision > 0 && task.execution.requirements_revision === task.requirements_revision && !terminalTask(task) && await this.routines.canExecute(task),
       goal: task.goal, source_session_id: task.source.session_id,
       source_message_seq: task.source.message_binding === "host_turn" && task.requirements_revision === 1 ? task.source.message_seq ?? 0 : 0,
+      requirement_sources: (task.requirements ?? []).map(requirement => ({
+        revision: requirement.revision,
+        session_id: requirement.source?.session_id ?? "",
+        message_seq: requirement.source?.message_binding === "host_turn" ? requirement.source.message_seq ?? 0 : 0,
+      })),
       routine_id: task.routine_id, routine_revision: task.routine_revision,
     };
     return facts;

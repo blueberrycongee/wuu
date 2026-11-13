@@ -1082,6 +1082,17 @@ and exact original human source. The host independently checks session ownership
 source history, the selected generation and execution grant. These facts do not
 grant permission to execute an action.
 
+For revised tasks, return `task.requirement_sources` with one
+`{revision, session_id, message_seq}` entry per requirement revision, in order.
+References must come from host-bound human turns, never model arguments or goal
+summaries. Repeated references are allowed for retries; sequence numbers must not
+move backwards. The host resolves active human history in the owning agent's main
+conversation, checks the complete chain and binds it to the action digest. Later
+restrictions override earlier permission. Missing evidence disables intent review;
+retracted or foreign sources cannot authorize dispatch. Legacy single-source facts
+remain eligible only at revision 1. Do not reconstruct missing provenance from
+cached text or silently omit revisions.
+
 For the existing Personal review/memory coordinator, store these durable facts in
 the provider's **user-scoped host storage**, in any key/value format. During an
 effect the coordinator retains the selected provider and holds that storage's

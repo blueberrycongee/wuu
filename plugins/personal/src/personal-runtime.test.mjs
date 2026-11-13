@@ -161,13 +161,33 @@ test("Personal memory shipped runtime persists bound corrections and forget acro
   await assert.rejects(observe("unknown-session"), /owning agent/);
   const taskKey = [...storage.keys()].find(key => key.endsWith(`.agent.${mainAgent}`)).replace(`.agent.${mainAgent}`, ".task.facts-task");
   const observedTask = {user_space_id:"local",agent_id:mainAgent,task_id:"facts-task",requirements_revision:1,state:"running",goal:"Bound objective",cancel_requested:false,source:{session_id:mainSession,message_seq:7,message_binding:"host_turn"},execution:{session_id:"facts-worker",request_id:"facts-run",requirements_revision:1}};
+  observedTask.requirements = [{revision:1,source:observedTask.source}];
   storage.set(taskKey, JSON.stringify(observedTask));
-  assert.deepEqual((await observe("facts-worker")).task, {id:"facts-task",revision:1,run_id:"facts-run",active:true,goal:"Bound objective",source_session_id:mainSession,source_message_seq:7});
+  assert.deepEqual((await observe("facts-worker")).task, {id:"facts-task",revision:1,run_id:"facts-run",active:true,goal:"Bound objective",source_session_id:mainSession,source_message_seq:7,requirement_sources:[{revision:1,session_id:mainSession,message_seq:7}]});
   observedTask.cancel_requested = true; storage.set(taskKey, JSON.stringify(observedTask));
   assert.equal((await observe("facts-worker")).task.active, false);
   observedTask.cancel_requested = false; observedTask.requirements_revision = 2; storage.set(taskKey, JSON.stringify(observedTask));
   const changedFacts = await observe("facts-worker");
   assert.equal(changedFacts.task.active, false); assert.equal(changedFacts.task.source_message_seq, 0);
+  observedTask.source={session_id:mainSession,message_seq:12,message_binding:"host_turn"};
+  observedTask.requirements.push({revision:2,source:observedTask.source});
+  observedTask.execution.requirements_revision=2;
+  storage.set(taskKey,JSON.stringify(observedTask));
+  const revised=await observe("facts-worker");
+  assert.equal(revised.task.active,true);
+  assert.deepEqual(revised.task.requirement_sources,[{revision:1,session_id:mainSession,message_seq:7},{revision:2,session_id:mainSession,message_seq:12}]);
+  for(const revision of [3,4]) {
+    observedTask.source={session_id:mainSession,message_seq:12+revision,message_binding:"host_turn"};
+    observedTask.requirements.push({revision,source:observedTask.source});
+    observedTask.requirements_revision=revision;observedTask.execution.requirements_revision=revision;
+    storage.set(taskKey,JSON.stringify(observedTask));
+    const facts=await observe("facts-worker");
+    assert.equal(facts.task.requirement_sources.length,revision);
+    assert.deepEqual(facts.task.requirement_sources.at(-1),{revision,session_id:mainSession,message_seq:12+revision});
+  }
+  delete observedTask.requirements[0].source.message_binding;
+  storage.set(taskKey,JSON.stringify(observedTask));
+  assert.equal((await observe("facts-worker")).task.requirement_sources[0].message_seq,0,"unbound cached text cannot authorize review");
   storage.delete(taskKey);
 
   assert.deepEqual(await runtime.call("service.invoke", {service:"personal.agents",method:"legacy-memory",caller:"wuu.personal-actions-consumer",params:{},execution_id:"legacy-observer"}), {});

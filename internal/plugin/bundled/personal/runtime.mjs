@@ -3262,7 +3262,7 @@ var PersonalPlugin = class {
   async captureTaskSource(source) {
     const page = await this.host.call("host.session.history.read", { session_id: source.session_id, start_seq: source.seq, end_seq: source.seq, limit: 1 });
     const record2 = page.records?.find((record3) => record3.seq === source.seq);
-    if (!record2 || record2.role !== "user" || record2.origin && record2.origin !== "user" || record2.hidden || record2.read_only || record2.truncated) throw new Error("Original user request is unavailable; delegation was not sent");
+    if (!record2 || record2.role !== "user" || record2.origin !== "user" || record2.hidden || record2.read_only || record2.truncated) throw new Error("Original user request is unavailable; delegation was not sent");
     const captured = { session_id: source.session_id, message_seq: source.seq, message_binding: "host_turn", original_text: record2.content || record2.display_content || "" };
     if (!record2.attachments?.length) return captured;
     if (record2.attachments.length > 16 || record2.attachments.some((a) => !Number.isSafeInteger(a.size) || a.size <= 0) || record2.attachments.reduce((total, a) => total + a.size, 0) > MAX_SESSION_HANDOFF_BYTES) throw new Error("Attachment handoff exceeds 20 MiB or 16 files; nothing was sent");
@@ -3549,7 +3549,7 @@ User answered the task question (${old.question?.text || old.progress || "additi
         authorization_refs: input.authorization_refs === void 0 ? current.authorization_refs : this.authorizations(input),
         requirements_revision: revision,
         input_mutations: [...current.input_mutations ?? [], ...mutationKey ? [{ key: mutationKey, fingerprint, requirements_revision: revision }] : []],
-        requirements: [...current.requirements.map((item) => ({ ...item, source: item.source ?? current.source })), { revision, goal, source: source ?? current.source, attachment_snapshot: source?.attachment_snapshot ?? current.attachment_snapshot ?? current.source.attachment_snapshot, authorization_refs: input.authorization_refs === void 0 ? current.authorization_refs : this.authorizations(input), changed_at: now2() }],
+        requirements: [...current.requirements, { revision, goal, source: source ?? current.source, attachment_snapshot: source?.attachment_snapshot ?? current.attachment_snapshot ?? current.source.attachment_snapshot, authorization_refs: input.authorization_refs === void 0 ? current.authorization_refs : this.authorizations(input), changed_at: now2() }],
         previous_executions: [...current.previous_executions, { ...current.execution, cancel_pending: Boolean(current.execution.session_id && !current.execution.finished_state && !(current.execution.existing_session && current.execution.status === "pending" && !current.execution.dispatch_pending)) }],
         execution: { ...this.execution(taskID, revision), ...current.existing_session ? { existing_session: current.existing_session, controller_session_id: current.execution.controller_session_id, session_id: current.existing_session.session_id } : {} },
         state: "queued",
@@ -4341,6 +4341,11 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
       goal: task.goal,
       source_session_id: task.source.session_id,
       source_message_seq: task.source.message_binding === "host_turn" && task.requirements_revision === 1 ? task.source.message_seq ?? 0 : 0,
+      requirement_sources: (task.requirements ?? []).map((requirement) => ({
+        revision: requirement.revision,
+        session_id: requirement.source?.session_id ?? "",
+        message_seq: requirement.source?.message_binding === "host_turn" ? requirement.source.message_seq ?? 0 : 0
+      })),
       routine_id: task.routine_id,
       routine_revision: task.routine_revision
     };

@@ -339,31 +339,60 @@ func (p *personalActions) authorityWithFacts(ctx context.Context, state *runtime
 		}
 		a.Scope.TaskID, a.Scope.RequirementsRevision = prefix+strconv.Itoa(sourceSeq), 1
 	}
-	if sourceSeq > 0 {
-		sourceMeta, ok, err := state.Sessions.Find(sourceSession)
+	sources := []personalRequirementSource{{Revision: 1, SessionID: sourceSession, MessageSeq: sourceSeq}}
+	if facts.Task != nil {
+		if facts.Task.RequirementSources != nil {
+			sources = facts.Task.RequirementSources
+		} else if facts.Task.Revision != 1 {
+			sources = nil
+		}
+		if int64(len(sources)) != facts.Task.Revision {
+			sources = nil
+		}
+	}
+	seen := make(map[string]bool)
+	for i, source := range sources {
+		if source.Revision != int64(i+1) || source.MessageSeq <= 0 || i > 0 && source.MessageSeq < sources[i-1].MessageSeq {
+			a.UserMessages = nil
+			break
+		}
+		sourceMeta, ok, err := state.Sessions.Find(source.SessionID)
 		if err != nil {
 			return a, err
 		}
-		if !ok || sourceMeta.UserSpaceID != b.UserSpaceID || sourceMeta.ProductDomain != "personal" || sourceMeta.Owner != owner || sourceMeta.ParentID != "" {
+		if !ok || source.SessionID != facts.MainSessionID || sourceMeta.AgentID != facts.AgentID || sourceMeta.UserSpaceID != b.UserSpaceID || sourceMeta.ProductDomain != "personal" || sourceMeta.Owner != owner || sourceMeta.ParentID != "" || sourceMeta.ArchivedAt != nil {
+			a.UserMessages = nil
 			a.BoundaryReason = "source is not the owning Personal conversation"
-		} else {
-			// Physical audit rows survive logical edits. Only the exact active
-			// source can authorize this task, including at guarded dispatch.
-			page, err := state.Sessions.WithContext(ctx).ReadActiveHistoryQuery(session.HistoryReadQuery{SessionID: sourceSession, StartSeq: sourceSeq, EndSeq: sourceSeq, Limit: 1})
-			if err != nil {
-				return a, err
-			}
-			if len(page.Records) == 1 {
-				r := page.Records[0]
-				if r.Seq == sourceSeq && r.Role == "user" && r.Origin == "user" && !r.Hidden && !r.ReadOnly && !r.Truncated && strings.TrimSpace(r.Content) != "" {
-					a.UserMessages = []personalreview.HumanMessage{{ID: fmt.Sprintf("%s:%d", sourceSession, sourceSeq), Text: r.Content}}
-				}
-			}
-			if len(a.UserMessages) == 0 {
-				a.BoundaryReason = "source is no longer an active original user message"
-			}
+			break
+		}
+		// Physical audit rows survive edits; only the active human source is authority.
+		page, err := state.Sessions.WithContext(ctx).ReadActiveHistoryQuery(session.HistoryReadQuery{SessionID: source.SessionID, StartSeq: source.MessageSeq, EndSeq: source.MessageSeq, Limit: 1})
+		if err != nil {
+			return a, err
+		}
+		if len(page.Records) != 1 {
+			a.UserMessages = nil
+			a.BoundaryReason = "source is no longer an active original user message"
+			break
+		}
+		r := page.Records[0]
+		if r.Seq != source.MessageSeq || r.Role != "user" || r.Origin != "user" || r.Hidden || r.ReadOnly || r.Truncated || strings.TrimSpace(r.Content) == "" {
+			a.UserMessages = nil
+			a.BoundaryReason = "source is no longer an active original user message"
+			break
+		}
+		id := fmt.Sprintf("%s:%d", source.SessionID, source.MessageSeq)
+		if !seen[id] {
+			a.UserMessages = append(a.UserMessages, personalreview.HumanMessage{ID: id, Text: r.Content})
+			seen[id] = true
 		}
 	}
+	// Bind the ordered revision chain as well as the resolved text to this action.
+	if facts.Task != nil && facts.Task.RequirementSources != nil {
+		chain, _ := json.Marshal(sources)
+		contextParts = append(contextParts, string(chain))
+	}
+
 	raw, _ := json.Marshal(struct {
 		Parts  []string
 		Source []personalreview.HumanMessage
