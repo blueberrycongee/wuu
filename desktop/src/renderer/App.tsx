@@ -104,7 +104,7 @@ import {
 } from "./ThreadTitles";
 import { showErrorToast, showToast } from "./Toast";
 import { OPEN_SETTINGS_EVENT, type OpenSettingsDetail } from "./TurnNotice";
-import { isPluginLifecycleCancellation } from "../shared/PluginLifecycle";
+import { isPluginLifecycleCancellation, PluginActionNotStartedError } from "../shared/PluginLifecycle";
 import { WebWorkspacePanel } from "./WebWorkspace";
 import { releaseWindowResizeClass, WINDOW_RESIZING_CLASS } from "./WindowResizeState";
 import { requestWorkspaceBrowserNavigation } from "./WorkspaceBrowserNavigation";
@@ -374,8 +374,10 @@ export function App({ application, slots, shellPluginId }: {
     dockingMotionMs: sidebarMotionMs,
   });
   const sidebarDrawerVisible = sidebarDrawerPhase === "open";
+  const catalogSelectionRequest = useRef(0);
   const nativeSection = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.section);
   const setNativeSection = useCallback((section: "conversations" | "catalog") => {
+    catalogSelectionRequest.current++;
     void application.invoke("navigation.show-section", { section }).catch(showErrorToast);
   }, [application]);
   const ribbonBrowser = { state: navigationWorkspace.browser };
@@ -388,11 +390,39 @@ export function App({ application, slots, shellPluginId }: {
   const catalogSection = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.catalogSection);
   const catalogPluginID = useSyncExternalStore(application.subscribe, () => application.getSnapshot().navigation.catalogPluginId);
   const setCatalogSection = useCallback((section: SkillsCatalogSection) => {
+    catalogSelectionRequest.current++;
     void application.invoke("catalog.select-section", { section }).catch(showErrorToast);
   }, [application]);
+  const [deferredCatalogSelection, setDeferredCatalogSelection] = useState<{
+    application: typeof application; pluginId: string; request: number; interaction: number;
+    context: string; section: string; catalogSection: string; selectedPluginId: string;
+  }>();
+  const catalogContext = activeContext ? runtimeContextKey(activeContext) : "";
   const setCatalogPluginID = useCallback((pluginId: string) => {
-    void application.invoke("catalog.select-plugin", { pluginId }).catch(showErrorToast);
-  }, [application]);
+    const intent = { application, pluginId, request: ++catalogSelectionRequest.current,
+      interaction: userInteractionVersionRef.current, context: catalogContext,
+      section: nativeSection, catalogSection, selectedPluginId: catalogPluginID };
+    setDeferredCatalogSelection(undefined);
+    void application.invoke("catalog.select-plugin", { pluginId }).catch(error => {
+      // Retained catalog pixels may receive a click after their writer stopped.
+      // Only an intent that never entered that writer can cross the handoff.
+      if (error instanceof PluginActionNotStartedError) {
+        if (intent.request === catalogSelectionRequest.current) setDeferredCatalogSelection(intent);
+      } else showErrorToast(error);
+    });
+  }, [application, catalogContext, nativeSection, catalogSection, catalogPluginID]);
+  useEffect(() => {
+    const intent = deferredCatalogSelection;
+    if (!intent || intent.application === application) return;
+    setDeferredCatalogSelection(undefined);
+    if (intent.request !== catalogSelectionRequest.current
+      || intent.interaction !== userInteractionVersionRef.current || intent.context !== catalogContext
+      || intent.section !== nativeSection || intent.catalogSection !== catalogSection
+      || intent.selectedPluginId !== catalogPluginID) return;
+    // Admit once through the successor's normal scope. Do not replay an action
+    // that started, or keep retrying if another handoff retires this successor.
+    void application.invoke("catalog.select-plugin", { pluginId: intent.pluginId }).catch(showErrorToast);
+  }, [application, deferredCatalogSelection, catalogContext, nativeSection, catalogSection, catalogPluginID]);
   const [catalogVisited, setCatalogVisited] = useState(false);
   const primaryPageView = navigationWorkspace.activePluginView;
   const showingPrimaryPluginView = primaryPageView !== undefined;
@@ -1868,6 +1898,7 @@ export function App({ application, slots, shellPluginId }: {
         {initialized && (catalogVisited || showingSkillsCatalog) ? (
           <div
             className="catalog-section-pane skills-scroll-region"
+            aria-busy={deferredCatalogSelection !== undefined || undefined}
             hidden={!showingManagementCatalog || showingPrimaryPluginView}
             inert={!showingManagementCatalog || showingPrimaryPluginView}
           >
