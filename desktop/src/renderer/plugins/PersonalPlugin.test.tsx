@@ -235,16 +235,16 @@ it("does not clear a re-edited draft even when its text matches the pending send
   await act(async () => { finish({ state: "accepted" }); await pending; });
   expect(ui.container.querySelector('textarea')!.value).toBe("Same text");
 });
-it("offers live replies only after durable identity and carries terminal task relations", async () => {
-  const ui = await mount(async method => { if (method === "agents.send") throw new Error("Keep draft"); }, main, [], { history: async input => input.reply_seq === 9 ? { reply_root_seq: 9, records: [{ seq: 9, role: "assistant", content: "Live result" }], has_earlier: false } : { records: [] } });
+it("offers live replies before persistence and carries terminal task relations", async () => {
+  const ui = await mount(async method => { if (method === "agents.send") throw new Error("Keep draft"); }, main, [], { history: async input => input.reply_display_id === "live:answer" ? { reply_root_seq: 9, reply_root_display_id: "live:answer", records: [{ seq: 9, display_id: "live:answer", role: "assistant", content: "Live result" }], has_earlier: false } : { records: [] } });
   await act(async () => ui.publish({ kind: "notification", message: { method: "item/agentMessage/delta", params: { thread_id: "s-private", turn_id: "live", item_id: "answer", delta: "Live result" } } }));
-  expect(ui.container.querySelector('[data-action="reply-message"]')).toBeNull();
+  await vi.waitFor(() => expect(ui.container.querySelector('[data-action="reply-message"]')).not.toBeNull());
   const relation = { metadata: { task_links: [{ task_id: "t1", requirements_revision: 2 }] } };
   await act(async () => ui.publish({ kind: "notification", message: { method: "turn/completed", params: { thread_id: "s-private", turn: { id: "live", items_view: "full", items: [{ id: "answer", type: "agent_message", seq: 9, text: "Live result", relation }] } } } }));
   await ui.click('[data-action="reply-message"]');
   expect(ui.container.querySelector('.mosaic-replies [data-role="assistant"]')?.textContent).toContain("Live result");
   await ui.edit("Follow up"); await ui.click('.composer-send-button');
-  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { reply_to: { session_id: "s-private", seq: 9 }, ...relation } }) }));
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { reply_to: { session_id: "s-private", seq: 0, display_id: "live:answer" }, ...relation } }) }));
 });
 const fileDigest = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824";
 async function chooseFiles(container: HTMLElement, files: File[]) {
@@ -1584,6 +1584,47 @@ it("preserves visual order while queuing a message", async () => {
   const rows = [...ui.container.querySelectorAll(".mosaic-main [data-role]")].map(node=>node.textContent);
   expect(rows.findIndex(text=>text?.includes("Earlier live answer"))).toBeLessThan(rows.findIndex(text=>text?.includes("Later queued request")));
 });
+it("keeps a queued user message before a later reply when history settles", async () => {
+  let records: Record<string, unknown>[] = [];
+  let receipt: (ReturnType<typeof receiptFixture> & { message_seq?: number; hostturn_id?: string }) | undefined;
+  const ui = await mount(async (method, input) => {
+    if (method === "agents.send") {
+      receipt = receiptFixture(input.request_id, { execution_state: "queued" });
+      return { state: "queued", queue_id: receipt.queue_id, receipt };
+    }
+    if (method === "agents.messages.status") return { receipt };
+  }, main, [], { history: async () => ({ records }), open: async () => ({ agent: main, session: { state: "running" }, pending_inputs: receipt?.receipt_state === "accepted" ? [{ receipt, prompt: "My message" }] : [] }) });
+  const rows = () => [...ui.container.querySelectorAll('.mosaic-main [data-role]')].map(node => node.textContent);
+  const expectOrder = () => expect(rows().findIndex(text => text?.includes("My message"))).toBeLessThan(rows().findIndex(text => text?.includes("Later reply")));
+  await ui.edit("My message"); await ui.click('.composer-send-button');
+  await act(async () => ui.publish({ kind: "notification", message: { method: "item/agentMessage/delta", params: { thread_id: "s-private", turn_id: "old-turn", item_id: "answer", delta: "Later reply" } } }));
+  await vi.waitFor(() => expect(ui.container.textContent).toContain("Later reply"));
+  expectOrder();
+  if (!receipt) throw new Error("Send did not return a receipt");
+  receipt = { ...receipt, receipt_state: "in_history", execution_state: "running", message_seq: 20, hostturn_id: "next-turn", revision: 3 };
+  records = [{ seq: 10, role: "assistant", content: "Later reply", at: "2026-01-01T00:00:02Z" }, { seq: 20, role: "user", content: "My message", receipt }];
+  await act(async () => ui.publish({ kind: "notification", message: { method: "turn/completed", params: { thread_id: "s-private", turn_id: "old-turn", turn: { id: "old-turn", status: "completed", items: [{ id: "answer", type: "agent_message", seq: 10, text: "Later reply" }] } } } }));
+  await vi.waitFor(() => expect(ui.container.querySelectorAll('.mosaic-main [data-role]')).toHaveLength(2));
+  expectOrder();
+  ui.dispose();
+  const reopened = await mount(undefined, main, undefined, { history: async () => ({ records }) });
+  const restored = [...reopened.container.querySelectorAll('.mosaic-main [data-role]')].map(node => node.textContent);
+  expect(restored.findIndex(text => text?.includes("My message"))).toBeLessThan(restored.findIndex(text => text?.includes("Later reply")));
+});
+it.each(["provider", "host"])("restores the observed order after exiting before a streamed reply is persisted (%s)", async identity => {
+  const receipt = receiptFixture("restart-pending", { execution_state: "queued" });
+  const ui = await mount(undefined, main, [], { open: async () => ({ agent: main, session: { state: "running" }, pending_inputs: [{ receipt, prompt: "Before stream" }] }) });
+  await act(async () => ui.publish({ kind: "notification", message: { method: "item/started", params: { thread_id: "s-private", turn_id: "stream-turn", item: { id: "stream-item", ...(identity === "provider" ? { source_id: "provider-item" } : {}), type: "agent_message", text: "After send" } } } }));
+  await vi.waitFor(() => expect(ui.container.textContent).toContain("After send"));
+  ui.dispose();
+  const next = await mount(undefined, main, [
+    { seq: 10, ...(identity === "provider" ? { provider_item_id: "provider-item" } : { display_id: "stream-turn:stream-item" }), role: "assistant", content: "After send" },
+    { seq: 20, role: "user", content: "Before stream", receipt: { ...receipt, message_seq: 20, receipt_state: "in_history", revision: 3 } },
+  ]);
+  const rows = [...next.container.querySelectorAll('.mosaic-main [data-role]')].map(node => node.textContent);
+  expect(rows.findIndex(text => text?.includes("Before stream"))).toBeLessThan(rows.findIndex(text => text?.includes("After send")));
+});
+
 it("places a sequenced live reply before later persisted messages", async () => {
   const ui = await mount(undefined, main, [{ seq: 20, role: "user", content: "Later persisted message" }]);
   await act(async () => ui.publish({ kind: "notification", message: { method: "item/completed", params: { thread_id: "s-private", turn_id: "earlier", item: { id: "answer", type: "agent_message", seq: 10, text: "Earlier sequenced reply" } } } }));
@@ -1622,4 +1663,35 @@ it("shows a live failure once, preserves partial output, and clears it for the n
 it("does not present a manual cancellation as a failure", async () => {
   const ui = await mount(undefined, main, [], { open: async () => ({ agent: main, session: { state: "interrupted" }, turn: { turn_id: "stopped-turn", state: "interrupted", error: "context canceled" } }) });
   expect(ui.container.querySelector(".turn-notice")).toBeNull();
+});
+
+it.each(["streaming", "completed"])("replies to an unpersisted %s message without waiting for turn completion", async status => {
+  const source = { seq: 0, display_id: "stream:answer", role: "assistant", content: "Working on this" };
+  const ui = await mount(undefined, main, [], { history: async input => input.reply_display_id ? { reply_root_seq: 0, reply_root_display_id: source.display_id, records: [source] } : { records: [] } });
+  await act(async () => ui.publish({ kind: "notification", message: { method: "item/agentMessage/delta", params: { thread_id: "s-private", turn_id: "stream", item_id: "answer", delta: source.content } } }));
+  if (status === "completed") await act(async () => ui.publish({ kind: "notification", message: { method: "item/completed", params: { thread_id: "s-private", turn_id: "stream", item: { id: "answer", type: "agent_message", text: source.content } } } }));
+  await vi.waitFor(() => expect(ui.container.textContent).toContain(source.content));
+  await ui.click('.mosaic-main [data-action="reply-message"]');
+  await vi.waitFor(() => expect(ui.container.querySelector('.mosaic-replies')?.textContent).toContain(source.content));
+  await ui.edit("Please check the date");
+  await ui.click('.composer-send-button');
+  expect(ui.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { reply_to: { session_id: "s-private", seq: 0, display_id: "stream:answer" } } }) }));
+});
+
+it("restores an unsent streaming reply draft after the source gains a history sequence", async () => {
+  let source = { seq: 0, display_id: "stream:answer", role: "assistant", content: "Working on this" };
+  const history = async (input: Record<string, unknown>) => input.reply_display_id || input.reply_seq ? { reply_root_seq: source.seq, reply_root_display_id: source.display_id, records: [source] } : { records: source.seq ? [source] : [] };
+  const ui = await mount(undefined, main, [], { history });
+  await act(async () => ui.publish({ kind: "notification", message: { method: "item/agentMessage/delta", params: { thread_id: "s-private", turn_id: "stream", item_id: "answer", delta: source.content } } }));
+  await vi.waitFor(() => expect(ui.container.querySelector('[data-action="reply-message"]')).not.toBeNull());
+  await ui.click('[data-action="reply-message"]');
+  await vi.waitFor(() => expect(ui.container.querySelector('.mosaic-replies textarea')).not.toBeNull());
+  await ui.edit("Keep my follow-up");
+  ui.dispose();
+  source = { ...source, seq: 9 };
+  const restarted = await mount(undefined, main, [], { history });
+  await restarted.click('[data-action="reply-message"]');
+  await vi.waitFor(() => expect(restarted.container.querySelector<HTMLTextAreaElement>('.mosaic-replies textarea')?.value).toBe("Keep my follow-up"));
+  await restarted.click('.composer-send-button');
+  expect(restarted.invoke).toHaveBeenCalledWith(expect.objectContaining({ method: "agents.send", input: expect.objectContaining({ relation: { reply_to: { session_id: "s-private", seq: 0, display_id: "stream:answer" } } }) }));
 });

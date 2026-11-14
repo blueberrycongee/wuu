@@ -332,8 +332,10 @@ func CloneMessageContentParts(parts []MessageContentPart) []MessageContentPart {
 	return out
 }
 
-// MessageRef identifies a durable message by its session and sequence.
+// MessageRef identifies a message by sequence or a stable host display ID.
+// A display reference uses Seq zero until the message is persisted.
 type MessageRef struct {
+	DisplayID string `json:"display_id,omitempty"`
 	SessionID string `json:"session_id"`
 	Seq       int    `json:"seq"`
 }
@@ -366,6 +368,8 @@ func CloneMessageRelation(r *MessageRelation) *MessageRelation {
 
 // ChatMessage is a generic multi-provider chat message.
 type ChatMessage struct {
+	// DisplayID links a live host bubble to its durable history independently of provider IDs.
+	DisplayID      string           `json:"display_id,omitempty"`
 	Relation       *MessageRelation `json:"relation,omitempty"`
 	Role           string
 	Name           string

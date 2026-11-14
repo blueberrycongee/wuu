@@ -643,6 +643,53 @@ export async function activate(api) {
   let timelineOrder = 0;
   let mainSessionID = "";
   const streamFor = id => { if (!streams.has(id)) streams.set(id, { items: new Map(), tools: new Map(), completedItems: new Set(), completedTurns: new Set(), verifiedToolTurns: new Set(), version: 0, running: false }); return streams.get(id); };
+  const timelines = new Map();
+  const timelineFor = session => {
+    if (!timelines.has(session)) {
+      const key = `wuu.personal.timeline.v1:${JSON.stringify(route)}:${session}`;
+      let state = { keys: [], sequences: {} }, unread = false;
+      try {
+        const saved = localStorage.getItem(key);
+        if (saved) state = JSON.parse(saved);
+        if (!Array.isArray(state.keys) || !state.sequences || state.keys.some(key => typeof key !== "string")) throw new Error("Invalid saved Twin message order");
+      } catch { state = { keys: [], sequences: {} }; unread = true; }
+      timelines.set(session, { ...state, sources: state.sources || {}, storageKey: key, unread, session });
+    }
+    return timelines.get(session);
+  };
+  const saveTimeline = timeline => {
+    try {
+      // Never overwrite an unread order ledger with a partial reconstruction.
+      if (timeline.unread) {
+        const raw = localStorage.getItem(timeline.storageKey);
+        const saved = raw ? JSON.parse(raw) : { keys: [], sequences: {} };
+        timeline.keys = [...saved.keys, ...timeline.keys.filter(key => !saved.keys.includes(key))];
+        timeline.sequences = { ...saved.sequences, ...timeline.sequences };
+        timeline.sources = { ...saved.sources, ...timeline.sources };
+        timeline.unread = false;
+      }
+      localStorage.setItem(timeline.storageKey, JSON.stringify({ keys: timeline.keys, sequences: timeline.sequences, sources: timeline.sources }));
+    } catch { draftFor(timeline.session).storageError = true; }
+  };
+  const bindTimelineSequence = (session, key, seq) => {
+    if (!Number.isSafeInteger(seq) || seq < 1) return;
+    const timeline = timelineFor(session);
+    if (timeline.sequences[seq] === key) return;
+    const historical = `history:${seq}`, index = timeline.keys.indexOf(historical);
+    if (index >= 0) {
+      if (timeline.keys.includes(key)) timeline.keys.splice(index, 1);
+      else timeline.keys[index] = key;
+    }
+    timeline.sequences[seq] = key;
+    saveTimeline(timeline);
+  };
+  const observeTimelineItem = (session, key) => {
+    const timeline = timelineFor(session);
+    if (timeline.keys.includes(key)) return;
+    timeline.keys.push(key);
+    saveTimeline(timeline);
+  };
+  const sameStreamMessage = (record, message) => record.seq === message.seq && message.seq !== undefined || record.display_id === `${message.turn_id}:${message.id}` || message.source_id && record.provider_item_id === message.source_id;
   const seenEvents = new WeakSet();
   api.onHostEvent(event => {
     if (!event || typeof event !== "object" || seenEvents.has(event)) return;
@@ -688,6 +735,7 @@ export async function activate(api) {
         if (item.type !== "agent_message") continue;
         const key = `${turnID}:${item.id}`, previous = stream.items.get(key);
         if (!previous) continue;
+        bindTimelineSequence(session, `message:${turnID}:${item.id}`, item.seq);
         stream.items.set(key, { ...previous, seq: item.seq, relation: item.relation, source_id: item.source_id, content: item.text ?? previous.content, streaming: false });
         stream.completedItems.add(key);
       }
@@ -723,6 +771,7 @@ export async function activate(api) {
     }
     if (["item/agentMessage/delta", "item/agentMessage/replace"].includes(method)) {
       if (!itemID || stream.completedItems.has(itemKey) || stream.completedTurns.has(params.turn_id)) return;
+      observeTimelineItem(session, `message:${params.turn_id}:${itemID}`);
       const previous = stream.items.get(itemKey) || { id: itemID, turn_id: params.turn_id, content: "", order: ++timelineOrder };
       const content = method.endsWith("replace") ? params.text ?? params.delta ?? "" : previous.content + (params.delta || "");
       stream.items.set(itemKey, { ...previous, content, streaming: true }); stream.running = true; stream.activeTurnID = params.turn_id;
@@ -730,7 +779,14 @@ export async function activate(api) {
     if (["item/started", "item/completed"].includes(method) && item?.type === "agent_message") {
       if (stream.completedTurns.has(params.turn_id)) return;
       if (stream.completedItems.has(itemKey) && method === "item/started") return;
+      if (!item.seq) observeTimelineItem(session, `message:${params.turn_id}:${itemID}`);
       const previous = stream.items.get(itemKey);
+      if (item.source_id) {
+        const timeline = timelineFor(session);
+        timeline.sources[item.source_id] = `message:${params.turn_id}:${itemID}`;
+        saveTimeline(timeline);
+      }
+      bindTimelineSequence(session, `message:${params.turn_id}:${itemID}`, item.seq);
       if (method === "item/completed") stream.completedItems.add(itemKey);
       stream.items.set(itemKey, { id: itemID, turn_id: params.turn_id, seq: item.seq, relation: item.relation, source_id: item.source_id, order: previous?.order ?? ++timelineOrder, content: method === "item/started" && previous ? previous.content : item.text ?? previous?.content ?? "", streaming: method !== "item/completed" });
     }
@@ -864,18 +920,20 @@ export async function activate(api) {
       view === "edit" && h("footer", { className: "mosaic-routine-footer", "data-view": view }, h(React.Fragment, null, h(Button, { variant: "ghost", "data-action": "cancel-routine-edit", disabled: busy, onClick: back }, label("Cancel", "取消")), h(Button, { variant: "primary", type: "submit", form: "mosaic-routine-editor", "data-action": "save-routine", disabled: busy }, busy ? t("savingName") : t("save"))))));
   }
 
+  const messageDisplayID = message => message.display_id || (message.turn_id && message.id ? `${message.turn_id}:${message.id}` : undefined);
+  const matchesReply = (record, reference) => reference?.display_id ? messageDisplayID(record) === reference.display_id : reference?.seq > 0 && record.seq === reference.seq;
   const replySources = new Map();
   function useReplySource({ reference, records, sessionID, agentID }) {
-    const key = `${agentID}:${reference?.session_id}:${reference?.seq}`;
-    const valid = reference?.session_id === sessionID && Number.isSafeInteger(reference?.seq) && reference.seq > 0;
-    const visible = valid ? records.find(record => record.seq === reference.seq && ["user", "assistant"].includes(record.role)) : undefined;
+    const key = `${agentID}:${reference?.session_id}:${reference?.display_id || reference?.seq}`;
+    const valid = reference?.session_id === sessionID && (Boolean(reference?.display_id) || Number.isSafeInteger(reference?.seq) && reference.seq > 0);
+    const visible = valid ? records.find(record => matchesReply(record, reference) && ["user", "assistant"].includes(record.role)) : undefined;
     const [resolved, setResolved] = React.useState(null), [attempt, setAttempt] = React.useState(0);
     React.useEffect(() => {
       if (!valid || visible) return;
       let current = true;
       if (!replySources.has(key)) {
-        const request = call("agents.history", { agent_id: agentID, start_seq: reference.seq, end_seq: reference.seq })
-          .then(result => result.records?.find(record => record.seq === reference.seq && ["user", "assistant"].includes(record.role)) ?? null)
+        const request = call("agents.history", { agent_id: agentID, ...(reference.display_id ? { reply_display_id: reference.display_id } : { start_seq: reference.seq, end_seq: reference.seq }) })
+          .then(result => result.records?.find(record => matchesReply(record, reference) && ["user", "assistant"].includes(record.role)) ?? null)
           .catch(() => null).then(record => { if (!record && replySources.get(key) === request) replySources.delete(key); return record; });
         replySources.set(key, request);
       }
@@ -1156,7 +1214,9 @@ export async function activate(api) {
         setRecords(current => [...new Map([...current, ...(history.records || [])].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq));
         setHistoryInfo(current => current && current.first_seq < history.first_seq ? current : { first_seq: history.first_seq, has_earlier: history.has_earlier });
         for (const [id, message] of stream.items) {
-          if (!message.streaming && (history.records || []).some(record => (message.seq !== undefined && record.seq === message.seq) || (message.source_id && record.provider_item_id === message.source_id))) stream.items.delete(id);
+          const persisted = (history.records || []).find(record => sameStreamMessage(record, message));
+          if (persisted) bindTimelineSequence(identity.main_session_id, `message:${message.turn_id}:${message.id}`, persisted.seq);
+          if (!message.streaming && persisted) stream.items.delete(id);
         }
         for (const [id, tool] of stream.tools) if ((history.records || []).some(record => record.ui_resources?.some(resource => resource.tool_call_id === tool.call_id))) stream.tools.delete(id);
         const state = opened.session?.state;
@@ -1264,15 +1324,26 @@ export async function activate(api) {
       replyTrigger.current = document.activeElement;
       const reference = target.relation.reply_to;
       try {
-        const history = await call("agents.history", { agent_id: agent.agent_id, reply_seq: reference.seq });
+        const history = await call("agents.history", { agent_id: agent.agent_id, ...(reference.display_id ? { reply_display_id: reference.display_id } : { reply_seq: reference.seq }) });
         if (!mounted.current || version !== replyLoadVersion.current) return;
-        const key = `${conversationID}:reply:${history.reply_root_seq}`;
+        let key = `${conversationID}:reply:${history.reply_root_display_id || history.reply_root_seq}`;
+        if (history.reply_root_display_id && history.reply_root_seq > 0) {
+          const legacyKey = `${conversationID}:reply:${history.reply_root_seq}`, legacy = draftFor(legacyKey);
+          if (legacy.prompt || legacy.files.length || legacy.pending || legacy.attachmentsMissing) key = legacyKey;
+        }
+        const saved = draftFor(key);
+        if (saved.pending?.relationKey) {
+          try {
+            const relation = JSON.parse(saved.pending.relationKey);
+            if (relation.reply_to?.session_id === conversationID && matchesReply(source, relation.reply_to)) target = { ...target, relation };
+          } catch { /* Invalid saved relations cannot replace the selected target. */ }
+        }
         if (JSON.stringify(draftFor(key).replyTarget?.relation) !== JSON.stringify(target.relation)) updateDraft(key, { replyTarget: target });
         for (const record of history?.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation, inHistory: true });
         setReplyHistory(history);
         closePanel(false);
         if (replyClosing.current && replyMotion.current) { replyClosing.current = false; replyMotion.current.onfinish = null; replyMotion.current.reverse(); }
-        setReplySelection({ key, source, rootSeq: history.reply_root_seq });
+        setReplySelection({ key, source, rootSeq: history.reply_root_seq, rootDisplayID: history.reply_root_display_id });
       } catch (cause) { if (version === replyLoadVersion.current) report(cause); }
     };
     React.useLayoutEffect(() => {
@@ -1307,14 +1378,14 @@ export async function activate(api) {
     React.useEffect(() => { if (replySelection) replyPanelRef.current?.querySelector("textarea")?.focus({ preventScroll: true }); }, [replySelection?.key]);
     const replyMessage = message => {
       if (message.role !== "assistant") return;
-      setReply({ label: t("replyingMessage"), preview: message.display_content || message.content || message.attachments?.map(item => item.name).join(", ") || "", relation: { reply_to: { session_id: conversationID, seq: message.seq }, ...(message.relation?.metadata?.task_links ? { metadata: { task_links: message.relation.metadata.task_links } } : {}) } }, message);
+      setReply({ label: t("replyingMessage"), preview: message.display_content || message.content || message.attachments?.map(item => item.name).join(", ") || "", relation: { reply_to: { session_id: conversationID, seq: messageDisplayID(message) ? 0 : message.seq, ...(messageDisplayID(message) ? { display_id: messageDisplayID(message) } : {}) }, ...(message.relation?.metadata?.task_links ? { metadata: { task_links: message.relation.metadata.task_links } } : {}) } }, message);
     };
     const loadReplyHistory = async (earlier = false) => {
       if (!replySelection || replyPaging.current || (earlier && !replyHistory?.has_earlier)) return;
       const version = replyLoadVersion.current;
       replyPaging.current = true;
       try {
-        const page = await call("agents.history", { agent_id: agent.agent_id, reply_seq: replySelection.rootSeq, ...(earlier ? { end_seq: replyHistory.first_seq - 1 } : {}) });
+        const page = await call("agents.history", { agent_id: agent.agent_id, ...(replySelection.rootDisplayID ? { reply_display_id: replySelection.rootDisplayID } : { reply_seq: replySelection.rootSeq }), ...(earlier ? { end_seq: replyHistory.first_seq - 1 } : {}) });
         if (!mounted.current || version !== replyLoadVersion.current) return;
         for (const record of page.records || []) if (record.receipt) acceptReceipt(record.receipt, { prompt: record.display_content || record.content, relation: record.relation, inHistory: true });
         setReplyHistory(current => ({ ...page, ...(!earlier && current?.records.length ? { first_seq: current.first_seq, has_earlier: current.has_earlier } : {}), records: [...new Map([...(current?.records || []), ...page.records].map(record => [record.seq, record])).values()].sort((a, b) => a.seq - b.seq) }));
@@ -1366,6 +1437,7 @@ export async function activate(api) {
       updateDraft(id, { submitting: true, error: "" }); if (id === conversationID) setError("");
       const detail = { requestID, prompt: text, relation: sentTarget?.relation, attachments: references, sessionID: conversationID, draftID: id, retryFiles: sentFiles, retryInput: { ...state.pending } };
       const existingReceipt = receiptStates.current.get(requestID);
+      observeTimelineItem(conversationID, `user:${requestID}`);
       receiptStates.current.set(requestID, { ...existingReceipt, ...detail, order: existingReceipt?.order ?? ++timelineOrder, state: "sending" });
       const recover = async () => { const status = await call("agents.messages.status", { agent_id: agent.agent_id, request_id: requestID }); return acceptReceipt(status.receipt, detail) ? { receipt: status.receipt, state: status.receipt.execution_state, queue_id: status.receipt.queue_id, turn_id: status.receipt.hostturn_id } : null; };
       try {
@@ -1565,15 +1637,17 @@ export async function activate(api) {
     const replyDraft = replySelection ? draftFor(replySelection.key) : undefined;
     const rootSeq = replySelection?.rootSeq;
     const replyPersisted = replyHistory?.records || [];
-    const replyMessages = [...replyPersisted, ...liveMessages.filter(message => !replyPersisted.some(record => record.seq === message.seq || (message.source_id && record.provider_item_id === message.source_id))).map(message => ({ ...message, role: "assistant" }))];
-    const relatedSeqs = new Set(rootSeq ? [rootSeq, ...replyPersisted.map(record => record.seq)] : []);
-    for (let changed = true; changed;) { changed = false; for (const record of replyMessages) if (Number.isSafeInteger(record.seq) && !relatedSeqs.has(record.seq) && record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq)) { relatedSeqs.add(record.seq); changed = true; } }
-    const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (relatedSeqs.has(record.seq) || record.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(record.relation.reply_to.seq))) : [];
+    const replyMessages = [...replyPersisted.filter(record => !liveMessages.some(message => sameStreamMessage(record, message))), ...liveMessages.map(message => ({ ...message, role: "assistant" }))];
+    const relatedSeqs = new Set(rootSeq !== undefined ? [rootSeq, ...replyPersisted.filter(record => record.seq > 0).map(record => record.seq)] : []);
+    const relatedDisplays = new Set([replySelection?.rootDisplayID, ...replyPersisted.map(messageDisplayID)].filter(Boolean));
+    const relatedReply = reference => reference?.session_id === conversationID && (reference.display_id ? relatedDisplays.has(reference.display_id) : relatedSeqs.has(reference.seq));
+    for (let changed = true; changed;) { changed = false; for (const record of replyMessages) if (Number.isSafeInteger(record.seq) && !relatedSeqs.has(record.seq) && relatedReply(record.relation?.reply_to)) { relatedSeqs.add(record.seq); changed = true; } }
+    const replyRecords = replySelection ? replyMessages.filter(record => ["user", "assistant"].includes(record.role) && (relatedSeqs.has(record.seq) || relatedDisplays.has(messageDisplayID(record)) || relatedReply(record.relation?.reply_to))) : [];
     const pendingReceipts = [...receiptStates.current.entries()].filter(([_, entry]) => (entry.receipt?.session_id || entry.sessionID) === conversationID && (!entry.receipt?.message_seq || entry.draftID && !entry.inHistory) && !records.some(record => record.receipt?.receipt_id && record.receipt.receipt_id === entry.receipt?.receipt_id));
     const renderPendingReceipt = ([requestID, entry], scopeID) => h(ConversationMessage, { className: sendMotion.className(requestID), key: `pending:${requestID}`, id: `pending:${scopeID}:${requestID}`, role: "user", content: entry.prompt || "", attachments: entry.attachments?.length ? h("div", null, entry.attachments.map((file, index) => h("span", { key: index }, file.filename, " "))) : undefined, footer: receiptFooter(entry.receipt, entry), linkPolicy: "external-only" });
     const replyPending = replySelection ? pendingReceipts.filter(([_, entry]) => {
       if (entry.draftID === replySelection.key) return true;
-      return entry.relation?.reply_to?.session_id === conversationID && relatedSeqs.has(entry.relation.reply_to.seq);
+      return relatedReply(entry.relation?.reply_to);
     }) : [];
     const transientTimeline = (messages, pending, tools = []) => [
       ...messages.map(message => ({ kind: "message", order: message.order, seq: message.seq, value: message })),
@@ -1581,15 +1655,23 @@ export async function activate(api) {
       ...tools.map(tool => ({ kind: "tool", order: tool.order, value: tool })),
     ].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     const mergeTimeline = (history, transient) => {
-      // A transient item without a durable sequence stays before the next
-      // observed sequenced item; otherwise it follows the persisted history.
-      let nextSeq = Infinity;
-      const live = transient.map(item => ({ ...item })).reverse().map(item => {
-        if (Number.isSafeInteger(item.seq) && item.seq > 0) nextSeq = item.seq;
-        return { ...item, position: nextSeq };
-      }).reverse();
-      return [...history.map(record => ({ kind: "history", value: record, position: record.seq })), ...live]
-        .sort((a, b) => a.position - b.position || (a.order ?? -1) - (b.order ?? -1));
+      const timeline = timelineFor(conversationID);
+      const items = [
+        ...history.map(record => ({ kind: "history", value: record, seq: record.seq, key: record.receipt?.request_id ? `user:${record.receipt.request_id}` : (record.display_id && `message:${record.display_id}`) || timeline.sequences[record.seq] || timeline.sources[record.provider_item_id] || `history:${record.seq}` })),
+        ...transient.map(item => ({ ...item, key: item.kind === "pending" ? `user:${item.value[0]}` : `${item.kind}:${item.value.turn_id}:${item.value.id}` })),
+      ];
+      const before = JSON.stringify(timeline.keys);
+      for (const item of items) {
+        if (timeline.keys.includes(item.key)) continue;
+        // Previously unseen history pages belong before the next known history
+        // row. Already displayed rows retain their position through settlement.
+        const next = item.seq && items.filter(other => other.seq > item.seq && timeline.keys.includes(other.key)).sort((a, b) => a.seq - b.seq)[0];
+        const index = next ? timeline.keys.indexOf(next.key) : timeline.keys.length;
+        timeline.keys.splice(index, 0, item.key);
+      }
+      if (before !== JSON.stringify(timeline.keys)) saveTimeline(timeline);
+      const positions = new Map(timeline.keys.map((key, index) => [key, index]));
+      return items.sort((a, b) => positions.get(a.key) - positions.get(b.key));
     };
     const replyTimeline = mergeTimeline(replyRecords.filter(record => replyPersisted.includes(record)), transientTimeline(replyRecords.filter(record => !replyPersisted.includes(record)), replyPending));
     const renderTimelineHistory = (record) => h(ConversationMessage, {
@@ -1597,7 +1679,7 @@ export async function activate(api) {
           attachments: record.attachments?.length > 0 ? h(React.Fragment, null, record.attachments.map(attachment => h(Attachment, { key: `${conversationID}:${record.seq}:${attachment.kind}:${attachment.index}:${attachment.sha256}`, agentId: agent.agent_id, seq: record.seq, attachment, t }))) : null
         });
     const renderTimelineTool = (tool) => h(ConversationMessage, { key: `tool-preview:${tool.turn_id}:${tool.id}`, id: `tool-preview:${conversationID}:${tool.turn_id}:${tool.id}`, role: "assistant", content: "", linkPolicy: "external-only", resources: [{ sessionId: conversationID, rendererScope: route, itemId: tool.call_id, partIndex: 0, part: { type: "resource" }, fallbackText: "", running: true, preview: { capability: tool.capability, turnId: tool.turn_id, argumentsText: tool.argumentsText, status: tool.status } }] });
-    const renderTimelineMessage = (message) => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: Number.isSafeInteger(message.seq) && message.seq > 0 ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" });
+    const renderTimelineMessage = (message) => h(ConversationMessage, { reaction: reactionFor({ ...message, role: "assistant" }), onReply: (messageDisplayID(message) || Number.isSafeInteger(message.seq) && message.seq > 0) ? () => replyMessage({ ...message, role: "assistant" }) : undefined, replyLabel: t("replyMessage"), key: `live:${message.turn_id}:${message.id}`, id: `personal:${conversationID}:${message.turn_id}:${message.id}`, turnId: `personal:${conversationID}:${message.turn_id}`, role: "assistant", content: message.content, streaming: message.streaming, latest: true, linkPolicy: "external-only" });
     const sendRefreshNotice = sendRefreshError && h("div", { className: "mosaic-error", role: "alert", "data-send-refresh-error": true }, h("span", null, t("sendRefreshFailed"), " ", sendRefreshError), h(Button, { onClick: refreshAcceptedSend }, t("refreshHistory")));
     const draftNotice = (id, state) => (state.storageError || state.attachmentsMissing) && h("div", { className: "mosaic-draft-notice" },
       state.storageError && h("p", { role: "alert", "data-draft-storage-error": true }, h("span", null, locale?.startsWith("zh") ? "草稿恢复或保存失败，请在关闭前重试（最多保存 32K 字符）。" : "Draft recovery or saving failed. Retry before closing (32K character limit)."), h(Button, { "data-action": "retry-draft-save", onClick: () => updateDraft(id, {}) }, t("retry"))),
@@ -1621,7 +1703,7 @@ export async function activate(api) {
         composer: h("div", { style: { visibility: replySelection ? "hidden" : undefined } }, rendererContextLimited && h("p", { role: "status", "data-renderer-context-limit": true }, t("rendererContextLimited")), h(ConversationComposer, { ...commandProps, sessionScope: route, conversationId: conversationID, prompt: draft.prompt, placeholder: t("placeholder"), running, submitting: draft.submitting, queuedCount, stopState, disabled: loading, sendDisabled: draft.submitting || readingFiles || draft.attachmentsMissing,
           attachments: files.map((file, index) => ({ ...file, id: String(index) })), onChangePrompt: value => updateDraft(conversationID, { prompt: value }), onAddAttachments: selectFiles,
           onRemoveAttachment: id => updateDraft(conversationID, { files: files.filter((_, index) => String(index) !== id) }), onSend: (text, contentParts) => send(text, conversationID, undefined, contentParts), onStop: stopReply }))
-      }, mergeTimeline(records.filter(record => (record.ui_parts?.length || record.ui_resources?.length || !liveMessages.some(message => message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id))) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)), transientTimeline(liveMessages.filter(message => !records.some(record => (record.ui_parts?.length || record.ui_resources?.length) && (message.seq === record.seq || (message.source_id && message.source_id === record.provider_item_id)))), pendingReceipts, liveTools.filter(tool => !records.some(record => record.ui_resources?.some(resource => resource.tool_call_id === tool.call_id))))).map(item => item.kind === "history" ? renderTimelineHistory(item.value) : item.kind === "pending" ? renderPendingReceipt(item.value, conversationID) : item.kind === "tool" ? renderTimelineTool(item.value) : renderTimelineMessage(item.value)), !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
+      }, mergeTimeline(records.filter(record => (record.ui_parts?.length || record.ui_resources?.length || !liveMessages.some(message => sameStreamMessage(record, message))) && ["user", "assistant"].includes(record.role) && (record.display_content || record.content || record.attachments?.length)), transientTimeline(liveMessages.filter(message => !records.some(record => (record.ui_parts?.length || record.ui_resources?.length) && (sameStreamMessage(record, message)))), pendingReceipts, liveTools.filter(tool => !records.some(record => record.ui_resources?.some(resource => resource.tool_call_id === tool.call_id))))).map(item => item.kind === "history" ? renderTimelineHistory(item.value) : item.kind === "pending" ? renderPendingReceipt(item.value, conversationID) : item.kind === "tool" ? renderTimelineTool(item.value) : renderTimelineMessage(item.value)), !loading && !records.length && !pendingReceipts.length && !liveMessages.length && h("div", { className: "mosaic-empty" }, h(EmptyState, { title: t("emptyChat"), description: t("emptyChatText") })),
         h(settingsPanels.ReviewConversation, { locale }))), h("div", { className: "mosaic-panel-layer", inert: avatarOpen || Boolean(selectedRoutine), "aria-hidden": avatarOpen || Boolean(selectedRoutine) || undefined, "data-panel-phase": panelPhase }, sidebar), replySelection && h("div", { className: "mosaic-replies-backdrop", "aria-hidden": true, onPointerDown: closeReplies }), replyPanel, selectedRoutine && h(RoutineDialog, { key: selectedRoutine.routine_id, routine: selectedRoutine, locale, t, onClose: closeRoutine, onChanged: changeRoutine, onOpenTask: item => { setTasks(current => current.some(value => value.task_id === item.task_id) ? current : [...current, item]); setRoutineID(null); detailTrigger.current = `[data-routine-id="${selectedRoutine.routine_id}"]`; setSelection({ taskId: item.task_id, kind: "task" }); } }), avatarOpen && h(IdentityDialog, { agent, locale, onSave: saveIdentity, onClose: closeAvatar })));
   }
   // Runtime calls require an active generation. Keep prior artwork while its identity loads.

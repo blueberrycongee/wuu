@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -74,8 +75,18 @@ func (s *Server) validateMessageRelation(binding *runtime.State, pluginID, targe
 		return nil
 	}
 	ref := relation.ReplyTo
-	if ref.SessionID != target || ref.Seq <= 0 {
+	if ref.SessionID != target || ref.Seq < 0 || (ref.Seq == 0 && ref.DisplayID == "") {
 		return errors.New("reply_to must address a message in the target session")
+	}
+	if ref.DisplayID != "" {
+		message, err := s.resolveDisplayMessage(binding, target, ref.DisplayID)
+		if err != nil {
+			return err
+		}
+		if message != nil && (ref.Seq == 0 || ref.Seq == message.Seq) {
+			return nil
+		}
+		return errors.New("reply_to message is not visible in the target session")
 	}
 	records, err := binding.Sessions.LoadActiveHistoryRecords(target, false)
 	if err != nil {
@@ -87,4 +98,33 @@ func (s *Server) validateMessageRelation(binding *runtime.State, pluginID, targe
 		}
 	}
 	return errors.New("reply_to message is not visible in the target session")
+}
+
+// resolveDisplayMessage reads host-owned message content; callers enforce session
+// ownership. Durable rows win once the stream has been committed.
+func (s *Server) resolveDisplayMessage(binding *runtime.State, sessionID, displayID string) (*pluginhost.SessionHistoryRecord, error) {
+	records, err := binding.Sessions.LoadActiveHistoryRecords(sessionID, false)
+	if err != nil {
+		return nil, err
+	}
+	for _, record := range records {
+		if record.DisplayID == displayID {
+			if record.Hidden || record.Role != "assistant" {
+				return nil, nil
+			}
+			return &pluginhost.SessionHistoryRecord{Seq: record.Seq, DisplayID: displayID, Role: record.Role, Content: record.Content, Relation: providers.CloneMessageRelation(record.Relation)}, nil
+		}
+	}
+	if th := s.threadForState(binding, sessionID); th != nil {
+		th.mu.Lock()
+		defer th.mu.Unlock()
+		for _, turn := range th.Turns {
+			for _, item := range turn.Items {
+				if turn.ID+":"+item.ID == displayID && item.Type == ThreadItemAgentMessage && item.Text != "" {
+					return &pluginhost.SessionHistoryRecord{Seq: item.Seq, DisplayID: displayID, Role: "assistant", Content: item.Text, Relation: providers.CloneMessageRelation(item.Relation)}, nil
+				}
+			}
+		}
+	}
+	return nil, nil
 }

@@ -168,6 +168,7 @@ export interface SessionDomainHistoryRecord {
   readonly "context_tokens"?: number;
   readonly "discovered_tools"?: unknown;
   readonly "display_content"?: string;
+  readonly "display_id"?: string;
   readonly "engine_turn_id"?: string;
   readonly "engine_turn_pending"?: boolean;
   /** Base64 admission-only compare-and-swap fence; never persist this field into history. */

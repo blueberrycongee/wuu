@@ -488,6 +488,15 @@ func (s *Server) inspectPluginSessionOnce(binding *runtime.State, pluginID strin
 		Visibility: metadata.Visibility, State: state, WorkspaceID: metadata.WorkspaceID,
 		CreatedAt: metadata.CreatedAt.Format(time.RFC3339Nano), UpdatedAt: metadata.UpdatedAt.Format(time.RFC3339Nano),
 	}}
+	if params.MessageDisplayID != "" {
+		if metadata.Owner != "plugin:"+strings.TrimSpace(pluginID) {
+			return result, false, errors.New("message inspection requires session ownership")
+		}
+		result.Message, err = s.resolveDisplayMessage(binding, params.SessionID, params.MessageDisplayID)
+		if err != nil {
+			return result, false, err
+		}
+	}
 	if metadata.Owner == "plugin:"+strings.TrimSpace(pluginID) {
 		result.Session.CreationRequestID = metadata.CreationRequestID
 	}

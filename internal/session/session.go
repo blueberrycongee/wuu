@@ -109,6 +109,8 @@ type ManagedMetadata struct {
 // HistoryRecord is the durable session message shape. App-server remains
 // responsible for provider-specific ChatMessage conversion.
 type HistoryRecord struct {
+	// DisplayID links a live host bubble to its durable history independently of provider IDs.
+	DisplayID            string                            `json:"display_id,omitempty"`
 	AcceptedClientInput  *AcceptedClientInput              `json:"-"`
 	AcceptedClientTurnID string                            `json:"-"`
 	Relation             *providers.MessageRelation        `json:"relation,omitempty"`

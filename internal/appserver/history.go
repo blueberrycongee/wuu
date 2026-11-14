@@ -48,6 +48,8 @@ type persistedFile struct {
 }
 
 type persistedMessage struct {
+	// DisplayID links a live host bubble to its durable history independently of provider IDs.
+	DisplayID  string                     `json:"display_id,omitempty"`
 	Relation   *providers.MessageRelation `json:"relation,omitempty"`
 	ModelSteps []providers.ModelStepUsage `json:"model_steps,omitempty"`
 	// Seq is the message's stable per-thread address. It is not serialized to
@@ -147,6 +149,7 @@ func chatMessagesFromPersistedMessages(records []persistedMessage) []providers.C
 			Name:                 rec.Name,
 			ClientID:             rec.ClientID,
 			Content:              rec.Content,
+			DisplayID:            rec.DisplayID,
 			DisplayContent:       rec.DisplayContent,
 			Origin:               rec.Origin,
 			OriginID:             rec.OriginID,
@@ -397,6 +400,7 @@ func persistedMessageFromChatMessage(msg providers.ChatMessage) persistedMessage
 		Seq:               msg.Seq,
 		Role:              strings.ToLower(msg.Role),
 		Content:           msg.Content,
+		DisplayID:         msg.DisplayID,
 		DisplayContent:    msg.DisplayContent,
 		Origin:            msg.Origin,
 		OriginID:          msg.OriginID,
@@ -543,6 +547,7 @@ func historyRecordFromPersistedMessage(rec persistedMessage) sessionstore.Histor
 		Seq:                 rec.Seq,
 		Role:                rec.Role,
 		Content:             rec.Content,
+		DisplayID:           rec.DisplayID,
 		DisplayContent:      rec.DisplayContent,
 		Origin:              rec.Origin,
 		OriginID:            rec.OriginID,
@@ -598,6 +603,7 @@ func persistedMessageFromHistoryRecord(rec sessionstore.HistoryRecord) (persiste
 		Seq:                 rec.Seq,
 		Role:                rec.Role,
 		Content:             rec.Content,
+		DisplayID:           rec.DisplayID,
 		DisplayContent:      rec.DisplayContent,
 		Origin:              rec.Origin,
 		OriginID:            rec.OriginID,

@@ -517,8 +517,9 @@ type SessionInspectParams struct {
 	TimeoutMS              int                              `json:"timeout_ms,omitempty"`
 	// Requires an explicit request ID. Progress is an optional display snapshot,
 	// not a delivery receipt, event stream or durable execution result.
-	IncludeProgress bool `json:"include_progress,omitempty"`
-	IncludeSkills   bool `json:"include_skills,omitempty"`
+	IncludeProgress  bool   `json:"include_progress,omitempty"`
+	IncludeSkills    bool   `json:"include_skills,omitempty"`
+	MessageDisplayID string `json:"message_display_id,omitempty"`
 }
 
 // SessionControlParams coordinates automatic execution without changing Owner
@@ -555,6 +556,7 @@ type SessionSkill struct {
 }
 
 type SessionInspectResult struct {
+	Message       *SessionHistoryRecord `json:"message,omitempty"`
 	Skills        []SessionSkill        `json:"skills,omitempty"`
 	AcceptedInput *SessionAcceptedInput `json:"accepted_input,omitempty"`
 

@@ -235,3 +235,66 @@ func TestPluginRelationQueuedTurnsKeepTheirOwnSource(t *testing.T) {
 		t.Fatal("queued inputs reused source")
 	}
 }
+
+func TestStreamingReplyIdentityResolvesBeforeAndAfterPersistence(t *testing.T) {
+	rt := newTestRuntime(t, &fakeClient{response: providersResponse("answer")})
+	owner := &pluginTurnLifecycleClient{id: "fixture"}
+	rt.ActivePlugins = []pluginpkg.Plugin{{Manifest: pluginpkg.Manifest{ID: owner.id}}}
+	attachTestModelGeneration(t, rt, owner)
+	srv := New(rt, &lockedBuffer{})
+	t.Cleanup(srv.Close)
+	ctx := pluginInvocationContext(t, srv.rt, context.Background())
+	created, err := srv.createPluginSession(ctx, owner.id, pluginhost.SessionCreateParams{RequestID: "stream-reply", Visibility: pluginhost.SessionVisibilityPlugin, ContextSource: pluginhost.SessionContextFresh})
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := testRuntimeState(t, srv.rt)
+	th, err := srv.ensureThreadLoaded(binding, created.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th.mu.Lock()
+	th.Turns = append(th.Turns, Turn{ID: "stream", Items: []ThreadItem{{ID: "message", Type: ThreadItemAgentMessage, Text: "partial"}}})
+	th.mu.Unlock()
+	ref := &providers.MessageRelation{ReplyTo: &providers.MessageRef{SessionID: created.SessionID, DisplayID: "stream:message"}}
+	if err := srv.validateMessageRelation(binding, owner.id, created.SessionID, ref); err != nil {
+		t.Fatal(err)
+	}
+	inspected, err := srv.inspectPluginSession(ctx, owner.id, pluginhost.SessionInspectParams{SessionID: created.SessionID, MessageDisplayID: "stream:message"})
+	if err != nil || inspected.Message == nil || inspected.Message.Seq != 0 || inspected.Message.Content != "partial" {
+		t.Fatalf("stream inspection: %+v, %v", inspected.Message, err)
+	}
+	for _, invalid := range []providers.MessageRef{{SessionID: "other", DisplayID: "stream:message"}, {SessionID: created.SessionID, DisplayID: "missing"}, {SessionID: created.SessionID, Seq: 99, DisplayID: "stream:message"}} {
+		if err := srv.validateMessageRelation(binding, owner.id, created.SessionID, &providers.MessageRelation{ReplyTo: &invalid}); err == nil {
+			t.Fatalf("accepted %+v", invalid)
+		}
+	}
+	if _, err := srv.inspectPluginSession(ctx, "other", pluginhost.SessionInspectParams{SessionID: created.SessionID, MessageDisplayID: "stream:message"}); err == nil {
+		t.Fatal("cross-owner inspection accepted")
+	}
+	if err := rt.Sessions.AppendHistoryRecord(created.SessionID, session.HistoryRecord{Role: "assistant", Content: "complete", DisplayID: "stream:message"}); err != nil {
+		t.Fatal(err)
+	}
+	th.mu.Lock()
+	th.Turns = nil
+	th.mu.Unlock()
+	inspected, err = srv.inspectPluginSession(ctx, owner.id, pluginhost.SessionInspectParams{SessionID: created.SessionID, MessageDisplayID: "stream:message"})
+	if err != nil || inspected.Message == nil || inspected.Message.Seq != 1 || inspected.Message.Content != "complete" {
+		t.Fatalf("durable inspection: %+v, %v", inspected.Message, err)
+	}
+	if err := srv.validateMessageRelation(binding, owner.id, created.SessionID, ref); err != nil {
+		t.Fatal(err)
+	}
+	// A retained stream snapshot must not expose a source hidden by durable history.
+	if err := rt.Sessions.AppendHistoryRecord(created.SessionID, session.HistoryRecord{Role: "assistant", Content: "hidden", DisplayID: "stream:hidden", Hidden: true}); err != nil {
+		t.Fatal(err)
+	}
+	th.mu.Lock()
+	th.Turns = []Turn{{ID: "stream", Items: []ThreadItem{{ID: "hidden", Type: ThreadItemAgentMessage, Text: "hidden"}}}}
+	th.mu.Unlock()
+	hidden := &providers.MessageRelation{ReplyTo: &providers.MessageRef{SessionID: created.SessionID, DisplayID: "stream:hidden"}}
+	if err := srv.validateMessageRelation(binding, owner.id, created.SessionID, hidden); err == nil {
+		t.Fatal("hidden stream source accepted")
+	}
+
+}

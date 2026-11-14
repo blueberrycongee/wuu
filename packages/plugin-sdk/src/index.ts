@@ -11,8 +11,8 @@ export interface AcceptedClientInputView {
  receipt: ClientInputReceipt; prompt: string; relation?: MessageRelation; attachments?: SessionInputAttachment[];
 }
 
-/** Stable durable message address; seq is not a provider item or turn ID. */
-export interface MessageRef { session_id: string; seq: number; }
+/** Host message address. Use seq: 0 with display_id before persistence; positive seq addresses history. */
+export interface MessageRef { session_id: string; seq: number; display_id?: string; }
 /** Host-validated quote target plus extension-owned context. Never encode routing in prompt text. */
 export interface MessageRelation { reply_to?: MessageRef; metadata?: Record<string, unknown>; }
 
@@ -1742,9 +1742,12 @@ export interface HostServiceContracts {
       include_progress?: boolean;
       /** Discover user-invocable skills in an owned session, never the active Coding workspace. */
       include_skills?: boolean;
+      /** Resolve a host display identity before or after history persistence. Owner only. */
+      message_display_id?: string;
     };
     result: {
       receipt?: ClientInputReceipt;
+      message?: NonNullable<HostServiceContracts["host.session.history.read"]["result"]["records"]>[number];
       accepted_input?: AcceptedClientInputView;
       pending_inputs?: AcceptedClientInputView[];
       skills?: import("./ui-catalog.js").CatalogSkillV1[];
@@ -1820,6 +1823,8 @@ export interface HostServiceContracts {
         display_content?: string;
         /** Provider identity, not the host-generated live item or turn ID. */
         provider_item_id?: string;
+        /** Host turn:item identity retained from streaming through history. */
+        display_id?: string;
         engine_turn_id?: string;
         reasoning_content?: string;
         tool_calls?: string;

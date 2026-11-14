@@ -3238,13 +3238,14 @@ var PersonalPlugin = class {
     let reply;
     if (relation.reply_to !== void 0) {
       const reference = object2(relation.reply_to), seq = number(reference, "seq");
-      if (seq < 1 || text3(reference, "session_id", true) !== agent.main_session_id) throw new Error("reply target must belong to this main conversation");
-      const page = await this.host.call("host.session.history.read", { session_id: agent.main_session_id, start_seq: seq, end_seq: seq, limit: 1 });
-      const record2 = page.records?.find((item) => item.seq === seq);
+      if (seq < 0 || seq === 0 && !text3(reference, "display_id") || text3(reference, "session_id", true) !== agent.main_session_id) throw new Error("reply target must belong to this main conversation");
+      const displayID = text3(reference, "display_id");
+      const record2 = displayID ? (await this.host.call("host.session.inspect", { session_id: agent.main_session_id, message_display_id: displayID })).message : (await this.host.call("host.session.history.read", { session_id: agent.main_session_id, start_seq: seq, end_seq: seq, limit: 1 })).records?.find((item) => item.seq === seq);
+      if (displayID && seq > 0 && record2?.seq !== seq) throw new Error("reply target identity mismatch");
       if (!record2 || record2.hidden || !["user", "assistant"].includes(record2.role) && !record2.attachments?.length || record2.role === "user" && (record2.read_only || record2.origin && record2.origin !== "user")) throw new Error("reply target is not a visible conversation message");
       const content = record2.display_content || record2.content || "";
-      reply = { source: { session_id: agent.main_session_id, seq }, role: record2.role, content: content.slice(0, 12e3), truncated: Boolean(record2.truncated || content.length > 12e3), attachments: (record2.attachments ?? []).slice(0, 16).map((item) => ({ name: item.name, mime_type: item.mime_type })) };
-      const projected = await this.messageRelation(agent.main_session_id, seq, record2.relation);
+      reply = { source: { session_id: agent.main_session_id, seq, ...displayID ? { display_id: displayID } : {} }, role: record2.role, content: content.slice(0, 12e3), truncated: Boolean(record2.truncated || content.length > 12e3), attachments: (record2.attachments ?? []).slice(0, 16).map((item) => ({ name: item.name, mime_type: item.mime_type })) };
+      const projected = await this.messageRelation(agent.main_session_id, record2.seq, record2.relation);
       referenced = projected?.metadata?.task_links ?? [];
     }
     const metadata = relation.metadata === void 0 ? {} : object2(relation.metadata);
@@ -4641,10 +4642,13 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
       case "agents.history": {
         const agent = await this.conversation(input, true);
         await this.inspectAgent(agent);
-        let history = await this.history(agent.main_session_id, input.reply_seq === void 0 ? input : { start_seq: 1, limit: 50 });
-        let replyRoot;
-        if (input.reply_seq !== void 0) {
-          const selected = number(input, "reply_seq"), roots = /* @__PURE__ */ new Map();
+        const replyDisplayID = text3(input, "reply_display_id");
+        const isReply = input.reply_seq !== void 0 || Boolean(replyDisplayID);
+        let history = await this.history(agent.main_session_id, isReply ? { start_seq: 1, limit: 50 } : input);
+        let replyRoot, replyRootDisplayID;
+        if (isReply) {
+          let selected = input.reply_seq === void 0 ? 0 : number(input, "reply_seq");
+          const roots = /* @__PURE__ */ new Map();
           const all = [...history.records ?? []];
           while (history.has_more) {
             const last = history.records?.at(-1);
@@ -4652,13 +4656,33 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
             history = await this.history(agent.main_session_id, { start_seq: last.seq + 1, limit: 50 }, history.snapshot_seq);
             all.push(...history.records ?? []);
           }
-          for (const record2 of all) {
-            if (record2.hidden || record2.role === "user" && (record2.read_only || record2.origin && record2.origin !== "user") || !(["user", "assistant"].includes(record2.role) && (record2.display_content || record2.content) || record2.attachments?.length)) continue;
-            const parent = record2.relation?.reply_to;
-            roots.set(record2.seq, parent?.session_id === agent.main_session_id ? roots.get(parent.seq) ?? record2.seq : record2.seq);
+          if (replyDisplayID) {
+            let message = all.find((record2) => record2.display_id === replyDisplayID);
+            if (!message) {
+              message = (await this.host.call("host.session.inspect", { session_id: agent.main_session_id, message_display_id: replyDisplayID })).message;
+              if (message) all.push(message);
+            }
+            if (!message) throw new Error("reply message not found");
+            selected = message.seq;
           }
+          const visible = all.filter((record2) => !record2.hidden && !(record2.role === "user" && (record2.read_only || record2.origin && record2.origin !== "user")) && (["user", "assistant"].includes(record2.role) && (record2.display_content || record2.content) || record2.attachments?.length));
+          const bySeq = new Map(visible.map((record2) => [record2.seq, record2]));
+          const byDisplay = new Map(visible.filter((record2) => record2.display_id).map((record2) => [record2.display_id, record2]));
+          const rootFor = (record2, visited = /* @__PURE__ */ new Set()) => {
+            const cached = roots.get(record2.seq);
+            if (cached !== void 0) return cached;
+            if (visited.has(record2.seq)) throw new Error("cyclic reply relation");
+            visited.add(record2.seq);
+            const parent = record2.relation?.reply_to;
+            const source = parent?.session_id === agent.main_session_id ? parent.display_id ? byDisplay.get(parent.display_id) : bySeq.get(parent.seq) : void 0;
+            const root = source ? rootFor(source, visited) : record2.seq;
+            roots.set(record2.seq, root);
+            return root;
+          };
+          for (const record2 of visible) rootFor(record2);
           replyRoot = roots.get(selected);
           if (replyRoot === void 0) throw new Error("reply message not found");
+          replyRootDisplayID = all.find((record2) => record2.seq === replyRoot)?.display_id;
           const end = input.end_seq === void 0 ? history.snapshot_seq : number(input, "end_seq");
           const matching = all.filter((record2) => roots.get(record2.seq) === replyRoot && record2.seq <= end);
           const limit = input.limit === void 0 ? 50 : Math.max(1, Math.min(50, number(input, "limit")));
@@ -4676,8 +4700,8 @@ Personal and Coding memory are logically separate. Use personal_memory_query/rea
             const ui_text = record2.role === "tool" ? "" : record2.display_content || record2.content || "";
             return { ...record2, ui_parts, ui_resources, ui_text, ui_fallback: Boolean(projected2.fallbackText && !ui_parts.length), ...fallback ? { role: "assistant", content: [ui_text, fallback].filter(Boolean).join("\n\n"), display_content: void 0, read_only: true } : {} };
           }));
-          const records = await Promise.all(projected.filter((r) => !r.hidden && (r.role !== "user" || !r.read_only && (!r.origin || r.origin === "user")) && (["user", "assistant"].includes(r.role) && (r.display_content || r.content) || r.attachments?.length)).map(async (r) => ({ seq: r.seq, ...r.ui_fallback ? { ui_fallback: true } : {}, ...r.ui_parts.length ? { ui_parts: r.ui_parts, ui_text: r.ui_text } : {}, ...r.ui_resources.length ? { ui_resources: r.ui_resources, ui_text: r.ui_text } : {}, ...r.receipt ? { receipt: r.receipt } : {}, reaction_eligible: !r.ui_parts.length && !r.read_only && !r.truncated && (r.role === "assistant" || r.role === "user" && r.origin === "user"), reactions: this.reactionState((await this.read("reaction", this.reactionID(agent.main_session_id, r.seq))).value), relation: await this.messageRelation(agent.main_session_id, r.seq, r.relation, tasks), ...r.provider_item_id ? { provider_item_id: r.provider_item_id } : {}, ...r.engine_turn_id ? { engine_turn_id: r.engine_turn_id } : {}, role: r.role === "user" ? "user" : "assistant", content: ["user", "assistant"].includes(r.role) ? r.display_content || r.content || "" : "", ..."at" in r && typeof r.at === "string" ? { at: r.at } : {}, ...r.attachments?.length ? { attachments: r.attachments } : {}, ...["user", "assistant"].includes(r.role) && r.name ? { name: r.name } : {} })) ?? []);
-          if (replyRoot !== void 0 || records.length || !history.has_earlier || pagesRead >= historyRecoveryPageLimit || input.start_seq !== void 0 || text3(input, "cursor")) return { ...history, ...replyRoot === void 0 ? {} : { reply_root_seq: replyRoot }, records };
+          const records = await Promise.all(projected.filter((r) => !r.hidden && (r.role !== "user" || !r.read_only && (!r.origin || r.origin === "user")) && (["user", "assistant"].includes(r.role) && (r.display_content || r.content) || r.attachments?.length)).map(async (r) => ({ seq: r.seq, ...r.display_id ? { display_id: r.display_id } : {}, ...r.ui_fallback ? { ui_fallback: true } : {}, ...r.ui_parts.length ? { ui_parts: r.ui_parts, ui_text: r.ui_text } : {}, ...r.ui_resources.length ? { ui_resources: r.ui_resources, ui_text: r.ui_text } : {}, ...r.receipt ? { receipt: r.receipt } : {}, reaction_eligible: !r.ui_parts.length && !r.read_only && !r.truncated && (r.role === "assistant" || r.role === "user" && r.origin === "user"), reactions: this.reactionState((await this.read("reaction", this.reactionID(agent.main_session_id, r.seq))).value), relation: await this.messageRelation(agent.main_session_id, r.seq, r.relation, tasks), ...r.provider_item_id ? { provider_item_id: r.provider_item_id } : {}, ...r.engine_turn_id ? { engine_turn_id: r.engine_turn_id } : {}, role: r.role === "user" ? "user" : "assistant", content: ["user", "assistant"].includes(r.role) ? r.display_content || r.content || "" : "", ..."at" in r && typeof r.at === "string" ? { at: r.at } : {}, ...r.attachments?.length ? { attachments: r.attachments } : {}, ...["user", "assistant"].includes(r.role) && r.name ? { name: r.name } : {} })) ?? []);
+          if (replyRoot !== void 0 || records.length || !history.has_earlier || pagesRead >= historyRecoveryPageLimit || input.start_seq !== void 0 || text3(input, "cursor")) return { ...history, ...replyRoot === void 0 ? {} : { reply_root_seq: replyRoot, ...replyRootDisplayID ? { reply_root_display_id: replyRootDisplayID } : {} }, records };
           history = await this.history(agent.main_session_id, { ...input, end_seq: history.first_seq - 1 }, history.snapshot_seq);
         }
       }

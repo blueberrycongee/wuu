@@ -3,6 +3,7 @@ package appserver
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -396,6 +397,44 @@ func TestPersistedThreadLoadPreservesActiveTranscript(t *testing.T) {
 			providerAfter, err := rt.Sessions.LoadProviderHistorySnapshot(id)
 			if err != nil || !reflect.DeepEqual(providerAfter, providerBefore) {
 				t.Fatalf("loading modified the provider checkpoint: %v", err)
+			}
+		})
+	}
+}
+
+func TestStreamDisplayIdentitySurvivesHistoryReload(t *testing.T) {
+	for _, rewrite := range []bool{false, true} {
+		t.Run(fmt.Sprint(rewrite), func(t *testing.T) {
+			store := newAppserverTestStore(t, t.TempDir())
+			sess, err := store.Create()
+			if err != nil {
+				t.Fatal(err)
+			}
+			messages := []providers.ChatMessage{{Role: "assistant", Content: "same answer"}, {Role: "assistant", Content: "same answer"}}
+			thread := &threadState{ID: sess.ID, state: &runtime.State{Sessions: store}, PersistHistory: true, currentTurn: "turn", History: cloneHistory(messages), Turns: []Turn{{ID: "turn", Items: []ThreadItem{{ID: "first", Type: ThreadItemAgentMessage, Text: "same answer"}, {ID: "second", Type: ThreadItemAgentMessage, Text: "same answer"}}}}}
+			server := &Server{}
+			result := agent.LoopResult{NewMessages: messages, DurableNewMessages: messages, DurableMessagesTracked: true}
+			if err := server.persistTurnResultLocked(thread, result, rewrite, "", "", 0); err != nil {
+				t.Fatal(err)
+			}
+			records, err := store.LoadHistoryRecords(sess.ID, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ids []string
+			for _, record := range records {
+				if record.Role == "assistant" {
+					raw, _ := json.Marshal(record)
+					var fields map[string]any
+					if err := json.Unmarshal(raw, &fields); err != nil {
+						t.Fatal(err)
+					}
+					id, _ := fields["display_id"].(string)
+					ids = append(ids, id)
+				}
+			}
+			if !reflect.DeepEqual(ids, []string{"turn:first", "turn:second"}) {
+				t.Fatalf("restored display identities: %v", ids)
 			}
 		})
 	}

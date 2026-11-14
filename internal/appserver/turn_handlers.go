@@ -3254,6 +3254,9 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		if th != nil && th.PersistHistory {
 			runner.ArchiveHistory = func(archiveCtx context.Context, messages []providers.ChatMessage) (agent.HistoryArchive, error) {
 				inheritMessageRelation(messages, turnRuntime.MessageRelation)
+				th.mu.Lock()
+				th.bindStreamDisplayIDsLocked(turnID, messages)
+				th.mu.Unlock()
 				seqs, endSeq, err := appendChatMessagesReturningSeqs(binding.Sessions, th.ID, messages)
 				if err != nil {
 					// These messages left the live steer queue but were not sent.
@@ -6163,6 +6166,9 @@ func (s *Server) persistTurnResultLocked(th *threadState, res agent.LoopResult, 
 	if !th.PersistHistory {
 		return nil
 	}
+	th.bindStreamDisplayIDsLocked(th.currentTurn, th.History)
+	th.bindStreamDisplayIDsLocked(th.currentTurn, res.NewMessages)
+	th.bindStreamDisplayIDsLocked(th.currentTurn, res.DurableNewMessages)
 	indexHistory := th.History
 	if rewriteHistory {
 		rewriteBaselineSeq := max(historyBaselineSeq, res.HistoryArchiveHeadSeq)
@@ -6222,14 +6228,18 @@ func applyPersistedHistorySeqs(messages, persisted []providers.ChatMessage, seqs
 		if persistedIndex >= len(seqs) || seqs[persistedIndex] <= 0 {
 			continue
 		}
+		displayID := persistedMessage.DisplayID
+		persistedMessage.DisplayID = ""
 		persistedMessage.Seq = 0
 		for messageIndex := searchFrom; messageIndex < len(out); messageIndex++ {
 			candidate := providers.CloneChatMessage(out[messageIndex])
 			candidate.Seq = 0
+			candidate.DisplayID = ""
 			if !reflect.DeepEqual(candidate, persistedMessage) {
 				continue
 			}
 			out[messageIndex].Seq = seqs[persistedIndex]
+			out[messageIndex].DisplayID = displayID
 			searchFrom = messageIndex + 1
 			break
 		}
