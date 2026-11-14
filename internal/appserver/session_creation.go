@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -42,6 +45,7 @@ type hostSessionCreateParams struct {
 	WorkspaceRoot            string
 	ModelAlias               string
 	Role                     string
+	Engine                   string
 	Provider                 string
 	Model                    string
 	Variant                  string
@@ -102,6 +106,42 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 	if id == "" {
 		id = session.NewID()
 	}
+	// Engine binding is a creation-time decision, the same rule thread/start
+	// applies to user threads. An unknown or disabled engine fails creation
+	// rather than silently substituting the built-in loop.
+	engineID := agentengine.NormalizeEngineID(params.Engine)
+	hostLoop := true
+	var engineDescriptor agentengine.Descriptor
+	if engineID != agentengine.EngineWuu {
+		descriptorCtx, cancelDescriptor := context.WithTimeout(context.Background(), 5*time.Second)
+		descriptor, descriptorErr := s.engineDescriptorForState(descriptorCtx, binding, engineID)
+		cancelDescriptor()
+		if descriptorErr != nil {
+			return nil, fmt.Errorf("%w: %q is unavailable: %v", agentengine.ErrUnknownEngine, engineID, descriptorErr)
+		}
+		engineDescriptor = descriptor
+		hostLoop = slices.Contains(descriptor.Capabilities, "host-managed-continuation")
+		if s.rt.UserBinding().IsUser() && !slices.Contains(descriptor.Capabilities, "explicit-context") {
+			return nil, errors.New("engine does not enforce explicit user-host context")
+		}
+		if !hostLoop {
+			if params.ContextSource != sessionContextFresh {
+				return nil, fmt.Errorf("engine %q cannot ingest host-managed conversation context; use a fresh context", engineID)
+			}
+			if params.ModelAlias != "" {
+				return nil, fmt.Errorf("engine %q does not use the host model catalog; pass its native model in model", engineID)
+			}
+			if params.ToolPolicy != nil {
+				return nil, fmt.Errorf("the selected agent engine cannot enforce %s", turnToolRestrictionName(false))
+			}
+			if params.Seed != nil || params.Launch != nil {
+				return nil, fmt.Errorf("engine %q cannot ingest host-managed session launches", engineID)
+			}
+			if len(params.ModelOptions) > 0 && !slices.Contains(descriptor.Capabilities, "model-options") {
+				return nil, errors.New("selected engine does not expose additional model options")
+			}
+		}
+	}
 	threadCWD := s.rt.RootDir
 	managed := session.ManagedMetadata{Owner: owner, Visibility: params.Visibility, ParentID: params.ParentSessionID, ContextSource: params.ContextSource, CreationRequestID: params.RequestID}
 	var history []providers.ChatMessage
@@ -139,43 +179,62 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		selection = runtimeSelectionFromSession(parent)
 		threadCWD = firstNonEmpty(parent.CWD, threadCWD)
 	}
-	if params.Provider != "" || params.Model != "" {
-		selection.Provider = params.Provider
-		selection.Model = params.Model
-		// Resolving an omitted delegated model pins its admitted provider/model,
-		// but must not turn omission into a caller-requested options reset.
-		if !params.inheritModelOptions {
-			selection.Variant = params.Variant
-			selection.Effort = params.Effort
+	if hostLoop {
+		if params.Provider != "" || params.Model != "" {
+			selection.Provider = params.Provider
+			selection.Model = params.Model
+			// Resolving an omitted delegated model pins its admitted provider/model,
+			// but must not turn omission into a caller-requested options reset.
+			if !params.inheritModelOptions {
+				selection.Variant = params.Variant
+				selection.Effort = params.Effort
+				selection.Speed = params.Speed
+				selection.ModelOptions = params.ModelOptions
+			}
+			if params.PermissionMode != "" {
+				selection.PermissionMode = params.PermissionMode
+			}
+		}
+		if params.ModelAlias != "" {
+			services, err := binding.Services()
+			if err != nil {
+				return nil, err
+			}
+			models, err := binding.Models()
+			if err != nil {
+				return nil, err
+			}
+			resolved := s.resolveSubagentModelAliasWithServices(services, models, params.ModelAlias)
+			if resolved.Err != nil {
+				return nil, resolved.Err
+			}
+			if !resolved.Found {
+				return nil, fmt.Errorf("unknown model alias %q (available: %s)", params.ModelAlias, strings.Join(resolved.ValidAliases, ", "))
+			}
+			selection.Provider = resolved.Runtime.Provider
+			selection.Model = resolved.Runtime.Model
+			selection.Variant = resolved.Runtime.Variant
+			selection.Effort = resolved.Runtime.Effort
 			selection.Speed = params.Speed
 			selection.ModelOptions = params.ModelOptions
 		}
-		if params.PermissionMode != "" {
-			selection.PermissionMode = params.PermissionMode
-		}
-	}
-	if params.ModelAlias != "" {
-		services, err := binding.Services()
-		if err != nil {
-			return nil, err
-		}
-		models, err := binding.Models()
-		if err != nil {
-			return nil, err
-		}
-		resolved := s.resolveSubagentModelAliasWithServices(services, models, params.ModelAlias)
-		if resolved.Err != nil {
-			return nil, resolved.Err
-		}
-		if !resolved.Found {
-			return nil, fmt.Errorf("unknown model alias %q (available: %s)", params.ModelAlias, strings.Join(resolved.ValidAliases, ", "))
-		}
-		selection.Provider = resolved.Runtime.Provider
-		selection.Model = resolved.Runtime.Model
-		selection.Variant = resolved.Runtime.Variant
-		selection.Effort = resolved.Runtime.Effort
+	} else {
+		// External engines own model access: selection fields carry
+		// engine-native identifiers rather than host provider catalog
+		// entries, so an inherited host selection never leaks across the
+		// boundary.
+		selection.Provider = firstNonEmpty(params.Provider, string(engineID))
+		selection.Model = params.Model
+		selection.Variant = ""
+		selection.Effort = params.Effort
 		selection.Speed = params.Speed
 		selection.ModelOptions = params.ModelOptions
+		if params.PermissionMode != "" {
+			selection.PermissionMode = config.NormalizePermissionMode(params.PermissionMode)
+		} else if slices.Contains(engineDescriptor.Capabilities, "default-permission-unconfined") {
+			selection.PermissionMode = config.PermissionModeUnconfined
+		}
+		selection.ApproveForMe = false
 	}
 	if params.Speed != "" {
 		selection.Speed = params.Speed
@@ -242,7 +301,7 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 	}
 	initial := session.Session{
 		UserSpaceID: s.rt.UserSpaceID, ProductDomain: s.rt.ProductDomain, AgentID: params.AgentID,
-		ID: id, Title: params.Name, CWD: threadCWD,
+		ID: id, Title: params.Name, CWD: threadCWD, EngineID: string(engineID),
 		WorkspaceID: workspaceID, Source: source,
 		Owner: managed.Owner, Visibility: managed.Visibility, ParentID: managed.ParentID,
 		ContextSource: managed.ContextSource, CreationRequestID: managed.CreationRequestID,
@@ -340,6 +399,7 @@ func (s *Server) createHostSessionThreadWithStore(binding *runtime.State, store 
 		}
 	}
 	th := newThreadState(id, history, s.rt.ProviderName, s.rt.Model, threadCWD, true, time.Now().UTC())
+	th.EngineID = string(engineID)
 	applyThreadRuntimeSelection(th, selection)
 	th.Source = source
 	th.Title = params.Name

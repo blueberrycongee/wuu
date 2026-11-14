@@ -377,6 +377,8 @@ async function readCounter(host: RuntimeHost): Promise<string | null> {
 
 创建会话时提供稳定的 `request_id`、`visibility=user|plugin` 和 `context_source=fresh|fork|seed`。发送也需要稳定的请求 ID 和 `input.prompt`。请求被接纳或排队不代表完成，应检查轮次或处理生命周期事件后再消费结果。模型提示、业务状态和重试策略由插件负责，执行、历史、工作区改动和恢复交给宿主。
 
+`engine` 在创建时将会话绑定到选定的 agent 引擎，语义与 `thread/start` 一致；留空使用内置引擎。外部引擎自行管理模型访问、鉴权和原生会话历史：`provider`/`model`/`effort` 传递引擎原生标识而非宿主目录条目，`context_source=fork|seed`、`model_alias`、`tool_policy`、`seed` 和 `launch` 不适用。未知或已禁用的引擎会导致创建失败，而不会回退到内置循环。委派创建（`execution_authorization`）仍仅限内置引擎。宿主提供时，`host.session.list` 和 `host.session.inspect` 在 `session.engine` 中返回绑定的引擎。
+
 `host.session.model` 读取调用插件所拥有会话的当前 provider 和模型。修改时须同时提供 `provider` 和 `model`。调用需要同一用户空间内有效的所有者界面，并检查会话归属；会话忙碌时拒绝修改。成功的选择保存在该会话中，不修改其他会话或全局默认值。已获准的委派任务保留自身的授权和模型选择。此服务不配置凭据，也不选择外部引擎。
 
 `host.session.list` 的 owned 结果，以及调用插件所拥有会话的 `host.session.inspect` 结果，在可用时包含 `creation_request_id`。该字段是原始 `host.session.create` 请求 ID，在首个轮次开始前也可返回，因此插件能发现已被接纳但响应丢失的创建请求。shared 列表和对其他所有者会话的检查不返回此字段。它仅用于请求关联，不授予会话控制权限。

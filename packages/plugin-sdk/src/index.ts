@@ -1637,6 +1637,14 @@ export interface HostServiceContracts {
       workspace_id?: string;
       workspace_root?: string;
       model_alias?: string;
+      /**
+       * Agent engine the child binds to at creation; empty selects the
+       * built-in engine. External engines own model access and native session
+       * history: provider/model/effort carry engine-native identifiers, and
+       * fork/seed context, model aliases, and session tool policies do not
+       * apply. Unknown or disabled engines fail creation explicitly.
+       */
+      engine?: string;
       provider?: string;
       model?: string;
       variant?: string;
@@ -1706,6 +1714,8 @@ export interface HostServiceContracts {
         parent_session_id?: string;
         visibility: "user" | "plugin";
         state: string;
+        /** Agent engine the session is bound to; absent on hosts before this field existed. */
+        engine?: string;
         workspace_id?: string;
         created_at?: string;
         updated_at?: string;
@@ -1759,6 +1769,8 @@ export interface HostServiceContracts {
         parent_session_id?: string;
         visibility: "user" | "plugin";
         state: string;
+        /** Agent engine the session is bound to; absent on hosts before this field existed. */
+        engine?: string;
         workspace_id?: string;
         created_at?: string;
         updated_at?: string;
