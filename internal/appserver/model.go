@@ -1193,6 +1193,33 @@ func (th *threadState) applyMessageItemLocked(turnID string, msg providers.ChatM
 	}
 }
 
+// bindStreamDisplayIDsLocked freezes the host bubble identity before history is
+// committed. Matching is ordered within one turn, including repeated text.
+func (th *threadState) bindStreamDisplayIDsLocked(turnID string, messages []providers.ChatMessage) {
+	for _, turn := range th.Turns {
+		if turn.ID != turnID {
+			continue
+		}
+		next := 0
+		for m := range messages {
+			msg := &messages[m]
+			if msg.Role != "assistant" || msg.Content == "" || msg.Seq > 0 || msg.DisplayID != "" {
+				continue
+			}
+			for i := next; i < len(turn.Items); i++ {
+				item := turn.Items[i]
+				if item.Type != ThreadItemAgentMessage || item.Seq > 0 || item.Text != msg.Content {
+					continue
+				}
+				msg.DisplayID = turnID + ":" + item.ID
+				next = i + 1
+				break
+			}
+		}
+		return
+	}
+}
+
 // stampDurableAgentMessageSeqsLocked gives live agent message rows the seq of
 // the assistant message they render once that message is committed. Live rows
 // are numbered by stream events, restored rows per persisted message, so their
@@ -2089,6 +2116,7 @@ func chatMessageFromPersistedMessage(rec persistedMessage) providers.ChatMessage
 		ReadOnly:             rec.ReadOnly,
 		Phase:                providers.NormalizeMessagePhase(rec.Phase),
 		Hidden:               rec.Hidden,
+		DisplayID:            rec.DisplayID,
 		ProviderItemID:       rec.ProviderItemID,
 		ProviderItemProvider: rec.Provider,
 		ProviderItemModel:    rec.ProviderItemModel,

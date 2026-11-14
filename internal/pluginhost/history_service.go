@@ -75,8 +75,10 @@ type SessionAttachmentReadResult struct {
 }
 
 type SessionHistoryRecord struct {
-	Receipt  *providers.ClientInputReceipt `json:"receipt,omitempty"`
-	Relation *providers.MessageRelation    `json:"relation,omitempty"`
+	// DisplayID links a live host bubble to its durable history independently of provider IDs.
+	DisplayID string                        `json:"display_id,omitempty"`
+	Receipt   *providers.ClientInputReceipt `json:"receipt,omitempty"`
+	Relation  *providers.MessageRelation    `json:"relation,omitempty"`
 	// ProviderItemID matches a projected thread item's source_id when available;
 	// EngineTurnID identifies a native engine turn. Neither is a host item/turn ID.
 	ProviderItemID   string                     `json:"provider_item_id,omitempty"`

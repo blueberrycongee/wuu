@@ -64,7 +64,7 @@ func readPluginSessionHistory(ctx context.Context, store *session.Store, pluginI
 			content = record.DisplayContent
 		}
 		result.Records = append(result.Records, pluginhost.SessionHistoryRecord{
-			Receipt: receipt, Relation: providers.CloneMessageRelation(record.Relation),
+			DisplayID: record.DisplayID, Receipt: receipt, Relation: providers.CloneMessageRelation(record.Relation),
 			Attachments: attachments, At: historyRecordTime(record.At),
 			ProviderItemID: record.ProviderItemID, EngineTurnID: record.EngineTurnID,
 			Seq: record.Seq, Role: record.Role, Name: record.Name, Content: content, DisplayContent: record.DisplayContent,
