@@ -352,6 +352,63 @@ describe("DesktopPluginRuntime", () => {
     }
   });
 
+  it("does not let superseded application preparation retire the returned graph", async () => {
+    let entered!: () => void, release!: () => void;
+    const entering = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    installDesktopModuleLoader(async ({ id, fingerprint, graph_generation }) => {
+      if (graph_generation === "graph-b") { entered(); await gate; }
+      return { id, fingerprint, digest: "a".repeat(64), url: id };
+    });
+    const host = new PluginHost({ react: React });
+    const runtime = new DesktopPluginRuntime(host, async () => ({ activate(api: PluginGenerationApi) {
+      api.registerApplicationProvider({ id: "ui.application", prepare: () => ({
+        activate() {}, deactivate: () => undefined, dispose() {}, createScope: () => { throw new Error("unused"); },
+      }) });
+    } }));
+    const a = { ...dependencyPlugin("business"), graph_generation: "graph-a" };
+    const b = { ...a, graph_generation: "graph-b" };
+    await host.selectApplicationBinding({ pluginId: a.id, generation: a.fingerprint!, id: "ui.application" });
+    await runtime.sync([a]);
+    const source = host.applicationProviders.current;
+    const pendingB = runtime.sync([b]);
+    await entering;
+    const returnedA = runtime.sync([a]);
+    const [obsoleteFailures, currentFailures] = await Promise.all([pendingB, returnedA]);
+    release();
+    expect(host.applicationProviders.current).toBe(source);
+    expect(obsoleteFailures).toEqual([]);
+    expect(currentFailures).toEqual([]);
+    expect(host.applicationProviders.failure).toBeUndefined();
+    await runtime.shutdown();
+  });
+
+  it("restores the returning graph when superseded activation already stopped its provider", async () => {
+    let entered!: () => void, release!: () => void;
+    const entering = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    installDesktopModuleLoader(async ({ id, fingerprint, graph_generation }) => ({ id, fingerprint, digest: "a".repeat(64), url: graph_generation! }));
+    const host = new PluginHost({ react: React });
+    const runtime = new DesktopPluginRuntime(host, async graph => ({ activate(api: PluginGenerationApi) {
+      api.registerApplicationProvider({ id: "ui.application", prepare: () => ({
+        async activate() { if (graph === "graph-b") { entered(); await gate; } },
+        deactivate: () => undefined, dispose() {}, createScope: () => { throw new Error("unused"); },
+      }) });
+    } }));
+    const a = { ...dependencyPlugin("business"), graph_generation: "graph-a" };
+    const b = { ...a, graph_generation: "graph-b" };
+    await host.selectApplicationBinding({ pluginId: a.id, generation: a.fingerprint!, id: "ui.application" });
+    await runtime.sync([a]);
+    const pendingB = runtime.sync([b]);
+    await entering;
+    const returnedA = runtime.sync([a]);
+    release();
+    try {
+      expect(await Promise.all([pendingB, returnedA])).toEqual([[], []]);
+      expect(host.applicationProviders.current?.graphGeneration).toBe("graph-a");
+    } finally { await runtime.shutdown(); }
+  });
+
   it.each([false, true])("prepares business before draining consumers and reports a committed Go graph honestly (%s)", async committed => {
     installDesktopModuleLoader(async ({ id, fingerprint }) => ({ id, fingerprint, digest: "a".repeat(64), url: id }));
     const host = new PluginHost({ react: React });
