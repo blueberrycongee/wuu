@@ -490,12 +490,15 @@ button.catalog-row,
 
 /* --- Plugin page ------------------------------------------------------------- */
 
-/* Identity, management, and reference content have separate reading rhythms. */
+/* Identity, management, and reference content have separate reading rhythms.
+ * The header holds the mark, the name over its facts, the management actions,
+ * and the tagline across the bottom. */
 .plugin-page-header {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: start;
-  gap: var(--space-4);
+  column-gap: var(--space-4);
+  row-gap: var(--space-3);
 }
 
 .plugin-page-identity {
@@ -517,6 +520,11 @@ button.catalog-row,
 .plugin-page-meta > span + span {
   border-inline-start: 1px solid var(--hairline);
   padding-inline-start: var(--space-3);
+}
+
+/* The lifecycle word stays quiet; only a failure colors it. */
+.plugin-page-meta .plugin-page-state[data-tone="danger"] {
+  color: var(--danger);
 }
 
 .plugin-page-mark {
@@ -561,31 +569,35 @@ button.catalog-row,
   line-height: 1.5;
 }
 
-.plugin-page-controls {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: var(--space-3);
-  border-block: 1px solid var(--hairline-soft);
-  padding-block: var(--space-3);
-}
-
-.plugin-page-state {
-  color: var(--ink);
-  font-size: var(--font-ui);
-  line-height: 1.5;
-}
-
 .plugin-page-actions {
   display: flex;
   align-items: center;
+  align-self: center;
   gap: var(--space-3);
-  margin-inline-start: auto;
+  grid-column: 3;
+  grid-row: 1;
 }
 
 .plugin-page-actions > .settings-button:not(.settings-icon-button) {
   white-space: normal;
+}
+
+/* Reference facts keep the settings row grammar: the label left, a soft,
+ * selectable value right, in the same bordered sheet as the groups above. */
+.plugin-detail-value {
+  display: block;
+  min-width: 0;
+  max-width: 36em;
+  color: var(--ink-soft);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  text-align: end;
+  user-select: text;
+}
+
+.plugin-detail-value.is-mono {
+  font-family: var(--font-mono);
 }
 
 .plugin-page .plugin-settings-editor-title {
