@@ -312,15 +312,21 @@ type SessionCreateParams struct {
 	WorkspaceID            string                           `json:"workspace_id,omitempty"`
 	WorkspaceRoot          string                           `json:"workspace_root,omitempty"`
 	ModelAlias             string                           `json:"model_alias,omitempty"`
-	Provider               string                           `json:"provider,omitempty"`
-	Model                  string                           `json:"model,omitempty"`
-	Variant                string                           `json:"variant,omitempty"`
-	Effort                 string                           `json:"effort,omitempty"`
-	PermissionMode         string                           `json:"permission_mode,omitempty"`
-	Instructions           string                           `json:"instructions,omitempty"`
-	ToolPolicy             *SessionToolPolicy               `json:"tool_policy,omitempty"`
-	Seed                   *SessionContextSeed              `json:"seed,omitempty"`
-	Launch                 *SessionLaunchParams             `json:"launch,omitempty"`
+	// Engine binds the child to a selected agent engine at creation, the same
+	// decision thread/start makes for user threads. Empty selects the built-in
+	// engine. External engines own model access and native session history, so
+	// provider/model/effort carry engine-native identifiers and fork/seed
+	// context, model aliases, and session tool policies do not apply.
+	Engine         string               `json:"engine,omitempty"`
+	Provider       string               `json:"provider,omitempty"`
+	Model          string               `json:"model,omitempty"`
+	Variant        string               `json:"variant,omitempty"`
+	Effort         string               `json:"effort,omitempty"`
+	PermissionMode string               `json:"permission_mode,omitempty"`
+	Instructions   string               `json:"instructions,omitempty"`
+	ToolPolicy     *SessionToolPolicy   `json:"tool_policy,omitempty"`
+	Seed           *SessionContextSeed  `json:"seed,omitempty"`
+	Launch         *SessionLaunchParams `json:"launch,omitempty"`
 }
 
 type SessionContextSeed struct {
@@ -468,9 +474,12 @@ type SessionSummary struct {
 	ParentSessionID   string `json:"parent_session_id,omitempty"`
 	Visibility        string `json:"visibility"`
 	State             string `json:"state"`
-	WorkspaceID       string `json:"workspace_id,omitempty"`
-	CreatedAt         string `json:"created_at,omitempty"`
-	UpdatedAt         string `json:"updated_at,omitempty"`
+	// Engine is the agent engine the session is bound to; empty means the
+	// built-in engine for sessions persisted before engine selection.
+	Engine      string `json:"engine,omitempty"`
+	WorkspaceID string `json:"workspace_id,omitempty"`
+	CreatedAt   string `json:"created_at,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
 }
 
 type SessionListResult struct {
