@@ -23,7 +23,10 @@ app.whenReady().then(async () => {
   const timeout = setTimeout(() => { console.error("Workspace new page E2E timed out"); app.exit(1); }, 120_000);
   protocol.handle("wuu-plugin", () => new Response("export function activate(api) {"
     + "api.registerViewType({ id: 'notes', title: 'Workspace notes',"
-    + "render: () => api.react.createElement('div', { 'data-workspace-e2e-notes': true }, 'Extension notes') });"
+    + "render: () => api.react.createElement('div', { 'data-workspace-e2e-notes': true, style: { padding: '18px' } },"
+    + "api.react.createElement('h2', null, 'Extension notes'),"
+    + "api.react.createElement('div', null, Array.from({ length: 80 }, (_, index) =>"
+    + "api.react.createElement('p', { key: index, style: { margin: '0 0 12px' } }, 'Scrollable extension row ' + (index + 1))))) });"
     + "}", { headers: { "Content-Type": "text/javascript", "Access-Control-Allow-Origin": "*" } }));
   const win = new BrowserWindow({ width: 1440, height: 900, useContentSize: true, show: false, titleBarStyle: "hiddenInset",
     webPreferences: { preload: path.join(__dirname, "streaming-e2e-preload.cjs"),
@@ -350,6 +353,86 @@ app.whenReady().then(async () => {
     document.documentElement.dataset.theme = "light";
     document.documentElement.style.setProperty("--font-ui", "14px");
   });
+
+  // The floating rail must not shrink a plugin page's scrollport. Its inset
+  // belongs to the page content, leaving the native scrollbar on the panel edge.
+  const pluginScrollGeometry = await waitFor(() => {
+    const panel = document.querySelector(".workspace-right-panel");
+    const body = document.querySelector(".workspace-panel-body");
+    const rail = document.querySelector(".workspace-tool-rail");
+    const content = document.querySelector("[data-workspace-e2e-notes]");
+    const wrapper = content?.closest(".plugin-view-content-region");
+    if (!(panel && body && wrapper && rail && content)) return null;
+    const panelRect = panel.getBoundingClientRect();
+    const wrapperRect = wrapper.getBoundingClientRect();
+    const railRect = rail.getBoundingClientRect();
+    const wrapperStyle = getComputedStyle(wrapper);
+    return {
+      panelRight: panelRect.right,
+      wrapperRight: wrapperRect.right,
+      wrapperPaddingRight: parseFloat(wrapperStyle.paddingRight),
+      railLeft: railRect.left,
+      contentRight: content.getBoundingClientRect().right,
+      bodyMarginRight: parseFloat(getComputedStyle(body).marginRight),
+      scrollWidth: wrapper.scrollWidth,
+      scrollHeight: wrapper.scrollHeight,
+      clientWidth: wrapper.clientWidth,
+      clientHeight: wrapper.clientHeight,
+    };
+  });
+  assert.ok(Math.abs(pluginScrollGeometry.wrapperRight - pluginScrollGeometry.panelRight) <= 0.5,
+    `Plugin scrollport reaches the panel edge: ${JSON.stringify(pluginScrollGeometry)}`);
+  assert.ok(pluginScrollGeometry.bodyMarginRight <= 0.5,
+    `The floating rail must not margin the panel body: ${JSON.stringify(pluginScrollGeometry)}`);
+  assert.ok(pluginScrollGeometry.wrapperPaddingRight + 0.5 >= pluginScrollGeometry.panelRight - pluginScrollGeometry.railLeft,
+    `Plugin content padding covers the rail footprint: ${JSON.stringify(pluginScrollGeometry)}`);
+  assert.ok(pluginScrollGeometry.contentRight <= pluginScrollGeometry.railLeft + 0.5,
+    `Plugin content stays clear of the rail: ${JSON.stringify(pluginScrollGeometry)}`);
+  assert.ok(pluginScrollGeometry.scrollWidth <= pluginScrollGeometry.clientWidth + 1,
+    `Plugin content must not create a horizontal scrollport: ${JSON.stringify(pluginScrollGeometry)}`);
+  assert.ok(pluginScrollGeometry.scrollHeight > pluginScrollGeometry.clientHeight,
+    `The host wrapper owns plugin page scrolling: ${JSON.stringify(pluginScrollGeometry)}`);
+  await capture("plugin-rail-inset");
+  await evaluate(() => {
+    const content = document.querySelector("[data-workspace-e2e-notes]");
+    const wrapper = content?.closest(".plugin-view-content-region");
+    if (!(wrapper instanceof HTMLElement)) throw new Error("Plugin scrollport missing");
+    wrapper.scrollTop = 180;
+    wrapper.classList.add("scrollbar-visible");
+  });
+  await capture("plugin-rail-inset-scrolled");
+  await evaluate(() => {
+    const content = document.querySelector("[data-workspace-e2e-notes]");
+    const wrapper = content?.closest(".plugin-view-content-region");
+    if (wrapper instanceof HTMLElement) {
+      wrapper.scrollTop = 0;
+      wrapper.classList.remove("scrollbar-visible");
+    }
+  });
+  results.push({ scenario: "plugin page keeps its scrollport on the panel edge", geometry: pluginScrollGeometry });
+
+  await click(".workspace-tool-rail-toggle");
+  await waitFor(() => Boolean(document.querySelector(".workspace-tool-rail-collapsed")));
+  const collapsedRailGeometry = await waitFor(() => {
+    const panel = document.querySelector(".workspace-right-panel");
+    const body = document.querySelector(".workspace-panel-body");
+    const content = document.querySelector("[data-workspace-e2e-notes]");
+    const wrapper = content?.closest(".plugin-view-content-region");
+    if (!(panel && body && wrapper)) return null;
+    return {
+      panelRight: panel.getBoundingClientRect().right,
+      wrapperRight: wrapper.getBoundingClientRect().right,
+      wrapperPaddingRight: parseFloat(getComputedStyle(wrapper).paddingRight),
+      bodyMarginRight: parseFloat(getComputedStyle(body).marginRight),
+    };
+  });
+  assert.ok(Math.abs(collapsedRailGeometry.wrapperRight - collapsedRailGeometry.panelRight) <= 0.5,
+    `Collapsing the rail keeps the plugin scrollport on the panel edge: ${JSON.stringify(collapsedRailGeometry)}`);
+  assert.ok(collapsedRailGeometry.bodyMarginRight <= 0.5 && collapsedRailGeometry.wrapperPaddingRight <= 0.5,
+    `Collapsing the rail releases its content inset: ${JSON.stringify(collapsedRailGeometry)}`);
+  results.push({ scenario: "collapsed rail releases only the content inset", geometry: collapsedRailGeometry });
+  await click(".workspace-tool-rail-collapsed .workspace-tool-rail-toggle");
+  await waitFor(() => Boolean(document.querySelector(".workspace-tool-rail")));
 
   results.push({ scenario: "keyboard discovery and installed extension selection", passed: true });
 
