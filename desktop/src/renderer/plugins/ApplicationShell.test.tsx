@@ -997,3 +997,56 @@ describe("application shell assembly", () => {
   });
 
 });
+
+it.each([["render", false], ["cleanup", false], ["render", true], ["cleanup", true]] as const)("does not send %s for a filtered registration when its graph returns (prior ACK: %s)", async (phase, priorAck) => {
+  const registered = new Map<string, number>();
+  const report = vi.fn(async (params: PluginDesktopActivationParams) => {
+    const key = `${params.graph_generation}/${params.id}`;
+    if (params.phase !== "registration" && params.activation > (registered.get(key) ?? 0)) throw new Error("renderer activation has not registered");
+    registered.set(key, params.activation);
+  });
+  const host = new PluginHost({ react: React, reportActivation: report });
+  if (priorAck) {
+    host.setInventoryGraphs([{ id: "shell", graph_generation: "graph-a" }] as never);
+    await host.activateGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph-a", register: () => {} });
+    await host.flushActivationReports();
+  }
+  host.setInventoryGraphs([{ id: "shell", graph_generation: "graph-b" }] as never);
+  const prepared = await host.prepareGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph-b", register: () => {} });
+  // Commit enqueues its registration; a newer authoritative inventory arrives before its microtask sends.
+  const activated = prepared.activate();
+  host.setInventoryGraphs([{ id: "shell", graph_generation: "graph-a" }] as never);
+  await activated;
+  await host.flushActivationReports();
+  expect(report.mock.calls.filter(([params]) => params.graph_generation === "graph-b")).toHaveLength(0);
+  host.setInventoryGraphs([{ id: "shell", graph_generation: "graph-b" }] as never);
+  if (phase === "render") host.observeGenerationRender("shell", "source");
+  else host.unload("shell");
+  await host.flushActivationReports();
+  expect(report.mock.calls.filter(([params]) => params.graph_generation === "graph-b")).toHaveLength(0);
+  expect(host.getActivationReportFailure()).toBeUndefined();
+});
+
+it("preserves an actual registration error without sending phases whose registration was not acknowledged", async () => {
+  const report = vi.fn(async (_params: PluginDesktopActivationParams) => { throw new Error("registration transport rejected"); });
+  const host = new PluginHost({ react: React, reportActivation: report });
+  await host.activateGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph", register: () => {} });
+  host.observeGenerationRender("shell", "source");
+  host.unload("shell");
+  await host.flushActivationReports();
+  expect(report.mock.calls.map(([params]) => params.phase)).toEqual(["registration"]);
+  expect(host.getActivationReportFailure()).toContain("registration transport rejected");
+});
+
+it("sends accepted registration before render and cleanup and preserves an actual cleanup rejection", async () => {
+  const report = vi.fn(async (params: PluginDesktopActivationParams) => {
+    if (params.phase === "cleanup") throw new Error("backend cleanup rejected");
+  });
+  const host = new PluginHost({ react: React, reportActivation: report });
+  await host.activateGeneration({ pluginId: "shell", generation: "source", graphGeneration: "graph", register: () => {} });
+  host.observeGenerationRender("shell", "source");
+  host.unload("shell");
+  await host.flushActivationReports();
+  expect(report.mock.calls.map(([params]) => params.phase)).toEqual(["registration", "render", "cleanup"]);
+  expect(host.getActivationReportFailure()).toContain("backend cleanup rejected");
+});
