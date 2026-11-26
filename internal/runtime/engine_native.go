@@ -344,7 +344,11 @@ func (p *nativeEngineProvider) InvokeService(ctx context.Context, in pluginhost.
 				}
 			})
 			runErr = errors.Join(runErr, s.callbacks.takeError())
-			return json.Marshal(pluginprotocol.EngineRunResult{Result: engineResultToWire(result.Result), Failure: loopdriver.FailureToWire(runErr)})
+			failure := loopdriver.FailureToWire(runErr)
+			if failure != nil && failure.Code == "" && errors.Is(runErr, agentengine.ErrReadOnlyUnsupported) {
+				failure.Code = "read_only_unsupported"
+			}
+			return json.Marshal(pluginprotocol.EngineRunResult{Result: engineResultToWire(result.Result), Failure: failure})
 		case "interrupt":
 			var input pluginprotocol.EngineInterruptParams
 			if err := decodeServiceParams(in.Params, &input); err != nil {

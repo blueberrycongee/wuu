@@ -361,6 +361,142 @@ func (s *Store) Interrupt(mainThreadID string) (*SideThread, bool, error) {
 	return st, changed, nil
 }
 
+// SetEngineRef persists the side thread's isolated external-engine session reference.
+// Writes are fenced by sideThreadID so a late callback from a reset conversation
+// cannot overwrite a newly created side thread.
+func (s *Store) SetEngineRef(mainThreadID, sideThreadID, engineID, ref string) error {
+	sideThreadID = strings.TrimSpace(sideThreadID)
+	engineID = strings.TrimSpace(engineID)
+	ref = strings.TrimSpace(ref)
+	if sideThreadID == "" {
+		return errors.New("sidethread.Store: side_thread_id is required")
+	}
+	if ref == "" {
+		return errors.New("sidethread.Store: engine ref is required")
+	}
+	key := normalizeKey(mainThreadID)
+	if key == "" {
+		return ErrNotFound
+	}
+	now := time.Now().UTC()
+	return s.update(func(tx *persistence.Tx) error {
+		raw, namespace, err := record(tx, key)
+		if err != nil {
+			return err
+		}
+		if raw == nil {
+			return ErrNotFound
+		}
+		var st SideThread
+		if err := json.Unmarshal(raw, &st); err != nil {
+			return err
+		}
+		if st.SideThreadID != sideThreadID {
+			return ErrNotFound
+		}
+		if st.EngineID == engineID && st.EngineRef == ref {
+			return nil
+		}
+		st.EngineID = engineID
+		st.EngineRef = ref
+		st.UpdatedAt = now
+		st.Revision++
+		return tx.Put(namespace, key, &st)
+	})
+}
+
+// ClearEngineRef drops a persisted external-engine reference for sideThreadID,
+// used when an external engine refuses read-only mode before dispatching a prompt.
+func (s *Store) ClearEngineRef(mainThreadID, sideThreadID string) error {
+	sideThreadID = strings.TrimSpace(sideThreadID)
+	key := normalizeKey(mainThreadID)
+	if key == "" || sideThreadID == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	return s.update(func(tx *persistence.Tx) error {
+		raw, namespace, err := record(tx, key)
+		if err != nil || raw == nil {
+			return err
+		}
+		var st SideThread
+		if err := json.Unmarshal(raw, &st); err != nil {
+			return err
+		}
+		if st.SideThreadID != sideThreadID || (st.EngineID == "" && st.EngineRef == "") {
+			return nil
+		}
+		st.EngineID = ""
+		st.EngineRef = ""
+		st.UpdatedAt = now
+		st.Revision++
+		return tx.Put(namespace, key, &st)
+	})
+}
+
+// SetMessageEngineTurn records native turn admission and settlement receipts on
+// a side-thread user message, fenced by sideThreadID.
+func (s *Store) SetMessageEngineTurn(mainThreadID, sideThreadID, userMessageID, engineTurnID string, pending bool) error {
+	sideThreadID = strings.TrimSpace(sideThreadID)
+	userMessageID = strings.TrimSpace(userMessageID)
+	engineTurnID = strings.TrimSpace(engineTurnID)
+	if sideThreadID == "" {
+		return errors.New("sidethread.Store: side_thread_id is required")
+	}
+	if userMessageID == "" && engineTurnID == "" {
+		return errors.New("sidethread.Store: user_message_id is required")
+	}
+	key := normalizeKey(mainThreadID)
+	if key == "" {
+		return ErrNotFound
+	}
+	now := time.Now().UTC()
+	return s.update(func(tx *persistence.Tx) error {
+		raw, namespace, err := record(tx, key)
+		if err != nil {
+			return err
+		}
+		if raw == nil {
+			return ErrNotFound
+		}
+		var st SideThread
+		if err := json.Unmarshal(raw, &st); err != nil {
+			return err
+		}
+		if st.SideThreadID != sideThreadID {
+			return ErrNotFound
+		}
+		target := -1
+		if !pending && engineTurnID != "" {
+			for i := len(st.Messages) - 1; i >= 0; i-- {
+				if st.Messages[i].Role == RoleUser && st.Messages[i].EngineTurnID == engineTurnID {
+					target = i
+					break
+				}
+			}
+		}
+		if target < 0 && userMessageID != "" {
+			for i := len(st.Messages) - 1; i >= 0; i-- {
+				if st.Messages[i].Role == RoleUser && st.Messages[i].ID == userMessageID {
+					target = i
+					break
+				}
+			}
+		}
+		if target < 0 {
+			return fmt.Errorf("user message %q not found", userMessageID)
+		}
+		if st.Messages[target].EngineTurnID == engineTurnID && st.Messages[target].EngineTurnPending == pending {
+			return nil
+		}
+		st.Messages[target].EngineTurnID = engineTurnID
+		st.Messages[target].EngineTurnPending = pending
+		st.UpdatedAt = now
+		st.Revision++
+		return tx.Put(namespace, key, &st)
+	})
+}
+
 // RecoverRunning requires exclusive workspace boot recovery ownership.
 func (s *Store) RecoverRunning() (int, error) {
 	now := time.Now().UTC()

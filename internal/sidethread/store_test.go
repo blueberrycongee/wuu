@@ -559,6 +559,69 @@ func TestStoreRollbackTurnRestoresPriorTerminalState(t *testing.T) {
 	}
 }
 
+func TestStoreEngineRefAndTurnReceipts(t *testing.T) {
+	store := newTempStore(t)
+	if _, err := store.BeginTurnWithSideThreadID("main_engine", "side-1", "first?", "user-1", "assistant-1"); err != nil {
+		t.Fatalf("BeginTurnWithSideThreadID: %v", err)
+	}
+	if err := store.SetEngineRef("main_engine", "side-1", "codex", "ext-ref-1"); err != nil {
+		t.Fatalf("SetEngineRef: %v", err)
+	}
+	if err := store.SetEngineRef("main_engine", "other-side", "codex", "ext-ref-stale"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("mismatched sideThreadID SetEngineRef = %v, want ErrNotFound", err)
+	}
+	if err := store.SetMessageEngineTurn("main_engine", "side-1", "user-1", "", true); err != nil {
+		t.Fatalf("SetMessageEngineTurn admit: %v", err)
+	}
+	if err := store.SetMessageEngineTurn("main_engine", "side-1", "user-1", "native-turn-1", true); err != nil {
+		t.Fatalf("SetMessageEngineTurn bind: %v", err)
+	}
+	if err := store.SetMessageEngineTurn("main_engine", "other-side", "user-1", "native-turn-1", false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("mismatched sideThreadID SetMessageEngineTurn = %v, want ErrNotFound", err)
+	}
+	st, err := store.Load("main_engine")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if st.EngineID != "codex" || st.EngineRef != "ext-ref-1" {
+		t.Fatalf("engine ref = (%q, %q), want (codex, ext-ref-1)", st.EngineID, st.EngineRef)
+	}
+	if st.Messages[0].EngineTurnID != "native-turn-1" || !st.Messages[0].EngineTurnPending {
+		t.Fatalf("pending turn receipt = %+v", st.Messages[0])
+	}
+	if _, _, err := store.FinishTurn("main_engine", "assistant-1", "done", StatusCompleted, ""); err != nil {
+		t.Fatalf("FinishTurn: %v", err)
+	}
+	if _, err := store.BeginTurnWithSideThreadID("main_engine", "side-1", "second?", "user-2", "assistant-2"); err != nil {
+		t.Fatalf("BeginTurn second: %v", err)
+	}
+	// Settling an earlier native turn by its ID updates the earlier user message.
+	if err := store.SetMessageEngineTurn("main_engine", "side-1", "user-2", "native-turn-1", false); err != nil {
+		t.Fatalf("SetMessageEngineTurn settle prior: %v", err)
+	}
+	st, err = store.Load("main_engine")
+	if err != nil {
+		t.Fatalf("Load after settle: %v", err)
+	}
+	if st.Messages[0].EngineTurnPending || st.Messages[0].EngineTurnID != "native-turn-1" {
+		t.Fatalf("prior message not settled: %+v", st.Messages[0])
+	}
+	if err := store.ClearEngineRef("main_engine", "other-side"); err != nil {
+		t.Fatalf("ClearEngineRef wrong side: %v", err)
+	}
+	st, err = store.Load("main_engine")
+	if err != nil || st.EngineRef != "ext-ref-1" {
+		t.Fatalf("wrong side cleared engine ref: st=%+v err=%v", st, err)
+	}
+	if err := store.ClearEngineRef("main_engine", "side-1"); err != nil {
+		t.Fatalf("ClearEngineRef: %v", err)
+	}
+	st, err = store.Load("main_engine")
+	if err != nil || st.EngineID != "" || st.EngineRef != "" {
+		t.Fatalf("engine ref survived ClearEngineRef: st=%+v err=%v", st, err)
+	}
+}
+
 func openSideStore(t *testing.T, dir string) *Store {
 	t.Helper()
 	docs, err := persistence.Open(context.Background(), dir, "sqlite")

@@ -27,6 +27,8 @@ Use `/side` or **Ask in side chat** to open the side chat tab in the right sideb
 
 Side chat follows the selected main conversation; each conversation keeps its own side history and draft. Switching tool tabs or collapsing the sidebar preserves the draft and lets a running answer continue. Closing the side chat tab preserves its history; use the chat's stop or reset action to interrupt or clear it. In the expanded layout, the side chat tab has its own input, while the main conversation remains available through its first tab.
 
+Side chat uses the main conversation's engine in read-only mode and keeps a separate engine session. If the engine reports that read-only mode is unsupported before producing output, Wuu can send the side question and its attached context to the configured default Wuu model instead.
+
 ## App zoom
 
 Press **Command + + / −** on macOS (**Ctrl + + / −** on other platforms) to

@@ -227,7 +227,7 @@ func (s *Session) persist(ref string) error {
 }
 
 func readOnlyUnsupportedError(name string) error {
-	return fmt.Errorf("%s does not enforce Wuu's read-only boundary; choose another engine or change the permission mode explicitly", name)
+	return fmt.Errorf("%s %w; choose another engine or change the permission mode explicitly", name, agentengine.ErrReadOnlyUnsupported)
 }
 
 func latestUserMessage(history []providers.ChatMessage) providers.ChatMessage {
