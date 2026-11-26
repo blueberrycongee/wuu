@@ -5,14 +5,20 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
 	"github.com/blueberrycongee/wuu/internal/compact"
+	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
+	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/providers"
@@ -31,6 +37,8 @@ const sideThreadExecutionLeasePrefix = "side-thread:"
 const unknownSideThreadInputBudget = 16_000
 
 const sideThreadInterruptPollInterval = 100 * time.Millisecond
+const sideThreadEngineInterruptTimeout = 2 * time.Second
+const sideThreadEngineSetupTimeout = 5 * time.Second
 
 // A turn that completed in memory must never be lost to a transient store
 // failure, so FinishTurn is retried within this bound. Retries stop early
@@ -51,6 +59,81 @@ type sideThreadTurn struct {
 	cancel      context.CancelFunc
 	lease       *session.DocumentThreadExecutionLease
 	interrupted atomic.Bool
+
+	engineMu      sync.Mutex
+	engineSession agentengine.Session
+	engineDoneCtx context.Context
+	engineDone    context.CancelFunc
+	interruptOnce sync.Once
+	interruptWG   sync.WaitGroup
+}
+
+// interrupt notifies an active external engine with a bounded deadline before
+// canceling the local turn context. Callers must invoke it without holding
+// sched.sideMu so engine RPCs cannot block scheduling.
+func (t *sideThreadTurn) interrupt(reason string) {
+	if t == nil {
+		return
+	}
+	t.interrupted.Store(true)
+	t.interruptOnce.Do(func() {
+		t.engineMu.Lock()
+		engine := t.engineSession
+		baseCtx := t.engineDoneCtx
+		if engine != nil {
+			t.interruptWG.Add(1)
+		}
+		t.engineMu.Unlock()
+		if engine != nil {
+			if baseCtx == nil {
+				baseCtx = context.Background()
+			}
+			interruptCtx, cancel := context.WithTimeout(baseCtx, sideThreadEngineInterruptTimeout)
+			_ = engine.Interrupt(interruptCtx, reason)
+			cancel()
+			t.interruptWG.Done()
+		}
+		if t.cancel != nil {
+			t.cancel()
+		}
+	})
+}
+
+func (t *sideThreadTurn) detachExternalEngine() agentengine.Session {
+	if t == nil {
+		return nil
+	}
+	t.engineMu.Lock()
+	engine := t.engineSession
+	done := t.engineDone
+	t.engineSession = nil
+	t.engineDone = nil
+	t.engineMu.Unlock()
+	if done != nil {
+		done()
+	}
+	t.interruptWG.Wait()
+	return engine
+}
+
+type sideThreadMainTarget struct {
+	engineID     agentengine.EngineID
+	selection    runtime.ThreadModelSelection
+	modelOptions map[string]string
+}
+
+type sideThreadRunSpec struct {
+	runner          *agent.StreamRunner
+	engineID        agentengine.EngineID
+	engineSession   agentengine.Session
+	threadRuntime   *runtime.ThreadRuntime
+	providerName    string
+	model           string
+	rootDir         string
+	commandPrompt   string
+	snapshot        sideThreadMainSnapshot
+	previewMessages []sidethread.Message
+	history         []providers.ChatMessage
 }
 
 type sideThreadMainSnapshot struct {
@@ -297,21 +380,20 @@ func (s *Server) mainTaskSnapshot(binding *runtime.State, mainThreadID string) *
 	return snapshot
 }
 
-// mainThreadModelSelection resolves the pinned model selection of the
-// conversation a side chat is attached to. It prefers the loaded thread state
-// and falls back to the persisted session row, so a side chat opened on an idle
-// (not currently loaded) thread still inherits the conversation's model instead of the
-// workspace default. An empty selection means "use the workspace defaults",
-// which NewSideThreadRunner treats as the plain workspace clone.
-func (s *Server) mainThreadModelSelection(binding *runtime.State, mainID string) runtime.ThreadModelSelection {
+// mainThreadExecutionTarget resolves the pinned engine and model selection of
+// the conversation a side chat is attached to. It prefers the loaded thread
+// state and falls back to the persisted session row, so a side chat opened on
+// an idle thread inherits both the conversation's engine and model.
+func (s *Server) mainThreadExecutionTarget(binding *runtime.State, mainID string) sideThreadMainTarget {
 	if s == nil {
-		return runtime.ThreadModelSelection{}
+		return sideThreadMainTarget{engineID: agentengine.EngineWuu}
 	}
 	s.mu.Lock()
 	th := s.threads[mainID]
 	s.mu.Unlock()
 	if th != nil {
 		th.mu.Lock()
+		engineID := agentengine.NormalizeEngineID(th.EngineID)
 		sel := runtime.ThreadModelSelection{
 			Provider:       strings.TrimSpace(th.ModelProvider),
 			Model:          strings.TrimSpace(th.Model),
@@ -320,27 +402,36 @@ func (s *Server) mainThreadModelSelection(binding *runtime.State, mainID string)
 			Speed:          th.Speed,
 			PermissionMode: strings.TrimSpace(th.PermissionMode),
 		}
+		modelOptions := maps.Clone(th.ModelOptions)
 		th.mu.Unlock()
-		if sel.Provider != "" && sel.Model != "" {
-			return sel
+		if engineID != agentengine.EngineWuu || (sel.Provider != "" && sel.Model != "") {
+			return sideThreadMainTarget{engineID: engineID, selection: sel, modelOptions: modelOptions}
 		}
 	}
 	if s.rt == nil {
-		return runtime.ThreadModelSelection{}
+		return sideThreadMainTarget{engineID: agentengine.EngineWuu}
 	}
 	sess, ok, err := binding.Sessions.Find(mainID)
 	if err != nil || !ok {
-		return runtime.ThreadModelSelection{}
+		return sideThreadMainTarget{engineID: agentengine.EngineWuu}
 	}
 	selection := runtimeSelectionFromSession(sess)
-	return runtime.ThreadModelSelection{
-		Provider:       selection.Provider,
-		Model:          selection.Model,
-		Variant:        selection.Variant,
-		Effort:         selection.Effort,
-		Speed:          selection.Speed,
-		PermissionMode: selection.PermissionMode,
+	return sideThreadMainTarget{
+		engineID: agentengine.NormalizeEngineID(sess.EngineID),
+		selection: runtime.ThreadModelSelection{
+			Provider:       selection.Provider,
+			Model:          selection.Model,
+			Variant:        selection.Variant,
+			Effort:         selection.Effort,
+			Speed:          selection.Speed,
+			PermissionMode: selection.PermissionMode,
+		},
+		modelOptions: maps.Clone(selection.ModelOptions),
 	}
+}
+
+func (s *Server) mainThreadModelSelection(binding *runtime.State, mainID string) runtime.ThreadModelSelection {
+	return s.mainThreadExecutionTarget(binding, mainID).selection
 }
 
 func (s *Server) mainThreadRoot(binding *runtime.State, mainID string) string {
@@ -533,7 +624,9 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 			_ = execution.Close()
 		}
 	}()
-	runner, err := s.rt.NewSideThreadRunnerForState(execution, sideThreadID, s.mainThreadRoot(binding, mainID), s.mainThreadModelSelection(binding, mainID), command.ResolvedPrompt.Text, mainID)
+	rootDir := s.mainThreadRoot(binding, mainID)
+	target := s.mainThreadExecutionTarget(binding, mainID)
+	hostManaged, err := s.sideThreadUsesHostManagedEngine(execution, target.engineID)
 	if err != nil {
 		return nil, err
 	}
@@ -541,9 +634,95 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 		sidethread.Message{ID: userMessageID, SideThreadID: sideThreadID, Role: sidethread.RoleUser, Text: prompt, Selection: selection},
 		sidethread.Message{ID: assistantMessageID, SideThreadID: sideThreadID, Role: sidethread.RoleAssistant, Status: sidethread.AssistantStreaming},
 	)
-	history, err := buildSideThreadRunHistory(runner, snapshot, previewMessages, assistantMessageID)
-	if err != nil {
-		return nil, err
+
+	var (
+		spec          sideThreadRunSpec
+		externalOwned bool
+	)
+	spec = sideThreadRunSpec{
+		engineID:        target.engineID,
+		rootDir:         rootDir,
+		commandPrompt:   command.ResolvedPrompt.Text,
+		snapshot:        snapshot,
+		previewMessages: previewMessages,
+	}
+	releasePreparedExternal := func() {
+		if spec.engineSession != nil {
+			_ = spec.engineSession.Close(context.Background())
+			spec.engineSession = nil
+		}
+		if spec.threadRuntime != nil {
+			s.releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: spec.threadRuntime})
+			spec.threadRuntime = nil
+		}
+	}
+	defer func() {
+		if externalOwned {
+			releasePreparedExternal()
+		}
+	}()
+
+	if hostManaged {
+		runner, err := s.rt.NewSideThreadRunnerForState(execution, sideThreadID, rootDir, target.selection, command.ResolvedPrompt.Text, mainID)
+		if err != nil {
+			return nil, err
+		}
+		history, err := buildSideThreadRunHistory(runner, snapshot, previewMessages, assistantMessageID)
+		if err != nil {
+			return nil, err
+		}
+		spec.runner = runner
+		spec.providerName = runner.ProviderName
+		spec.model = runner.Model
+		spec.history = history
+	} else {
+		history, err := buildExternalSideThreadRunHistory(command.ResolvedPrompt.Text, snapshot, previewMessages, assistantMessageID)
+		if err != nil {
+			return nil, err
+		}
+		setupCtx, cancelSetup := context.WithTimeout(context.Background(), sideThreadEngineSetupTimeout)
+		defer cancelSetup()
+		threadRuntime, err := s.rt.NewSideThreadCapabilityRuntimeForState(execution, sideThreadID, rootDir, target.selection)
+		if err != nil {
+			return nil, err
+		}
+		threadRuntime.EngineID = target.engineID
+		spec.threadRuntime = threadRuntime
+		externalOwned = true
+		if execution.Host != nil {
+			if err := s.retainEngineScope(setupCtx, execution, target.engineID); err != nil {
+				return nil, err
+			}
+		}
+		externalRef := ""
+		if existing != nil && strings.TrimSpace(existing.EngineID) == string(target.engineID) {
+			externalRef = strings.TrimSpace(existing.EngineRef)
+		}
+		engineBinding := agentengine.ThreadBinding{
+			ThreadID:       sideThreadID,
+			RootDir:        rootDir,
+			Model:          target.selection.Model,
+			Effort:         target.selection.Effort,
+			Speed:          target.selection.Speed,
+			ModelOptions:   maps.Clone(target.modelOptions),
+			PermissionMode: config.PermissionModeReadOnly,
+			Instructions:   command.ResolvedPrompt.Text,
+			ExternalRef:    externalRef,
+			PersistRef: func(ref string) error {
+				return store.SetEngineRef(mainID, sideThreadID, string(target.engineID), ref)
+			},
+			PersistTurnRef: func(nativeTurnID string, pending bool) error {
+				return store.SetMessageEngineTurn(mainID, sideThreadID, userMessageID, nativeTurnID, pending)
+			},
+		}
+		engineSession := s.rt.EngineSessionForThread(setupCtx, threadRuntime, engineBinding)
+		if engineSession == nil {
+			engineSession = runtime.EngineUnavailableSession(target.engineID)
+		}
+		spec.engineSession = engineSession
+		spec.providerName = firstNonEmpty(target.selection.Provider, string(target.engineID))
+		spec.model = target.selection.Model
+		spec.history = history
 	}
 	// Runner construction reads the workspace toolkit. A publication during that
 	// work must not admit a turn against a different retained plugin generation.
@@ -558,15 +737,31 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	lifecycleLeaseOwned = false
 
 	ctx, cancel := context.WithCancel(context.Background())
-	turn := &sideThreadTurn{store: store, cancel: cancel, lease: lease, commandID: command.PublicID, fingerprint: owner.Fingerprint, pluginID: owner.ID, generation: generation, state: generationState, execution: execution}
+	engineDoneCtx, engineDone := context.WithCancel(context.Background())
+	turn := &sideThreadTurn{
+		store:         store,
+		cancel:        cancel,
+		lease:         lease,
+		commandID:     command.PublicID,
+		fingerprint:   owner.Fingerprint,
+		pluginID:      owner.ID,
+		generation:    generation,
+		state:         generationState,
+		execution:     execution,
+		engineSession: spec.engineSession,
+		engineDoneCtx: engineDoneCtx,
+		engineDone:    engineDone,
+	}
 	sched.sideMu.Lock()
 	if s.closed.Load() {
 		sched.sideMu.Unlock()
+		engineDone()
 		cancel()
 		return nil, s.abortAcceptedSideThread(store, mainID, userMessageID, assistantMessageID, errServerClosed)
 	}
 	if sched.sideTurn != nil {
 		sched.sideMu.Unlock()
+		engineDone()
 		cancel()
 		return nil, s.abortAcceptedSideThread(store, mainID, userMessageID, assistantMessageID, errSideThreadExecutionBusy)
 	}
@@ -574,14 +769,16 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 	sched.sideMu.Unlock()
 
 	if !s.startBackgroundWithState(binding, func(binding *runtime.State) {
-		s.runSideThreadTurn(binding, ctx, start, mainID, st, assistantMessageID, turn, runner, history)
+		s.runSideThreadTurn(binding, ctx, start, mainID, st, assistantMessageID, turn, spec)
 	}) {
 		sched.sideMu.Lock()
 		sched.sideTurn = nil
 		sched.sideMu.Unlock()
+		engineDone()
 		turn.cancel()
 		return nil, s.abortAcceptedSideThread(store, mainID, userMessageID, assistantMessageID, errServerClosed)
 	}
+	externalOwned = false
 	leaseOwned = false
 	generationOwned = false
 	executionOwned = false
@@ -590,6 +787,34 @@ func (s *Server) sendSideThreadMessageWithSelection(binding *runtime.State, main
 		UserMessageID: userMessageID,
 		Summary:       *sideThreadWireSummary(st, s.mainTaskSnapshot(binding, mainID)),
 	}, nil
+}
+
+func (s *Server) sideThreadUsesHostManagedEngine(binding *runtime.State, id agentengine.EngineID) (bool, error) {
+	id = agentengine.NormalizeEngineID(string(id))
+	if s == nil || s.rt == nil || s.rt.Engines() == nil {
+		if id == agentengine.EngineWuu {
+			return true, nil
+		}
+		return false, fmt.Errorf("side conversation engine %q is unavailable: %w", id, agentengine.ErrUnknownEngine)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), sideThreadEngineSetupTimeout)
+	defer cancel()
+	descriptor, err := s.engineDescriptorForState(ctx, binding, id)
+	if err != nil {
+		if id == agentengine.EngineWuu {
+			return true, nil
+		}
+		return false, fmt.Errorf("side conversation engine %q is unavailable: %w", id, err)
+	}
+	return slices.Contains(descriptor.Capabilities, "host-managed-continuation"), nil
+}
+
+func isSideThreadReadOnlyUnsupported(err error) bool {
+	if errors.Is(err, agentengine.ErrReadOnlyUnsupported) {
+		return true
+	}
+	var failure *loopdriver.FailureError
+	return errors.As(err, &failure) && failure.Failure.Code == "read_only_unsupported"
 }
 
 // Resolve from the active generation on every send; disabled, revoked and safe-mode
@@ -674,11 +899,21 @@ func (s *Server) runSideThreadTurn(binding *runtime.State, ctx context.Context,
 	initial *sidethread.SideThread,
 	assistantMessageID string,
 	turn *sideThreadTurn,
-	runner *agent.StreamRunner,
-	history []providers.ChatMessage,
+	spec sideThreadRunSpec,
 ) {
+	closeExternal := sync.OnceFunc(func() {
+		engine := turn.detachExternalEngine()
+		if engine != nil {
+			_ = engine.Close(context.Background())
+		}
+		if spec.threadRuntime != nil {
+			s.releaseDetachedThreadRuntime(detachedThreadRuntime{runtime: spec.threadRuntime})
+			spec.threadRuntime = nil
+		}
+	})
 	defer func() {
 		turn.cancel()
+		closeExternal()
 		sched := s.schedulerFor(mainID)
 		sched.sideMu.Lock()
 		if sched.sideTurn == turn {
@@ -704,45 +939,83 @@ func (s *Server) runSideThreadTurn(binding *runtime.State, ctx context.Context,
 	projector := newSideThreadItemProjector(
 		initial.SideThreadID,
 		assistantMessageID,
-		runner.ProviderName,
-		runner.Model,
-		s.mainThreadRoot(binding, mainID),
+		spec.providerName,
+		spec.model,
+		spec.rootDir,
 		time.Now().UTC(),
 	)
 	if !s.sideConversationTurnAvailable(turn) {
-		turn.interrupted.Store(true)
-		turn.cancel()
+		turn.interrupt("plugin_unavailable")
+	}
+	emitStreamEvent := func(event providers.StreamEvent) {
+		if turn.interrupted.Load() || ctx.Err() != nil {
+			return
+		}
+		if items, changed := projector.apply(event, time.Now().UTC()); changed {
+			s.notifySideThreadEvent(SideThreadEventNotification{
+				Type:         "items",
+				SideThreadID: initial.SideThreadID,
+				MainThreadID: mainID,
+				Revision:     initial.Revision,
+				MessageID:    assistantMessageID,
+				Items:        items,
+			})
+		}
+		if event.Type == providers.EventContentDelta && event.Content != "" {
+			streamed.WriteString(event.Content)
+			s.notifySideThreadEvent(SideThreadEventNotification{
+				Type:         "delta",
+				SideThreadID: initial.SideThreadID,
+				MainThreadID: mainID,
+				Revision:     initial.Revision,
+				MessageID:    assistantMessageID,
+				TextDelta:    event.Content,
+			})
+		}
 	}
 	if ctx.Err() == nil {
 		s.notifySideThreadStatus(initial, s.mainTaskSnapshot(binding, mainID))
 		watchDone := make(chan struct{})
 		go s.watchSideThreadInterrupt(ctx, mainID, turn, watchDone)
-		result, runErr = runner.RunWithCallback(ctx, history, func(event providers.StreamEvent) {
-			if turn.interrupted.Load() || ctx.Err() != nil {
-				return
+		if spec.engineSession != nil {
+			emittedOutput := false
+			turnResult, err := spec.engineSession.RunTurn(ctx, agentengine.TurnInput{History: spec.history}, func(event providers.StreamEvent) {
+				if event.Type == providers.EventError && isSideThreadReadOnlyUnsupported(event.Error) {
+					return
+				}
+				if event.Type == providers.EventContentDelta && event.Content != "" ||
+					event.Type == providers.EventToolUseStart ||
+					event.Type == providers.EventToolUseEnd ||
+					event.Type == providers.EventThinkingDelta && event.Content != "" {
+					emittedOutput = true
+				}
+				emitStreamEvent(event)
+			})
+			result, runErr = turnResult.Result, err
+			closeExternal()
+			if runErr != nil && !turn.interrupted.Load() && ctx.Err() == nil && !emittedOutput && isSideThreadReadOnlyUnsupported(runErr) {
+				_ = turn.store.ClearEngineRef(mainID, initial.SideThreadID)
+				fallbackRunner, fallbackErr := s.rt.NewSideThreadRunnerForState(turn.execution, initial.SideThreadID, spec.rootDir, runtime.ThreadModelSelection{}, spec.commandPrompt, mainID)
+				if fallbackErr != nil {
+					runErr = fmt.Errorf("%w; fallback to default model service failed: %v", runErr, fallbackErr)
+				} else if fallbackHistory, histErr := buildSideThreadRunHistory(fallbackRunner, spec.snapshot, spec.previewMessages, assistantMessageID); histErr != nil {
+					runErr = fmt.Errorf("%w; fallback to default model service failed: %v", runErr, histErr)
+				} else {
+					streamed.Reset()
+					projector = newSideThreadItemProjector(
+						initial.SideThreadID,
+						assistantMessageID,
+						fallbackRunner.ProviderName,
+						fallbackRunner.Model,
+						spec.rootDir,
+						time.Now().UTC(),
+					)
+					result, runErr = fallbackRunner.RunWithCallback(ctx, fallbackHistory, emitStreamEvent)
+				}
 			}
-			if items, changed := projector.apply(event, time.Now().UTC()); changed {
-				s.notifySideThreadEvent(SideThreadEventNotification{
-					Type:         "items",
-					SideThreadID: initial.SideThreadID,
-					MainThreadID: mainID,
-					Revision:     initial.Revision,
-					MessageID:    assistantMessageID,
-					Items:        items,
-				})
-			}
-			if event.Type == providers.EventContentDelta && event.Content != "" {
-				streamed.WriteString(event.Content)
-				s.notifySideThreadEvent(SideThreadEventNotification{
-					Type:         "delta",
-					SideThreadID: initial.SideThreadID,
-					MainThreadID: mainID,
-					Revision:     initial.Revision,
-					MessageID:    assistantMessageID,
-					TextDelta:    event.Content,
-				})
-			}
-		})
+		} else {
+			result, runErr = spec.runner.RunWithCallback(ctx, spec.history, emitStreamEvent)
+		}
 		turn.cancel()
 		<-watchDone
 	} else {
@@ -873,8 +1146,7 @@ func (s *Server) watchSideThreadInterrupt(ctx context.Context, mainID string, tu
 			return
 		case <-ticker.C:
 			if !s.sideConversationTurnAvailable(turn) {
-				turn.interrupted.Store(true)
-				turn.cancel()
+				turn.interrupt("plugin_unavailable")
 				return
 			}
 			st, err := store.Load(mainID)
@@ -883,8 +1155,7 @@ func (s *Server) watchSideThreadInterrupt(ctx context.Context, mainID string, tu
 				continue
 			}
 			if errors.Is(err, sidethread.ErrNotFound) || st.Status != sidethread.StatusRunning {
-				turn.interrupted.Store(true)
-				turn.cancel()
+				turn.interrupt("remote_interrupt")
 				return
 			}
 		}
@@ -921,9 +1192,11 @@ func (s *Server) interruptSideThread(binding *runtime.State, mainID string) (*Si
 		binding = turn.state.Retain()
 		defer binding.Close()
 		turn.interrupted.Store(true)
-		turn.cancel()
 	}
 	sched.sideMu.Unlock()
+	if turn != nil {
+		turn.interrupt("user_interrupt")
+	}
 	store := sidethread.NewStore(context.Background(), binding.Documents)
 	st, changed, err := store.Interrupt(mainID)
 	if errors.Is(err, sidethread.ErrNotFound) {
@@ -971,13 +1244,16 @@ func (s *Server) resetSideThread(binding *runtime.State, mainID string) (*SideTh
 	// settles as ErrNotFound on the removed record.
 	sched := s.schedulerFor(mainID)
 	sched.sideMu.Lock()
-	if turn := sched.sideTurn; turn != nil {
+	turn := sched.sideTurn
+	if turn != nil {
 		binding = turn.state.Retain()
 		defer binding.Close()
 		turn.interrupted.Store(true)
-		turn.cancel()
 	}
 	sched.sideMu.Unlock()
+	if turn != nil {
+		turn.interrupt("reset")
+	}
 	store := sidethread.NewStore(context.Background(), binding.Documents)
 	st, err := store.Load(mainID)
 	if errors.Is(err, sidethread.ErrNotFound) {
@@ -1070,6 +1346,63 @@ func buildSideThreadRunHistory(runner *agent.StreamRunner, main sideThreadMainSn
 		return nil, errors.New("side thread runner is required")
 	}
 	systemPrompt := strings.TrimSpace(runner.SystemPrompt)
+	inputBudget := sideThreadInputBudget(runner)
+	contextMessage, activeUser, sideThreadID, _, err := buildSideThreadPromptParts(systemPrompt, inputBudget, main, messages, activeAssistantID, false)
+	if err != nil {
+		return nil, err
+	}
+	history := []providers.ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		{Role: "user", Name: "main-task-snapshot", Content: contextMessage},
+		{Role: "user", Name: "side-thread:" + sideThreadID, Content: activeUser},
+	}
+	if estimated := contextbudget.EstimateMessagesTokens(history); estimated > inputBudget {
+		return nil, fmt.Errorf("side thread context estimate %d exceeds model input budget %d", estimated, inputBudget)
+	}
+	return history, nil
+}
+
+// buildExternalSideThreadRunHistory packs the main-task snapshot, budgeted
+// earlier side conversation (so ACP load fallbacks keep context), and active
+// question into one final user message, because external engines take
+// instructions via ThreadBinding.Instructions and send only the latest user
+// message. Earlier unconfirmed native turns are preserved ahead of it for
+// recovery verification.
+func buildExternalSideThreadRunHistory(systemPrompt string, main sideThreadMainSnapshot, messages []sidethread.Message, activeAssistantID string) ([]providers.ChatMessage, error) {
+	systemPrompt = strings.TrimSpace(systemPrompt)
+	inputBudget := unknownSideThreadInputBudget
+	contextMessage, activeUser, sideThreadID, activeUserIndex, err := buildSideThreadPromptParts(systemPrompt, inputBudget, main, messages, activeAssistantID, true)
+	if err != nil {
+		return nil, err
+	}
+	combined := strings.TrimSpace(contextMessage + "\n\n## Current side question\n\n" + activeUser)
+	history := make([]providers.ChatMessage, 0, 2)
+	for i := 0; i < activeUserIndex; i++ {
+		if messages[i].Role == sidethread.RoleUser && messages[i].EngineTurnPending {
+			history = append(history, providers.ChatMessage{
+				Role:              "user",
+				Content:           strings.TrimSpace(messages[i].Text),
+				EngineTurnID:      messages[i].EngineTurnID,
+				EngineTurnPending: true,
+			})
+		}
+	}
+	finalMsg := providers.ChatMessage{
+		Role:    "user",
+		Name:    "side-thread:" + sideThreadID,
+		Content: combined,
+	}
+	budgetCheck := []providers.ChatMessage{
+		{Role: "system", Content: systemPrompt},
+		finalMsg,
+	}
+	if estimated := contextbudget.EstimateMessagesTokens(budgetCheck); estimated > inputBudget {
+		return nil, fmt.Errorf("side thread context estimate %d exceeds model input budget %d", estimated, inputBudget)
+	}
+	return append(history, finalMsg), nil
+}
+
+func buildSideThreadPromptParts(systemPrompt string, inputBudget int, main sideThreadMainSnapshot, messages []sidethread.Message, activeAssistantID string, singleUserMessage bool) (string, string, string, int, error) {
 	activeUserIndex := -1
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].ID != activeAssistantID && messages[i].Role == sidethread.RoleUser && strings.TrimSpace(messages[i].Text) != "" {
@@ -1078,7 +1411,7 @@ func buildSideThreadRunHistory(runner *agent.StreamRunner, main sideThreadMainSn
 		}
 	}
 	if activeUserIndex < 0 {
-		return nil, errors.New("active side thread user message is missing")
+		return "", "", "", -1, errors.New("active side thread user message is missing")
 	}
 
 	latestMainUserIndex := -1
@@ -1097,12 +1430,19 @@ func buildSideThreadRunHistory(runner *agent.StreamRunner, main sideThreadMainSn
 	liveSnapshot := renderSideThreadLiveSnapshot(main)
 	activeUser := sideThreadQuestionText(messages[activeUserIndex])
 
-	inputBudget := sideThreadInputBudget(runner)
 	contextHeading := "# Main task context"
-	fixedHistory := []providers.ChatMessage{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Name: "main-task-snapshot", Content: contextHeading + "\n\n"},
-		{Role: "user", Name: "side-thread:" + messages[activeUserIndex].SideThreadID},
+	var fixedHistory []providers.ChatMessage
+	if singleUserMessage {
+		fixedHistory = []providers.ChatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Name: "side-thread:" + messages[activeUserIndex].SideThreadID, Content: contextHeading + "\n\n\n\n## Current side question\n\n"},
+		}
+	} else {
+		fixedHistory = []providers.ChatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Name: "main-task-snapshot", Content: contextHeading + "\n\n"},
+			{Role: "user", Name: "side-thread:" + messages[activeUserIndex].SideThreadID},
+		}
 	}
 	contentBudget := inputBudget - contextbudget.EstimateMessagesTokens(fixedHistory)
 	separatorTokens := contextbudget.EstimateTokens("\n\n")
@@ -1113,11 +1453,11 @@ func buildSideThreadRunHistory(runner *agent.StreamRunner, main sideThreadMainSn
 		contentBudget -= separatorTokens
 	}
 	if contentBudget <= 0 {
-		return nil, fmt.Errorf("side thread model input budget %d is too small for its system prompt", inputBudget)
+		return "", "", "", -1, fmt.Errorf("side thread model input budget %d is too small for its system prompt", inputBudget)
 	}
 	activeUserTokens := contextbudget.EstimateTokens(activeUser)
 	if activeUserTokens > contentBudget {
-		return nil, fmt.Errorf("side thread prompt requires %d tokens but only %d fit in the model input budget", activeUserTokens, contentBudget)
+		return "", "", "", -1, fmt.Errorf("side thread prompt requires %d tokens but only %d fit in the model input budget", activeUserTokens, contentBudget)
 	}
 	allocations := fairTokenAllocations([]string{latestMainUser, liveSnapshot}, contentBudget-activeUserTokens)
 	latestMainUser = truncateToTokenBudget(latestMainUser, allocations[0])
@@ -1156,15 +1496,7 @@ func buildSideThreadRunHistory(runner *agent.StreamRunner, main sideThreadMainSn
 			contextMessage.WriteString("\n\n")
 		}
 	}
-	history := []providers.ChatMessage{
-		{Role: "system", Content: systemPrompt},
-		{Role: "user", Name: "main-task-snapshot", Content: strings.TrimSpace(contextMessage.String())},
-		{Role: "user", Name: "side-thread:" + messages[activeUserIndex].SideThreadID, Content: activeUser},
-	}
-	if estimated := contextbudget.EstimateMessagesTokens(history); estimated > inputBudget {
-		return nil, fmt.Errorf("side thread context estimate %d exceeds model input budget %d", estimated, inputBudget)
-	}
-	return history, nil
+	return strings.TrimSpace(contextMessage.String()), activeUser, messages[activeUserIndex].SideThreadID, activeUserIndex, nil
 }
 
 func sideThreadInputBudget(runner *agent.StreamRunner) int {
@@ -1434,22 +1766,26 @@ func (s *Server) cancelSideThreads() {
 	if s == nil {
 		return
 	}
-	turns := make(map[string]*runtime.State)
+	type activeSideTurn struct {
+		turn  *sideThreadTurn
+		state *runtime.State
+	}
+	turns := make(map[string]activeSideTurn)
 	for mainID, sched := range s.schedulersSnapshot() {
 		sched.sideMu.Lock()
 		if turn := sched.sideTurn; turn != nil {
 			turn.interrupted.Store(true)
-			turn.cancel()
-			turns[mainID] = turn.state.Retain()
+			turns[mainID] = activeSideTurn{turn: turn, state: turn.state.Retain()}
 		}
 		sched.sideMu.Unlock()
 	}
-	for mainID, binding := range turns {
-		_, _, err := sidethread.NewStore(context.Background(), binding.Documents).Interrupt(mainID)
+	for mainID, active := range turns {
+		active.turn.interrupt("server_shutdown")
+		_, _, err := sidethread.NewStore(context.Background(), active.state.Documents).Interrupt(mainID)
 		if err != nil && !errors.Is(err, sidethread.ErrNotFound) {
 			providers.DebugLogf("interrupt side thread %q: %v", mainID, err)
 		}
-		_ = binding.Close()
+		_ = active.state.Close()
 	}
 }
 

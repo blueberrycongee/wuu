@@ -38,6 +38,9 @@ var ErrUnknownEngine = errors.New("unknown agent engine")
 // ErrNoActiveTurn reports an Interrupt call with no in-flight turn.
 var ErrNoActiveTurn = errors.New("no active turn on this engine session")
 
+// ErrReadOnlyUnsupported reports an engine that cannot enforce Wuu's read-only boundary.
+var ErrReadOnlyUnsupported = errors.New("does not enforce Wuu's read-only boundary")
+
 // NormalizeEngineID treats an empty id as the built-in wuu engine, which is
 // the legacy default for threads persisted before engine binding.
 func NormalizeEngineID(id string) EngineID {

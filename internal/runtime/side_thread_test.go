@@ -193,6 +193,47 @@ func TestNewSideThreadRunnerReDerivesMediaInputForPinnedModel(t *testing.T) {
 	}
 }
 
+func TestNewSideThreadCapabilityRuntimeEnforcesReadOnlyOverExplicitWorkspaceMode(t *testing.T) {
+	root := t.TempDir()
+	kit, err := tools.New(root)
+	if err != nil {
+		t.Fatalf("tools.New: %v", err)
+	}
+	s := &Session{
+		RootDir:                root,
+		WuuHome:                root,
+		StateDir:               filepath.Join(root, "state"),
+		SessionDir:             filepath.Join(root, "sessions"),
+		Toolkit:                kit,
+		PermissionModeExplicit: true,
+		Permissions:            config.ResolvedPermissions{Mode: config.PermissionModeUnconfined},
+	}
+	rt, err := s.NewSideThreadCapabilityRuntimeForState(&State{}, "side-ro", root, ThreadModelSelection{
+		Provider:       "antigravity",
+		Model:          "gemini-4-neon",
+		PermissionMode: config.PermissionModeUnconfined,
+	})
+	if err != nil {
+		t.Fatalf("NewSideThreadCapabilityRuntimeForState: %v", err)
+	}
+	if rt.Selection.PermissionMode != config.PermissionModeReadOnly {
+		t.Fatalf("Selection.PermissionMode = %q, want %q", rt.Selection.PermissionMode, config.PermissionModeReadOnly)
+	}
+	if boundary := rt.Toolkit.Boundary(); !boundary.Enforce || boundary.AllowMutations {
+		t.Fatalf("Toolkit.Boundary() = %+v, want read-only (Enforce=true, AllowMutations=false)", boundary)
+	}
+	if _, err := rt.Toolkit.Execute(context.Background(), providers.ToolCall{
+		ID:        "write-blocked",
+		Name:      "write_file",
+		Arguments: `{"path":"blocked.txt","content":"must not write\n"}`,
+	}); err == nil {
+		t.Fatal("write_file unexpectedly succeeded on external capability runtime")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "blocked.txt")); !os.IsNotExist(statErr) {
+		t.Fatalf("blocked write created a file, stat error = %v", statErr)
+	}
+}
+
 type staticClient struct{}
 
 func (*staticClient) Chat(context.Context, providers.ChatRequest) (providers.ChatResponse, error) {

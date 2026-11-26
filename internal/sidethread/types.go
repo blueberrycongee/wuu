@@ -39,15 +39,17 @@ const (
 // Message is one entry in the side thread's independent history. Side
 // threads own their own messages and never append to the main thread.
 type Message struct {
-	ID           string                 `json:"id"`
-	SideThreadID string                 `json:"side_thread_id"`
-	Role         MessageRole            `json:"role"`
-	Text         string                 `json:"text"`
-	Selection    *SelectionReference    `json:"selection,omitempty"`
-	Items        []Item                 `json:"items,omitempty"`
-	Status       AssistantMessageStatus `json:"status,omitempty"`
-	ErrorText    string                 `json:"error_message,omitempty"`
-	CreatedAt    time.Time              `json:"created_at"`
+	ID                string                 `json:"id"`
+	SideThreadID      string                 `json:"side_thread_id"`
+	Role              MessageRole            `json:"role"`
+	Text              string                 `json:"text"`
+	Selection         *SelectionReference    `json:"selection,omitempty"`
+	Items             []Item                 `json:"items,omitempty"`
+	Status            AssistantMessageStatus `json:"status,omitempty"`
+	ErrorText         string                 `json:"error_message,omitempty"`
+	EngineTurnID      string                 `json:"engine_turn_id,omitempty"`
+	EngineTurnPending bool                   `json:"engine_turn_pending,omitempty"`
+	CreatedAt         time.Time              `json:"created_at"`
 }
 
 // SelectionReference keeps the source attached to a side question across reloads.
@@ -85,6 +87,8 @@ type SideThread struct {
 	// lazily on the first message and persisted.
 	SideThreadID string    `json:"side_thread_id"`
 	MainThreadID string    `json:"main_thread_id"`
+	EngineID     string    `json:"engine_id,omitempty"`
+	EngineRef    string    `json:"engine_ref,omitempty"`
 	Status       Status    `json:"status"`
 	Revision     uint64    `json:"revision"`
 	CreatedAt    time.Time `json:"created_at"`

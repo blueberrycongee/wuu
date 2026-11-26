@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/blueberrycongee/wuu/internal/agent"
+	"github.com/blueberrycongee/wuu/internal/agentengine"
+	"github.com/blueberrycongee/wuu/internal/composition"
 	"github.com/blueberrycongee/wuu/internal/config"
 	"github.com/blueberrycongee/wuu/internal/contextbudget"
 	"github.com/blueberrycongee/wuu/internal/credentialstore"
@@ -24,6 +26,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/persistence"
 	pluginpkg "github.com/blueberrycongee/wuu/internal/plugin"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
+	"github.com/blueberrycongee/wuu/internal/pluginprotocol"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
@@ -1153,4 +1156,557 @@ func newReloadingSideThreadRuntime(t *testing.T, previous *runtime.Session, clie
 		}
 	})
 	return selected
+}
+
+type sideThreadGatewayFixtureEngine struct {
+	registry *pluginhost.ServiceRegistry
+	engineID agentengine.EngineID
+
+	mu              sync.Mutex
+	bindings        []pluginprotocol.EngineBinding
+	runMessages     [][]pluginprotocol.DriverMessageV1
+	gatewayIDs      map[string]string
+	approvalResult  agentengine.ApprovalDecision
+	approvalErr     error
+	userInputErr    error
+	readOnlyFail    bool
+	blockRun        bool
+	runStarted      chan struct{}
+	runRelease      chan struct{}
+	startOnce       sync.Once
+	onInterruptHook func()
+	lifecycleOrder  []string
+	nextRefSeq      int
+	nextTurnSeq     int
+	lastGatewayID   string
+}
+
+func (e *sideThreadGatewayFixtureEngine) ID() string { return "fixture.side-gateway-engine" }
+func (e *sideThreadGatewayFixtureEngine) Status() pluginhost.Status {
+	return pluginhost.Status{ID: e.ID(), State: pluginhost.StateActive}
+}
+func (*sideThreadGatewayFixtureEngine) Prepare(context.Context) error  { return nil }
+func (*sideThreadGatewayFixtureEngine) Activate(context.Context) error { return nil }
+func (*sideThreadGatewayFixtureEngine) Close(context.Context) error    { return nil }
+func (*sideThreadGatewayFixtureEngine) RequiredServices() []pluginhost.ServiceRequirement {
+	return []pluginhost.ServiceRequirement{{Name: pluginprotocol.EngineGatewayService, MajorVersion: 1, Required: true}}
+}
+func (e *sideThreadGatewayFixtureEngine) ProvidedServices() []pluginhost.ServiceDescriptor {
+	var methods []pluginhost.ServiceMethodDescriptor
+	for _, name := range []string{"descriptor", "retain", "release", "bind", "run", "interrupt", "close"} {
+		methods = append(methods, pluginhost.ServiceMethodDescriptor{
+			Name:         name,
+			InputSchema:  "engine." + name + ".input.v1",
+			OutputSchema: "engine." + name + ".output.v1",
+			Cleanup:      name == "close" || name == "release",
+		})
+	}
+	return []pluginhost.ServiceDescriptor{{Name: "engine." + string(e.engineID), Version: "1.0.0", Methods: methods}}
+}
+
+func (e *sideThreadGatewayFixtureEngine) callGateway(ctx context.Context, method string, params pluginprotocol.EngineGatewayParams, out any) error {
+	raw, err := json.Marshal(params)
+	if err != nil {
+		return err
+	}
+	res, callErr := e.registry.RouteServiceCall(ctx, e.ID(), pluginhost.ServiceCallParams{
+		Service: pluginprotocol.EngineGatewayService,
+		Method:  method,
+		Params:  raw,
+	})
+	if callErr != nil {
+		return callErr
+	}
+	if out != nil {
+		return json.Unmarshal(res, out)
+	}
+	return nil
+}
+
+func (e *sideThreadGatewayFixtureEngine) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeParams) (json.RawMessage, error) {
+	switch p.Method {
+	case "descriptor":
+		return json.Marshal(map[string]any{
+			"id":           e.engineID,
+			"version":      "1",
+			"enabled":      true,
+			"capabilities": []string{"native-tool-loop", "native-session-resume", "warm-scope"},
+		})
+	case "retain":
+		return json.Marshal(pluginprotocol.EngineSessionParams{SessionID: "lease-1"})
+	case "release":
+		return json.RawMessage(`{}`), nil
+	case "bind":
+		var in pluginprotocol.EngineBinding
+		if err := json.Unmarshal(p.Params, &in); err != nil {
+			return nil, err
+		}
+		e.mu.Lock()
+		if e.gatewayIDs == nil {
+			e.gatewayIDs = make(map[string]string)
+		}
+		sid := fmt.Sprintf("ext-sess-%d", len(e.bindings)+1)
+		e.bindings = append(e.bindings, in)
+		e.gatewayIDs[sid] = in.GatewayID
+		e.lastGatewayID = in.GatewayID
+		e.mu.Unlock()
+		return json.Marshal(pluginprotocol.EngineSessionParams{SessionID: sid})
+	case "run":
+		var in pluginprotocol.EngineRunParams
+		if err := json.Unmarshal(p.Params, &in); err != nil {
+			return nil, err
+		}
+		e.mu.Lock()
+		gw := e.gatewayIDs[in.SessionID]
+		e.runMessages = append(e.runMessages, append([]pluginprotocol.DriverMessageV1(nil), in.Messages...))
+		e.nextRefSeq++
+		ref := fmt.Sprintf("side-native-ref-%d", e.nextRefSeq)
+		e.nextTurnSeq++
+		turnRef := fmt.Sprintf("side-native-turn-%d", e.nextTurnSeq)
+		readOnlyFail := e.readOnlyFail
+		blockRun := e.blockRun
+		e.mu.Unlock()
+
+		// Exercise production gateway reference persistence (as ACP/Codex do).
+		if err := e.callGateway(ctx, "persist_reference", pluginprotocol.EngineGatewayParams{GatewayID: gw, Reference: ref}, nil); err != nil {
+			return nil, err
+		}
+		if readOnlyFail {
+			return json.Marshal(pluginprotocol.EngineRunResult{
+				Failure: &pluginprotocol.DriverFailure{
+					Code:    "read_only_unsupported",
+					Message: "FixtureEngine does not enforce Wuu's read-only boundary; choose another engine or change the permission mode explicitly",
+				},
+			})
+		}
+		// Exercise Codex-style native turn admission & settlement receipts through the production gateway.
+		if err := e.callGateway(ctx, "persist_turn", pluginprotocol.EngineGatewayParams{GatewayID: gw, Reference: "", Pending: true}, nil); err != nil {
+			return nil, err
+		}
+		if err := e.callGateway(ctx, "persist_turn", pluginprotocol.EngineGatewayParams{GatewayID: gw, Reference: turnRef, Pending: true}, nil); err != nil {
+			return nil, err
+		}
+		// Exercise fail-closed approval and unavailable user-input bridge through the production gateway.
+		var decision agentengine.ApprovalDecision
+		approvalErr := e.callGateway(ctx, "approval", pluginprotocol.EngineGatewayParams{
+			GatewayID: gw,
+			Approval:  &pluginprotocol.EngineApprovalRequestV1{Kind: "command_execution", EngineID: string(e.engineID), ItemID: "cmd-1", Command: "rm -rf /"},
+		}, &decision)
+		inputErr := e.callGateway(ctx, "input", pluginprotocol.EngineGatewayParams{
+			GatewayID: gw,
+			Input:     &pluginprotocol.EngineUserInputRequestV1{EngineID: string(e.engineID), ItemID: "q-1"},
+		}, nil)
+		e.mu.Lock()
+		e.approvalResult = decision
+		e.approvalErr = approvalErr
+		e.userInputErr = inputErr
+		e.mu.Unlock()
+
+		if err := e.callGateway(ctx, "event", pluginprotocol.EngineGatewayParams{
+			GatewayID: gw,
+			Event:     &pluginprotocol.EngineEventV1{Version: 1, Type: "content_delta", Content: "external side reply"},
+		}, nil); err != nil {
+			return nil, err
+		}
+		if blockRun {
+			e.startOnce.Do(func() {
+				if e.runStarted != nil {
+					close(e.runStarted)
+				}
+			})
+			select {
+			case <-ctx.Done():
+				e.mu.Lock()
+				e.lifecycleOrder = append(e.lifecycleOrder, "run_exit")
+				e.mu.Unlock()
+				_ = e.callGateway(context.Background(), "settle_turn", pluginprotocol.EngineGatewayParams{GatewayID: gw, Reference: turnRef, Pending: false}, nil)
+				return json.Marshal(pluginprotocol.EngineRunResult{
+					Failure: &pluginprotocol.DriverFailure{Category: string(providers.FailureCanceled), Message: context.Canceled.Error()},
+				})
+			case <-e.runRelease:
+			}
+		}
+		if err := e.callGateway(context.Background(), "settle_turn", pluginprotocol.EngineGatewayParams{GatewayID: gw, Reference: turnRef, Pending: false}, nil); err != nil {
+			return nil, err
+		}
+		return json.Marshal(pluginprotocol.EngineRunResult{
+			Result: pluginprotocol.EngineResultV1{
+				Version: 1,
+				Content: "external side reply",
+				NewMessages: []pluginprotocol.DriverMessageV1{{
+					Role: "assistant", Content: "external side reply",
+				}},
+			},
+		})
+	case "interrupt":
+		e.mu.Lock()
+		hook := e.onInterruptHook
+		e.lifecycleOrder = append(e.lifecycleOrder, "interrupt")
+		e.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
+		return json.RawMessage(`{}`), nil
+	case "close":
+		e.mu.Lock()
+		e.lifecycleOrder = append(e.lifecycleOrder, "close")
+		e.mu.Unlock()
+		return json.RawMessage(`{}`), nil
+	default:
+		return nil, fmt.Errorf("unsupported fixture engine method %q", p.Method)
+	}
+}
+
+func newSideThreadGatewayServer(t *testing.T, engineID agentengine.EngineID, fixture *sideThreadGatewayFixtureEngine, wuuClient providers.StreamClient, explicitMode string) (*Server, *runtime.Session, *lockedBuffer) {
+	t.Helper()
+	if wuuClient == nil {
+		wuuClient = &sideThreadTestClient{response: "wuu fallback reply"}
+	}
+	endpoint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		stream, err := wuuClient.StreamChat(r.Context(), providers.ChatRequest{Model: "test-model"})
+		if err != nil {
+			http.Error(w, err.Error(), 500)
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		for event := range stream {
+			if event.Type == providers.EventContentDelta {
+				raw, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"index": 0, "delta": map[string]string{"content": event.Content}}}})
+				_, _ = fmt.Fprintf(w, "data: %s\n\n", raw)
+				w.(http.Flusher).Flush()
+			}
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	t.Cleanup(endpoint.Close)
+
+	root := t.TempDir()
+	home := t.TempDir()
+	wuuHome := filepath.Join(home, ".wuu")
+	cfg := config.Default()
+	cfg.DefaultProvider = "test-provider"
+	cfg.Providers = map[string]config.ProviderConfig{
+		"test-provider": {Type: "openai-compatible", BaseURL: endpoint.URL + "/v1", APIKey: "fixture-only", Model: "test-model"},
+	}
+	sidePlugin, err := pluginpkg.LoadManifestWithOptions("../plugin/bundled/side/plugin.json", pluginpkg.LoadOptions{Source: "bundled", Official: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Composition = &composition.Config{
+		Version: composition.Version,
+		Profile: "headless",
+		Services: []composition.Binding{{
+			Service: "engine." + string(engineID), Major: 1, Provider: fixture.ID(),
+		}},
+		Patches: []composition.Patch{{
+			Modules: map[string]bool{fixture.ID(): true, sidePlugin.ID: true},
+		}},
+	}
+	cfgPath := filepath.Join(root, "config.json")
+	rawCfg, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgPath, rawCfg, 0600); err != nil {
+		t.Fatal(err)
+	}
+	plugins := []pluginpkg.Plugin{sidePlugin}
+	credentials := runtime.NativeProviderFactory{ID: credentialstore.OSModule, DefaultEnabled: true, Build: func(runtime.NativeProviderContext) (pluginhost.Client, error) {
+		return credentialstore.NewService(credentialstore.OSModule, func() (credentialstore.Store, error) { return nativeCredentialFixture(t, home), nil }), nil
+	}}
+	engineProvider := runtime.NativeProviderFactory{ID: fixture.ID(), Build: func(in runtime.NativeProviderContext) (pluginhost.Client, error) {
+		fixture.registry = in.Registry
+		return fixture, nil
+	}}
+	rt, err := runtime.NewSession(runtime.Options{
+		RootDir:           root,
+		HomeDir:           home,
+		WuuHome:           wuuHome,
+		ConfigPath:        cfgPath,
+		Config:            cfg,
+		ConfigLoadMode:    runtime.ConfigLoadFile,
+		Overrides:         runtime.ConfigOverrides{PermissionMode: explicitMode},
+		NonInteractive:    true,
+		DiscoveredPlugins: &plugins,
+		NativeProviders:   []runtime.NativeProviderFactory{credentials, engineProvider},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if _, err := rt.Cleanup(); err != nil {
+			t.Error(err)
+		}
+	})
+	out := &lockedBuffer{}
+	s := New(rt, out)
+	t.Cleanup(func() {
+		s.Close()
+		s.backgroundWG.Wait()
+	})
+	return s, rt, out
+}
+
+func TestSideThreadExternalEngineGatewayLifecycleAndIsolation(t *testing.T) {
+	fixture := &sideThreadGatewayFixtureEngine{engineID: "codex"}
+	s, rt, out := newSideThreadGatewayServer(t, "codex", fixture, nil, config.PermissionModeUnconfined)
+
+	const mainID = "main_ext_gateway"
+	if _, err := rt.Sessions.CreateWithMetadata(mainID, rt.RootDir); err != nil {
+		t.Fatalf("create main session: %v", err)
+	}
+	if _, err := rt.Sessions.SetEngine(mainID, "codex"); err != nil {
+		t.Fatalf("set engine: %v", err)
+	}
+	if _, err := rt.Sessions.SetRuntimeSelection(mainID, session.RuntimeSelection{
+		Provider:       "codex",
+		Model:          "codex-5",
+		Effort:         "high",
+		PermissionMode: config.PermissionModeUnconfined,
+	}); err != nil {
+		t.Fatalf("set runtime selection: %v", err)
+	}
+	if _, err := rt.Sessions.SetEngineRef(mainID, "main-native-ref"); err != nil {
+		t.Fatalf("set main engine ref: %v", err)
+	}
+	if err := appendChatMessages(rt.Sessions, mainID, []providers.ChatMessage{
+		{Role: "user", Content: "MAIN_TASK_PROMPT_MARKER"},
+		{Role: "assistant", Content: "MAIN_TASK_ANSWER_MARKER"},
+	}); err != nil {
+		t.Fatalf("append main history: %v", err)
+	}
+
+	selection := &sidethread.SelectionReference{
+		Type: "response",
+		Response: &providers.ResponseSelection{
+			ID: "sel-1", Text: "MAIN_TASK_ANSWER_MARKER",
+			Source: providers.ResponseSelectionSource{ThreadID: mainID, TurnID: "t1", ItemID: "i1", StartOffset: 0, EndOffset: 23},
+		},
+	}
+	wire, _ := json.Marshal(map[string]any{
+		"id": "ext-send-1", "method": MethodSideThreadSend,
+		"params": SideThreadSendParams{MainThreadID: mainID, Prompt: "FIRST_SIDE_QUESTION", Selection: selection},
+	})
+	if err := s.handleLine(context.Background(), wire); err != nil {
+		t.Fatalf("send 1: %v", err)
+	}
+	if resp := responseByID(t, parseOutput(t, out.String()), "ext-send-1"); resp["error"] != nil {
+		t.Fatalf("send 1 rpc error: %+v", resp["error"])
+	}
+
+	st := waitForSideThreadStatus(t, sideStoreForTest(t, s), mainID, sidethread.StatusCompleted)
+	if st.EngineID != "codex" || st.EngineRef != "side-native-ref-1" {
+		t.Fatalf("side thread engine ref = (%q, %q), want (codex, side-native-ref-1)", st.EngineID, st.EngineRef)
+	}
+	if st.Messages[0].EngineTurnID != "side-native-turn-1" || st.Messages[0].EngineTurnPending {
+		t.Fatalf("turn receipt not settled: %+v", st.Messages[0])
+	}
+	if st.Messages[1].Text != "external side reply" {
+		t.Fatalf("assistant text = %q, want external side reply", st.Messages[1].Text)
+	}
+	mainSess, ok, err := rt.Sessions.Find(mainID)
+	if err != nil || !ok || mainSess.EngineRef != "main-native-ref" {
+		t.Fatalf("main session engine_ref mutated: sess=%+v err=%v", mainSess, err)
+	}
+
+	fixture.mu.Lock()
+	binding1 := fixture.bindings[0]
+	msgs1 := fixture.runMessages[0]
+	approvalDecision := fixture.approvalResult
+	approvalErr := fixture.approvalErr
+	userInputErr := fixture.userInputErr
+	fixture.mu.Unlock()
+	if binding1.PermissionMode != config.PermissionModeReadOnly {
+		t.Fatalf("engine binding PermissionMode = %q, want read_only", binding1.PermissionMode)
+	}
+	if len(binding1.MCPServers) != 0 {
+		t.Fatalf("external side chat attached host MCP servers: %+v", binding1.MCPServers)
+	}
+	if strings.TrimSpace(binding1.Instructions) == "" {
+		t.Fatal("external side chat dropped system instructions")
+	}
+	if binding1.ExternalRef != "" {
+		t.Fatalf("first side turn reused external ref %q", binding1.ExternalRef)
+	}
+	if approvalErr != nil || approvalDecision != agentengine.ApprovalDecline {
+		t.Fatalf("gateway approval = (%q, %v), want decline", approvalDecision, approvalErr)
+	}
+	if userInputErr == nil {
+		t.Fatal("gateway user input unexpectedly succeeded in side chat")
+	}
+	prompt1 := msgs1[len(msgs1)-1].Content
+	for _, want := range []string{"MAIN_TASK_PROMPT_MARKER", "MAIN_TASK_ANSWER_MARKER", "FIRST_SIDE_QUESTION"} {
+		if !strings.Contains(prompt1, want) {
+			t.Fatalf("first external prompt missing %q:\n%s", want, prompt1)
+		}
+	}
+
+	// Second turn: reuses side thread's EngineRef AND still carries prior side
+	// history in the single user prompt so an ACP resume fallback keeps context.
+	waitForSideThreadIdle(t, s, mainID)
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), mainID, "SECOND_SIDE_QUESTION"); err != nil {
+		t.Fatalf("send 2: %v", err)
+	}
+	waitForSideThreadIdle(t, s, mainID)
+	waitForSideThreadStatus(t, sideStoreForTest(t, s), mainID, sidethread.StatusCompleted)
+	fixture.mu.Lock()
+	binding2 := fixture.bindings[1]
+	msgs2 := fixture.runMessages[1]
+	fixture.mu.Unlock()
+	if binding2.ExternalRef != "side-native-ref-1" {
+		t.Fatalf("second side turn ExternalRef = %q, want side-native-ref-1", binding2.ExternalRef)
+	}
+	prompt2 := msgs2[len(msgs2)-1].Content
+	for _, want := range []string{"FIRST_SIDE_QUESTION", "external side reply", "SECOND_SIDE_QUESTION"} {
+		if !strings.Contains(prompt2, want) {
+			t.Fatalf("second external prompt dropped prior side history %q:\n%s", want, prompt2)
+		}
+	}
+
+	// Reset clears the side EngineRef so a subsequent turn starts fresh.
+	if _, err := s.resetSideThread(testRuntimeState(t, s.rt), mainID); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), mainID, "AFTER_RESET_QUESTION"); err != nil {
+		t.Fatalf("send 3: %v", err)
+	}
+	waitForSideThreadIdle(t, s, mainID)
+	waitForSideThreadStatus(t, sideStoreForTest(t, s), mainID, sidethread.StatusCompleted)
+	fixture.mu.Lock()
+	binding3 := fixture.bindings[2]
+	fixture.mu.Unlock()
+	if binding3.ExternalRef != "" {
+		t.Fatalf("turn after reset reused old ExternalRef %q", binding3.ExternalRef)
+	}
+}
+
+func waitForSideThreadIdle(t *testing.T, s *Server, mainID string) {
+	t.Helper()
+	sched := s.schedulerFor(mainID)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		sched.sideMu.Lock()
+		running := sched.sideTurn != nil
+		sched.sideMu.Unlock()
+		if !running {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("side thread %q did not become idle before timeout", mainID)
+}
+
+func TestSideThreadExternalEngineReadOnlyUnsupportedFallsBackToDefaultWuuProvider(t *testing.T) {
+	fixture := &sideThreadGatewayFixtureEngine{engineID: "codex", readOnlyFail: true}
+	wuuClient := &sideThreadTestClient{response: "fallback wuu read-only answer"}
+	s, rt, _ := newSideThreadGatewayServer(t, "codex", fixture, wuuClient, config.PermissionModeUnconfined)
+
+	const mainID = "main_ext_readonly_fallback"
+	if _, err := rt.Sessions.CreateWithMetadata(mainID, rt.RootDir); err != nil {
+		t.Fatalf("create main session: %v", err)
+	}
+	if _, err := rt.Sessions.SetEngine(mainID, "codex"); err != nil {
+		t.Fatalf("set engine: %v", err)
+	}
+	if _, err := rt.Sessions.SetRuntimeSelection(mainID, session.RuntimeSelection{
+		Provider: "codex", Model: "codex-5",
+	}); err != nil {
+		t.Fatalf("set runtime selection: %v", err)
+	}
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), mainID, "Explain this safely."); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	waitForSideThreadIdle(t, s, mainID)
+	st := waitForSideThreadStatus(t, sideStoreForTest(t, s), mainID, sidethread.StatusCompleted)
+	if st.Messages[1].Text != "fallback wuu read-only answer" {
+		t.Fatalf("fallback reply = %q, want fallback wuu read-only answer", st.Messages[1].Text)
+	}
+	if st.EngineRef != "" || st.EngineID != "" {
+		t.Fatalf("fallback left stale external engine ref: (%q, %q)", st.EngineID, st.EngineRef)
+	}
+	for _, item := range st.Messages[1].Items {
+		if item.Error != "" {
+			t.Fatalf("suppressed read-only rejection leaked error item into fallback turn: %+v", item)
+		}
+	}
+}
+
+func TestSideThreadExternalEngineInterruptResetAndOrderedCleanup(t *testing.T) {
+	fixture := &sideThreadGatewayFixtureEngine{
+		engineID:   "codex",
+		blockRun:   true,
+		runStarted: make(chan struct{}),
+		runRelease: make(chan struct{}),
+	}
+	s, rt, _ := newSideThreadGatewayServer(t, "codex", fixture, nil, config.PermissionModeUnconfined)
+
+	const mainID = "main_ext_interrupt"
+	if _, err := rt.Sessions.CreateWithMetadata(mainID, rt.RootDir); err != nil {
+		t.Fatalf("create main session: %v", err)
+	}
+	if _, err := rt.Sessions.SetEngine(mainID, "codex"); err != nil {
+		t.Fatalf("set engine: %v", err)
+	}
+	if _, err := rt.Sessions.SetRuntimeSelection(mainID, session.RuntimeSelection{
+		Provider: "codex", Model: "codex-5",
+	}); err != nil {
+		t.Fatalf("set runtime selection: %v", err)
+	}
+	sched := s.schedulerFor(mainID)
+	schedUnlockedInInterrupt := false
+	fixture.onInterruptHook = func() {
+		// Acquiring sched.sideMu inside engine.Interrupt proves the interrupt
+		// path never invokes external engine RPCs while holding the scheduler lock.
+		sched.sideMu.Lock()
+		schedUnlockedInInterrupt = true
+		sched.sideMu.Unlock()
+	}
+
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), mainID, "Long running side check"); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	select {
+	case <-fixture.runStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("external side turn did not start")
+	}
+
+	if res, err := s.interruptSideThread(testRuntimeState(t, s.rt), mainID); err != nil || !res.Ok {
+		t.Fatalf("interruptSideThread = (%+v, %v)", res, err)
+	}
+	waitForSideThreadIdle(t, s, mainID)
+
+	if !schedUnlockedInInterrupt {
+		t.Fatal("engine.Interrupt was not called or ran while holding sched.sideMu")
+	}
+	fixture.mu.Lock()
+	order := append([]string(nil), fixture.lifecycleOrder...)
+	fixture.mu.Unlock()
+	if len(order) < 3 || order[0] != "interrupt" || order[len(order)-1] != "close" {
+		t.Fatalf("unexpected external engine lifecycle order: %v", order)
+	}
+	st := waitForSideThreadStatus(t, sideStoreForTest(t, s), mainID, sidethread.StatusInterrupted)
+	if st.Messages[0].EngineTurnPending {
+		t.Fatalf("interrupted turn left EngineTurnPending=true: %+v", st.Messages[0])
+	}
+}
+
+func TestSideThreadUnavailableExternalEngineRejectedAtAdmission(t *testing.T) {
+	s, rt, _ := newSideThreadServer(t, nil)
+	const mainID = "main_missing_engine"
+	createSideThreadMain(t, s, mainID)
+	if _, err := rt.Sessions.SetEngine(mainID, "missing-engine"); err != nil {
+		t.Fatalf("set engine: %v", err)
+	}
+	if _, err := rt.Sessions.SetRuntimeSelection(mainID, session.RuntimeSelection{
+		Provider: "missing-engine", Model: "m1",
+	}); err != nil {
+		t.Fatalf("set runtime selection: %v", err)
+	}
+	if _, err := s.sendSideThreadMessage(testRuntimeState(t, s.rt), mainID, "hello?"); err == nil {
+		t.Fatal("unavailable external engine accepted side message")
+	}
+	if _, err := sideStoreForTest(t, s).Load(mainID); !errors.Is(err, sidethread.ErrNotFound) {
+		t.Fatalf("rejected external engine persisted a side thread: %v", err)
+	}
 }

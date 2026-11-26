@@ -326,3 +326,31 @@ func (s *Session) NewSideThreadRunnerForState(binding *State, sessionID, rootDir
 	}
 	return shadow.newSideThreadRunner(sessionID, rootDir, selected, prompt, parentSession...)
 }
+
+// NewSideThreadCapabilityRuntimeForState builds a read-only capability runtime
+// for an external-engine side conversation against the admitted execution.
+// Side conversations stay read-only even when the workspace pins another mode.
+func (s *Session) NewSideThreadCapabilityRuntimeForState(binding *State, sessionID, rootDir string, selected ThreadModelSelection) (*ThreadRuntime, error) {
+	owner := s
+	if binding != nil && binding.Generation != nil && binding.Generation.composition.scope != nil {
+		owner = binding.Generation.composition.scope.runtime
+	}
+	shadow, err := owner.cloneForThreadModel(binding)
+	if err != nil {
+		return nil, err
+	}
+	defer owner.releasePluginGeneration(shadow.pluginGeneration)
+	if owner != s {
+		shadow.StateDir, shadow.SessionDir, shadow.WuuHome = s.StateDir, s.SessionDir, s.WuuHome
+	}
+	shadow.PermissionModeExplicit = false
+	shadow.Permissions = config.ResolvedPermissions{Mode: config.PermissionModeReadOnly}
+	selected.PermissionMode = config.PermissionModeReadOnly
+	rt, err := shadow.NewThreadCapabilityRuntime(sessionID, rootDir, selected)
+	if err != nil {
+		return nil, err
+	}
+	rt.Selection.PermissionMode = config.PermissionModeReadOnly
+	rt.ConfigureExecutionPermissions(config.ResolvedPermissions{Mode: config.PermissionModeReadOnly}, false, nil)
+	return rt, nil
+}
