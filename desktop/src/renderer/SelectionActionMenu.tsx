@@ -1,21 +1,19 @@
 import { forwardRef, type CSSProperties, type ReactNode, type Ref } from "react";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
-import { ArrowUp } from "./WuuIcons";
 import "./SelectionActionMenu.css";
 
 type SelectionActionMenuProps = {
   className?: string;
   style?: CSSProperties;
   label: string;
-  addLabel: string;
-  commentLabel: string;
+  quoteLabel: string;
+  submitLabel: string;
   commentPlaceholder: string;
   commenting: boolean;
   comment: string;
   allowEmptyComment?: boolean;
   onCommentChange: (value: string) => void;
-  onAdd: () => void;
-  onCommentStart: () => void;
+  onQuote: () => void;
   onCommentCancel: () => void;
   onCommentSubmit: () => void;
   commentToggleRef?: Ref<HTMLButtonElement>;
@@ -25,8 +23,8 @@ type SelectionActionMenuProps = {
 };
 
 export const SelectionActionMenu = forwardRef<HTMLDivElement, SelectionActionMenuProps>(function SelectionActionMenu({
-  className, style, label, addLabel, commentLabel, commentPlaceholder, commenting, comment, allowEmptyComment = true,
-  onCommentChange, onAdd, onCommentStart, onCommentCancel, onCommentSubmit,
+  className, style, label, quoteLabel, submitLabel, commentPlaceholder, commenting, comment, allowEmptyComment = true,
+  onCommentChange, onQuote, onCommentCancel, onCommentSubmit,
   commentToggleRef, commentInputRef, extraActions, status,
 }, ref) {
   return <div ref={ref} className={`selection-action-menu${commenting ? " selection-action-menu-commenting" : ""}${className ? ` ${className}` : ""}`}
@@ -44,17 +42,16 @@ export const SelectionActionMenu = forwardRef<HTMLDivElement, SelectionActionMen
               onCommentCancel();
             } else if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              if (comment.trim() || allowEmptyComment) onCommentSubmit();
+              if (!event.repeat && (allowEmptyComment || comment.trim())) onCommentSubmit();
             }
           }} />
-        <button type="button" className="selection-action-comment-submit" aria-label={commentLabel}
+        <button type="button" className="selection-action-comment-submit"
           disabled={!allowEmptyComment && !comment.trim()} onPointerDown={event => event.preventDefault()} onClick={onCommentSubmit}>
-          <ArrowUp className="icon" aria-hidden="true" />
+          {submitLabel}
         </button>
       </> : <>
-        <button type="button" onPointerDown={event => event.preventDefault()} onClick={onAdd}>{addLabel}</button>
         <button ref={commentToggleRef} type="button" className="selection-action-comment-toggle"
-          onPointerDown={event => event.preventDefault()} onClick={onCommentStart}>{commentLabel}</button>
+          onPointerDown={event => event.preventDefault()} onClick={onQuote}>{quoteLabel}</button>
         {extraActions}
       </>}
     </div>

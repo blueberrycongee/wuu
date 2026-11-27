@@ -6,9 +6,9 @@ The left sidebar keeps the visibility and width you choose when you resize the w
 
 Expanding the right panel adds the current conversation as the first tab beside the tool tabs. Select it to return to the conversation without leaving the expanded layout; select a tool tab to switch back. The conversation draft is preserved. Choosing a conversation or starting a new one from the sidebar selects this conversation tab and keeps the expanded layout. Closing a tool returns to the most recently visited remaining tab, including the conversation; closing the last tool leaves the conversation tab open. Use the close button to close a tool tab. Exiting the expanded layout restores the conversation and tools side by side.
 
-![The action menu shown after selecting code in the file preview, with options to add it to the conversation, annotate it, or ask in side chat.](../assets/product/files-en.jpg)
+![The action menu shown after selecting code in the file preview.](../assets/product/files-en.jpg)
 
-<p class="docs-caption">Select text in a file to bring the passage, an annotation, or a question into the conversation while the file stays in its tab.</p>
+<p class="docs-caption">Quote a passage with an optional comment, or use it to ask a question in side chat.</p>
 
 ## Ask about the current page
 
@@ -74,27 +74,23 @@ For agents and integrations, the built-in `present_artifact` tool accepts an exi
 
 The limit is 256 MiB. Normal read permissions and sensitive-path restrictions apply, and the tool does not fetch URLs. Presenting a file does not inspect its appearance or send its image bytes to the model; visual verification is a separate step.
 
-Select text in a Markdown, code, or plain-text preview to use **Add to conversation**,
-**Comment**, or **Edit**. Adding to the conversation adds a quote card to the attachment tray without
-sending it or expanding the excerpt into the input. Open the card to
-read the original text; its remove button removes the selection. Sending the message
-includes the original text and source location. Comments appear below the document preview and as a
-quote card in the attachment tray; open the card to inspect the location,
-quoted text, and comment. You can edit or remove comments before sending several
-comments together with your message.
+Select text in a Markdown, code, plain-text, or PDF preview and choose **Quote**.
+Enter a comment if you want, then choose **Add quote** or press Enter. The quote card
+appears in the attachment tray. Open it to read the excerpt, add or change its comment,
+view the source, or remove the quote. Sending the message includes the excerpt,
+source location, and any comment.
 
 Choose **Ask in side chat** from a file selection to attach the passage to a side question. This requires an existing main conversation; the side composer shows the same quote card.
 
-**Edit** opens a small instruction box at the selection. Submitting it sends an
+In Markdown, code, and plain-text files, **Edit** opens an instruction box at the selection. Submitting it sends an
 independent request to the current conversation without consuming your existing
 draft or attachments. A running task queues the request. The request instructs the agent
 to read the latest file before editing, and the preview refreshes when the turn finishes. A failed
 submission keeps your instruction available to retry.
 
 Source locations refer to the file version captured when you selected the text.
-Comments retain their original excerpt if the file changes. Complex rendered blocks
-may be referenced as a whole when a precise source selection is unavailable. These
-selection actions do not yet apply to PDF or image previews.
+Quotes retain their original excerpt if the file changes. Complex rendered blocks
+may be referenced as a whole when a precise source selection is unavailable.
 
 ## Review
 

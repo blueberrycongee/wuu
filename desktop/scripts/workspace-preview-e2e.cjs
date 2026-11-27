@@ -504,7 +504,9 @@ if (process.argv.includes("--pdf-fixtures-only")) {
         document.dispatchEvent(new Event("selectionchange"));
       })()`);
       await waitFor('document.querySelector(".pdf-selection-menu button")');
-      await click(".pdf-selection-menu button");
+      await click(".pdf-selection-menu__comment-toggle");
+      await waitFor('document.querySelector(".pdf-selection-comment__submit")');
+      await click(".pdf-selection-comment__submit");
       const parts = await evaluate('window.pdfParts');
       const quote = parts.find(part => part.type === "file_selection");
       assert.equal(quote.source.revision, `workspace-pdf:1000:7:${"a".repeat(64)}`);
@@ -523,7 +525,9 @@ if (process.argv.includes("--pdf-fixtures-only")) {
         document.dispatchEvent(new Event("selectionchange"));
       })()`);
       await waitFor('document.querySelector(".pdf-selection-menu button")');
-      await click(".pdf-selection-menu button");
+      await click(".pdf-selection-menu__comment-toggle");
+      await waitFor('document.querySelector(".pdf-selection-comment__submit")');
+      await click(".pdf-selection-comment__submit");
       const changedQuote = (await evaluate('window.pdfParts')).find(part => part.type === "file_selection" && part.source.path === "changed.pdf");
       assert.equal(changedQuote.source.revision, `workspace-pdf:1000:8:${"b".repeat(64)}`);
       assert.match(changedQuote.source.quote, /Updated fixture page 2/);

@@ -85,9 +85,11 @@ Expand the activity trail to inspect tool calls. A `run_code` row shows its desc
 
 ## Quote part of a response
 
-Select displayed text in an assistant response, including while it is still streaming, then choose **Add to conversation**. Choose **Comment** to add an optional comment beside the selected passage first. Appended output and turn completion keep the selection and comment open while the selected text remains valid; changes to that passage dismiss the menu. Selections appear as quote cards in the attachment tray above that conversation's input, including in split view. Each quote captures the displayed text at that moment. Open a card to read the passage, edit its comment, remove the selection, or open its source. You can send a selection without typing another message. Sending, queuing, and steering include both the quoted text and your comment in the model's input.
+Select text in an assistant response and choose **Quote**. Enter an optional comment beside the passage, then choose **Add quote** or press Enter. You can quote a reply while it streams. The editor stays open as output arrives while the selected passage remains valid.
 
-Selected passages stay with their draft when switching tabs or leaving split view. Failed sends and editing held messages restore the quotes separately from the editable prompt. **View source** highlights the exact selected passage when the original response is loaded and visible. If it is hidden, unloaded, or changed, Wuu reports that the source is unavailable rather than highlighting another occurrence. Open the source conversation and load its response before trying again.
+The composer and sent messages show a quote count. Open it to see the passages and their comments. Select a row to jump to the original response and briefly highlight the exact passage. Wuu opens folded responses when needed and reports an unavailable source if the original passage can no longer be located. In a draft, you can edit a comment or remove a quote from its row.
+
+Quotes stay with your draft when switching tabs or leaving split view. Failed sends and editing held messages restore quotes separately from the prompt. You can send quotes on their own. Sending, queuing, and steering include the quoted passages and their comments in the model's input.
 
 Older hosts can discard quote metadata while retaining the transmitted text; older desktop clients may not display structured quotes. Use matching current host and desktop versions to retain structured quotes through editing and history recovery. Native clients show the flattened quote and comment as text.
 

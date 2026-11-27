@@ -152,7 +152,8 @@ async function run() {
       await selectFile(file, quote);
       await screenshot(`${label}-toolbar`);
       await checkFilePlacement(`${label}-toolbar`);
-      await clickButton(".file-selection-action-menu", "Add to conversation");
+      await clickButton(".file-selection-action-menu", "Quote");
+      await clickButton(".file-selection-action-menu", "Add quote");
       await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main")), "selected text tag");
       assert.equal(await evaluate(composerValue), draft, "Selected text must remain folded instead of expanding into the draft");
       assert.equal(await evaluate(() => Boolean(document.querySelector(".file-selection-comments"))), false, "A quote must not create a document comment");
@@ -161,6 +162,11 @@ async function run() {
       await click("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
       await waitFor(expected => document.querySelector(".composer-response-selection-quote")?.textContent === expected, "opened original text", quote);
       await visibleGeometry(".composer-file-selection-card-popover");
+      await fill(".composer-response-selection-comment", "Add a comment to the existing quote.");
+      await waitFor(() => document.querySelector(".file-selection-comments .file-selection-comment > p")?.textContent === "Add a comment to the existing quote.",
+        "existing quote accepts a comment");
+      await fill(".composer-response-selection-comment", "");
+      await waitFor(() => !document.querySelector(".file-selection-comments"), "clearing the comment keeps the plain quote");
       await screenshot(`${label}-quote-tag`);
       await press("Escape");
       await click("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main");
@@ -168,7 +174,8 @@ async function run() {
       await waitFor(() => !document.querySelector("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main"), "quote removed");
       assert.equal(await evaluate(composerValue), draft, "Removing a quote must preserve typed text");
       await selectFile(file, quote);
-      await clickButton(".file-selection-action-menu", "Add to conversation");
+      await clickButton(".file-selection-action-menu", "Quote");
+      await clickButton(".file-selection-action-menu", "Add quote");
       assert.equal((await snapshot()).submissions.length, initial.submissions.length, "Adding a quote must not submit a turn");
       await click("[data-main-conversation-composer] .composer-send-button");
       await waitFor(count => window.selectionE2E.snapshot().submissions.length === count, "quoted text submission", initial.submissions.length + 1);
@@ -183,12 +190,12 @@ async function run() {
 
       phase = `${label}: comment`;
       await selectFile(file, quote);
-      await clickButton(".file-selection-action-menu", "Comment");
+      await clickButton(".file-selection-action-menu", "Quote");
       let comment = `Explain this selection (${label}).`;
       await fill(".file-selection-action-menu textarea", comment);
       await screenshot(`${label}-comment-form`);
       await checkFilePlacement(`${label}-comment-form`);
-      await clickButton(".file-selection-action-menu", "Comment");
+      await clickButton(".file-selection-action-menu", "Add quote");
       await waitFor(() => Boolean(document.querySelector("[data-main-conversation-composer] .composer-file-selection-card .composer-document-card-main")), "comment chip");
       assert.equal(await evaluate(composerValue), draft, "Comment attachment must not replace the visible draft");
       phase = `${label}: document comment visibility`;
@@ -305,7 +312,7 @@ async function run() {
     const wrapped = await checkFilePlacement(`${variant.name}-wrapped-toolbar`);
     assert.ok(new Set(wrapped.sourceRects.map(rect => Math.round(rect.top))).size >= 2, "Wrapped fixture must select multiple painted rows");
     await screenshot(`${variant.name}-wrapped-toolbar`);
-    await clickButton(".file-selection-action-menu", "Comment");
+    await clickButton(".file-selection-action-menu", "Quote");
     const wrappedComment = "Review this wrapped code without covering the source. 第二行 😀";
     await fill(".file-selection-action-menu textarea", wrappedComment);
     await checkFilePlacement(`${variant.name}-wrapped-comment`);

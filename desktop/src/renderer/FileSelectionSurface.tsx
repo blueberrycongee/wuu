@@ -27,10 +27,10 @@ type Form = { kind: "comment" | "edit"; value: string; id?: string };
 
 const copy = {
   en: {
-    tools: "Selection actions", quote: "Add to conversation", comment: "Comment", edit: "Edit",
+    tools: "Selection actions", edit: "Edit",
     submit: "Send edit request", cancel: "Cancel", remove: "Remove",
-    editComment: "Edit comment", comments: "Comments", instruction: "Describe the change",
-    commentLabel: "Add an optional comment…", block: "Source block selected; rendered text cannot be mapped exactly.",
+    comments: "Comments", instruction: "Describe the change",
+    block: "Source block selected; rendered text cannot be mapped exactly.",
     stale: "The file has changed. Select the text again before sending an edit request.",
     close: "Close selection actions",
     sending: "Sending…", failed: "The edit request was not sent. Your instruction is kept; try again.",
@@ -38,10 +38,10 @@ const copy = {
     askSide: "Ask in side chat", sideUnavailable: "Start a main conversation to use side chat",
   },
   zh: {
-    tools: "选区操作", quote: "添加到对话", comment: "评论", edit: "编辑",
+    tools: "选区操作", edit: "编辑",
     submit: "发送修改请求", cancel: "取消", remove: "删除",
-    editComment: "编辑评论", comments: "评论", instruction: "描述需要的修改",
-    commentLabel: "添加可选评论…", block: "已选取源码块；渲染内容无法精确映射。",
+    comments: "批注", instruction: "描述需要的修改",
+    block: "已选取源码块；渲染内容无法精确映射。",
     stale: "文件已更新。发送修改请求前，请重新选择文本。", close: "关闭选区操作",
     sending: "发送中…", failed: "修改请求未发送。指令已保留，可以重试。",
     locate: "定位原文",
@@ -58,7 +58,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
 }): JSX.Element {
   const sideConversationAvailable = useContext(SideConversationAvailableContext);
   const actions = useFileSelectionActions();
-  const { locale } = useI18n();
+  const { locale, t } = useI18n();
   const labels = locale.startsWith("zh") ? copy.zh : copy.en;
   const host = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -255,7 +255,7 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
           <button type="button" onClick={() => {
             setCapture(captureSaved(part.source));
             setForm({ kind: "comment", value: part.comment ?? "", id: part.id });
-          }}>{labels.editComment}</button>
+          }}>{t("responseSelection.editComment")}</button>
           <button type="button" onClick={() => { actions!.removeComment(part.id); if (form?.id === part.id) close(); }}>{labels.remove}</button>
         </div>
         <blockquote>{part.source.quote}</blockquote>
@@ -300,13 +300,22 @@ export function FileSelectionSurface({ workspace, path, text, active = true, chi
         </form>
       </div> : <SelectionActionMenu ref={popup} className="file-selection-action-menu"
         style={{ left: position.left, top: position.top, maxWidth: position.width, maxHeight: position.height, overflow: "auto" }}
-        label={labels.tools} addLabel={labels.quote} commentLabel={labels.comment} commentPlaceholder={labels.commentLabel}
+        label={labels.tools} quoteLabel={t("responseSelection.quote")}
+        submitLabel={t(form?.id ? "common.save" : "responseSelection.add")}
+        commentPlaceholder={t(form?.id ? "responseSelection.editComment" : "responseSelection.optionalComment")}
         commenting={form?.kind === "comment"} comment={form?.kind === "comment" ? form.value : ""}
         allowEmptyComment={!form?.id}
         onCommentChange={value => setForm(previous => previous?.kind === "comment" ? { ...previous, value } : previous)}
-        onAdd={() => { actions!.addQuote(current.source); close(); }} onCommentStart={() => startForm("comment")}
+        onQuote={() => startForm("comment")}
         onCommentCancel={() => { returnToComment.current = true; setForm(null); }}
-        onCommentSubmit={() => { if (form?.kind !== "comment") return; if (form.value.trim()) actions!.addComment(current.source, form.value.trim(), form.id); else if (!form.id) actions!.addQuote(current.source); else return; close(); }}
+        onCommentSubmit={() => {
+          if (form?.kind !== "comment") return;
+          const comment = form.value.trim();
+          if (comment) actions!.addComment(current.source, comment, form.id);
+          else if (!form.id) actions!.addQuote(current.source);
+          else return;
+          close();
+        }}
         commentToggleRef={commentToggle} commentInputRef={textarea}
         extraActions={<>
           {sideConversationAvailable ? <Tooltip asChild content={!actions!.askSide ? labels.sideUnavailable : undefined}><button aria-description={!actions!.askSide ? labels.sideUnavailable : undefined} type="button" disabled={!actions!.askSide || stale}
