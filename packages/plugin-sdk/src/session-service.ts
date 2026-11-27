@@ -504,6 +504,8 @@ export interface SessionDomainNextStepModelSelection {
 }
 
 export interface SessionDomainSession {
+  readonly placement?: "side";
+  readonly inherited_through_seq?: number;
   readonly user_space_id?: string;
   readonly product_domain?: string;
   readonly agent_id?: string;
@@ -787,6 +789,8 @@ export interface SessionDomainMethods {
   "ReadHistoryPage": { args: readonly [id: string, startSeq: number, limit: number]; values: readonly [SessionDomainHistoryPage]; };
   /** Bounded active transcript read: current retractions apply even to an older snapshot/cursor.
    * Unsupported providers must reject this distinct operation, never substitute physical history. */
+  "PromoteSideChat": { args: readonly [id: string]; values: readonly [SessionDomainSession]; };
+  "DeleteWithSideChats": { args: readonly [id: string, children: readonly string[], onlyIfArchived: boolean]; values: readonly [readonly SessionDomainSession[]]; };
   "ReadActiveHistoryQuery": { args: readonly [query: SessionDomainHistoryReadQuery]; values: readonly [SessionDomainHistoryPage]; };
   "ReadHistoryQuery": { args: readonly [query: SessionDomainHistoryReadQuery]; values: readonly [SessionDomainHistoryPage]; };
   "ReadPluginGenerationSnapshot": { args: readonly [sessionID: string]; values: readonly [SessionDomainPluginGenerationSnapshot, boolean]; };
@@ -941,6 +945,8 @@ const sessionDomainArity = {
   "PutSessionLaunch": [1, 1],
   "ReadControl": [1, 2],
   "ReadHistoryPage": [3, 1],
+  "PromoteSideChat": [1, 1],
+  "DeleteWithSideChats": [3, 1],
   "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],

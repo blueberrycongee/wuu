@@ -240,7 +240,7 @@ func (s *Server) handleRestartRecoveryList(ctx context.Context, req Request) err
 }
 
 func restartRecoverySessionEligible(meta session.Session) bool {
-	return meta.ArchivedAt == nil && meta.Visibility != pluginhost.SessionVisibilityPlugin && meta.ParentID == "" && !retiredSessionSource(meta.Source)
+	return meta.ArchivedAt == nil && meta.Visibility != pluginhost.SessionVisibilityPlugin && (meta.ParentID == "" || meta.Placement == session.PlacementSide) && !retiredSessionSource(meta.Source)
 }
 
 func (s *Server) handleRestartRecoveryDismiss(req Request) error {

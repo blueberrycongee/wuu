@@ -276,7 +276,7 @@ describe("FirstRunOnboarding", () => {
   });
 
   it.each(["推荐", "极简", "全部"])("applies the %s preset as one complete provider and consumer selection", async preset => {
-    const ids = ["side", "todo", "automation", "automation-client"];
+    const ids = ["todo", "automation", "automation-client"];
     const update = vi.fn(async () => undefined);
     await sharedFlow({ inventory: ids.map(id => plugin(id, true)), onUpdateExtensionPackage: update });
     await clickButton("开始设置");
@@ -473,7 +473,6 @@ describe("FirstRunOnboarding", () => {
               plugin("todo", false),
               plugin("automation", false),
               plugin("automation-client", false),
-              plugin("side", true),
               plugin("subagent", true),
               plugin("peers", true),
               plugin("memory", true),
@@ -487,25 +486,25 @@ describe("FirstRunOnboarding", () => {
     const selectedPlugins = () => [...container.querySelectorAll(".onboarding-plugin")]
       .filter((row) => row.querySelector("[role=switch]")?.getAttribute("aria-checked") === "true")
       .map((row) => row.getAttribute("data-plugin"));
-    expect(selectedPlugins()).toEqual(["side", "automation", "automation-client"]);
+    expect(selectedPlugins()).toEqual(["automation", "automation-client"]);
     expect(container.querySelector(".onboarding-presets [aria-pressed=true]")?.textContent).toBe("推荐");
     await clickButton("全部");
-    expect(selectedPlugins()).toHaveLength(8);
+    expect(selectedPlugins()).toHaveLength(7);
     await clickButton("推荐");
-    expect(selectedPlugins()).toEqual(["side", "automation", "automation-client"]);
+    expect(selectedPlugins()).toEqual(["automation", "automation-client"]);
     expect(props.onUpdateExtensionPackage).not.toHaveBeenCalled();
-    await clickPlugin("side");
+    await clickPlugin("todo");
     await clickButton("继续");
     expect(props.onUpdateExtensionPackage).toHaveBeenCalledExactlyOnceWith({ updates: [
-      "side", "ask-user", "todo", "automation", "automation-client", "subagent", "peers", "memory",
-    ].map(id => ({ id: `plugin:bundled:${id}`, fingerprint: `${id}-fingerprint`, action: id === "automation" || id === "automation-client" ? "enable" : "disable" })) });
+      "ask-user", "todo", "automation", "automation-client", "subagent", "peers", "memory",
+    ].map(id => ({ id: `plugin:bundled:${id}`, fingerprint: `${id}-fingerprint`, action: ["todo", "automation", "automation-client"].includes(id) ? "enable" : "disable" })) });
 
     // Restarting before onboarding finishes keeps the committed selection.
     await act(async () => {
       root.unmount();
       root = createRoot(container);
       root.render(<I18nProvider><FirstRunOnboarding {...props} inventory={[
-        "side", "ask-user", "todo", "automation", "automation-client", "subagent", "peers", "memory",
+        "ask-user", "todo", "automation", "automation-client", "subagent", "peers", "memory",
       ].map((id) => ({ ...plugin(id, id === "automation"), enabled_override: id === "automation" }))} /></I18nProvider>);
     });
     await clickButton("开始设置");
@@ -583,8 +582,7 @@ describe("FirstRunOnboarding", () => {
     }
     // Removing one capability leaves all the others intact.
     await clickPlugin("memory");
-    expect(wornCapabilities()).not.toContain("memory");
-    expect(wornCapabilities()).toHaveLength(8);
+    expect(wornCapabilities().sort()).toEqual(ONBOARDING_PLUGIN_ORDER.filter(id => id !== "subagent" && id !== "memory").sort());
     await clickButton("极简");
     expect(visibleClones()).toHaveLength(1);
     expect(wornCapabilities()).toEqual([]);

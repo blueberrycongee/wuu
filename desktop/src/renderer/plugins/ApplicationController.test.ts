@@ -42,20 +42,29 @@ describe("shared application state", () => {
       expect(snapshots).toEqual([false]);
     } finally { off(); }
   });
-  it("requests the auxiliary panel again when an existing side conversation is reopened", async () => {
+  it("keeps side chats local to the preview and retains their first draft when fork fails", async () => {
     const context = { kind: "no_project" as const, cwd: "/fixture" };
-    const thread = { id: "main", cwd: context.cwd, preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle" as const, turns: [] };
-    window.wuu = { openSideThread: vi.fn().mockResolvedValue({ summary: null }), getSideThreadHistory: vi.fn().mockResolvedValue(null) } as unknown as WuuDesktopApi;
+    const thread: Thread = { id: "main", cwd: context.cwd, preview: "", model_provider: "fixture", model: "fixture", created_at: "", updated_at: "", status: "idle", turns: [] };
+    const child: Thread = { ...thread, id: "child", parent_id: thread.id, placement: "side" };
+    const forkThread = vi.fn().mockRejectedValueOnce(new Error("fork failed")).mockResolvedValue({ thread: child });
+    const startTurn = vi.fn().mockResolvedValue({ turn: { id: "turn", items: [], status: "in_progress" } });
+    window.wuu = { forkThread, startTurn, resumeThread: vi.fn().mockResolvedValue({ thread: child }) } as unknown as WuuDesktopApi;
     const controller = new ApplicationController({ ...initialState, activeContext: context, thread, threads: [thread],
-      initialized: { ...submissionInitialized!, extension_inventory: [{ id: "side", kind: "plugin", name: "Side", state: "active", enabled: true, approval_state: "official", runtime_state: "active",
-        provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
-        contributions: { commands: [{ id: "side", title: "Side", kind: "side_conversation", template: "Side" }] },
-      }] } });
-    await controller.invoke("side.open", { parentThreadId: thread.id });
-    const first = controller.getSnapshot().navigationWorkspace.regionVisibilityRequest;
-    expect(first?.region).toBe("auxiliary");
-    await controller.invoke("side.open", { parentThreadId: thread.id });
-    expect(controller.getSnapshot().navigationWorkspace.regionVisibilityRequest).toEqual({ id: first!.id + 1, region: "auxiliary" });
+      initialized: submissionInitialized, activeSessionTabID: "thread:main", sessionTabs: [createThreadSessionTab(thread, context)] });
+    const { tabId } = await controller.invoke("side.open", { parentThreadId: thread.id });
+    expect(forkThread).not.toHaveBeenCalled();
+    await controller.invoke("composer.set-draft", { ownerTabId: tabId, text: "side question" });
+    expect((await settleSubmission(controller, await controller.invoke("composer.submit", { ownerTabId: tabId }))).phase).toBe("failed");
+    expect(controller.getSnapshot().drafts.sideChats?.[tabId]?.text).toBe("side question");
+    expect((await settleSubmission(controller, await controller.invoke("composer.submit", { ownerTabId: tabId }))).phase).toBe("completed");
+    expect(forkThread).toHaveBeenLastCalledWith("main", undefined, undefined, undefined, undefined, { placement: "side", anchor: "latest_completed" });
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(controller.getSnapshot().tabs.primaryThreadId).toBe("main");
+    expect(controller.getSnapshot().previewWorkspace.tabs).toContainEqual(expect.objectContaining({ id: tabId, kind: "side-chat", threadID: "child" }));
+    await controller.invoke("preview.close-tab", { tabId });
+    await controller.invoke("side.open", { parentThreadId: thread.id, threadId: child.id });
+    expect(forkThread).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot().previewWorkspace.tabs).toContainEqual(expect.objectContaining({ threadID: "child" }));
   });
 
   it("reveals the auxiliary panel when a PiP expand docks its browser page", async () => {

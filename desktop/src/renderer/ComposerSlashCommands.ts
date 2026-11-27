@@ -11,7 +11,6 @@ import {
 export type ComposerSlashCommandAction =
   | "new-thread"
   | "open-side-thread"
-  | "reset-side-thread"
   | "open-review"
   | "open-skills"
   | "open-files"
@@ -343,6 +342,17 @@ export function buildComposerSlashCommands({
       disabledReason: needsRuntime ?? needsIdleThread
     },
     {
+      id: "side",
+      name: "side",
+      title: t("slash.side.title"),
+      description: t("slash.side.description"),
+      tag: t("slash.tag.sideChat"),
+      kind: "action",
+      action: "open-side-thread",
+      argumentHint: t("slash.side.argumentHint"),
+      disabledReason: needsRuntime ?? sideThreadDisabledReason,
+    },
+    {
       id: "settings",
       name: "settings",
       title: t("slash.settings.title"),
@@ -370,36 +380,15 @@ export function buildComposerSlashCommands({
     description: command.description,
     tag: `Plugin · ${command.pluginId}`,
     kind: command.kind === "prompt_template" ? "prompt" : "action",
-    action: command.kind === "side_conversation" ? "open-side-thread" : command.kind === "runtime_action" ? "plugin" : undefined,
-    argumentHint: command.kind === "side_conversation" ? t("slash.side.argumentHint") : undefined,
+    action: command.kind === "runtime_action" ? "plugin" : undefined,
     aliases: command.aliases,
     keywords: [command.pluginId, "plugin", ...command.keywords],
-    disabledReason: command.kind !== "prompt_template"
-      ? needsRuntime ?? sideThreadDisabledReason
-      : needsRuntime,
+    disabledReason: needsRuntime,
     pluginId: command.pluginId,
     pluginCommandId: command.name,
     promptTemplate: command.template,
   }));
   return [...commands, ...pluginCommands, ...skillCommands];
-}
-
-// The side-chat composer exposes its own command surface instead of the main
-// list: side commands act on the side thread only.
-export function buildSideThreadSlashCommands(): ComposerSlashCommand[] {
-  return [
-    {
-      id: "side-reset",
-      name: "reset",
-      title: t("slash.sideReset.title"),
-      description: t("slash.sideReset.description"),
-      tag: t("slash.tag.sideChat"),
-      kind: "action",
-      action: "reset-side-thread",
-      aliases: ["rebase"],
-      keywords: ["reset", "rebase", "clear", "清空", "重置", "变基"]
-    }
-  ];
 }
 
 export function filterComposerSlashCommands(commands: ComposerSlashCommand[], query: string): ComposerSlashCommand[] {

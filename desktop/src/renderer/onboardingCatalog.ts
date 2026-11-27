@@ -3,10 +3,10 @@ import type { TranslationKey } from "./i18n/resources/zh-CN";
 // First-run choices are deliberately a subset of installed extensions. Changing
 // this catalog changes the offer, not installation or extension lifecycle.
 export const ONBOARDING_PLUGIN_ORDER = [
-  "side", "ask-user", "todo", "goal", "automation", "automation-client", "subagent", "peers", "memory", "dream",
+  "ask-user", "todo", "goal", "automation", "automation-client", "subagent", "peers", "memory", "dream",
 ] as const;
 
-export const RECOMMENDED_PLUGIN_IDS = new Set<string>(["side", "automation", "automation-client"]);
+export const RECOMMENDED_PLUGIN_IDS = new Set<string>(["automation", "automation-client"]);
 
 // Package names distinguish providers from clients that share an interface name.
 // Only presentation metadata is used; no extension runtime is loaded here.

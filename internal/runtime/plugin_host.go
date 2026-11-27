@@ -534,7 +534,12 @@ func selectCompositionPlugins(selection *composition.Config, candidates []plugin
 	if resolved.Modules != nil {
 		modules := make([]string, 0, len(*resolved.Modules))
 		for _, id := range *resolved.Modules {
-			if slices.Contains(resolved.OptionalModules, id) && !identities[id] {
+			// Retire this compatibility path when direct upgrades from the
+			// bundled side-chat command are no longer supported.
+			retiredSide := id == "side" && !slices.ContainsFunc(resolved.Services, func(binding composition.Binding) bool {
+				return binding.Provider == id || binding.Consumer == id
+			})
+			if !identities[id] && (retiredSide || slices.Contains(resolved.OptionalModules, id)) {
 				delete(resolved.ModuleSources, id)
 				continue
 			}

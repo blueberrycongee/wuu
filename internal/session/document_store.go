@@ -242,7 +242,7 @@ func (s *documentStore) updateMetadata(id string, missingOK bool, update func(*S
 }
 
 func (s *documentStore) MostRecent() (string, error) {
-	rows, err := s.List(1)
+	rows, err := s.listSessions(1, func(sess Session) bool { return sess.Placement != PlacementSide })
 	if err != nil || len(rows) == 0 {
 		return "", err
 	}
@@ -250,7 +250,8 @@ func (s *documentStore) MostRecent() (string, error) {
 }
 
 func (s *documentStore) MostRecentForCWD(cwd, workspaceID string) (string, error) {
-	rows, err := s.ListForCWD(cwd, workspaceID, 1)
+	matches := sessionListMatches(cwd, workspaceID)
+	rows, err := s.listSessions(1, func(sess Session) bool { return sess.Placement != PlacementSide && matches(sess) })
 	if err != nil || len(rows) == 0 {
 		return "", err
 	}

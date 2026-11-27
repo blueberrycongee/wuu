@@ -116,7 +116,7 @@ export class ApplicationNavigation {
       initialized: Boolean(state.initialized), activeContextKind: state.activeContext?.kind, selectedWorkspaceId: state.activeProjectId,
       workspaces: state.projects, threads: rows,
       loadingWorkspaceIds: [...this.host.sidebarCache.getSnapshot().requestedWorkspaceThreadIDs],
-      pendingConversations: this.host.getPendingDraftTabIds().flatMap(id => { const tab = state.sessionTabs.find(tab => tab.id === id); return tab && tab.kind !== "skills" ? [{ id, title: tab.prompt, context: tab.context }] : []; }),
+      pendingConversations: this.host.getPendingDraftTabIds().flatMap(id => { const tab = state.sessionTabs.find(tab => tab.id === id); return tab && tab.kind !== "skills" && !tab.sideParentThreadId ? [{ id, title: tab.prompt, context: tab.context }] : []; }),
       lastViewedTurnByThreadId: state.lastViewedTurnByThreadID, folders: this.folders,
       plugins: (state.initialized?.extension_inventory ?? []).filter(row => row.kind === "plugin" || row.kind === "skill").map(row => ({
         id: row.id, name: row.name, pluginId: row.provenance.plugin_id ?? row.id, fingerprint: row.fingerprint ?? "", icon: row.icon, family: row.family, enabled: pluginToggle(row).on, kind: row.kind as "plugin" | "skill",

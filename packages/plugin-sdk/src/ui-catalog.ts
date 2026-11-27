@@ -11,7 +11,7 @@ export type CatalogCommandDescriptorV1 = {
   id: string;
   title: string;
   description?: string;
-  kind: "prompt_template" | "runtime_action" | "side_conversation";
+  kind: "prompt_template" | "runtime_action";
   template?: string;
   contexts?: string[];
   aliases?: string[];

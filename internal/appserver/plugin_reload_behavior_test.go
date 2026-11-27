@@ -647,7 +647,12 @@ func TestPluginReloadWaitsForOutstandingBackgroundWork(t *testing.T) {
 			if len(requests) != 1 {
 				t.Fatalf("completion inference calls=%d want 1", len(requests))
 			}
-			if !strings.Contains(requestMessagesText(requests[0].Messages), "history before reload") || !strings.Contains(requestMessagesText(requests[0].Messages), "worker finished") {
+			var text strings.Builder
+			for _, message := range requests[0].Messages {
+				text.WriteString(message.Content)
+				text.WriteByte('\n')
+			}
+			if !strings.Contains(text.String(), "history before reload") || !strings.Contains(text.String(), "worker finished") {
 				t.Fatalf("completion lost retained history or worker result: %+v", requests[0].Messages)
 			}
 			// An idle projection may not have a runtime until its next turn.

@@ -80,6 +80,15 @@ func (s *documentStore) createInitialized(sess Session, records []HistoryRecord,
 				}
 			}
 		}
+		if current.Placement == PlacementSide {
+			parent, err := requireSessionDocument(tx, current.ParentID)
+			if err != nil {
+				return err
+			}
+			if parent.Placement != "" {
+				return errors.New("side chats require a main conversation")
+			}
+		}
 		if err := putSessionDocument(tx, current); err != nil {
 			return err
 		}

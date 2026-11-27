@@ -71,12 +71,16 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
   const frames = mockAnimationFrames();
   vi.stubGlobal("wuu", { unsupportedMethods: [] });
   const base = createConversationTestApplication();
-  const side = { ...base.getSnapshot().sideConversation, parentThreadId: "parent", entry: { open: true, summary: null, messages: [], draft: "", streaming: false }, turns: [{ id: "side-turn", duration_ms: 0, input_tokens: 3, status: "completed" as const, items_view: "full" as const, items: [user, { id: "side-artifact", type: "tool_call" as const, name: "present_artifact", status: "completed" as const, result_detail: { content: [{ type: "image" as const, mime_type: "image/png", name: "side.png", data: "c2lkZQ==", artifact: { placement: "inline" as const, ref: "side-image" } }] } }, { id: "side-answer", type: "agent_message" as const, text: "Independent side answer", status: "completed" as const, terminal: true }] }] };
-  const snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(), sideConversation: side,
-    tabs: { ...base.getSnapshot().tabs, items: [{ ...base.getSnapshot().tabs.items[0], id: "thread:parent", threadId: "parent" }] },
-    previewWorkspace: { ...base.getSnapshot().previewWorkspace, tabs: [{ kind: "side-thread", id: "side-thread" }], activeTabId: "side-thread", conversationSelected: false } };
   const parent: Thread = { id: "parent", preview: "", cwd: "/repo", model_provider: "fixture", model: "fixture", status: "idle", created_at: "", updated_at: "", turns: [] };
-  const state: AppState = { ...initialState, thread: parent, threads: [parent], activeSessionTabID: "thread:parent",
+  const side: Thread = { ...parent, id: "side:parent", parent_id: parent.id, placement: "side",
+    turns: [{ id: "side-turn", duration_ms: 0, input_tokens: 3, status: "completed" as const, items_view: "full" as const, items: [user, { id: "side-artifact", type: "tool_call" as const, name: "present_artifact", status: "completed" as const, result_detail: { content: [{ type: "image" as const, mime_type: "image/png", name: "side.png", data: "c2lkZQ==", artifact: { placement: "inline" as const, ref: "side-image" } }] } }, { id: "side-answer", type: "agent_message" as const, text: "Independent side answer", status: "completed" as const, terminal: true }] }] };
+  const draft = { ownerTabId: "thread:side:parent", text: "", imageIds: [], fileIds: [], selections: [], revision: 0 };
+  const snapshot: ApplicationSnapshotV1 = { ...base.getSnapshot(),
+    sideConversation: { ...base.getSnapshot().sideConversation, parentThreadId: parent.id },
+    conversationWorkspace: { ...base.getSnapshot().conversationWorkspace, threads: [parent, side] },
+    drafts: { ...base.getSnapshot().drafts, sideChats: { [draft.ownerTabId]: draft } },
+    previewWorkspace: { ...base.getSnapshot().previewWorkspace, tabs: [{ kind: "side-chat", id: "side-chat", parentThreadID: parent.id, threadID: side.id }], activeTabId: "side-chat", conversationSelected: false } };
+  const state: AppState = { ...initialState, thread: parent, threads: [parent, side], activeSessionTabID: "thread:parent",
     sessionTabs: [{ id: "thread:parent", kind: "thread", threadID: "parent", title: "Parent", context: { kind: "no_project", cwd: "/repo" }, prompt: "", images: [], files: [] }] };
   const presentation = new ApplicationComposerPresentation({ getState: () => state, updateState: vi.fn(), subscribeState: () => () => {}, getPluginHost: () => host! });
   const setPreviewVisibility = vi.fn();
@@ -101,9 +105,6 @@ it("keeps preview-owned side turns and artifacts when an alternate conversation 
   expect(container.textContent).toContain("Independent side answer");
   expect(container.querySelector('[data-conversation-metrics-turn="side-turn"]')?.textContent).toBe("0 ms · 3 input tokens");
   await frames.flush();
-  const sideComposer = container.querySelector(".side-thread-panel textarea");
-  expect(sideComposer).not.toBeNull();
-  expect(document.activeElement).toBe(sideComposer);
   expect(setPreviewVisibility).toHaveBeenLastCalledWith(true, expect.any(AbortSignal));
   expect(container.querySelector('img')?.getAttribute("src")).toBe("data:image/png;base64,c2lkZQ==");
   expect(presented.mock.calls.at(-1)?.[0].context).toMatchObject({ threadId: "side:parent", turnId: "side-turn", itemId: "side-answer" });

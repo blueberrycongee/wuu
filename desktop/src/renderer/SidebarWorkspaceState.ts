@@ -269,7 +269,7 @@ export function createSidebarThreadCache(getProjects: () => DesktopProject[], se
     setWorkspaceThreadsByWorkspaceID((current) => {
       let next = current;
       for (const project of projects) {
-        const workspaceThreads = threadsForWorkspace(incoming, project);
+        const workspaceThreads = threadsForWorkspace(incoming, project).filter(thread => thread.placement !== "side");
         if (workspaceThreads.length === 0 && !requested) {
           continue;
         }

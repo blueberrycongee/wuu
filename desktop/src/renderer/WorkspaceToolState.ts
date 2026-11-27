@@ -30,7 +30,6 @@ export function useWorkspaceToolState({
   ensureWorkspaceToolTab: (view: WorkspacePanelView) => void;
   activateWorkspaceTool: (view: WorkspacePanelView) => void;
   openWorkspaceTool: (view: WorkspacePanelView) => void;
-  openWorkspaceSideThread: () => void;
   openWorkspacePluginTool: (entry: RegisteredPluginViewEntry) => void;
   openWorkspaceDiffTab: (input: { threadID: string; path: string; selection: TurnFileDiffSelection }) => void;
   openWorkspaceFileTab: (input: { context: Exclude<RuntimeContext, { kind: "user" }>; path: string }) => void;
@@ -83,10 +82,7 @@ export function useWorkspaceToolState({
     activateWorkspaceTool(view);
     setRightPanelOpenWithMotion(true);
   }
-  function openWorkspaceSideThread(): void {
-    void application.invoke("preview.open-side-thread", {}).catch(showErrorToast);
-    setRightPanelOpenWithMotion(true);
-  }
+
   function openWorkspacePluginTool(entry: RegisteredPluginViewEntry): void {
     void application.invoke("preview.open-plugin", { entryId: entry.id, pluginId: entry.pluginId,
       generation: entry.generation, viewTypeId: entry.view, title: entry.title, icon: entry.icon }).catch(showErrorToast);
@@ -158,7 +154,6 @@ export function useWorkspaceToolState({
     ensureWorkspaceToolTab,
     activateWorkspaceTool,
     openWorkspaceTool,
-    openWorkspaceSideThread,
     openWorkspacePluginTool,
     openWorkspaceDiffTab,
     openWorkspaceFileTab,

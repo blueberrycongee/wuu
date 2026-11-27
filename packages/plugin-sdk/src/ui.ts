@@ -194,7 +194,7 @@ export interface ApplicationActionMapV1 extends ApplicationSideConversationActio
   "thread.rename": { input: { readonly threadId: string; readonly title: string }; result: void };
   "thread.archive": { input: { readonly threadId: string; readonly archived: boolean; readonly force?: boolean }; result: void };
   "composer.set-draft": { input: { readonly text: string; readonly ownerTabId?: string }; result: void };
-  "composer.stop": { input: Record<string, never>; result: void };
+  "composer.stop": { input: { readonly ownerTabId?: string }; result: void };
   "composer.configure": { input: { readonly modelId?: string; readonly runtimeId?: string; readonly permissionId?: string }; result: void };
   "settings.open": { input: { readonly pageId?: string }; result: void };
   "settings.close": { input: Record<string, never>; result: void };

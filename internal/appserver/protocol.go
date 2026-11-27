@@ -20,7 +20,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/sidethread"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -71,13 +70,9 @@ const (
 	MethodThreadStart                     = "thread/start"
 	MethodThreadResume                    = "thread/resume"
 	MethodThreadFork                      = "thread/fork"
+	MethodThreadPromote                   = "thread/promote"
 	MethodThreadEditMessage               = "thread/edit-message"
 	MethodThreadContextComposition        = "thread/context-composition"
-	MethodSideThreadOpen                  = "sideThread/open"
-	MethodSideThreadGetHistory            = "sideThread/getHistory"
-	MethodSideThreadSend                  = "sideThread/sendMessage"
-	MethodSideThreadInterrupt             = "sideThread/interrupt"
-	MethodSideThreadReset                 = "sideThread/reset"
 	MethodThreadList                      = "thread/list"
 	MethodThreadListAll                   = "thread/listAll"
 	MethodThreadListArchived              = "thread/listArchived"
@@ -163,6 +158,7 @@ const (
 
 	NotificationThreadStarted          = "thread/started"
 	NotificationThreadResumed          = "thread/resumed"
+	NotificationThreadDeleted          = "thread/deleted"
 	NotificationThreadUpdated          = "thread/updated"
 	NotificationTurnStarted            = "turn/started"
 	NotificationTurnQueued             = "turn/queued"
@@ -176,7 +172,6 @@ const (
 	NotificationUserAttention          = "user/attention"
 	NotificationRunStarted             = "run/started"
 	NotificationRunUpdated             = "run/updated"
-	NotificationSideThreadEvent        = "sideThread/event"
 	NotificationActivityStarted        = "activity/started"
 	NotificationActivityUpdated        = "activity/updated"
 	NotificationActivityControlChanged = "activity/control_changed"
@@ -766,9 +761,8 @@ const (
 type ExtensionCommandKind string
 
 const (
-	ExtensionCommandPromptTemplate   ExtensionCommandKind = "prompt_template"
-	ExtensionCommandRuntimeAction    ExtensionCommandKind = "runtime_action"
-	ExtensionCommandSideConversation ExtensionCommandKind = "side_conversation"
+	ExtensionCommandPromptTemplate ExtensionCommandKind = "prompt_template"
+	ExtensionCommandRuntimeAction  ExtensionCommandKind = "runtime_action"
 )
 
 type ExtensionCommandDescriptor struct {
@@ -1707,11 +1701,13 @@ type ThreadResumeResult struct {
 }
 
 type ThreadForkParams struct {
-	ThreadID string            `json:"thread_id"`
-	TurnID   string            `json:"turn_id,omitempty"`
-	ItemID   string            `json:"item_id,omitempty"`
-	Target   *ThreadForkTarget `json:"target,omitempty"`
-	Mode     string            `json:"mode,omitempty"`
+	Placement string            `json:"placement,omitempty"`
+	Anchor    string            `json:"anchor,omitempty"`
+	ThreadID  string            `json:"thread_id"`
+	TurnID    string            `json:"turn_id,omitempty"`
+	ItemID    string            `json:"item_id,omitempty"`
+	Target    *ThreadForkTarget `json:"target,omitempty"`
+	Mode      string            `json:"mode,omitempty"`
 	// HistoryPage bounds the returned history; older items use thread/history/read.
 	HistoryPage bool `json:"history_page,omitempty"`
 }
@@ -1792,93 +1788,6 @@ type ThreadContextCompositionResult struct {
 // the global session list. Its four JSON-RPC methods mirror the renderer IPC
 // surface in packages/protocol/src/index.ts and the dispatch table in server.go.
 
-type SideThreadOpenParams struct {
-	MainThreadID string `json:"main_thread_id"`
-}
-
-type SideThreadOpenResult struct {
-	Summary *SideThreadWireSummary `json:"summary"`
-}
-
-type SideThreadGetHistoryParams struct {
-	MainThreadID string `json:"main_thread_id"`
-}
-
-type SideThreadGetHistoryResult struct {
-	Summary  SideThreadWireSummary   `json:"summary"`
-	Messages []SideThreadWireMessage `json:"messages"`
-}
-
-type SideThreadWireSummary struct {
-	SideThreadID    string                     `json:"side_thread_id"`
-	MainThreadID    string                     `json:"main_thread_id"`
-	Status          string                     `json:"status"`
-	Revision        uint64                     `json:"revision"`
-	MainTaskSummary *SideThreadMainTaskSummary `json:"main_task_summary,omitempty"`
-	CreatedAt       time.Time                  `json:"created_at"`
-	UpdatedAt       time.Time                  `json:"updated_at"`
-}
-
-type SideThreadWireMessage struct {
-	ID           string                         `json:"id"`
-	SideThreadID string                         `json:"side_thread_id"`
-	Role         string                         `json:"role"`
-	Text         string                         `json:"text"`
-	Selection    *sidethread.SelectionReference `json:"selection,omitempty"`
-	Items        []ThreadItem                   `json:"items,omitempty"`
-	Status       string                         `json:"status,omitempty"`
-	ErrorMessage string                         `json:"error_message,omitempty"`
-	CreatedAt    time.Time                      `json:"created_at"`
-}
-
-type SideThreadMainTaskSummary struct {
-	Running         bool   `json:"running"`
-	LastUserMessage string `json:"last_user_message,omitempty"`
-}
-
-type SideThreadSendParams struct {
-	CommandID    string                         `json:"command_id,omitempty"`
-	MainThreadID string                         `json:"main_thread_id"`
-	Prompt       string                         `json:"prompt"`
-	Selection    *sidethread.SelectionReference `json:"selection,omitempty"`
-}
-
-type SideThreadSendResult struct {
-	UserMessageID string                `json:"user_message_id"`
-	Summary       SideThreadWireSummary `json:"summary"`
-}
-
-type SideThreadInterruptParams struct {
-	MainThreadID string `json:"main_thread_id"`
-}
-
-type SideThreadInterruptResult struct {
-	Ok bool `json:"ok"`
-}
-
-type SideThreadResetParams struct {
-	MainThreadID string `json:"main_thread_id"`
-}
-
-type SideThreadResetResult struct {
-	Ok bool `json:"ok"`
-}
-
-// SideThreadEventNotification is the wire union consumed by the renderer.
-// Fields outside the selected Type are omitted.
-type SideThreadEventNotification struct {
-	Type         string                 `json:"type"`
-	SideThreadID string                 `json:"side_thread_id"`
-	MainThreadID string                 `json:"main_thread_id"`
-	Revision     uint64                 `json:"revision,omitempty"`
-	Summary      *SideThreadWireSummary `json:"summary,omitempty"`
-	MessageID    string                 `json:"message_id,omitempty"`
-	TextDelta    string                 `json:"text_delta,omitempty"`
-	Message      *SideThreadWireMessage `json:"message,omitempty"`
-	Items        []ThreadItem           `json:"items,omitempty"`
-	ErrorMessage string                 `json:"error_message,omitempty"`
-}
-
 type ContextCompositionCategory struct {
 	ID          string `json:"id"`
 	Label       string `json:"label"`
@@ -1912,7 +1821,9 @@ type ThreadListResult struct {
 }
 
 type ThreadListParams struct {
-	CWD string `json:"cwd,omitempty"`
+	Placement      string `json:"placement,omitempty"`
+	ParentThreadID string `json:"parent_thread_id,omitempty"`
+	CWD            string `json:"cwd,omitempty"`
 	// SummaryOnly omits turn history; metadata and live status remain available.
 	// Fetch a selected conversation through thread/resume. Default preserves full snapshots.
 	SummaryOnly bool `json:"summary_only,omitempty"`
@@ -2529,6 +2440,8 @@ type ThreadSessionControl struct {
 }
 
 type Thread struct {
+	Placement            string                `json:"placement,omitempty"`
+	InheritedThroughSeq  int                   `json:"inherited_through_seq,omitempty"`
 	RunningModelProvider string                `json:"running_model_provider,omitempty"`
 	RunningModel         string                `json:"running_model,omitempty"`
 	RunningModelRevision uint64                `json:"running_model_revision,omitempty"`

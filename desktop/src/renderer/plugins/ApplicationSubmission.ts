@@ -1,6 +1,6 @@
 import type { ApplicationContentSourceV1, ApplicationSubmissionInputV1, ApplicationSubmissionResultV1, ApplicationSubmissionSnapshotV1, ApplicationSubmissionOperationV1 } from "../../../../packages/plugin-sdk/src/ui-submission";
 import type { MessageContentPart, ResponseSelection, RuntimeContext, ServerEvent, Thread, ThreadStartParams, Turn } from "../../shared/protocol";
-import { activeThreadIDForState, activeTurnIDForThread, activeTurnIsAnswerReady, bindActiveSessionTabToThread, cloneComposerDraft, composerDraftHasContent, createDraftSessionTab, createThreadSessionTab, emptyComposerDraft, isThreadRunning, resolveComposerRunningAction, resolveThreadRuntimeContext, sameRuntimeContext, setThreadForPane, threadForTab, threadSessionTabID, updateThreadByID, upsertThread, upsertTurn, type AppState, type ComposerDraftState, type SessionTab } from "../AppState";
+import { activeThreadIDForState, activeThreadForState, activeTurnIDForThread, activeTurnIsAnswerReady, bindActiveSessionTabToThread, cloneComposerDraft, composerDraftHasContent, createDraftSessionTab, createThreadSessionTab, emptyComposerDraft, isThreadRunning, resolveComposerRunningAction, resolveThreadRuntimeContext, sameRuntimeContext, setThreadForPane, threadForTab, threadSessionTabID, updateThreadByID, upsertThread, upsertTurn, type AppState, type ComposerDraftState, type SessionTab } from "../AppState";
 import { awaitComposerFiles, awaitComposerImages, composerContextFromMessage, createComposerMessage, createOptimisticTurn, dropOptimisticTurn, inputFilesFromComposer, inputImagesFromComposer, interruptOptimisticTurn, isOptimisticTurnInterrupted, OPTIMISTIC_TURN_ID_PREFIX, replaceOptimisticTurn, threadHasAcceptedComposerMessage, type QueuedComposerMessage } from "../ComposerMessages";
 import type { ComposerPendingStateController } from "../ComposerPendingState";
 import type { ApplicationDraftResources } from "./ApplicationDrafts";
@@ -20,6 +20,8 @@ import { parseContentSubmission } from "../ContentSubmission";
 export interface ApplicationSubmissionOptions {
   artifacts?: () => import("../../../../packages/plugin-sdk/src/ui-artifacts").ApplicationArtifactsV1;
   getState(): AppState;
+  bindSideChat?(tabId: string, threadId: string): void;
+  recoverSideChat?(tabId: string, parentThreadId: string): void;
   updateState(update: (state: AppState) => AppState): void;
   changed(): void;
   isNavigationPending(): boolean;
@@ -115,7 +117,7 @@ export class ApplicationSubmission {
   submit(input: ApplicationSubmissionInputV1, signal?: AbortSignal): ApplicationSubmissionResultV1 {
     const state = this.options.getState();
     const source = state.sessionTabs.find(tab => tab.id === input.ownerTabId);
-    const visible = input.ownerTabId === state.activeSessionTabID || Boolean(state.thread && input.ownerTabId === threadSessionTabID(state.thread.id)) || Boolean(state.secondaryThread && input.ownerTabId === threadSessionTabID(state.secondaryThread.id));
+    const visible = Boolean(source?.sideParentThreadId && activeThreadForState(state)?.id === source.sideParentThreadId) || input.ownerTabId === state.activeSessionTabID || Boolean(state.thread && input.ownerTabId === threadSessionTabID(state.thread.id)) || Boolean(state.secondaryThread && input.ownerTabId === threadSessionTabID(state.secondaryThread.id));
     if (this.disposed || signal?.aborted || this.options.isNavigationPending() || !source || source.kind === "skills" || !visible || !state.activeContext || !state.initialized) return { accepted: false };
     const thread = source.kind === "thread" ? threadForTab(state, source.threadID) : undefined;
     if (source.kind === "thread" && !thread || thread?.read_only || thread && this.stopRequests.has(thread.id) || !thread && this.options.getRuntime(source.id).pending) return { accepted: false };
@@ -327,7 +329,10 @@ export class ApplicationSubmission {
       if (!thread) {
         let params = { ...runtime.params };
         if (runtime.worktree) params = { ...params, workspace: "worktree", ...(runtime.worktree.startBranch ? { base_revision: runtime.worktree.startBranch } : {}) };
-        const creating = window.wuu.startThread(params, context).then(async result => {
+        const creation = source.sideParentThreadId
+          ? window.wuu.forkThread(source.sideParentThreadId, undefined, undefined, undefined, undefined, { placement: "side", anchor: "latest_completed" })
+          : window.wuu.startThread(params, context);
+        const creating = creation.then(async result => {
           if (operation.creationCancelled && result.thread) {
             try {
               await window.wuu.deleteThread(result.thread.id);
@@ -347,7 +352,7 @@ export class ApplicationSubmission {
       if (this.disposed) return false;
       // An edit's authoritative prepare result is adopted even if Stop arrived.
       operation.thread = thread;
-      const customTitle = !target && !operation.creationCancelled
+      const customTitle = !target && !source.sideParentThreadId && !operation.creationCancelled
         ? customDraftConversationTitle(source.kind === "draft" ? source.title : undefined, t("tabs.newConversation")) : "";
       const originalTitle = thread.title;
       if (customTitle) thread = { ...thread, title: customTitle };
@@ -374,6 +379,7 @@ export class ApplicationSubmission {
             sessionTabs: bindActiveSessionTabToThread(state.sessionTabs, source.id, created, context),
             activeSessionTabID: stillTarget ? threadSessionTabID(created.id) : state.activeSessionTabID, threads: upsertThread(state.threads, created) };
         });
+        if (source.sideParentThreadId) this.options.bindSideChat?.(source.id, thread.id);
       }
       optimisticThreadID = thread.id;
       if (!operation.draft) this.options.updateState(state => updateThreadByID(state, thread!.id, current => upsertTurn(current, optimistic)));
@@ -583,10 +589,13 @@ export class ApplicationSubmission {
       ...(operation.stopped ? { status: "interrupted" as const }
         : { status: "failed" as const, error: { message: operation.view.error || t("composer.sendFailed") } }),
     })));
-    const recovery = createDraftSessionTab(`draft:recovery:${message.id}`, operation.context, draft);
+    if (source.sideParentThreadId && !state.sessionTabs.some(tab => tab.id === owner)) return;
+    const recovery = { ...createDraftSessionTab(`draft:recovery:${message.id}`, operation.context, draft),
+      sideParentThreadId: source.sideParentThreadId };
     rememberCollapsedPromptParts(recovery.id, draft.prompt, draft.contentParts);
     this.options.updateState(state => ({ ...state, sessionTabs: [recovery, ...state.sessionTabs] }));
-    this.failedDrafts.add(recovery.id);
+    if (source.sideParentThreadId) this.options.recoverSideChat?.(recovery.id, source.sideParentThreadId);
+    else this.failedDrafts.add(recovery.id);
   }
   private saveRecovery(): void {
     if (this.disposed) return;
@@ -607,7 +616,7 @@ export class ApplicationSubmission {
     }
     for (const id of this.recoveryText.keys()) if (!tabs.has(id)) this.recoveryText.delete(id);
     for (const operation of this.operations.values()) {
-      if (operation.guard || operation.view.phase !== "preparing" && operation.view.phase !== "sending") continue;
+      if (operation.guard || operation.source.sideParentThreadId || operation.view.phase !== "preparing" && operation.view.phase !== "sending") continue;
       const parts = operation.message.contentParts;
       const prompt = parts ? parts.filter(part => part.type === "text" || part.type === "pasted_text").map(part => part.text).join("") : operation.message.text;
       const id = operation.thread ? threadSessionTabID(operation.thread.id) : operation.source.id;

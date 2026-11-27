@@ -27,6 +27,8 @@ var (
 )
 
 // Session represents one conversation session.
+const PlacementSide = "side"
+
 type Session struct {
 	UserSpaceID            string            `json:"user_space_id,omitempty"`
 	ProductDomain          string            `json:"product_domain,omitempty"`
@@ -44,6 +46,8 @@ type Session struct {
 	Owner                  string            `json:"owner,omitempty"`
 	Visibility             string            `json:"visibility,omitempty"`
 	ParentID               string            `json:"parent_id,omitempty"`
+	Placement              string            `json:"placement,omitempty"`
+	InheritedThroughSeq    int               `json:"inherited_through_seq,omitempty"`
 	ContextSource          string            `json:"context_source,omitempty"`
 	CreationRequestID      string            `json:"creation_request_id,omitempty"`
 	SeedID                 string            `json:"seed_id,omitempty"`

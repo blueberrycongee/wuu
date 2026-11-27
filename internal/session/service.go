@@ -55,6 +55,7 @@ func (s *Service) ProvidedServices() []pluginhost.ServiceDescriptor {
 	names = append(names, clientInputDomainMethods...)
 	names = append(names, inspectionDomainMethods...)
 	names = append(names, activeHistoryDomainMethods...)
+	names = append(names, placementDomainMethods...)
 	names = append(names, resourceMethods...)
 	methods := make([]pluginhost.ServiceMethodDescriptor, 0, len(names))
 	for _, name := range names {
@@ -198,7 +199,7 @@ func (s *Service) InvokeService(ctx context.Context, p pluginhost.ServiceInvokeP
 			releaseHandle = id
 		}
 
-	} else if !containsMethod(domainMethods, method) && !containsMethod(clientInputDomainMethods, method) && !containsMethod(inspectionDomainMethods, method) && !containsMethod(activeHistoryDomainMethods, method) {
+	} else if !containsMethod(domainMethods, method) && !containsMethod(clientInputDomainMethods, method) && !containsMethod(inspectionDomainMethods, method) && !containsMethod(activeHistoryDomainMethods, method) && !containsMethod(placementDomainMethods, method) {
 		return nil, &pluginhost.HostServiceError{Code: "method_not_found", Message: "unknown session domain method"}
 	}
 	guardKey := ""

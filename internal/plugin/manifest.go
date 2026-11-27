@@ -50,8 +50,6 @@ const (
 	// plugin's approved desktop generation. The manifest alone never executes
 	// plugin code.
 	CommandKindRuntimeAction CommandKind = "runtime_action"
-	// CommandKindSideConversation supplies the policy prompt for an attached conversation.
-	CommandKindSideConversation CommandKind = "side_conversation"
 )
 
 // CommandSpec is the declarative command descriptor contributed by a manifest.
@@ -1498,7 +1496,7 @@ func normalizeCommands(root, pluginID string, raw json.RawMessage) ([]ResolvedCo
 			PublicID: pluginID + "." + spec.ID,
 		}
 		switch resolved.Kind {
-		case CommandKindPromptTemplate, CommandKindSideConversation:
+		case CommandKindPromptTemplate:
 			if strings.TrimSpace(spec.Prompt) == "" {
 				return nil, nil, fmt.Errorf("commands: %s %q requires prompt", spec.Kind, spec.ID)
 			}
@@ -1532,7 +1530,7 @@ func validateCommandSpec(spec CommandSpec) error {
 		return fmt.Errorf("command %q requires title", spec.ID)
 	}
 	if commandKindFromString(string(spec.Kind)) == "" {
-		return fmt.Errorf("command %q requires kind prompt_template, runtime_action or side_conversation", spec.ID)
+		return fmt.Errorf("command %q requires kind prompt_template, runtime_action", spec.ID)
 	}
 	return nil
 }
@@ -1543,8 +1541,6 @@ func commandKindFromString(value string) CommandKind {
 		return CommandKindPromptTemplate
 	case string(CommandKindRuntimeAction):
 		return CommandKindRuntimeAction
-	case string(CommandKindSideConversation):
-		return CommandKindSideConversation
 	}
 	return ""
 }

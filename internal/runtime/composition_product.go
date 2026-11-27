@@ -439,38 +439,6 @@ func (s *Session) RetainCompositionExecution(id string) (*State, error) {
 	return binding.RetainExecution()
 }
 
-// RetainSideThreadExecution inherits a running parent's admitted scope. With an
-// idle parent it admits the current durable selection, rejecting disposed scopes.
-func (s *Session) RetainSideThreadExecution(binding *State, parentID string, admitted *ThreadRuntime) (*State, error) {
-	var id string
-	if admitted != nil {
-		id = admitted.CompositionID
-	} else {
-		var err error
-		id, err = s.SessionCompositionID(context.Background(), binding, parentID)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if id == "" {
-		return binding.RetainExecution()
-	}
-	held, err := s.RetainCompositionExecution(id)
-	if err != nil {
-		return nil, err
-	}
-	if admitted == nil {
-		selected := held.Generation.composition
-		selected.service.mu.Lock()
-		err = selected.available(binding)
-		selected.service.mu.Unlock()
-		if err != nil {
-			return nil, errors.Join(err, held.Close())
-		}
-	}
-	return held, nil
-}
-
 // CloseComposition releases the admitted scope after tools, workers and their
 // finalizers have drained. Non-composed runtimes use their ordinary owner.
 func (t *ThreadRuntime) CloseComposition() error {

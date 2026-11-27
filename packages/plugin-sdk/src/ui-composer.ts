@@ -48,6 +48,7 @@ export interface ApplicationDraftsSnapshotV1 {
   readonly split: boolean;
   readonly primary: ApplicationComposerDraftSnapshotV1;
   readonly secondary: ApplicationComposerDraftSnapshotV1;
+  readonly sideChats?: Readonly<Record<string, ApplicationComposerDraftSnapshotV1>>;
   readonly attachments: readonly ApplicationAttachmentV1[];
 }
 
@@ -73,6 +74,7 @@ export interface ApplicationPendingComposerThreadV1 {
 }
 
 export interface ApplicationComposerActionMapV1 {
+  "composer.update-side-draft": { input: { readonly ownerTabId: string; readonly draft: ApplicationComposerDraftV1 }; result: void };
   "composer.remove-pending": { input: { readonly ownerTabId: string; readonly messageId: string; readonly kind: "queue" | "guide" }; result: boolean };
   "composer.edit-pending": { input: { readonly ownerTabId: string; readonly messageId: string; readonly kind: "queue" | "guide" }; result: void };
   "composer.toggle-pending-mode": { input: { readonly ownerTabId: string; readonly messageId: string }; result: void };

@@ -157,17 +157,18 @@ func (s *Server) generateThreadTitleUsingModel(binding *runtime.State, threadID 
 	}
 
 	input := titleservice.PlanRequest{Model: res.Model, Force: forceFirstUser, Persist: persist}
-	for _, message := range history {
-		if isThreadTitleUserMessage(message) {
-			input.HumanMessages = append(input.HumanMessages, chatMessageDisplayContent(message))
-		}
-	}
 	if metadata, found, err := binding.Sessions.Find(threadID); err != nil {
 		res.PersistErr = err
 		return res, err
 	} else if found {
 		input.Title = metadata.Title
 		input.Summary = metadata.Summary
+		history = ownThreadHistory(history, metadata.InheritedThroughSeq)
+	}
+	for _, message := range history {
+		if isThreadTitleUserMessage(message) {
+			input.HumanMessages = append(input.HumanMessages, chatMessageDisplayContent(message))
+		}
 	}
 	if thread := s.threadForState(binding, threadID); thread != nil {
 		thread.mu.Lock()

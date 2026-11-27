@@ -140,12 +140,6 @@ let resizeCallbacks = new Set<ResizeObserverCallback>();
 
 function initialized(cwd: string): InitializeResult {
   return {
-    extension_inventory: [{
-      id: "plugin:bundled:side", kind: "plugin", name: "Side", state: "active", enabled: true,
-      approval_state: "official", runtime_state: "active",
-      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
-      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Side policy" }] },
-    }],
     protocol_version: "wuu-app-server/v0.1",
     provider: "fake",
     model: "fake-model",
@@ -324,15 +318,6 @@ function installWuuApi(
       dirty_count: 0,
       files: [],
     }),
-    openSideThread: vi.fn().mockResolvedValue({ summary: null }),
-    getSideThreadHistory: vi.fn().mockResolvedValue(null),
-    sendSideThreadMessage: vi.fn().mockResolvedValue({
-      user_message_id: "side-user",
-      summary: null,
-    }),
-    interruptSideThread: vi.fn().mockResolvedValue({ ok: true }),
-    resetSideThread: vi.fn().mockResolvedValue({ ok: true }),
-    onSideThreadEvent: vi.fn(() => () => {}),
     onServerEvent: vi.fn((handler: (event: ServerEvent) => void) => {
       serverEventHandlers.push(handler);
       return () => {
@@ -406,7 +391,7 @@ async function waitForSideComposerFocus(): Promise<void> {
   await act(async () => {
     await vi.waitFor(() => {
       const side = container.querySelector<HTMLTextAreaElement>(
-        'textarea[aria-label="side composer"]',
+        '.workspace-side-thread-content:not([hidden]) textarea[aria-label="side composer"]',
       );
       expect(side).not.toBeNull();
       expect(document.activeElement).toBe(side);
@@ -1129,23 +1114,10 @@ describe("main composer focus continuity", () => {
     await enterCommand(dock, "/side");
 
     await waitForSideComposerFocus();
-    const updateSide = async (enabled: boolean) => {
-      const inventory = initialized(conversationCwd).extension_inventory!;
-      inventory[0].enabled = enabled;
-      inventory[0].runtime_state = enabled ? "active" : "inactive";
-      await act(async () => {
-        for (const handler of serverEventHandlers) handler({ kind: "notification", workdir: conversationCwd,
-          message: { method: "plugin/inventory/changed", params: { epoch: enabled ? 3 : 2, extension_inventory: inventory, skills: [] } } });
-      });
-      await flushAsync();
-    };
-    await updateSide(false);
-    expect(container.querySelector('textarea[aria-label="side composer"]')).toBeNull();
-    await enterCommand(mainComposer("dock"), "/side");
-    expect(container.querySelector('textarea[aria-label="side composer"]')).toBeNull();
-    await updateSide(true);
     await enterCommand(mainComposer("dock"), "/side");
     await waitForSideComposerFocus();
+    expect(container.querySelectorAll('[data-wuu-tab-kind="side-chat"]')).toHaveLength(2);
+
   });
 
   it.each([

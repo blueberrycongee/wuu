@@ -21,13 +21,11 @@ draft. Clicking elsewhere returns control to that page. With the mascot focused,
 
 ## Side chat
 
-The bundled Side plugin supplies `/side` and is selected in the recommended first-run setup. You can turn it off during setup or later in Settings → Plugins. Disabling it removes side-chat entry points and stops active side answers while preserving history; enabling it restores access.
+Open a side chat from **+ → New side chat** in the right workspace panel, with `/side`, or by choosing **Ask in side chat** on a file or assistant reply selection. Enter `/side your question` to open a new tab and send the question immediately.
 
-Use `/side` or **Ask in side chat** to open the side chat tab in the right sidebar. It shares the sidebar width and expanded layout with files and other tools. File selections keep their quote card, and the original file stays available in its tab.
+The first send creates a conversation with the main conversation's engine, model, permissions, and history through its last completed reply. The main conversation can keep running. If it has yet to complete a reply, the side chat starts with an empty history. Inherited context is collapsed at the top of the side chat.
 
-Side chat follows the selected main conversation; each conversation keeps its own side history and draft. Switching tool tabs or collapsing the sidebar preserves the draft and lets a running answer continue. Closing the side chat tab preserves its history; use the chat's stop or reset action to interrupt or clear it. In the expanded layout, the side chat tab has its own input, while the main conversation remains available through its first tab.
-
-Side chat uses the main conversation's engine in read-only mode and keeps a separate engine session. If the engine reports that read-only mode is unsupported before producing output, Wuu can send the side question and its attached context to the configured default Wuu model instead.
+Each main conversation can have several side chat tabs. Closing a tab preserves saved history and background replies. Open **+** to return to a saved chat. To find it in the main list and search, choose **Move to main conversations** in the tab menu or saved chat list. Promoted conversations show the inherited history and remain independent of the original conversation.
 
 ## App zoom
 

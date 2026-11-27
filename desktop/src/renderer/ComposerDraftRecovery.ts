@@ -14,6 +14,7 @@ type StoredDraft = {
   kind: "draft" | "thread";
   context: RuntimeContext;
   threadID?: string;
+  sideParentThreadId?: string;
   prompt: string;
   updatedAt: number;
 };
@@ -51,6 +52,7 @@ function parseDraft(value: unknown, now: number): StoredDraft | undefined {
       ? { kind: "project", project_id: context.project_id, cwd: context.cwd }
       : { kind: "no_project", cwd: context.cwd },
     ...(entry.kind === "thread" ? { threadID: entry.threadID } : {}),
+    ...(validString(entry.sideParentThreadId, 512) ? { sideParentThreadId: entry.sideParentThreadId } : {}),
     prompt: entry.prompt, updatedAt: entry.updatedAt,
   };
 }
@@ -59,7 +61,7 @@ function tabFromDraft(entry: StoredDraft): SessionTab {
   const draft = { prompt: entry.prompt, images: [], files: [] };
   return entry.kind === "thread"
     ? { id: entry.id, kind: "thread", threadID: entry.threadID!, context: entry.context,
-        title: translateCurrent("thread.untitled"), ...draft }
+        title: translateCurrent("thread.untitled"), sideParentThreadId: entry.sideParentThreadId, ...draft }
     : { id: entry.id, kind: "draft", context: entry.context,
         title: translateCurrent("tabs.newConversation"), createdAt: entry.updatedAt,
         ...draft };
@@ -119,10 +121,10 @@ export function writeComposerDraftRecovery(tabs: SessionTab[], activeTabID: stri
     const now = Date.now();
     const oldDrafts = previous?.drafts ?? [];
     const drafts = tabs.flatMap((tab) => {
-      if (tab.kind === "skills") return [];
+      if (tab.kind === "skills" || tab.kind === "draft" && tab.sideParentThreadId) return [];
       const old = oldDrafts.find((entry) => entry.id === tab.id && sameRecoveryContext(entry.context, tab.context));
       const entry = parseDraft({ id: tab.id, kind: tab.kind, context: tab.context,
-        ...(tab.kind === "thread" ? { threadID: tab.threadID } : {}), prompt: tab.prompt,
+        ...(tab.kind === "thread" ? { threadID: tab.threadID, sideParentThreadId: tab.sideParentThreadId } : {}), prompt: tab.prompt,
         updatedAt: old?.prompt === tab.prompt ? old.updatedAt : now }, now);
       return entry ? [entry] : [];
     }).sort((left, right) => right.updatedAt - left.updatedAt);

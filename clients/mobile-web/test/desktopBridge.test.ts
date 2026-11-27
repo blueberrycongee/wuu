@@ -59,7 +59,6 @@ describe("browser host contract", () => {
   it("leaves optional Electron integrations absent and rejects unsupported actions", async () => {
     const host = await api();
     expect(host.reportBrowserBounds).toBeUndefined();
-    expect(host.openSideThread).toBeUndefined();
     expect(host.onBrowserInvalidate).toBeUndefined();
     expect(host.initializePluginScope).toBeUndefined();
     expect(host.onPluginScopeInvalidated).toBeUndefined();

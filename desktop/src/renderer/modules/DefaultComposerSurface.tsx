@@ -1,4 +1,3 @@
-import { ApplicationSideThreadComposer } from "../SideThreadComposer";
 import { ArtifactsProvider } from "../ArtifactsContext";
 import { ImagePreviewProvider } from "../ImagePreview";
 import { SettingsControlsProvider } from "../SettingsControlsContext";
@@ -23,7 +22,7 @@ import { ScopedToast } from "../Toast";
 import { DraftRecoveryNotice } from "../DraftRecoveryNotice";
 
 export interface DefaultComposerLayout {
-  side?: { readonly parentThreadId: string };
+  sideChat?: boolean;
   variant?: ComposerVariant;
   pane?: "primary" | "secondary";
   ownerTabId?: string;
@@ -36,14 +35,10 @@ export interface DefaultComposerLayout {
 /** A selected composer receives geometry only; every operation retains its public draft owner. */
 export function DefaultComposerSurface({ application, slots, ...layout }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1 }): JSX.Element | null {
   // Field subscriptions keep the composer off stream-frame publications.
-  const tabs = useSyncExternalStore(application.subscribe, () => application.getSnapshot().tabs);
-  const sideConversation = useSyncExternalStore(application.subscribe, () => application.getSnapshot().sideConversation);
   const drafts = useSyncExternalStore(application.subscribe, () => application.getSnapshot().drafts);
-  if (layout.side) {
-    const parentThreadId = layout.side.parentThreadId;
-    const ownerTabId = tabs.items.find(tab => tab.threadId === parentThreadId)?.id;
-    if (!ownerTabId || sideConversation.parentThreadId !== parentThreadId || !sideConversation.entry) return null;
-    return <OwnedSideComposer application={application} slots={slots} ownerTabId={ownerTabId} parentThreadId={parentThreadId} variant={layout.variant} />;
+  if (layout.sideChat) {
+    if (!layout.ownerTabId || !drafts.sideChats?.[layout.ownerTabId]) return null;
+    return <OwnedComposer application={application} slots={slots} {...layout} pane="primary" ownerTabId={layout.ownerTabId} />;
   }
   const pane = layout.pane ?? "primary";
   const ownerTabId = layout.ownerTabId ?? drafts[pane].ownerTabId;
@@ -58,25 +53,7 @@ async function openComposerPlugins(application: ApplicationServiceV1, pluginId?:
   await application.invoke("navigation.show-section", { section: "catalog" });
 }
 
-function OwnedSideComposer({ application, slots, ownerTabId, parentThreadId, variant }: {
-  application: ApplicationServiceV1; slots: UICompositionV1; ownerTabId: string; parentThreadId: string; variant?: ComposerVariant;
-}): JSX.Element | null {
-  const composerRuntime = useSyncExternalStore(application.subscribe, () => application.getSnapshot().composerRuntime);
-  const sideConversation = useSyncExternalStore(application.subscribe, () => application.getSnapshot().sideConversation);
-  const getPresentation = useCallback(() => application.composerPresentation.getSnapshot(ownerTabId), [application, ownerTabId]);
-  const presentation = useSyncExternalStore(application.composerPresentation.subscribe, getPresentation);
-  const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls,
-    conversationPluginsSupported: composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
-    openPlugins: (pluginId?: string) => openComposerPlugins(application, pluginId),
-  }), [application, slots, ownerTabId, presentation, composerRuntime.owners]);
-  if (sideConversation.parentThreadId !== parentThreadId) return null;
-  return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}>
-    <ApplicationSideThreadComposer snapshot={sideConversation} invoke={application.invoke} variant={variant}
-      onOpenFile={path => { void application.fileSelection.openFile({ target: { ownerTabId }, path }).catch(showApplicationActionError); }} />
-  </ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
-}
-
-function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId, containerRef, registerFocusTarget, runtimeControlsTarget, visible = true }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
+function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId, sideChat = false, containerRef, registerFocusTarget, runtimeControlsTarget, visible = true }: DefaultComposerLayout & { application: ApplicationServiceV1; slots: UICompositionV1; pane: "primary" | "secondary"; ownerTabId: string }): JSX.Element | null {
   const { t } = useI18n();
   const presentNavigation = usePresentedNavigation();
   // The composer also reads conversationWorkspace (thread continuation), which
@@ -110,7 +87,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     && Boolean(liveEnvironment.status?.is_repo || settledVisual.current.environment.status?.is_repo);
   const tab = tabs.items.find(row => row.id === ownerTabId);
   const textOwner = JSON.stringify([pane, ownerTabId, tab?.workspaceId, tab?.workspaceRoot]);
-  const controls = useMemo(() => createComposerControls(application, { ownerTabId, pane }), [application, ownerTabId, pane]);
+  const controls = useMemo(() => createComposerControls(application, { ownerTabId, pane, sideChat }), [application, ownerTabId, pane, sideChat]);
   const services = useMemo(() => ({ slots, ownerTabId, presentation: application.composerPresentation, view: presentation, catalog: application.catalog, settingsControls: application.settingsControls,
     conversationPluginsSupported: composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.engines.find(engine => engine.id === (composerRuntime.owners.find(row => row.ownerTabId === ownerTabId)?.selection.engine || "wuu"))?.capabilities?.includes("conversation-plugins") ?? false,
     openPlugins: (pluginId?: string) => openComposerPlugins(application, pluginId),
@@ -134,7 +111,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     focus: options => {
       const snapshot = application.getSnapshot();
       const input = contentRef.current?.querySelector<HTMLElement>('[data-wuu-component="composer-input"]');
-      if (!visible || snapshot.tabs.pending || snapshot.drafts[pane].ownerTabId !== ownerTabId || !input || input.matches(':disabled, [aria-disabled="true"], [aria-readonly="true"]')) return false;
+      if (!visible || snapshot.tabs.pending || (sideChat ? snapshot.drafts.sideChats?.[ownerTabId] : snapshot.drafts[pane])?.ownerTabId !== ownerTabId || !input || input.matches(':disabled, [aria-disabled="true"], [aria-readonly="true"]')) return false;
       input.focus(options);
       return true;
     },
@@ -143,13 +120,16 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
   const runtimeRef = useRef<HTMLDivElement>(null), workspaceRef = useRef<HTMLDivElement>(null), accessRef = useRef<HTMLDivElement>(null);
   const run = useCallback((result: Promise<unknown>) => { void result.catch(reportPresentedNavigationError); }, []);
   useEffect(() => {
+    if (sideChat) return;
     let active = true;
     const addSelection = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
       const snapshot = application.getSnapshot();
       const threadId = pane === "primary" ? snapshot.conversationWorkspace.primaryThreadId : snapshot.conversationWorkspace.secondaryThreadId;
       const draft = snapshot.drafts[pane];
-      if (snapshot.tabs.pending || !threadId || threadId !== selection.source.thread_id
+      const source = snapshot.conversationWorkspace.threads.find(thread => thread.id === selection.source.thread_id);
+      const selectionTarget = source?.placement === "side" ? source.parent_id : selection.source.thread_id;
+      if (snapshot.tabs.pending || !threadId || threadId !== selectionTarget
         || draft.ownerTabId !== ownerTabId
         || snapshot.conversationWorkspace.threads.find(thread => thread.id === threadId)?.read_only) return;
       void controls.setSelections([...draft.selections, selection]).then(() => {
@@ -162,7 +142,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     };
     window.addEventListener("wuu:add-response-selection", addSelection);
     return () => { active = false; window.removeEventListener("wuu:add-response-selection", addSelection); };
-  }, [application, controls, ownerTabId, pane]);
+  }, [application, controls, ownerTabId, pane, sideChat]);
   const pendingText = useRef<{ owner: string; text: string } | undefined>(undefined);
   const [deferredSubmission, setDeferredSubmission] = useState<{
     application: ApplicationServiceV1; owner: string; mode: "queue" | "steer";
@@ -196,7 +176,8 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     const target = submitAfterRebind.current;
     if (!target || target.application !== application) return;
     setDeferredSubmission(undefined);
-    const current = view.drafts[pane];
+    const current = sideChat ? view.drafts.sideChats?.[ownerTabId] : view.drafts[pane];
+    if (!current) return;
     const text = pendingText.current?.owner === textOwner ? pendingText.current.text
       : contentRef.current?.querySelector("textarea")?.value ?? current.text;
     const attachments = JSON.stringify([current.imageIds, current.fileIds, current.selections]);
@@ -215,7 +196,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     const cancellation = new AbortController();
     const refresh = () => {
       const snapshot = application.getSnapshot();
-      if (snapshot.tabs.pending || snapshot.drafts[pane].ownerTabId !== ownerTabId) return;
+      if (snapshot.tabs.pending || (sideChat ? snapshot.drafts.sideChats?.[ownerTabId] : snapshot.drafts[pane])?.ownerTabId !== ownerTabId) return;
       void application.invoke("composer.refresh-engine-models", { ownerTabId }, { signal: cancellation.signal }).catch(error => {
         if (!cancellation.signal.aborted) reportPresentedNavigationError(error);
       });
@@ -225,9 +206,9 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     return () => { cancellation.abort(); window.removeEventListener("focus", refresh); };
   }, [application, ownerTabId, pane, switching, liveRuntime?.engineSelectionPending]);
   const presentationConfiguration = useMemo(() => structuredClone(presentation.configuration), [presentation.configuration]);
-  const draft = view.drafts[pane];
-  if (!runtime || !tab || draft.ownerTabId !== ownerTabId) return null;
-  const Input = view.drafts.split ? SplitPaneComposer : Composer;
+  const draft = sideChat ? view.drafts.sideChats?.[ownerTabId] : view.drafts[pane];
+  if (!runtime || !tab || draft?.ownerTabId !== ownerTabId) return null;
+  const Input = view.drafts.split && !sideChat ? SplitPaneComposer : Composer;
   const selection = runtime.selection;
   const context: RuntimeContext = tab.workspaceId ? { kind: "project", project_id: tab.workspaceId, cwd: tab.workspaceRoot } : { kind: "no_project", cwd: tab.workspaceRoot };
   const projects = view.workspaces.workspaces.map(workspace => ({ id: workspace.id, name: workspace.name, path: workspace.root, missing: !workspace.available }));
@@ -283,16 +264,16 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
     onHold={() => application.invoke("question.hold", { requestId: offer.request_id })}
     onCustom={async text => { if (text?.trim()) await application.invoke("question.send-offer", { requestId: offer.request_id, text }); else contentRef.current?.querySelector<HTMLElement>('[data-wuu-component="composer-input"]')?.focus({ preventScroll: true }); }} /> : undefined;
   const failedDraftTabID = view.submission.failedDraftTabIds.find(id => view.tabs.items.some(tab => tab.id === id));
-  const recoveryNotice = visible && !switching && view.tabs.activePane === pane && failedDraftTabID ?
+  const recoveryNotice = !sideChat && visible && !switching && view.tabs.activePane === pane && failedDraftTabID ?
     <DraftRecoveryNotice interrupted={view.drafts.recoveryNotices.some(notice => notice.ownerTabId === failedDraftTabID)} onOpen={() => {
       void presentNavigation(() => application.invoke("tab.select", { tabId: failedDraftTabID })).catch(reportPresentedNavigationError);
     }} /> : null;
   return <ArtifactsProvider application={application}><ImagePreviewProvider><SettingsControlsProvider controls={application.settingsControls}><ComposerServicesProvider value={services}><FileSelectionProvider application={application} source={{ ownerTabId }}><div ref={contentRef} hidden={!visible} inert={!visible} style={{ display: visible ? "contents" : "none" }}>
     <Input workspaceId={tab.workspaceId} workspaceRoot={runtime.cwd} turnId={presentation.turnId}
       queuedCount={queued(pending?.queued).length} pendingCount={queued(pending?.queued).length + queued(pending?.guides).length}
-      variant={variant} mainConversation containerRef={containerRef} topAccessory={question} statusAccessory={recoveryNotice}
+      variant={variant} mainConversation={!sideChat} containerRef={containerRef} topAccessory={question} statusAccessory={recoveryNotice}
       runtimeControlsTarget={visible ? runtimeControlsTarget : undefined}
-      canSelectWorkspace={!presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
+      canSelectWorkspace={!sideChat && !presentation.threadId && !creation} permissionLocked={runtime.permissionLocked}
       prompt={draft.text} promptRevision={draft.revision} setPrompt={setText}
       files={files(draft.fileIds)} images={images(draft.imageIds)} selections={structuredClone(draft.selections) as ResponseSelection[]}
       onChangeSelection={selection => run(controls.setSelections(draft.selections.map(row => row.id === selection.id ? selection : row)))}
@@ -316,7 +297,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       worktree={!presentation.threadId && runtime.worktree.available ? { enabled: runtime.worktree.enabled, startBranch: runtime.worktree.startBranch,
         onSelectStartBranch: branch => { run(controls.chooseWorktree(true, branch)); setMenu(null); } } : undefined}
       projects={projects} activeContext={context} inlineCompletionWorkspace={{ ...context, cwd: runtime.cwd }} activeWorkspace={projects.find(row => row.id === tab.workspaceId)}
-      compactDisabledReason={compactReason} handoffDisabledReason={compactReason} sideThreadDisabledReason={!presentation.threadId ? t("app.sendMessageFirst") : undefined}
+      compactDisabledReason={compactReason} handoffDisabledReason={compactReason} sideThreadDisabledReason={sideChat ? t("sideThread.unavailable") : !presentation.threadId ? t("app.sendMessageFirst") : undefined}
       codexModels={{ loading: runtime.providerModelsLoading, error: runtime.providerModelsError, models: runtime.providerModels.map(model => ({ slug: model.id, display_name: model.label, supported_reasoning: [...model.efforts], default_reasoning_level: model.defaultEffort, supported_in_api: model.supportedInAPI })) }}
       codexRuntimeMenu={menu === "model" ? "model" : null} codexRuntimeRef={runtimeRef}
       menuOpen={menu === "workspace"} accessMenuOpen={menu === "access"} branchMenuOpen={menu === "branch"} menuRef={workspaceRef} accessMenuRef={accessRef}
@@ -334,7 +315,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       onSelectGitBranch={async branch => { await application.environment.checkoutBranch(branch); setMenu(null); }} onCreateGitBranch={async branch => { await application.environment.createAndCheckoutBranch(branch); setMenu(null); }}
       onStartNewThread={() => run(presentNavigation(() => application.invoke("draft.start", {})).then(({ tabId }) => application.invoke("navigation.focus-composer", { tabId })))}
       onHandoffSession={presentation.threadId ? input => run(application.invoke("conversation.handoff", { threadId: presentation.threadId!, ...input })) : undefined}
-      onOpenSideThread={presentation.threadId ? (prompt, commandId) => run(application.invoke("side.open", { parentThreadId: presentation.threadId!, prompt, commandId })) : undefined}
+      onOpenSideThread={!sideChat && presentation.threadId ? prompt => run(application.invoke("side.open", { parentThreadId: presentation.threadId!, prompt })) : undefined}
       onOpenWorkspaceTool={toolId => run(application.invoke("preview.open-tool", { toolId }))}
       onOpenContextComposition={presentation.threadId ? () => run(application.invoke("conversation.open-context", { threadId: presentation.threadId! })) : undefined}
       onCompactContext={presentation.threadId ? () => run(application.invoke("conversation.compact", { threadId: presentation.threadId! })) : undefined}
@@ -352,7 +333,7 @@ function OwnedComposer({ application, slots, variant = "dock", pane, ownerTabId,
       queryHistory={[...presentation.queryHistory]} requestedHandoffIntent={presentation.requestedHandoffIntent} />
     <SubmissionFailureNotice ownerTabId={ownerTabId} operationID={failedSend?.operationID} sourceOwnerTabId={failedSend?.ownerTabId} error={failedSend?.error}
       onReviewPlugins={() => run(services.openPlugins())}
-      visible={visible && !switching && view.tabs.activePane === pane && view.submission.failedDraftTabIds.length === 0}
+      visible={visible && !switching && (sideChat || (view.tabs.activePane === pane && view.submission.failedDraftTabIds.length === 0))}
       onRetry={() => run(submit(failedSend?.mode === "steer" ? "steer" : "queue"))} />
   </div></FileSelectionProvider></ComposerServicesProvider></SettingsControlsProvider></ImagePreviewProvider></ArtifactsProvider>;
 }

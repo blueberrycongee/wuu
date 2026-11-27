@@ -13,6 +13,7 @@ import (
 	"github.com/blueberrycongee/wuu/internal/participant"
 	"github.com/blueberrycongee/wuu/internal/pluginhost"
 	"github.com/blueberrycongee/wuu/internal/providers"
+	"github.com/blueberrycongee/wuu/internal/session"
 	"github.com/blueberrycongee/wuu/internal/toolresult"
 )
 
@@ -67,13 +68,19 @@ func (th *threadState) snapshotTurnsLocked(turns []Turn) Thread {
 	if th.runningModelRevision != 0 || th.running && th.stepModelSelection {
 		runningProvider, runningModel = th.runningProviderName, th.runningModel
 	}
+	placement := ""
+	if th.SideParentID != "" {
+		placement = session.PlacementSide
+	}
 	return Thread{
 		SessionControl:       th.SessionControl,
 		ID:                   th.ID,
 		Source:               th.Source,
-		ParentID:             th.ParentID,
+		ParentID:             firstNonEmpty(th.SideParentID, th.ParentID),
+		Placement:            placement,
+		InheritedThroughSeq:  th.InheritedThroughSeq,
 		AgentPath:            th.AgentPath,
-		Preview:              firstNonEmpty(th.Title, threadPreview(th.History)),
+		Preview:              firstNonEmpty(th.Title, threadPreview(ownThreadHistory(th.History, th.InheritedThroughSeq))),
 		Title:                th.Title,
 		TitleRevision:        th.TitleRevision,
 		ModelProvider:        th.ModelProvider,

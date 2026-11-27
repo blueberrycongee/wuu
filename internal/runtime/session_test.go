@@ -507,7 +507,7 @@ func newRuntimeCleanupWorktree(t *testing.T, sessionID string) (*agentcontrol.Ag
 		ThreadDir:    filepath.Join(artifactDir, "threads"),
 		HarnessDir:   filepath.Join(artifactDir, "harness"),
 		WorkerFactory: func(string, agentcontrol.WorkerType, agentthread.Metadata) (agent.ToolExecutor, error) {
-			return sideThreadRuntimeTools{}, nil
+			return cleanupWorkerTools{}, nil
 		},
 	})
 	if err != nil {
@@ -3634,4 +3634,11 @@ func TestRuntimeCompositionProfileOverridePreservesExplicitChoices(t *testing.T)
 	if err != nil || reloaded.Composition == nil || reloaded.Composition.Profile != "personal" {
 		t.Fatalf("reload lost process-scoped profile: %+v %v", reloaded.Composition, err)
 	}
+}
+
+type cleanupWorkerTools struct{}
+
+func (cleanupWorkerTools) Definitions() []providers.ToolDefinition { return nil }
+func (cleanupWorkerTools) Execute(context.Context, providers.ToolCall) (string, error) {
+	return "", nil
 }

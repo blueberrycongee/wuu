@@ -142,14 +142,6 @@ func TestToolReplacementProcess(t *testing.T) {
 					require.NotEqual(t, "web_search", definition.Name, "root-only tool must not appear in a real worker model request")
 				}
 			}
-			if !ptc {
-				side, err := owner.NewSideThreadRunner("side-replacement", root, ThreadModelSelection{}, "test side")
-				require.NoError(t, err)
-				sideText, err := side.Tools.Execute(ctx, providers.ToolCall{ID: "side-read", Name: "web_search", Arguments: `{"query":"fixture"}`})
-				require.NoError(t, err)
-				require.Contains(t, sideText, "fixture:result")
-				require.Contains(t, sideText, "side-replacement")
-			}
 			callCtx := ctx
 			if ptc {
 				callCtx = toolctx.WithNestedCall(ctx)

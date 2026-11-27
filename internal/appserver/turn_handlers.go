@@ -3042,6 +3042,28 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 	if capabilityErr == nil && hasPluginReferences(referenceParts) && !slices.Contains(engineDescriptor.Capabilities, "conversation-plugins") {
 		capabilityErr = errors.New("the selected engine does not support conversation plugins; choose a compatible engine or remove the references")
 	}
+	engineHistory := history
+	th.mu.Lock()
+	seedID, externalRef, inheritedThrough := th.SeedID, th.EngineRef, th.InheritedThroughSeq
+	th.mu.Unlock()
+	if capabilityErr == nil && externalEngine && externalRef == "" && seedID != "" && inheritedThrough > 0 {
+		var seed session.ContextSeed
+		var found bool
+		seed, found, capabilityErr = binding.Sessions.LoadContextSeed(seedID)
+		if capabilityErr == nil && !found {
+			capabilityErr = errors.New("inherited context seed is unavailable")
+		}
+		if capabilityErr == nil {
+			for i := len(history) - 1; i >= 0; i-- {
+				if history[i].Role == "user" && history[i].Seq > inheritedThrough {
+					engineHistory = slices.Clone(history)
+					engineHistory[i].Content = "Context from the earlier conversation (reference only):\n" + seed.Body +
+						"\nCurrent user request:\n" + history[i].Content
+					break
+				}
+			}
+		}
+	}
 	hostSteering := slices.Contains(engineDescriptor.Capabilities, "host-managed-steering")
 	nativeSteering := !hostSteering && slices.Contains(engineDescriptor.Capabilities, "active-turn-steering")
 	var engine agentengine.Session
@@ -3633,7 +3655,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		th.mu.Unlock()
 		joinNativeSteering = s.startNativeSteering(driverCtx, th, turnID, native)
 	}
-	turnResult, err := engine.RunTurn(driverCtx, agentengine.TurnInput{History: history}, func(ev providers.StreamEvent) {
+	turnResult, err := engine.RunTurn(driverCtx, agentengine.TurnInput{History: engineHistory}, func(ev providers.StreamEvent) {
 		th.streamMu.Lock()
 		defer th.streamMu.Unlock()
 		th.mu.Lock()
@@ -3790,7 +3812,7 @@ func (s *Server) runTurnWithRequestContext(binding *runtime.State, ctx context.C
 		if usageErr := appendLoopTokenUsage(binding.Sessions, th.ID, turnRuntime.ProviderName, turnRuntime.Model, res); usageErr != nil {
 			persistErr = usageErr
 		} else if th.PersistHistory {
-			persistErr = binding.Sessions.UpdateIndex(th.ID, persistableMessageCount(th.History), threadPreview(th.History))
+			persistErr = binding.Sessions.UpdateIndex(th.ID, persistableMessageCount(th.History), threadPreview(ownThreadHistory(th.History, th.InheritedThroughSeq)))
 		}
 	}
 	if persistErr == nil && th.PersistHistory {
@@ -6211,7 +6233,7 @@ func (s *Server) persistTurnResultLocked(th *threadState, res agent.LoopResult, 
 	if err := appendLoopTokenUsage(th.state.Sessions, th.ID, providerName, model, res); err != nil {
 		return err
 	}
-	if err := th.state.Sessions.UpdateIndex(th.ID, persistableMessageCount(indexHistory), threadPreview(indexHistory)); err != nil {
+	if err := th.state.Sessions.UpdateIndex(th.ID, persistableMessageCount(indexHistory), threadPreview(ownThreadHistory(indexHistory, th.InheritedThroughSeq))); err != nil {
 		return err
 	}
 	s.invalidateSettingsUsage()

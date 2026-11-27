@@ -251,14 +251,12 @@ export function Composer({
   skillThreadID,
   inlineCompletionKind = "main",
   threadId,
-  sideThreadId,
   queryHistory = [],
   requestedHandoffIntent,
   hideRuntimeControls = false,
   placeholder,
   textOnly = false,
   slashCommandsOverride,
-  onResetSideThread,
   pluginHost = desktopPluginHost,
 }: {
   variant?: ComposerVariant;
@@ -353,7 +351,7 @@ export function Composer({
   onHandoffSession?: (input: { provider: string; model: string; effort?: string; intent: string }) => void;
   // Open or focus the side thread attached to the active main conversation.
   // When prompt is non-empty, also send it as the side-thread query.
-  onOpenSideThread?: (prompt?: string, commandID?: string) => void;
+  onOpenSideThread?: (prompt?: string) => void;
   onOpenWorkspaceTool: (view: WorkspacePanelView) => void;
   onOpenContextComposition?: () => void;
   onCompactContext?: () => void;
@@ -381,7 +379,6 @@ export function Composer({
   inlineCompletionKind?: ComposerInlineCompletionContext["kind"];
   // Real protocol identities; a draft tab ID is only a local editor identity.
   threadId?: string;
-  sideThreadId?: string;
   queryHistory?: string[];
   requestedHandoffIntent?: string;
   // Suppress the model/context/token runtime chrome on the bar's right edge.
@@ -399,7 +396,6 @@ export function Composer({
   // providing an override re-enables slash input even in textOnly mode.
   slashCommandsOverride?: ComposerSlashCommand[];
   // Reset the side thread this composer is embedded in.
-  onResetSideThread?: () => void;
   pluginHost?: PluginHost;
 }): JSX.Element {
   const readOnly = sessionReadOnly || interactionDisabled;
@@ -502,7 +498,7 @@ export function Composer({
     variant,
   ]);
   const dictation = useComposerDictation({
-    owner: JSON.stringify([services?.ownerTabId, queryHistorySessionID, commandScopeKey, sideThreadId]),
+    owner: JSON.stringify([services?.ownerTabId, queryHistorySessionID, commandScopeKey]),
     disabled: Boolean(readOnly || topAccessory), prompt, locale,
     onText: (text, send) => {
       setPrompt(text);
@@ -1021,10 +1017,7 @@ export function Composer({
         onStartNewThread();
         break;
       case "open-side-thread":
-        onOpenSideThread?.(draft?.args.trim() || undefined, `${command.pluginId}.${command.pluginCommandId}`);
-        break;
-      case "reset-side-thread":
-        onResetSideThread?.();
+        onOpenSideThread?.(draft?.args.trim() || undefined);
         break;
       case "open-review":
         onOpenWorkspaceTool("review");
@@ -1519,13 +1512,12 @@ export function Composer({
                 pendingCount={guideMessages.length}
                 inlineCompletionEnabled={!dictation.active && !hasCollapsedPromptBlocks && !disconnected && !topAccessory
                   && !menuOpen && !accessMenuOpen && !branchMenuOpen && !codexRuntimeMenu && !composerContextMenu}
-                inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId, sideThreadId,
+                inlineCompletionContextKey={JSON.stringify([queryHistorySessionID, slashSkillContextKey, threadId,
                   inlineCompletionWorkspace?.kind === "project" ? inlineCompletionWorkspace.project_id : undefined, inlineCompletionWorkspace?.cwd])}
                 inlineCompletionRevisionKey={JSON.stringify([promptRevision, programmaticPromptRevision, submissionClearRevision, telemetryTurnID])}
                 inlineCompletionResetKey={JSON.stringify([promptRevision, programmaticPromptRevision])}
                 inlineCompletionActionsRef={inlineCompletionActionsRef}
                 threadId={threadId}
-                sideThreadId={sideThreadId}
                 running={running}
                 ariaControls={slashMenuOpen ? slashMenuID : undefined}
                 ariaActiveDescendant={
@@ -1743,7 +1735,6 @@ type ComposerTextareaProps = {
   inlineCompletionResetKey: string;
   inlineCompletionActionsRef: RefObject<ComposerInlineCompletionActions | null>;
   threadId?: string;
-  sideThreadId?: string;
   workspaceId?: string;
   workspaceRoot?: string;
   attachmentCount: number;
@@ -1779,7 +1770,6 @@ const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextareaProps>(
     inlineCompletionResetKey,
     inlineCompletionActionsRef,
     threadId,
-    sideThreadId,
     workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount,
     running,
     ariaControls,
@@ -1849,7 +1839,7 @@ const ComposerTextarea = forwardRef<ComposerInputHandle, ComposerTextareaProps>(
       kind: inlineCompletionKind,
       contextKey: inlineCompletionContextKey, revisionKey: inlineCompletionRevisionKey,
       resetKey: JSON.stringify([inlineCompletionResetKey, externalResetRevision]),
-      threadId, sideThreadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, compositionActive: compositionActiveRef.current, onInsert: publishValue,
+      threadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, compositionActive: compositionActiveRef.current, onInsert: publishValue,
     });
 
     useLayoutEffect(() => {

@@ -46,7 +46,7 @@ type Suggestion = {
 // This lives beside the synchronous textarea value. App's persisted draft and
 // the surrounding composer chrome may still describe an earlier keystroke.
 export function useComposerInlineCompletion({
-  host, inputRef, value, enabled, kind, contextKey, revisionKey, resetKey, threadId, sideThreadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, compositionActive, onInsert,
+  host, inputRef, value, enabled, kind, contextKey, revisionKey, resetKey, threadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, compositionActive, onInsert,
 }: {
   host: ComposerInlineSource;
   inputRef: RefObject<ComposerInputHandle | null>;
@@ -57,7 +57,6 @@ export function useComposerInlineCompletion({
   revisionKey: string;
   resetKey: string;
   threadId?: string;
-  sideThreadId?: string;
   workspaceId?: string;
   workspaceRoot?: string;
   attachmentCount?: number;
@@ -104,7 +103,7 @@ export function useComposerInlineCompletion({
       && !draftPluginReferences(input.value).length
       && input.selectionStart === input.value.length && input.selectionEnd === input.value.length
       && !parseComposerSlashDraft(input.value);
-    const key = JSON.stringify([composerId, kind, revisionKey, threadId, sideThreadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, input.value,
+    const key = JSON.stringify([composerId, kind, revisionKey, threadId, workspaceId, workspaceRoot, attachmentCount, queuedCount, pendingCount, running, input.value,
       input.selectionStart, input.selectionEnd, composing.current, eligible]);
     const previous = observed.current;
     if (previous?.key === key && previous.providers === providers) return previous;
@@ -113,7 +112,6 @@ export function useComposerInlineCompletion({
       key, providers, eligible,
       context: Object.freeze({ contractVersion: 1, kind, composerId, revision: ++revision.current,
         ...(threadId === undefined ? {} : { threadId }),
-        ...(sideThreadId === undefined ? {} : { sideThreadId }),
         ...(workspaceId === undefined ? {} : { workspaceId }),
         ...(workspaceRoot === undefined ? {} : { workspaceRoot }),
         attachmentCount, queuedCount, pendingCount, running, draftText: input.value,
@@ -179,13 +177,13 @@ export function useComposerInlineCompletion({
 
   function notify(current: Suggestion, outcome: { type: "shown" | "accepted" | "dismissed" }
     | { type: "dispatched"; mode: ComposerSubmissionModeV1; edited: boolean }): void {
-    const { kind, composerId, revision, threadId, sideThreadId } = current.observation.context;
+    const { kind, composerId, revision, threadId } = current.observation.context;
     const event: ComposerInlineCompletionInteraction = {
       ...outcome, interactionId: current.interactionId,
       ...(current.id === undefined ? {} : { suggestionId: current.id }),
       source: { kind, composerId, revision,
         ...(threadId === undefined ? {} : { threadId }),
-        ...(sideThreadId === undefined ? {} : { sideThreadId }) },
+      },
     };
     void current.provider.onDidInteract?.(event);
   }

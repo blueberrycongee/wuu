@@ -39,7 +39,7 @@ export class ApplicationFileSelection implements ApplicationFileSelectionService
     if (!tab || tab.kind === "skills" || !state.initialized || this.options.isNavigationPending()) return;
     const activeThread = activeThreadForState(state);
     const activeID = state.secondaryThread && activeThread ? threadSessionTabID(activeThread.id) : state.activeSessionTabID;
-    if (target.ownerTabId !== activeID || !sameRuntimeContext(tab.context, state.activeContext) && tab.kind === "draft") return;
+    if (target.ownerTabId !== activeID && (!tab.sideParentThreadId || tab.sideParentThreadId !== activeThread?.id) || !sameRuntimeContext(tab.context, state.activeContext) && tab.kind === "draft") return;
     const thread = tab.kind === "thread" ? threadForTab(state, tab.threadID) : undefined;
     if (tab.kind === "thread" && !thread || writable && thread?.read_only) return;
     const context = thread ? resolveThreadRuntimeContext(thread, state.projects) : tab.context;
@@ -59,7 +59,7 @@ export class ApplicationFileSelection implements ApplicationFileSelectionService
     const origin = owner?.thread && this.options.submission.getSnapshot().operations.find(operation => operation.threadId === owner.thread!.id && operation.ownerTabId.startsWith("draft:"))?.ownerTabId;
     if (origin) this.interactionOwners.set(target.ownerTabId, origin);
     const interactionOwnerKey = this.interactionOwners.get(target.ownerTabId) ?? target.ownerTabId;
-    const canAskSide = Boolean(owner?.thread && this.options.side.available());
+    const canAskSide = Boolean(owner?.thread && !owner.thread.placement && this.options.side.available());
     const key = JSON.stringify([draft?.prompt, Boolean(owner), canAskSide, interactionOwnerKey, getCollapsedPromptRevision()]);
     const cached = this.snapshots.get(target.ownerTabId); if (cached?.key === key) return cached.view;
     const comments = owner && draft ? (readCollapsedPromptParts(owner.storageKey, draft.prompt) ?? [])
@@ -129,7 +129,7 @@ export class ApplicationFileSelection implements ApplicationFileSelectionService
   async askSide({ target, source }: Parameters<ApplicationFileSelectionServiceV1["askSide"]>[0], options?: FileSelectionCallOptionsV1): Promise<boolean> {
     options?.signal?.throwIfAborted();
     const owner = this.validSource(target, source);
-    if (!owner?.thread || !this.options.side.available()) return false;
+    if (!owner?.thread || owner.thread.placement || !this.options.side.available()) return false;
     return this.options.side.open(owner.thread.id, structuredClone(source));
   }
 }

@@ -36,6 +36,8 @@ type ConversationThreadData = {
     };
     readonly id: string;
     readonly parent_id?: string;
+    readonly placement?: "side";
+    readonly inherited_through_seq?: number;
     readonly agent_path?: string;
     readonly preview: string;
     readonly title?: string;
