@@ -30,11 +30,15 @@ export class ApplicationPreview {
   }
 
   getSnapshot(parentThreadID: string | null | undefined = this.parentThreadID): PreviewTabs {
-    if ((parentThreadID ?? undefined) !== this.parentThreadID) {
+    const parent = parentThreadID ?? undefined;
+    if (parent !== this.parentThreadID) {
+      const sideTabsChanged = this.state.tabs.some(tab => tab.kind === "side-chat"
+        && (tab.parentThreadID === this.parentThreadID || tab.parentThreadID === parent));
+      this.parentThreadID = parent;
+      if (!sideTabsChanged) return this.snapshot;
       const previousTab = this.state.tabs.find(tab => tab.id === this.state.activeTabID);
-      this.parentThreadID = parentThreadID ?? undefined;
       if (previousTab?.kind === "side-chat") {
-        const remaining = this.state.activationHistory.findLast(id => this.state.tabs.some(tab => tab.id === id && (tab.kind !== "side-chat" || tab.parentThreadID === parentThreadID)));
+        const remaining = this.state.activationHistory.findLast(id => this.state.tabs.some(tab => tab.id === id && (tab.kind !== "side-chat" || tab.parentThreadID === parent)));
         this.state = focusViewTab(this.state, remaining);
       }
       this.snapshot = this.project(this.state, this.conversationOpen);

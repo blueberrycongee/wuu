@@ -16,7 +16,6 @@ export const ONBOARDING_PLUGIN_MANIFESTS = Object.fromEntries(Object.values(impo
   .map(manifest => [manifest.id, manifest]));
 
 export const PLUGIN_DESCRIPTION_KEYS: Readonly<Record<string, TranslationKey>> = {
-  side: "onboarding.plugin.side",
   "ask-user": "onboarding.plugin.askUser",
   todo: "onboarding.plugin.todo",
   goal: "onboarding.plugin.goal",

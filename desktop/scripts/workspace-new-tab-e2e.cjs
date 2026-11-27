@@ -677,9 +677,12 @@ app.whenReady().then(async () => {
   await waitFor(() => document.activeElement?.querySelector('strong')?.textContent === 'Workspace notes with a long descriptive title');
   win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
   win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
+  await waitFor(() => document.activeElement?.dataset.wuuTool === "side-chat");
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "Down" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "Down" });
   await waitFor(() => document.activeElement?.dataset.wuuTool === "files");
   await capture("light-14-keyboard-focus");
-  results.push({ scenario: "keyboard wraps from the public extension entry to the first tool", passed: true });
+  results.push({ scenario: "keyboard passes the new side chat entry and wraps to the first tool", passed: true });
   const hover = await evaluate(() => {
     const box = document.querySelector('.workspace-tool-menu [data-wuu-tool="files"]').getBoundingClientRect();
     return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };

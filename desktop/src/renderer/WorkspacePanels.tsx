@@ -268,14 +268,19 @@ function WorkspacePanelContent({
   const panelRef = useRef<HTMLElement>(null);
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const preview = snapshot.previewWorkspace;
+  const conversationActive = Boolean(conversationTabVisible && preview.conversationOpen !== false && preview.conversationSelected);
+  const sideCatalogParent = open && !conversationActive && !preview.tabs.some(tab => tab.id === preview.activeTabId && tab.kind !== "new")
+    ? snapshot.sideConversation.parentThreadId : undefined;
+  const hasBoundSideTabs = preview.tabs.some(tab => tab.kind === "side-chat" && tab.threadID);
+  const sideThreads = hasBoundSideTabs || sideCatalogParent ? snapshot.conversationWorkspace.threads : undefined;
+  const sideThreadByID = useMemo(() => new Map(sideThreads?.filter(thread => thread.placement === "side").map(thread => [thread.id, thread as Thread])), [sideThreads]);
   // Detach public immutable display data before using the existing mutable leaf renderers.
-  const sideThreadByID = useMemo(() => new Map(snapshot.conversationWorkspace.threads.filter(thread => thread.placement === "side").map(thread => [thread.id, thread as Thread])),
-    [snapshot.conversationWorkspace.threads]);
-  const tabs = useMemo(() => (structuredClone(preview.tabs) as WorkspaceViewTab[]).map(tab => {
+  const previewTabs = useMemo(() => structuredClone(preview.tabs) as WorkspaceViewTab[], [preview.tabs]);
+  const tabs = useMemo(() => hasBoundSideTabs ? previewTabs.map(tab => {
     if (tab.kind !== "side-chat" || !tab.threadID) return tab;
     const thread = sideThreadByID.get(tab.threadID);
     return { ...tab, title: thread?.title || thread?.preview || undefined };
-  }), [preview.tabs, sideThreadByID]);
+  }) : previewTabs, [previewTabs, hasBoundSideTabs, sideThreadByID]);
   const publicThread = snapshot.conversationWorkspace.threads.find(thread => thread.id === preview.threadId);
   const terminalThread = publicThread as Thread | undefined;
   const { activeContext, workspaceContext, fileRefreshKey, browserActivity, browserDockTarget } = preview;
@@ -314,10 +319,10 @@ function WorkspacePanelContent({
     }}>
     <slots.Slot name="wuu.default-preview/application.composer" context={{ variant: "document", pane }} />
   </WorkspaceDocumentTurnDock> : null;
-  const conversationActive = Boolean(conversationTab?.active);
   const selectedTabID = conversationActive ? WORKSPACE_CONVERSATION_TAB_ID : activeTabID;
   const visibleTabs = tabs;
   const activeTab = activeTabID ? visibleTabs.find((tab) => tab.id === activeTabID) : undefined;
+  const showingPicker = !activeTab || activeTab.kind === "new";
   const activeSideTab = activeTab?.kind === "side-chat" ? activeTab : undefined;
   const sideOwner = activeSideTab?.threadID ? threadSessionTabID(activeSideTab.threadID) : activeSideTab?.id;
   const needsSideLoad = Boolean(activeSideTab?.threadID && sideOwner && (!snapshot.drafts.sideChats?.[sideOwner] || !sideThreadByID.has(activeSideTab.threadID)));
@@ -348,7 +353,6 @@ function WorkspacePanelContent({
     setTerminalMounted(false);
   }
   const fileTabs = tabs.filter((tab): tab is WorkspaceFileViewTab => tab.kind === "file");
-  const showingPicker = !activeTab || activeTab.kind === "new";
   const [dirtyFileTabIDs, setDirtyFileTabIDs] = useState<Set<string>>(() => new Set());
   const enterReady = useStripEnterReady();
   const tabEntries = useTabExitRetention(visibleTabs, (tab) => tab.id);
@@ -1174,9 +1178,9 @@ function WorkspacePanelContent({
                   <WorkspaceToolPicker
                     slots={slots}
                     onSelectTool={onOpenTool}
-                    sideChats={open && !conversationActive && snapshot.sideConversation.parentThreadId ? <SideChatPicker
-                      key={snapshot.sideConversation.parentThreadId} application={application}
-                      parentThreadId={snapshot.sideConversation.parentThreadId} revision={snapshot.sideConversation.catalogRevision} tabs={tabs}
+                    sideChats={sideCatalogParent ? <SideChatPicker
+                      key={sideCatalogParent} application={application}
+                      parentThreadId={sideCatalogParent} revision={snapshot.sideConversation.catalogRevision} tabs={tabs}
                       liveChats={sideThreadByID} remove={removeSideChat} /> : undefined}
                   />
                 ) : activeTab.kind === "diff" ? (
@@ -1509,7 +1513,7 @@ function SideChatPicker({ application, parentThreadId, revision, tabs, liveChats
 
   const open = (threadId?: string) => { void application.invoke("side.open", { parentThreadId, threadId }).catch(showErrorToast); };
   return <section className="workspace-tool-menu-section">
-    <button className="workspace-tool-menu-item" type="button" onClick={() => open()}>
+    <button className="workspace-tool-menu-item" data-wuu-component="workspace-tool" data-wuu-tool="side-chat" type="button" onClick={() => open()}>
       <span className="workspace-tool-menu-icon" aria-hidden="true"><MessageCircle className="icon" /></span>
       <span className="workspace-tool-menu-copy"><strong>{t("sideThread.new")}</strong></span>
     </button>
