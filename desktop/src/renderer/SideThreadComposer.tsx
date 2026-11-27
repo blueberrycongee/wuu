@@ -1,7 +1,7 @@
 import type { ApplicationSideConversationActionMapV1, ApplicationSideConversationViewV1 } from "../../../packages/plugin-sdk/src/ui-side-conversation";
 import { showActionErrorToast } from "./Toast";
 import { useMemo, useRef } from "react";
-import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
+import { ResponseSelectionList } from "./ResponseSelectionList";
 import { ComposerFileSelectionCard } from "./ComposerFileSelectionCard";
 import { buildSideThreadSlashCommands } from "./ComposerSlashCommands";
 import {
@@ -76,7 +76,7 @@ export function SideThreadComposer({
       textOnly
       inlineSelection={selection?.type === "file"
         ? <ComposerFileSelectionCard source={selection.file} onRemove={onRemoveSelection} onOpenFile={onOpenFile} />
-        : selection ? <ComposerResponseSelectionCard selection={selection.response} onRemove={onRemoveSelection} /> : undefined}
+        : selection ? <ResponseSelectionList selections={[selection.response]} onRemove={onRemoveSelection} /> : undefined}
       placeholder={placeholder ?? t("composer.sideThreadPlaceholder")}
       prompt={visibleDraft}
       setPrompt={onChangeDraft}

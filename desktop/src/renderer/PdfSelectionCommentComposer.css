@@ -52,15 +52,16 @@ html[data-focus-modality="keyboard"] .pdf-selection-comment__input:focus-visible
   display: grid;
   flex: 0 0 auto;
   box-sizing: border-box;
-  width: max(28px, calc(var(--font-ui) * 1.5 + 4px));
-  height: max(28px, calc(var(--font-ui) * 1.5 + 4px));
+  min-height: max(28px, calc(var(--font-ui) * 1.5 + 4px));
   margin: 0;
-  padding: 0;
+  padding: 0 var(--space-3);
   place-items: center;
   border: 0;
-  border-radius: var(--radius-circle);
+  border-radius: var(--radius-pill);
   background: var(--ink);
   color: var(--paper);
+  font: inherit;
+  white-space: nowrap;
   cursor: pointer;
   transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
 }
@@ -68,7 +69,6 @@ html[data-focus-modality="keyboard"] .pdf-selection-comment__input:focus-visible
 .pdf-selection-comment__submit:hover { background: var(--ink-strong); }
 .pdf-selection-comment__submit:disabled { background: var(--surface-3); color: var(--ink-muted); cursor: default; }
 .pdf-selection-comment__submit:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.pdf-selection-comment__submit .icon { width: var(--icon-size-sm); height: var(--icon-size-sm); }
 
 .pdf-selection-comment__description {
   position: absolute;
@@ -81,7 +81,7 @@ html[data-focus-modality="keyboard"] .pdf-selection-comment__input:focus-visible
 }
 
 @media (pointer: coarse) {
-  .pdf-selection-comment__submit { width: 44px; height: 44px; }
+  .pdf-selection-comment__submit { min-height: 44px; }
   .pdf-selection-comment__input { min-height: 44px; }
 }
 

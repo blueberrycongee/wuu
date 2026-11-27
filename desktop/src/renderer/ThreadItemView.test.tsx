@@ -330,22 +330,24 @@ describe("ThreadItemView", () => {
       container!.hidden = false;
       document.dispatchEvent(new Event("selectionchange"));
     });
-    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar button")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-toggle")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-submit")!.click());
     window.removeEventListener("wuu:add-response-selection", listener);
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ text: "😀 bold\n", source: { thread_id: "owner", turn_id: "turn-1", item_id: "final-1", start_offset: 1, end_offset: 8, range_text: "😀 bold" } });
     expect(window.getSelection()!.rangeCount).toBe(0);
     const scroll = vi.fn();
     textRoot.querySelector("p")!.scrollIntoView = scroll;
-    expect(navigateToResponseSelection(received[0])).toBe(true);
-    expect(scroll).toHaveBeenCalled();
-    act(() => expect(navigateToResponseSelection({ ...received[0], source: { ...received[0].source, thread_id: "other" } })).toBe(false));
+    const signal = new AbortController().signal;
     await act(async () => {
+      expect(await navigateToResponseSelection(received[0], undefined, signal)).toBe(true);
+      expect(scroll).toHaveBeenCalled();
+      expect(await navigateToResponseSelection({ ...received[0], source: { ...received[0].source, thread_id: "other" } }, undefined, signal)).toBe(false);
       container!.hidden = true;
-      expect(navigateToResponseSelection(received[0])).toBe(false);
+      expect(await navigateToResponseSelection(received[0], undefined, signal)).toBe(false);
       container!.hidden = false;
       bold.textContent = "changed";
-      expect(navigateToResponseSelection(received[0])).toBe(false);
+      expect(await navigateToResponseSelection(received[0], undefined, signal)).toBe(false);
     });
   });
 
@@ -369,7 +371,8 @@ describe("ThreadItemView", () => {
       document.dispatchEvent(new Event("selectionchange"));
     });
     expect(document.querySelector(".response-selection-toolbar")).not.toBeNull();
-    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar button")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-toggle")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-submit")!.click());
     window.removeEventListener("wuu:add-response-selection", listener);
     expect(received).toHaveLength(1);
     expect(received[0]).toMatchObject({ text: "Final answer text.", source: { thread_id: "owner", turn_id: "turn-1", item_id: "final-1", start_offset: 0, end_offset: 18 } });
@@ -456,7 +459,8 @@ describe("ThreadItemView", () => {
     expect(document.querySelector(".response-selection-toolbar")).not.toBeNull();
     act(() => root.dispatchEvent(new Event("scroll")));
     expect(document.querySelector(".response-selection-toolbar")).not.toBeNull();
-    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar button")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-toggle")!.click());
+    act(() => document.querySelector<HTMLButtonElement>(".response-selection-toolbar .selection-action-comment-submit")!.click());
     expect(received).toHaveLength(1);
     expect(received[0].text).toContain("Opening paragraph");
     expect(received[0].text).toContain("Closing paragraph");
@@ -470,9 +474,12 @@ describe("ThreadItemView", () => {
     const message = createComposerMessage("notes\n  raw prompt  ", [], [], parts, [selection])!;
     const item = { ...makeUserMessage(message.text), content_parts: message.contentParts };
     render({ item, turnStatus: "completed", streaming: false });
-    expect(container!.textContent).toContain(selection.text);
-    expect(container!.textContent).toContain(selection.comment);
-    expect(container!.querySelector(".response-selection-source")).not.toBeNull();
+    const trigger = container!.querySelector<HTMLButtonElement>(".response-selection-list--history .response-selection-list-trigger")!;
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
+    act(() => trigger.click());
+    const reference = document.querySelector(".response-selection-list-source");
+    expect(reference?.textContent).toContain(selection.text);
+    expect(reference?.textContent).toContain(selection.comment);
     const submit = vi.fn();
     act(() => root!.render(<ConversationControlsTestProvider composition={composition} service={application}>{<ThreadItemView item={item} turnID="turn-1" turnStatus="completed" streaming={false} onStreamFrame={() => {}} editing onSubmitEditMessage={submit} />}</ConversationControlsTestProvider>));
     expect(container!.querySelector("textarea")!.value).toBe("  raw prompt  ");

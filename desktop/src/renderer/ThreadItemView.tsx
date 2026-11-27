@@ -41,7 +41,8 @@ import {
 } from "./LongTextCollapse";
 import { RichContent } from "./RichContent";
 import { ArtifactThreadContext } from "./ArtifactPreviewContext";
-import { AssistantResponseArticle, ResponseSelectionReference } from "./ResponseSelection";
+import { AssistantResponseArticle } from "./ResponseSelection";
+import { ResponseSelectionList } from "./ResponseSelectionList";
 import {
   AgentMessageActions,
   EmptyMessageActions,
@@ -486,7 +487,7 @@ function UserMessageContent({
 
   return (
     <>
-      {selectionParts.map((part, index) => <ResponseSelectionReference key={`${part.selection.id}-${index}`} selection={part.selection} />)}
+      <ResponseSelectionList selections={selectionParts.map(part => part.selection)} history />
       {hasAttachments ? (
         <div className="user-message-attachments" data-wuu-component="message-attachments">
           <div className="user-message-media-row">
@@ -869,7 +870,9 @@ function UserMessageInlineEditor({
             ? buildFileSelectionPart(part.source, part.intent, comment, part.id)
             : candidate))}
       />
-      {selections.map(selection => <ResponseSelectionReference key={selection.id} selection={selection} />)}
+      <ResponseSelectionList selections={selections}
+        onChange={submitting ? undefined : selection => setSelections(current => current.map(quote => quote.id === selection.id ? selection : quote))}
+        onRemove={submitting ? undefined : id => setSelections(current => current.filter(quote => quote.id !== id))} />
       <ComposerInput
         ref={textareaRef}
         className="user-message-edit-input"

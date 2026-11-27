@@ -15,7 +15,7 @@ const report = { scene: "response-selection-v2", boundary: "Real Electron render
 if (ipcMain) ipcMain.on("selection:bridge-call", (_event, call) => report.calls.push(call));
 let win;
 const surface = '[data-thread-id="selection-main"] article[data-response-item-id="selection-main-answer"] .agent-text';
-const card = '[data-main-conversation-composer] .composer-response-selection-card .composer-document-card-main';
+const card = '[data-main-conversation-composer] .response-selection-list-trigger';
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function evaluate(fn, ...args) {
   const result = await win.webContents.executeJavaScript(`(async()=>{try{return {value:await (${fn})(${args.map(arg => JSON.stringify(arg)).join(",")})}}catch(e){return {error:String(e.stack||e)}}})()`, true);
@@ -66,10 +66,10 @@ async function screenshot(name) {
 }
 function measureGeometry() {
   const selectors = {
-    toolbar: ".response-selection-toolbar", card: "[data-main-conversation-composer] .composer-response-selection-card .composer-document-card-main",
+    toolbar: ".response-selection-toolbar", card: "[data-main-conversation-composer] .response-selection-list-trigger",
     frame: "[data-main-conversation-composer] .composer-frame",
-    popover: ".composer-response-selection-popover", sourceComment: ".response-selection-toolbar .selection-action-comment-input",
-    sentReference: '[data-thread-id="selection-main"] .response-selection-reference',
+    popover: ".response-selection-list-panel", sourceComment: ".response-selection-toolbar .selection-action-comment-input",
+    sentReference: '[data-thread-id="selection-main"] .response-selection-list--history .response-selection-list-trigger',
   };
   const regions = {};
   for (const [name, selector] of Object.entries(selectors)) {
@@ -158,11 +158,9 @@ async function select(text, last = false, physical = false, backward = false, al
 }
 async function add(text, last = false, physical = false, comment = "") {
   const result = await select(text, last, physical);
-  if (comment) {
-    await click(".response-selection-toolbar .selection-action-comment-toggle");
-    await input(".response-selection-toolbar .selection-action-comment-input", comment);
-  }
-  await click(comment ? ".response-selection-toolbar .selection-action-comment-submit" : ".response-selection-toolbar .selection-action-menu-controls > button:first-child");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  if (comment) await input(".response-selection-toolbar .selection-action-comment-input", comment);
+  await click(".response-selection-toolbar .selection-action-comment-submit");
   await until(selector => !!document.querySelector(selector), "quote card", card);
   return result;
 }
@@ -170,22 +168,22 @@ async function closeQuotePanel() {
   if (typeof win !== "undefined" && win.webContents?.debugger) {
     // A pointer left over the Files rail can open its tooltip after resizing.
     // Move into the quote first: the topmost tooltip consumes Escape by design.
-    const point = await evaluate(() => { const r = document.querySelector(".composer-response-selection-popover").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
+    const point = await evaluate(() => { const r = document.querySelector(".response-selection-list-panel").getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; });
     await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...point });
     await until(() => !document.querySelector('[role="tooltip"]'), "hover tooltip dismissed before quote Escape");
-    await evaluate(() => document.querySelector(".composer-response-selection-popover").focus());
+    await evaluate(() => document.querySelector(".response-selection-list-panel").focus());
     await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
     await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
   } else {
-    await evaluate(() => document.querySelector(".composer-response-selection-popover").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, composed: true })));
+    await evaluate(() => document.querySelector(".response-selection-list-panel").dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true, composed: true })));
   }
-  await until(() => !document.querySelector(".composer-response-selection-popover"), "quote panel closed");
+  await until(() => !document.querySelector(".response-selection-list-panel"), "quote panel closed");
 }
 
 async function checkSource(expected) {
   await settle();
   await click(card);
-  await click(".composer-response-selection-source");
+  await click(".response-selection-list-source");
   await checkHighlight(expected);
 }
 async function checkHighlight(expected) {
@@ -202,45 +200,32 @@ async function checkHighlight(expected) {
   }
 }
 async function checkSentReference(expected, name) {
-  const selector = '[data-thread-id="selection-main"] .response-selection-reference';
-  await until(selector => !!document.querySelector(selector), "sent reference", selector);
-  await evaluate(selector => [...document.querySelectorAll(selector)].at(-1).scrollIntoView({ block: "center", behavior: "instant" }), selector);
-  await settle();
-  await evaluate(selector => {
-    const node = [...document.querySelectorAll(selector)].at(-1);
-    if (node.tagName !== "BUTTON") throw new Error("The sent reference must be a native keyboard-accessible button");
-    CSS.highlights.delete("wuu-response-source");
-    node.click();
+  const selector = '[data-thread-id="selection-main"] .response-selection-list--history .response-selection-list-trigger';
+  await until(selector => !!document.querySelector(selector), "sent quote list", selector);
+  const open = () => evaluate(selector => {
+    const trigger = [...document.querySelectorAll(selector)].at(-1);
+    trigger.scrollIntoView({ block: "center", behavior: "instant" });
+    trigger.click();
   }, selector);
+  await open();
+  await click(".response-selection-list-source");
   await checkHighlight(expected);
-  await evaluate(selector => {
-    CSS.highlights.delete("wuu-response-source");
-    const node = [...document.querySelectorAll(selector)].at(-1);
-    node.scrollIntoView({ block: "center", behavior: "instant" });
-    node.focus();
-  }, selector);
-  for (const modifiers of [0, 8]) {
-    await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
-    await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9, modifiers });
-  }
-  await until(selector => {
-    const node = [...document.querySelectorAll(selector)].at(-1);
-    return document.activeElement === node && node.matches(":focus-visible");
-  }, "keyboard focus returns to the sent reference", selector);
+  await until(() => !CSS.highlights.has("wuu-response-source"), "source highlight clears automatically");
+  await open();
+  await until(() => document.activeElement?.matches(".response-selection-list-source"), "opening sent list focuses its first row");
   await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyDown", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, text: "\r" });
   await win.webContents.debugger.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13 });
   await checkHighlight(expected);
   for (const [theme, font, width] of [["light", 14, 1200], ["dark", 14, 1200], ["light", 20, 390], ["dark", 20, 390]]) {
     win.setContentSize(width, 820);
-    await evaluate((selector, theme, font) => {
+    await evaluate((theme, font) => {
       document.documentElement.dataset.theme = theme;
       document.documentElement.style.setProperty("--ui-font-size", `${font}px`);
       document.documentElement.style.setProperty("--conversation-message-font-size", `${font}px`);
-      const node = [...document.querySelectorAll(selector)].at(-1);
-      node.scrollIntoView({ block: "center", behavior: "instant" });
-      node.focus();
-    }, selector, theme, font);
+    }, theme, font);
+    await open();
     await screenshot(`${name}-${theme}-${font}-${width}`);
+    await click(".response-selection-list-source");
     await checkHighlight(expected);
   }
   win.setContentSize(1200, 820);
@@ -249,7 +234,7 @@ async function checkSentReference(expected, name) {
     document.documentElement.style.setProperty("--ui-font-size", "14px");
     document.documentElement.style.setProperty("--conversation-message-font-size", "14px");
   });
-  report.cases.push(`${name}: whole-card DOM click and native Tab/Enter navigate to the exact source`);
+  report.cases.push(`${name}: pointer and keyboard row activation navigate to the exact source, then the highlight clears`);
 }
 async function send(expected, comment, prompt, method = "startTurn") {
   const before = report.calls.length;
@@ -277,7 +262,7 @@ async function checkAnnotationPanel(name) {
   const geometry = await evaluate(selector => {
     const anchor = document.querySelector(selector);
     const owner = anchor?.closest(".composer-frame, .composer-frame-shell, .composer-stack");
-    const panel = document.querySelector(".composer-response-selection-popover");
+    const panel = document.querySelector(".response-selection-list-panel");
     if (!owner || !panel) throw new Error("Missing annotation panel or owning composer");
     const input = panel.querySelector("textarea");
     return { owner: owner.getBoundingClientRect().toJSON(), panel: panel.getBoundingClientRect().toJSON(),
@@ -420,7 +405,8 @@ async function streamingCoverage() {
   await evaluate(() => window.getSelection().removeAllRanges());
   await until(() => !document.querySelector(".response-selection-toolbar"), "explicit native deselection closes actions");
   await select(tail.text);
-  await click(".response-selection-toolbar button");
+  await click(".response-selection-toolbar .selection-action-comment-toggle");
+  await click(".response-selection-toolbar .selection-action-comment-submit");
   await until(selector => !!document.querySelector(selector), "tail quote card", card);
   await checkSource(tail);
   await send(tail, "", "Explain the selected live tail.", "steerTurn");
@@ -546,6 +532,92 @@ async function run() {
   await checkSentReference(quote, "sent-quote-reference");
   report.cases.push("quote-only submission retains rich metadata and flattened quote");
 
+  const firstComment = "这是原文里第一次出现的位置。";
+  const secondComment = "结合这段补充说明。";
+  const firstSent = await add("Repeated 😀 café 中文 target.", false, false, firstComment);
+  const secondSent = await add("Last paragraph stays visible.", false, false, secondComment);
+  await send(firstSent, firstComment, "请对比这两处，并说明它们的关系。");
+  const sentGroup = '[data-thread-id="selection-main"] .response-selection-list--history .response-selection-list-trigger';
+  const sentRows = ".response-selection-list-panel--history .response-selection-list-source";
+  for (const [theme, font, width] of [["light", 14, 1200], ["dark", 20, 390]]) {
+    win.setContentSize(width, 820);
+    await evaluate((theme, font) => {
+      document.documentElement.dataset.theme = theme;
+      document.documentElement.style.setProperty("--ui-font-size", `${font}px`);
+      document.documentElement.style.setProperty("--conversation-message-font-size", `${font}px`);
+    }, theme, font);
+    await settle();
+    await evaluate(() => document.querySelector(".jump-to-latest-pill")?.click());
+    await settle();
+    const wheel = await evaluate(selector => {
+      const trigger = [...document.querySelectorAll(selector)].at(-1);
+      const bubble = trigger.closest(".user-message-block").querySelector(".user-message");
+      const viewport = trigger.closest(".scroll-region").getBoundingClientRect();
+      const composer = document.querySelector("[data-main-conversation-composer] .composer-frame").getBoundingClientRect();
+      const triggerTop = trigger.getBoundingClientRect().top;
+      const messageHeight = bubble.getBoundingClientRect().bottom - triggerTop;
+      const target = Math.min(viewport.top + viewport.height * 0.72, composer.top - messageHeight - 22);
+      return {
+        x: Math.round(viewport.left + viewport.width / 2),
+        y: Math.round(viewport.top + viewport.height / 2),
+        deltaX: 0,
+        deltaY: triggerTop - target,
+      };
+    }, sentGroup);
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseWheel", ...wheel });
+    await until(selector => {
+      const trigger = [...document.querySelectorAll(selector)].at(-1);
+      const bubble = trigger?.closest(".user-message-block")?.querySelector(".user-message");
+      const composer = document.querySelector("[data-main-conversation-composer] .composer-frame")?.getBoundingClientRect();
+      return bubble?.textContent.includes("请对比这两处")
+        && trigger.getBoundingClientRect().top >= innerHeight * 0.55
+        && bubble.getBoundingClientRect().bottom <= composer.top;
+    }, "sent quote count and message are visible with space for the list", sentGroup);
+    await settle();
+    await evaluate(selector => [...document.querySelectorAll(selector)].at(-1).click(), sentGroup);
+    await until(selector => document.querySelectorAll(selector).length === 2, "both quotes share one sent list", sentRows);
+    await settle();
+    const hover = await evaluate(selector => {
+      const rect = document.querySelector(selector).getBoundingClientRect();
+      return { x: Math.round((rect.left + rect.right) / 2), y: Math.round((rect.top + rect.bottom) / 2) };
+    }, sentRows);
+    await win.webContents.debugger.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", ...hover });
+    await screenshot(`sent-multiple-quotes-${theme}-${font}-${width}`);
+    const geometry = await evaluate(selector => {
+      const trigger = [...document.querySelectorAll(selector)].at(-1);
+      const panel = document.getElementById(trigger.getAttribute("aria-controls"));
+      const message = trigger.closest(".user-message-block");
+      const bubble = message.querySelector(".user-message");
+      return {
+        triggers: message.querySelectorAll(selector.split(" ").at(-1)).length,
+        panelBottom: panel.getBoundingClientRect().bottom,
+        triggerTop: trigger.getBoundingClientRect().top,
+        triggerBottom: trigger.getBoundingClientRect().bottom,
+        bubbleTop: bubble.getBoundingClientRect().top,
+        bubbleBottom: bubble.getBoundingClientRect().bottom,
+        composerTop: document.querySelector("[data-main-conversation-composer] .composer-frame").getBoundingClientRect().top,
+        excerpts: [...panel.querySelectorAll(".composer-response-selection-quote")].map(node => node.textContent),
+        comments: [...panel.querySelectorAll(".response-selection-list-comment")].map(node => node.textContent),
+      };
+    }, sentGroup);
+    report.measurements.push({ name: `sent quote placement ${theme} ${width}`, ...geometry });
+    if (geometry.triggers !== 1 || geometry.panelBottom > geometry.triggerTop + 1 || geometry.triggerBottom > geometry.bubbleTop + 1
+      || geometry.bubbleBottom > geometry.composerTop + 1 || geometry.excerpts[0] !== firstSent.text || geometry.excerpts[1] !== secondSent.text
+      || geometry.comments[0] !== firstComment || geometry.comments[1] !== secondComment) {
+      throw new Error(`Sent quotes are not grouped above the message: ${JSON.stringify(geometry)}`);
+    }
+    const second = theme === "light";
+    await evaluate((selector, index) => document.querySelectorAll(selector)[index].click(), sentRows, second ? 1 : 0);
+    await checkHighlight(second ? secondSent : firstSent);
+  }
+  win.setContentSize(1200, 820);
+  await evaluate(() => {
+    document.documentElement.dataset.theme = "light";
+    document.documentElement.style.setProperty("--ui-font-size", "14px");
+    document.documentElement.style.setProperty("--conversation-message-font-size", "14px");
+  });
+  report.cases.push("two sent comments share one count above the message; the list opens upward and each row jumps to its own quote");
+
   const multilineQuote = await evaluate(selector => document.querySelector(selector).textContent, surface);
   const multilineSelection = await add(multilineQuote);
   const longComment = `Long annotation with English and 中文.\n${"中文需要保持完整并正确换行。".repeat(16)}\n${"unbroken_annotation_".repeat(32)}`;
@@ -558,19 +630,18 @@ async function run() {
   });
   await settle();
   await screenshot("multiple-quotes-collapsed-light-390-20");
-  await until(selector => document.querySelectorAll(selector).length === 2, "two quote attachment cards", card);
-  await evaluate(selector => document.querySelectorAll(selector)[1].click(), card);
-  await until(() => document.querySelector(".composer-response-selection-comment")?.value === "Second annotation 第二条批注",
-    "second quote details");
+  await until(selector => document.querySelectorAll(selector).length === 1, "one quote attachment list", card);
+  await click(card);
+  await until(() => document.querySelectorAll(".response-selection-list-row").length === 2, "two quote rows");
+  await until(() => [...document.querySelectorAll(".response-selection-list-comment")].some(node => node.textContent === "Second annotation 第二条批注"), "second quote details");
   await checkAnnotationPanel("multiple-quotes-light-390-20");
   await screenshot("multiple-quotes-expanded-light-390-20");
-  await click(".composer-response-selection-remove");
-  await until(selector => document.querySelectorAll(selector).length === 1, "remove only second quote", card);
-  await click(card);
+  await click(".response-selection-list-panel li:nth-child(2) .composer-response-selection-remove");
+  await until(() => document.querySelectorAll(".response-selection-list-row").length === 1, "remove only second quote");
   const retained = await evaluate(() => document.querySelector(".composer-response-selection-quote")?.textContent);
   if (retained !== multilineSelection.renderedText) throw new Error("Removing the second quote changed the first quote");
   await closeQuotePanel();
-  report.cases.push("two quotes collapsed and expanded at 390px/20px, removing second retains complete first selection");
+  report.cases.push("one quote list with two rows at 390px/20px, removing the second retains the first");
   for (const [width, height, font, theme] of [[1200, 820, 14, "light"], [1200, 820, 20, "dark"], [390, 820, 14, "dark"], [390, 820, 20, "light"]]) {
     win.setContentSize(width, height);
     await evaluate((font, theme) => {
@@ -581,7 +652,7 @@ async function run() {
     await settle();
     await click(card);
     await until(() => {
-      const node = document.querySelector(".composer-response-selection-popover");
+      const node = document.querySelector(".response-selection-list-panel");
       if (!node) return false;
       const rect = node.getBoundingClientRect();
       return rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 1 && rect.top >= 0 && rect.bottom <= innerHeight + 1;
@@ -592,11 +663,13 @@ async function run() {
     // textContent intentionally omits. Compare against the native selection,
     // not concatenated DOM text; the source offsets still refer to textContent.
     if (shownQuote !== multilineSelection.renderedText) throw new Error(`Annotation quote lost original whitespace or text: ${JSON.stringify({ expected: multilineSelection.renderedText, actual: shownQuote })}`);
+    await click(".response-selection-list-edit");
     await input(".composer-response-selection-comment", longComment);
     await checkAnnotationPanel(`${theme}-${width}-${font}-long-comment`);
     await screenshot(`${theme}-${width}-${font}`);
     await closeQuotePanel();
     await click(card);
+    await click(".response-selection-list-edit");
     await until(expected => document.querySelector(".composer-response-selection-comment")?.value === expected,
       "long comment survives dismissal and reopening", longComment);
     await checkAnnotationPanel(`${theme}-${width}-${font}-reopened`);
@@ -677,7 +750,7 @@ function servePreview() {
       if(scene==='send'){
         const comment='Explain "this" 😀\\n第二行';
         const selected=await add(text,true,false,comment);await checkSource(selected);await send(selected,comment,'Please explain.');
-        report.cases.push('source-local Comment + Add + send wire payload');
+        report.cases.push('Quote with an optional comment + send wire payload');
         const quote=await add(text,true);await send(quote,'','');report.cases.push('quote-only wire payload');
       }else if(scene==='toolbar'||scene==='comment'||scene==='typing'){
         await select(text,true);
@@ -689,14 +762,12 @@ function servePreview() {
         for(let index=1;index<count;index++)await add('Native drag selection',false,false,'Comment '+(index+1));
         if(scene==='manager'||scene==='aggregate')await click(card);
         if(scene==='aggregate'){
-          const entries=()=>[...document.querySelectorAll(card)];
-          await until(()=>entries().length===2,'two selection attachment cards');
+          const rows=()=>[...document.querySelectorAll('.response-selection-list-row')];
+          await until(()=>rows().length===2,'two rows in one quote list');
+          rows()[1].querySelector('.composer-response-selection-remove').click();
+          await until(()=>rows().length===1,'remove only the second selection');
           await closeQuotePanel();
-          entries()[1].click();
-          await until(()=>!!document.querySelector('.composer-response-selection-remove'),'second quote details');
-          document.querySelector('.composer-response-selection-remove').click();
-          await until(()=>entries().length===1,'remove only the second selection');
-          await checkSource(expected);await click(card);report.cases.push('two selection cards; removing the second preserves the first exact source');
+          await checkSource(expected);await click(card);report.cases.push('two quote rows; removing the second preserves the first exact source');
         }
       }
       report.measurements.push({name:scene,...measureGeometry()});

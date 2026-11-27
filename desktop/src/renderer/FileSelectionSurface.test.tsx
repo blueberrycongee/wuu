@@ -11,7 +11,13 @@ const state = vi.hoisted(() => ({ actions: null as null | {
   removeComment: ReturnType<typeof vi.fn>; edit: ReturnType<typeof vi.fn>; openFile: ReturnType<typeof vi.fn>;
 } }));
 vi.mock("./FileSelectionContext", () => ({ useFileSelectionActions: () => state.actions }));
-vi.mock("./i18n", () => ({ useI18n: () => ({ locale: "en" }) }));
+vi.mock("./i18n", () => ({ useI18n: () => ({ locale: "en", t: (key: string) => ({
+  "responseSelection.quote": "Quote",
+  "responseSelection.add": "Add quote",
+  "responseSelection.editComment": "Edit comment",
+  "responseSelection.optionalComment": "Add a comment (optional)",
+  "common.save": "Save",
+}[key] ?? key) }) }));
 
 let root: Root;
 let container: HTMLDivElement;
@@ -56,7 +62,7 @@ describe("file selection surface", () => {
     const toolbar = document.querySelector<HTMLElement>(".file-selection-action-menu")!;
     expect(Number.parseFloat(toolbar.style.left)).toBe(300);
     expect(Number.parseFloat(toolbar.style.top)).toBe(192);
-    click("Comment");
+    click("Quote");
     const comment = document.querySelector<HTMLElement>(".file-selection-action-menu")!;
     expect(Number.parseFloat(comment.style.left)).toBe(300);
     expect(Number.parseFloat(comment.style.top)).toBe(152);
@@ -78,7 +84,7 @@ describe("file selection surface", () => {
     Object.defineProperty(event, "propertyName", { value: "transform" });
     act(() => container.dispatchEvent(event));
     expect(Number.parseFloat(toolbar.style.left)).toBe(342);
-    click("Add to conversation");
+    click("Quote"); click("Add quote");
     expect(state.actions!.addQuote).toHaveBeenCalledWith(source);
   });
 
@@ -91,13 +97,15 @@ describe("file selection surface", () => {
   it("quotes the captured source after browser selection loss on an action click", () => {
     render(); select();
     act(() => window.getSelection()!.removeAllRanges());
-    click("Add to conversation");
+    click("Quote");
+    expect(state.actions!.addQuote).not.toHaveBeenCalled();
+    click("Add quote");
     expect(state.actions!.addQuote).toHaveBeenCalledWith(source);
     expect(document.querySelector('[role="toolbar"]')).toBeNull();
   });
 
   it("keeps the selection while typing a comment and submits that captured source", () => {
-    render(); select(); click("Comment");
+    render(); select(); click("Quote");
     expect(document.activeElement).toBe(document.querySelector(".selection-action-comment-input"));
     type("Explain this line");
     act(() => { window.getSelection()!.removeAllRanges(); document.dispatchEvent(new Event("selectionchange")); });
@@ -135,7 +143,7 @@ describe("file selection surface", () => {
   });
 
   it("dismisses an unfinished file comment on an outside pointer press", () => {
-    render(); select(); click("Comment"); type("Unsent comment");
+    render(); select(); click("Quote"); type("Unsent comment");
     const input = document.querySelector<HTMLTextAreaElement>(".selection-action-comment-input")!;
     act(() => input.dispatchEvent(new Event("pointerdown", { bubbles: true })));
     expect(document.querySelector(".selection-action-comment-input")).not.toBeNull();
@@ -153,14 +161,14 @@ describe("file selection surface", () => {
   });
 
   it("clears transient state on Escape, file switches, and deactivation", () => {
-    render(); select(); click("Comment");
+    render(); select(); click("Quote");
     act(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); document.dispatchEvent(new KeyboardEvent("keyup", { key: "Escape" })); });
     expect(document.querySelector("textarea")).toBeNull();
     expect(document.querySelector('[role="toolbar"]')).not.toBeNull();
-    expect(document.activeElement).toBe(button("Comment"));
+    expect(document.activeElement).toBe(button("Quote"));
     act(() => document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(document.querySelector('[role="toolbar"]')).toBeNull();
-    select(); click("Comment"); render("other.md");
+    select(); click("Quote"); render("other.md");
     expect(document.querySelector("textarea")).toBeNull();
     render("note.md"); select(); render("note.md", text, false);
     expect(controls.onSelectionChange).toBeUndefined();
@@ -172,7 +180,7 @@ describe("file selection surface", () => {
     state.actions!.comments = [part, { ...part, id: "two", source: { ...source, path: "else.md" }, comment: "Other" }];
     render();
     expect(container.querySelectorAll(".file-selection-comment")).toHaveLength(1);
-    click("Edit comment"); type("Updated"); click("Comment");
+    click("Edit comment"); type("Updated"); click("Save");
     expect(state.actions!.addComment).toHaveBeenCalledWith(source, "Updated", "one");
     click("Remove"); expect(state.actions!.removeComment).toHaveBeenCalledWith("one");
   });
@@ -180,19 +188,19 @@ describe("file selection surface", () => {
   it("accepts model offsets for virtualized code without depending on DOM text", () => {
     render();
     act(() => controls.onSelectionChange!({ start: 11, end: 24, blockFallback: false, getRect: () => new DOMRect(20, 20, 1, 18) }));
-    click("Add to conversation");
+    click("Quote"); click("Add quote");
     expect(state.actions!.addQuote).toHaveBeenCalledWith(source);
   });
 
   it("cancels an unfinished form when the conversation owner changes with the same file open", () => {
-    render(); select(); click("Comment"); type("Belongs to the first thread");
+    render(); select(); click("Quote"); type("Belongs to the first thread");
     const original = state.actions!;
     state.actions = { ...original, ownerKey: "thread-two", addComment: vi.fn() };
     render();
     expect(document.querySelector("textarea")).toBeNull();
     expect(controls.persistentSelection).toBeUndefined();
     expect(state.actions.addComment).not.toHaveBeenCalled();
-    select(); click("Comment"); type("Second thread"); click("Comment");
+    select(); click("Quote"); type("Second thread"); click("Add quote");
     expect(state.actions.addComment).toHaveBeenCalledWith(source, "Second thread", undefined);
     expect(original.addComment).not.toHaveBeenCalled();
   });
@@ -202,7 +210,7 @@ describe("file selection surface", () => {
     state.actions!.edit.mockImplementation(() => new Promise<boolean>(done => { resolve = done; }));
     render(); select(); click("Edit"); type("Old request"); click("Send edit request");
     state.actions = { ...state.actions!, ownerKey: "thread-two" };
-    render(); select(); click("Comment"); type("New comment");
+    render(); select(); click("Quote"); type("New comment");
     await act(async () => resolve(true));
     expect(document.querySelector("textarea")!.value).toBe("New comment");
   });

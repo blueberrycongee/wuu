@@ -140,11 +140,10 @@ export function PdfSelectionMenu({ hostRef, source, active }: {
   if (!current || !position || !actions) return null;
   return <UILayerPortal layer="popover"><PdfSelectionActionMenu ref={popup} className="pdf-selection-action-menu"
     style={{ left: position.left, top: position.top, maxWidth: position.width, maxHeight: position.height, overflow: "auto" }}
-    label={t("pdfSelection.actions")} addLabel={t("pdfSelection.add")} commentLabel={t("pdfSelection.comment")}
+    label={t("pdfSelection.actions")} quoteLabel={t("responseSelection.quote")} submitLabel={t("responseSelection.add")}
     commentPlaceholder={t("responseSelection.optionalComment")} commenting={commenting} comment={comment}
-    onCommentChange={setComment} onCommentStart={() => setCommenting(true)}
+    onCommentChange={setComment} onQuote={() => setCommenting(true)}
     onCommentCancel={() => { setCommenting(false); requestAnimationFrame(() => toggle.current?.focus()); }}
-    onAdd={() => { actions.addQuote(current.source); close(); }}
     onCommentSubmit={() => {
       if (comment.trim()) actions.addComment(current.source, comment.trim());
       else actions.addQuote(current.source);

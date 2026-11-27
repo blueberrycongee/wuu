@@ -23,7 +23,7 @@ let container: HTMLDivElement;
 let root: Root | null = null;
 let storageKeyCounter = 0;
 
-it("keeps each quote as its own tray card and edits or removes one without losing the other", async () => {
+it("edits and removes individual quotes from one attachment list", async () => {
   const quote: ResponseSelection = {
     id: "quote-1", text: `${longText()}\nFinal quoted line`,
     source: { thread_id: "thread", turn_id: "turn", item_id: "item", start_offset: 0, end_offset: 200 },
@@ -38,11 +38,13 @@ it("keeps each quote as its own tray card and edits or removes one without losin
       onRemoveSelection={(id) => setSelections((current) => current.filter((selection) => selection.id !== id))} />;
   }
   act(() => { root = createRoot(container); root.render(<Harness />); });
-  const cards = () => container.querySelectorAll(".composer-attachment-tray .composer-response-selection-card");
-  expect(cards()).toHaveLength(2);
-  expect(cards()[0].querySelector(".composer-document-card-title")?.textContent).toBe(quote.text.replace(/\s+/g, " "));
-  act(() => cards()[0].querySelector<HTMLButtonElement>(".composer-document-card-main")!.click());
-  expect(document.querySelector("[role=dialog] blockquote")?.textContent).toBe(quote.text);
+  const trigger = container.querySelector<HTMLButtonElement>(".response-selection-list-trigger")!;
+  expect(container.querySelectorAll(".composer-attachment-tray-item")).toHaveLength(1);
+  act(() => trigger.click());
+  const rows = () => document.querySelectorAll<HTMLElement>(".response-selection-list-row");
+  expect(rows()).toHaveLength(2);
+  expect(rows()[0].querySelector(".composer-response-selection-quote")?.textContent).toBe(quote.text);
+  act(() => rows()[0].querySelector<HTMLButtonElement>(".response-selection-list-edit")!.click());
   const textarea = document.querySelector<HTMLTextAreaElement>("[role=dialog] textarea")!;
   await act(async () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(textarea));
@@ -52,13 +54,12 @@ it("keeps each quote as its own tray card and edits or removes one without losin
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
   });
   expect(latest).toEqual({ ...quote, comment: "Explain this part" });
-  expect(cards()[0].querySelector(".composer-document-card-meta")?.textContent).toBe("Explain this part");
-  act(() => document.querySelector<HTMLButtonElement>("[role=dialog] .composer-response-selection-remove")!.click());
-  expect(document.querySelector("[role=dialog]")).toBeNull();
-  expect(cards()).toHaveLength(1);
-  expect(cards()[0].querySelector(".composer-document-card-title")?.textContent).toBe(second.text);
-  act(() => cards()[0].querySelector<HTMLButtonElement>(".composer-attachment-card-remove")!.click());
+  act(() => rows()[1].querySelector<HTMLButtonElement>(".composer-response-selection-remove")!.click());
+  expect(rows()).toHaveLength(1);
+  expect(rows()[0].querySelector(".composer-response-selection-quote")?.textContent).toBe(quote.text);
+  act(() => rows()[0].querySelector<HTMLButtonElement>(".composer-response-selection-remove")!.click());
   expect(container.querySelector("ul")).toBeNull();
+  expect(document.querySelector("[role=dialog]")).toBeNull();
 });
 
 beforeEach(() => {
