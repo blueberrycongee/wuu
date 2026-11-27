@@ -92,13 +92,13 @@ if (process.env.WUU_PULL_SESSION_E2E === "1") {
 turns.at(-1).items[0].related_session_id = "resize-related-thread";
 turns.at(-1).items[0].input_text = "Related session completed its resize check.";
 
-const sideSummary = {
-  side_thread_id: "resize-side-thread",
-  main_thread_id: resizeThread.id,
+const sideThread = {
+  ...resizeThread,
+  id: "resize-side-thread",
+  placement: "side",
+  parent_id: resizeThread.id,
   status: "idle",
-  revision: 1,
-  created_at: now,
-  updated_at: now
+  turns: [],
 };
 
 function projectList() {
@@ -276,13 +276,7 @@ const desktopAPI = {
     model: "mock-resize",
     workspace_root: cwd,
     providers: [{ name: "e2e", type: "mock", model: "mock-resize", api_key_configured: true }],
-    // Layout journeys open /side through the same public contribution gate.
-    extension_inventory: [{
-      id: "user:e2e-attached-chat", kind: "plugin", name: "Attached chat fixture",
-      state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
-      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "e2e-attached-chat" },
-      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Use the fixture side conversation." }] },
-    }],
+    extension_inventory: [],
   }),
   updateGeneralSettings: async settings => {
     generalSettings = { ...generalSettings, ...settings };
@@ -307,31 +301,27 @@ const desktopAPI = {
   resumeThread: async (id) => ({
     thread: id === "resize-related-thread"
       ? { ...resizeThread, id, turns: turns.slice(-2) }
-      : resizeThread
+      : id === sideThread.id ? sideThread : resizeThread
   }),
+  forkThread: async (id, _turn, _item, _mode, _target, options) => {
+    if (id !== resizeThread.id || options?.placement !== "side") throw new Error("Unexpected fork in layout fixture");
+    return { thread: sideThread };
+  },
   listThreads: async () => ({ threads: [resizeThread] }),
   listAllThreads: async () => ({ threads: [resizeThread] }),
   getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
-  openSideThread: async () => ({ summary: sideSummary }),
-  getSideThreadHistory: async () => ({
-    summary: sideSummary,
-    messages: [{
-      id: "resize-side-answer",
-      side_thread_id: sideSummary.side_thread_id,
-      role: "assistant",
-      text: heavyAnswer,
-      status: "completed",
-      created_at: now
-    }]
-  }),
-  sendSideThreadMessage: async () => { throw new Error("Unexpected side-thread send in layout fixture"); },
-  interruptSideThread: async () => ({ ok: true }),
-  resetSideThread: async () => ({ ok: true }),
-  onSideThreadEvent: () => () => undefined,
   pinThread: async (_id, pinned) => ({ pinned }),
   archiveThread: async () => ({ ok: true }),
-  startTurn: async (_threadID, text, images = [], _files, _permission, _document, _parts, _context, clientID) => {
+  startTurn: async (threadID, text, images = [], _files, _permission, _document, _parts, _context, clientID) => {
+    if (threadID === sideThread.id) {
+      const turn = { ...turns[0], id: "resize-side-turn", items: [
+        { id: "resize-side-user", type: "user_message", text, status: "completed", source_id: clientID },
+        { id: "resize-side-answer", type: "agent_message", text: heavyAnswer, status: "completed" },
+      ] };
+      sideThread.turns = [turn];
+      return { turn };
+    }
     if (!liveLayout) return { turn: null };
     submittedTurns += 1;
     const turn = {

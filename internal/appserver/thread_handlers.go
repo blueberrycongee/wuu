@@ -761,6 +761,7 @@ func (s *Server) loadPersistedThreadSnapshotWithStore(binding *runtime.State, st
 }
 
 type forkSourceThread struct {
+	admitted       *runtime.ThreadRuntime
 	liveHistory    bool
 	history        []providers.ChatMessage
 	displayHistory []providers.ChatMessage
@@ -811,13 +812,35 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported fork mode %q", mode))
 	}
 
+	side := params.Placement == session.PlacementSide
+	if params.Placement != "" && !side {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported placement %q", params.Placement))
+	}
+	if params.Anchor != "" && (params.Anchor != "latest_completed" || !side) {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("unsupported fork anchor %q", params.Anchor))
+	}
+	if side && (mode != "local" || params.Anchor != "latest_completed" || params.TurnID != "" || params.ItemID != "" || params.Target != nil) {
+		return s.writeResponse(req.ID, nil, errors.New("side chats require a local fork at the latest completed turn"))
+	}
+
 	// Native history and its Wuu projection must come from the same idle
 	// session revision. This lease also fences edits/turns on other connections.
 	metadata, found, err := binding.Sessions.Find(sourceID)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if side {
+		if !found || metadata.Placement != "" || metadata.ArchivedAt != nil || metadata.Visibility == pluginhost.SessionVisibilityPlugin {
+			return s.writeResponse(req.ID, nil, errors.New("side chats require an active main conversation"))
+		}
+		lease, err := s.acquireThreadLifecycleWriteLease(sourceID)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer releaseThreadLifecycleWriteLease(sourceID, lease)
+	}
 	canonicalHistory := false
+	nativeIdle := true
 	if found {
 		descriptor, descriptorErr := s.engineDescriptorForState(ctx, binding, agentengine.NormalizeEngineID(metadata.EngineID))
 		if descriptorErr != nil {
@@ -825,11 +848,12 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		}
 		canonicalHistory = slices.Contains(descriptor.Capabilities, "canonical-history")
 	}
-	if found && !canonicalHistory {
+	if found && (side || !canonicalHistory) {
 		lease, err := s.tryAcquireThreadMutationLease(binding, sourceID)
-		if err != nil {
+		if err != nil && (!side || !errors.Is(err, errThreadExecutionBusy)) {
 			return s.writeResponse(req.ID, nil, fmt.Errorf("wait for the native turn to finish before forking: %w", err))
 		}
+		nativeIdle = lease != nil
 		defer releaseThreadMutationLease(sourceID, lease)
 		metadata, _, err = binding.Sessions.Find(sourceID)
 		if err != nil {
@@ -840,6 +864,9 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 	source, err := s.loadForkSourceThread(binding, sourceID, now)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
+	}
+	if side && (source.thread.ReadOnly || source.thread.Ephemeral || source.thread.ParentID != "") {
+		return s.writeResponse(req.ID, nil, errors.New("side chats require a writable main conversation"))
 	}
 	target := ThreadItem{}
 	if params.Target != nil {
@@ -856,7 +883,13 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 	turnBoundary, endBoundary := false, false
 	persistedClassify := func(rec persistedMessage) (string, bool) { return rec.Role, rec.Steered }
 	chatClassify := func(msg providers.ChatMessage) (string, bool) { return msg.Role, msg.Steered }
-	if len(source.rawHistory) > 0 {
+	var sourceCutoff int
+	if side {
+		history, display, params.TurnID, sourceCutoff, err = latestCompletedSideChatHistory(source, nativeIdle)
+		resolvedDisplay = true
+		turnBoundary = true
+		endBoundary = !source.liveHistory && sourceCutoff == maxHistorySeq(chatMessagesFromPersistedMessages(source.rawHistory))
+	} else if len(source.rawHistory) > 0 {
 		var prefix []persistedMessage
 		prefix, err = forkPersistedPrefixAtTarget(source.rawHistory, source.thread.ID, source.thread.Turns, params.TurnID, params.ItemID, target)
 		if err == nil {
@@ -907,7 +940,7 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 			}
 		}
 	}
-	if err == nil && len(source.rawHistory) == 0 && !canonicalHistory {
+	if !side && err == nil && len(source.rawHistory) == 0 && !canonicalHistory {
 		cutoffReached := false
 		for _, turn := range source.thread.Turns {
 			for _, item := range turn.Items {
@@ -974,7 +1007,15 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		}
 	}
 
-	nativeRef, err := s.forkNativeHistory(ctx, binding, source.thread.EngineID, firstNonEmpty(metadata.EngineRef, source.engineRef), forkCWD, history, nil, agentengine.HistoryForkBoundary{WholeTurn: params.ItemID == "", TurnBoundary: turnBoundary, EndBoundary: endBoundary})
+	var nativeRef string
+	var seed session.ContextSeed
+	if !side || (sourceCutoff > 0 && !canonicalHistory && nativeIdle && !source.liveHistory) {
+		nativeRef, err = s.forkNativeHistory(ctx, binding, source.thread.EngineID, firstNonEmpty(metadata.EngineRef, source.engineRef), forkCWD, history, nil, agentengine.HistoryForkBoundary{WholeTurn: params.ItemID == "", TurnBoundary: turnBoundary, EndBoundary: endBoundary})
+	}
+	if side && !canonicalHistory && sourceCutoff > 0 && nativeRef == "" && ctx.Err() == nil {
+		seed = sideChatContextSeed(sourceID, sourceCutoff, history)
+		err = nil
+	}
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -982,7 +1023,7 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, err)
 	}
-	if nativeRef != "" {
+	if nativeRef != "" || side {
 		for i := range history {
 			// Native verification proved every copied turn is terminal.
 			history[i].EngineTurnPending = false
@@ -1034,13 +1075,31 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 			return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
 		}
 	}
-	sess, err := binding.Sessions.CreateInitialized(initial, initialRecords)
+	seedRecords := 0
+	if side {
+		initial.Placement, initial.ParentID = session.PlacementSide, sourceID
+		initial.WorkspaceID, initial.Summary = metadata.WorkspaceID, ""
+		initial.Instructions, initial.ToolPolicyJSON = metadata.Instructions, metadata.ToolPolicyJSON
+		if err := s.rt.InheritSessionComposition(ctx, binding, sourceID, id, source.admitted); err != nil {
+			return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
+		}
+		if seed.Version != 0 {
+			seedRecords = 1
+		}
+		initial.InheritedThroughSeq = len(initialRecords) + seedRecords
+	}
+	var sess *session.Session
+	if seedRecords > 0 {
+		sess, err = binding.Sessions.CreateInitializedWithLaunch(initial, initialRecords, seed, session.SessionLaunchRecord{})
+	} else {
+		sess, err = binding.Sessions.CreateInitialized(initial, initialRecords)
+	}
 	if err != nil {
 		cleanupWorktree()
 		return s.writeResponse(req.ID, nil, rollbackCreatedArtifacts(artifactServices.Artifacts, id, err))
 	}
 	if !hasExternalDisplay {
-		seq := 0
+		seq := seedRecords
 		for i := range history {
 			history[i].Seq = 0
 			if shouldPersistMessage(history[i]) {
@@ -1049,9 +1108,19 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 			}
 		}
 	}
+	if seedRecords > 0 && hasExternalDisplay {
+		for i := range history {
+			if history[i].Seq > 0 {
+				history[i].Seq++
+			}
+		}
+		for i := range projectedRecords {
+			projectedRecords[i].Seq++
+		}
+	}
 	th := newThreadState(sess.ID, history, source.modelProvider, source.model, forkCWD, true, now)
 	if hasExternalDisplay {
-		th.historyHeadSeq = len(projectedRecords)
+		th.historyHeadSeq = len(projectedRecords) + seedRecords
 		th.Turns = turnsFromPersistedHistory(id, projectedRecords, now, s.participantResolver(binding))
 		restorePluginToolLabels(binding.Host, th.Turns)
 	}
@@ -1070,8 +1139,10 @@ func (s *Server) handleThreadForkForState(binding *runtime.State, ctx context.Co
 	if err := s.writeResponse(req.ID, ThreadForkResult{Thread: thread, Worktree: thread.Worktree}, nil); err != nil {
 		return err
 	}
-	if err := s.notifyThreadStarted(binding, thread); err != nil {
-		return err
+	if !side {
+		if err := s.notifyThreadStarted(binding, thread); err != nil {
+			return err
+		}
 	}
 	s.pruneCachedThreads(thread.ID, source.thread.ID)
 	return nil
@@ -1250,6 +1321,9 @@ func (s *Server) loadForkSourceThread(binding *runtime.State, id string, now tim
 			engineRef:      th.EngineRef,
 			thread:         th.snapshotLocked(),
 		}
+		if th.running {
+			source.admitted = th.execRuntime
+		}
 		if th.PersistHistory {
 			loaded, err := s.loadPersistedThreadSnapshot(binding, id)
 			if err != nil {
@@ -1331,6 +1405,9 @@ func (s *Server) handleThreadList(binding *runtime.State, req Request) error {
 	if err := decodeParams(req.Params, &params); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
+	if params.Placement != "" || params.ParentThreadID != "" {
+		return s.listSideChats(binding, req, params)
+	}
 	targetCWD := firstNonEmpty(params.CWD, s.rt.RootDir)
 	// Trust the active workspace's stable id only when the caller didn't pin a
 	// specific cwd; an explicit params.CWD falls back to pure cwd matching.
@@ -1383,7 +1460,7 @@ func (s *Server) handleThreadList(binding *runtime.State, req Request) error {
 	defer cancelDescriptors()
 	entries := make(map[string]threadListEntry, len(sessions))
 	for _, sess := range sessions {
-		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
+		if sess.Placement == session.PlacementSide || sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
 		}
 		if sess.ArchivedAt != nil {
@@ -1405,7 +1482,7 @@ func (s *Server) handleThreadList(binding *runtime.State, req Request) error {
 		visibility := th.Visibility
 		entry := threadListEntry{thread: thread, pinnedAt: th.PinnedAt}
 		th.mu.Unlock()
-		if visibility == pluginhost.SessionVisibilityPlugin {
+		if thread.Placement == session.PlacementSide || visibility == pluginhost.SessionVisibilityPlugin {
 			delete(entries, thread.ID)
 			continue
 		}
@@ -1483,7 +1560,7 @@ func (s *Server) handleThreadListAll(binding *runtime.State, req Request) error 
 	defer cancelDescriptors()
 	entries := make(map[string]threadListEntry, len(sessions))
 	for _, sess := range sessions {
-		if sess.Visibility == pluginhost.SessionVisibilityPlugin || sess.ArchivedAt != nil {
+		if sess.Placement == session.PlacementSide || sess.Visibility == pluginhost.SessionVisibilityPlugin || sess.ArchivedAt != nil {
 			continue
 		}
 		if _, isAgentThread := agentThreadIDs[sess.ID]; isAgentThread {
@@ -1508,7 +1585,7 @@ func (s *Server) handleThreadListAll(binding *runtime.State, req Request) error 
 			entry.pinnedAt = persisted.pinnedAt
 			thread = entry.thread
 		}
-		if visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || (thread.ReadOnly && !retiredSessionSource(thread.Source)) || thread.Archived {
+		if thread.Placement == session.PlacementSide || visibility == pluginhost.SessionVisibilityPlugin || thread.Ephemeral || (thread.ReadOnly && !retiredSessionSource(thread.Source)) || thread.Archived {
 			delete(entries, thread.ID)
 			continue
 		}
@@ -1550,7 +1627,7 @@ func (s *Server) handleThreadListArchived(binding *runtime.State, req Request) e
 	}
 	s.refreshListedSessionMetadata(binding, sessions)
 	for _, sess := range sessions {
-		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
+		if sess.Placement == session.PlacementSide || sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
 		}
 		if sess.ArchivedAt == nil {
@@ -1569,7 +1646,7 @@ func (s *Server) handleThreadListArchived(binding *runtime.State, req Request) e
 		visibility := th.Visibility
 		entry := threadListEntry{thread: thread, pinnedAt: th.PinnedAt}
 		th.mu.Unlock()
-		if visibility == pluginhost.SessionVisibilityPlugin {
+		if thread.Placement == session.PlacementSide || visibility == pluginhost.SessionVisibilityPlugin {
 			delete(entries, thread.ID)
 			continue
 		}
@@ -1985,6 +2062,9 @@ func applySessionMetadata(th *threadState, metadata session.Session) {
 		th.TitleRevision = metadata.TitleRevision
 	}
 	th.Source = metadata.Source
+	th.SideParentID = sideChatParent(metadata)
+	th.InheritedThroughSeq = metadata.InheritedThroughSeq
+	th.SeedID = metadata.SeedID
 	th.Owner = metadata.Owner
 	th.Visibility = metadata.Visibility
 	th.Instructions = metadata.Instructions
@@ -2092,6 +2172,9 @@ func (s *Server) threadEntryBuilder(binding *runtime.State) (func(session.Sessio
 		return threadListEntry{
 			thread: Thread{
 				ID:                    sess.ID,
+				ParentID:              sideChatParent(sess),
+				Placement:             sess.Placement,
+				InheritedThroughSeq:   sess.InheritedThroughSeq,
 				Source:                sess.Source,
 				ReadOnly:              retiredSessionSource(sess.Source),
 				Preview:               firstNonEmpty(sess.Title, sess.Summary),

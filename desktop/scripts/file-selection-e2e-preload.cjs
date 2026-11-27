@@ -28,6 +28,8 @@ const thread = {
 };
 const listeners = new Set();
 const submissions = [];
+const sideChats = new Map();
+let sideSequence = 0;
 const reads = [];
 const clone = value => JSON.parse(JSON.stringify(value));
 const projects = () => ({ projects: [project], active_context: { kind: "project", project_id: project.id, cwd } });
@@ -38,7 +40,7 @@ function emit(method, params) {
 }
 
 contextBridge.exposeInMainWorld("selectionE2E", {
-  snapshot: () => clone({ submissions, reads, files, thread }),
+  snapshot: () => clone({ submissions, reads, files, thread, sideChats: [...sideChats.values()] }),
   complete: (changes = {}) => {
     for (const [name, text] of Object.entries(changes)) {
       if (!(name in files) || typeof text !== "string") throw new Error("Invalid fixture update");
@@ -59,13 +61,6 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   listProjects: async () => projects(), selectProject: async () => projects(),
   initialize: async () => ({
     protocol_version: "e2e", provider: "e2e", model: "mock-selection", workspace_root: cwd, providers,
-    // Selection-to-side uses the public contribution, not a built-in command.
-    extension_inventory: [{
-      id: "user:e2e-attached-chat", kind: "plugin", name: "Attached chat fixture",
-      state: "granted", approval_state: "granted", enabled: true, runtime_state: "active",
-      provenance: { kind: "plugin", source: "user", scope: "user", plugin_id: "e2e-attached-chat" },
-      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Use the fixture side conversation." }] },
-    }],
   }),
   updateRuntimeSettings: async () => ({ provider: "e2e", model: "mock-selection", providers }),
   listEngines: async () => ({ engines: [] }),
@@ -86,33 +81,67 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
       binary: false, truncated: false, text: files[name] };
   },
   startThread: async () => ({ thread: clone(thread) }),
-  resumeThread: async () => ({ thread: clone(thread) }),
-  listThreads: async () => ({ threads: [clone(thread)] }),
-  listAllThreads: async () => ({ threads: [clone(thread)] }),
+  resumeThread: async id => ({ thread: clone(sideChats.get(id) ?? thread) }),
+  listThreads: async (_cwd, side) => ({ threads: side?.parentThreadId === thread.id
+    ? [...sideChats.values()].filter(item => item.placement === "side").reverse().map(clone)
+    : [clone(thread)] }),
+  listAllThreads: async () => ({ threads: [thread, ...[...sideChats.values()].filter(item => !item.placement)].map(clone) }),
+  forkThread: async (id, _turn, _item, _mode, _target, options) => {
+    if (id !== thread.id || options?.placement !== "side" || options?.anchor !== "latest_completed") {
+      throw new Error("A side chat must fork the last completed turn of its owner");
+    }
+    const childID = `selection-side-${++sideSequence}`;
+    const chat = { ...clone(thread), id: childID, status: "idle", placement: "side", parent_id: id, forked_from_id: id,
+      title: "", preview: "", inherited_through_seq: 2,
+      turns: [{ ...thread.turns[0], id: `${childID}-inherited`, items: [
+        { id: `${childID}-inherited-user`, type: "user_message", text: "Prior parent question", seq: 1, status: "completed" },
+        { id: `${childID}-inherited-answer`, type: "agent_message", text: "Prior parent answer", seq: 2, status: "completed", terminal: true },
+      ] }],
+    };
+    sideChats.set(childID, chat);
+    return { thread: clone(chat) };
+  },
+  promoteThread: async id => {
+    const chat = sideChats.get(id);
+    if (!chat?.placement) throw new Error("Unknown attached side chat");
+    delete chat.placement;
+    delete chat.parent_id;
+    emit("thread/started", { thread: chat });
+    return { thread: clone(chat) };
+  },
+  deleteThread: async id => {
+    if (!sideChats.delete(id)) throw new Error("Unknown attached side chat");
+    emit("thread/deleted", { thread_id: id });
+    return { thread_id: id };
+  },
   getSessionOrganization: async () => ({ organization: { folders: [] } }),
   listArchivedThreads: async () => ({ threads: [] }),
   startTurn: async (threadId, prompt, images = [], inputFiles = [], permissionMode, activeDocument, contentParts) => {
-    if (threadId !== thread.id) throw new Error(`Unexpected thread: ${threadId}`);
-    if (thread.status === "running") throw new Error("Previous fixture turn has not completed");
+    const target = sideChats.get(threadId) ?? (threadId === thread.id ? thread : undefined);
+    if (!target) throw new Error(`Unexpected thread: ${threadId}`);
+    if (target.status === "running") throw new Error("Previous fixture turn has not completed");
     const id = `selection-turn-${submissions.length + 1}`;
     submissions.push(clone({ threadId, prompt, images, files: inputFiles, permissionMode, activeDocument, contentParts }));
     const turn = { id, status: "in_progress", items_view: "full", started_at: new Date().toISOString(), items: [
       { id: `${id}-user`, type: "user_message", status: "completed", text: prompt, content_parts: contentParts, images, files: inputFiles },
     ] };
-    thread.turns.push(turn);
-    thread.status = "running";
+    target.turns.push(turn);
+    target.status = "running";
+    if (target !== thread) {
+      turn.items[0].seq = 3;
+      setTimeout(() => {
+        turn.status = "completed";
+        turn.items.push({ id: `${id}-answer`, type: "agent_message", text: "Side question answered.", status: "completed", terminal: true, seq: 4 });
+        target.title = prompt;
+        target.status = "idle";
+        target.latest_completed_turn_id = turn.id;
+        target.updated_at = new Date().toISOString();
+        emit("turn/completed", { thread_id: target.id, turn });
+        emit("thread/updated", { thread: target });
+      }, 50);
+    }
     return { turn: clone(turn) };
   },
-  // Selection-chip capture uses a lazy, empty side thread and never runs inference.
-  openSideThread: async mainThreadId => {
-    if (mainThreadId !== thread.id) throw new Error(`Unexpected side owner: ${mainThreadId}`);
-    return { summary: null };
-  },
-  getSideThreadHistory: async () => null,
-  sendSideThreadMessage: async () => { throw new Error("Side submission is outside this visual fixture"); },
-  interruptSideThread: async () => ({ ok: true }),
-  resetSideThread: async () => ({ ok: true }),
-  onSideThreadEvent: () => () => undefined,
   interruptTurn: async () => ({ ok: true }),
   respondToServerRequest: async () => undefined, rejectServerRequest: async () => undefined,
   onServerEvent: listener => { listeners.add(listener); return () => listeners.delete(listener); },

@@ -529,7 +529,7 @@ export type ExtensionCommandDescriptor = {
   id: string;
   title: string;
   description?: string;
-  kind: "prompt_template" | "runtime_action" | "side_conversation";
+  kind: "prompt_template" | "runtime_action";
   template?: string;
   contexts?: string[];
   aliases?: string[];
@@ -2177,6 +2177,8 @@ export type RestartRecoveryItem = {
 };
 
 export type Thread = {
+  placement?: "side";
+  inherited_through_seq?: number;
   /** Attached by the selected GUI connection, not trusted from remote JSON. */
   session_locator?: SessionLocatorV1;
   running_model_provider?: string;
@@ -2300,72 +2302,13 @@ export type ThreadForkResult = {
 
 // A side thread begins running on its first persisted message. Deleting the
 // main thread deletes the side thread instead of creating another status.
-export type SideThreadStatus =
-  | "running"
-  | "completed"
-  | "failed"
-  | "interrupted";
-
-// One side thread attached to a main thread. Deleting the main thread
-// removes its side thread.
-export type SideThreadSummary = {
-  side_thread_id: string;
-  main_thread_id: string;
-  status: SideThreadStatus;
-  // Monotonic durable version used to reject stale responses and events.
-  revision: number;
-  // Lightweight state for the main-task status shown in the panel header.
-  main_task_summary?: {
-    running: boolean;
-    last_user_message?: string;
-  };
-  created_at: string;
-  updated_at: string;
-};
-
-// Side-thread history is independent and never appends to the main thread.
-export type SideThreadMessage = {
-  id: string;
-  side_thread_id: string;
-  role: "user" | "assistant";
-  text: string;
-  selection?: SideThreadSelection;
-  // Canonical assistant/process items rendered by the shared TurnView.
-  // Absent on legacy text-only side-thread records.
-  items?: ThreadItem[];
-  // Assistant messages expose only the fields required by the side panel.
-  status?: "streaming" | "completed" | "failed" | "interrupted";
-  error_message?: string;
-  created_at: string;
-};
-
-export type SideThreadSelection =
-  | { type: "response"; response: ResponseSelection }
-  | { type: "file"; file: FileSelectionSource };
-
-// Opening a side thread is lazy: if no side thread exists for this main
-// thread yet, `openSideThread` returns `summary: null` and the side panel
-// renders an empty state. The actual agent thread is only created the
-// first time the user sends a message in the side panel.
-export type SideThreadOpenResult = {
-  summary: SideThreadSummary | null;
-};
-
-export type SideThreadHistoryResult = {
-  summary: SideThreadSummary;
-  messages: SideThreadMessage[];
-};
-
 /** Bounded, display-only history for trusted desktop extensions. */
 type PluginVisibleHistoryScope = {
   threadId: string;
   workspaceRoot: string;
   workspaceId?: string;
 };
-export type PluginVisibleHistoryRequest = PluginVisibleHistoryScope & (
-  | { kind: "main"; beforeTurnId: string; sideThreadId?: never }
-  | { kind: "side"; sideThreadId: string; beforeTurnId?: never }
-);
+export type PluginVisibleHistoryRequest = PluginVisibleHistoryScope & { kind: "main"; beforeTurnId: string };
 
 export type PluginVisibleTurn = {
   id: string;
@@ -2377,78 +2320,6 @@ export type PluginVisibleTurn = {
 
 export type PluginVisibleHistoryResult = {
   turns: PluginVisibleTurn[];
-};
-
-export type SideThreadSendParams = {
-  // Public plugin command ID (plugin.command); omitted selects the first active side command.
-  command_id?: string;
-  main_thread_id: string;
-  // The user's prompt. Empty prompts are rejected by the IPC layer.
-  prompt: string;
-  selection?: SideThreadSelection;
-};
-
-export type SideThreadSendResult = {
-  // Echoes the persisted id assigned to the user's prompt.
-  user_message_id: string;
-  summary: SideThreadSummary;
-};
-
-// The app-server sends these as `sideThread/event` notifications. Electron
-// forwards their params through the dedicated `wuu:side-thread-event` channel.
-export type SideThreadEvent =
-  | {
-      type: "status";
-      side_thread_id: string;
-      main_thread_id: string;
-      summary: SideThreadSummary;
-    }
-  | {
-      type: "delta";
-      side_thread_id: string;
-      main_thread_id: string;
-      revision: number;
-      // id of the assistant message being streamed; matches the
-      // SideThreadMessage.id once the message is finalized.
-      message_id: string;
-      text_delta: string;
-    }
-  | {
-      type: "items";
-      side_thread_id: string;
-      main_thread_id: string;
-      revision: number;
-      message_id: string;
-      items: ThreadItem[];
-    }
-  | {
-      type: "message";
-      side_thread_id: string;
-      main_thread_id: string;
-      revision: number;
-      message: SideThreadMessage;
-    }
-  | {
-      type: "error";
-      side_thread_id: string;
-      main_thread_id: string;
-      revision: number;
-      message_id: string;
-      error_message: string;
-    }
-  | {
-      // The side thread was reset: its record is gone and the panel starts
-      // over. The next send rebases onto the latest main history.
-      type: "reset";
-      side_thread_id: string;
-      main_thread_id: string;
-    };
-
-// Electron broadcasts app-server notifications to every window. Keep the
-// source runtime attached so renderers can reject events from other workspaces.
-export type SideThreadEventEnvelope = {
-  workdir: string;
-  event: SideThreadEvent;
 };
 
 export type ThreadContextCompositionResult = {
@@ -3504,7 +3375,9 @@ export type WuuDesktopApi = {
     itemId?: string,
     mode?: "local" | "worktree",
     target?: ThreadForkTarget,
+    options?: { placement: "side"; anchor: "latest_completed" },
   ) => Promise<ThreadForkResult>;
+  promoteThread: (threadId: string) => Promise<{ thread: Thread }>;
   editThreadMessage: (threadId: string, turnId: string, itemId: string) => Promise<ThreadEditMessageResult>;
   getThreadContextComposition: (threadId: string) => Promise<ThreadContextCompositionResult>;
   // Instruction files (AGENTS.md / CLAUDE.md, ...) loaded into the base
@@ -3599,7 +3472,7 @@ export type WuuDesktopApi = {
   // Settles a `submit` command. Unresolved submits fail after a timeout.
   resolveCodexPetCommand: (id: string, result: CodexPetSubmitResult) => void;
   polishText: (text: string) => Promise<TextPolishResult>;
-  listThreads: (cwd?: string) => Promise<{ threads: Thread[] }>;
+  listThreads: (cwd?: string, sideChats?: { parentThreadId: string }) => Promise<{ threads: Thread[] }>;
   listAllThreads: () => Promise<{ threads: Thread[] }>;
   listRestartRecovery?: () => Promise<{ items: RestartRecoveryItem[] }>;
   dismissRestartRecovery?: (threadIDs: string[]) => Promise<void>;
@@ -3753,29 +3626,6 @@ export type WuuDesktopApi = {
    * routed by that window identity.
    */
   popOutInit: () => PopOutInitResult;
-  // Side-thread IPC is keyed by the owning main thread.
-  // Non-Electron hosts may omit these optional methods.
-  openSideThread?: (
-    mainThreadId: string,
-  ) => Promise<SideThreadOpenResult>;
-  getSideThreadHistory?: (
-    mainThreadId: string,
-  ) => Promise<SideThreadHistoryResult | null>;
-  sendSideThreadMessage?: (
-    params: SideThreadSendParams,
-  ) => Promise<SideThreadSendResult>;
-  interruptSideThread?: (
-    mainThreadId: string,
-  ) => Promise<{ ok: boolean }>;
-  // Clears the side-thread history so the next message starts from the
-  // latest main-conversation state.
-  resetSideThread?: (
-    mainThreadId: string,
-  ) => Promise<{ ok: boolean }>;
-  // Streamed side-thread output forwarded by the Electron main process.
-  onSideThreadEvent?: (
-    handler: (envelope: SideThreadEventEnvelope) => void,
-  ) => () => void;
   // Embedded-browser visibility takeover (M3). These are wired only by the
   // Electron desktop preload; non-Electron hosts omit them, so the renderer
   // guards each call with `typeof window.wuu.x === "function"`.

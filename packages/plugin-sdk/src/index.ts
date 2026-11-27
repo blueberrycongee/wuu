@@ -711,8 +711,7 @@ interface PluginVisibleHistoryScope {
   readonly workspaceId?: string;
 }
 export type PluginVisibleHistoryRequest = PluginVisibleHistoryScope & (
-  | { readonly kind: "main"; readonly beforeTurnId: string; readonly sideThreadId?: never }
-  | { readonly kind: "side"; readonly sideThreadId: string; readonly beforeTurnId?: never }
+  { readonly kind: "main"; readonly beforeTurnId: string }
 );
 
 export interface PluginVisibleHistoryResult {
@@ -2782,15 +2781,13 @@ export type ComposerSubmissionModeV1 = "send" | "queue" | "steer";
 /** One immutable request for an append-only suggestion in the host-owned composer. */
 export interface ComposerInlineCompletionContext {
   readonly contractVersion: 1;
-  /** Conversation kind, including before a side conversation has an ID. Split panes use main. */
-  readonly kind: "main" | "side";
+  readonly kind: "main";
   /** Opaque identity for this mounted input and conversation/workspace context. */
   readonly composerId: string;
   /** Changes whenever input, selection, composition, focus, or conversation state changes. */
   readonly revision: number;
   readonly threadId?: string;
   /** Side-conversation identity; threadId remains its owning main conversation. */
-  readonly sideThreadId?: string;
   /** Project ID is absent outside a project; the event-routing root is available for no-project conversations. */
   readonly workspaceId?: string;
   readonly workspaceRoot?: string;
@@ -2831,7 +2828,7 @@ export interface ComposerInlineCompletionProviderHandle {
 
 /** Attribution only: interaction callbacks never receive a later draft's text. */
 export type ComposerInlineCompletionSource = Pick<ComposerInlineCompletionContext,
-  "kind" | "composerId" | "revision" | "threadId" | "sideThreadId">;
+  "kind" | "composerId" | "revision" | "threadId">;
 
 export type ComposerInlineCompletionInteraction = {
   /** Host identity for this presentation, shared by its subsequent interactions. */

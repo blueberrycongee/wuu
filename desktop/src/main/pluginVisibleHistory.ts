@@ -1,5 +1,5 @@
 import type {
-  PluginVisibleTurn, SideThreadHistoryResult, ThreadItem, Turn,
+  PluginVisibleTurn, ThreadItem, Turn,
 } from "../shared/protocol";
 
 function visibleText(item: ThreadItem): string | null {
@@ -29,24 +29,6 @@ export function visibleMainTurns(turns: readonly Turn[]): PluginVisibleTurn[] {
       + (item.content_parts?.filter((part) => part.type === "file_selection").length ?? 0), 0);
     if (!userText.trim()) continue;
     result.push({ id: turn.id, userText, assistantText: answer.text ?? "", imageCount, fileCount });
-  }
-  return result.slice(-20);
-}
-
-export function visibleSideTurns(history: SideThreadHistoryResult, sideThreadId: string): PluginVisibleTurn[] {
-  if (history.summary.side_thread_id !== sideThreadId) return [];
-  const result: PluginVisibleTurn[] = [];
-  let userText: string | undefined;
-  for (const message of history.messages) {
-    if (message.side_thread_id !== sideThreadId) return [];
-    if (message.role === "user") {
-      userText = message.text;
-    } else {
-      if (userText?.trim() && message.status === "completed" && message.text.trim()) {
-        result.push({ id: message.id, userText, assistantText: message.text, imageCount: 0, fileCount: 0 });
-      }
-      userText = undefined;
-    }
   }
   return result.slice(-20);
 }

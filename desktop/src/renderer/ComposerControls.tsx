@@ -6,17 +6,22 @@ import type { ApplicationSubmissionInputV1 } from "../../../packages/plugin-sdk/
 export interface ComposerSource {
   readonly ownerTabId: string;
   readonly pane: "primary" | "secondary";
+  readonly sideChat?: boolean;
 }
 
 /** Source identity is captured by the mounted surface, never recovered from a later active tab. */
 export function createComposerControls(application: ApplicationServiceV1, source: ComposerSource) {
   function current() {
     const snapshot = application.getSnapshot();
-    if (snapshot.drafts[source.pane].ownerTabId !== source.ownerTabId) throw new Error("Composer source is no longer visible");
+    if ((source.sideChat ? snapshot.drafts.sideChats?.[source.ownerTabId] : snapshot.drafts[source.pane])?.ownerTabId !== source.ownerTabId) throw new Error("Composer source is no longer visible");
     return snapshot;
   }
   async function checkpoint(update: (draft: ApplicationComposerDraftV1) => ApplicationComposerDraftV1): Promise<void> {
     const snapshot = current();
+    if (source.sideChat) {
+      await application.invoke("composer.update-side-draft", { ownerTabId: source.ownerTabId, draft: update(snapshot.drafts.sideChats![source.ownerTabId]) });
+      return;
+    }
     const draft = update(snapshot.drafts[source.pane]);
     await application.invoke("composer.checkpoint", {
       activeTabId: snapshot.drafts.activeTabId,

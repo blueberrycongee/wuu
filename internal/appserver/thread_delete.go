@@ -17,7 +17,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/sidethread"
 	"github.com/blueberrycongee/wuu/internal/statepath"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -45,91 +44,97 @@ func (s *Server) handleThreadDelete(req Request) error {
 	if id == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
-	if th := s.threadForState(binding, id); th != nil {
-		th.mu.Lock()
-		running := th.running
-		th.mu.Unlock()
-		if running {
-			return s.writeResponse(req.ID, nil, errors.New("cannot delete a running thread"))
+	lifecycle, err := s.acquireThreadLifecycleWriteLease(id)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	defer releaseThreadLifecycleWriteLease(id, lifecycle)
+	sessions, err := binding.Sessions.List(0)
+	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	var children []string
+	for _, row := range sessions {
+		if row.Placement == session.PlacementSide && row.ParentID == id {
+			children = append(children, row.ID)
 		}
-		if threadHasActiveAgents(th) {
+	}
+	stateDirs := make(map[string][]string, len(children)+1)
+	for _, target := range append([]string{id}, children...) {
+		if th := s.threadForState(binding, target); th != nil {
+			th.mu.Lock()
+			busy := threadAdmissionProjectionBusyLocked(th)
+			th.mu.Unlock()
+			if busy {
+				return s.writeResponse(req.ID, nil, errors.New("cannot delete a running thread"))
+			}
+			if threadHasActiveAgents(th) {
+				return s.writeResponse(req.ID, nil, errors.New("cannot delete a thread with active agents"))
+			}
+		}
+		mutationLease, err := s.tryAcquireThreadMutationLease(binding, target)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		defer releaseThreadMutationLease(target, mutationLease)
+		if target != id {
+			lease, err := s.acquireThreadLifecycleWriteLease(target)
+			if err != nil {
+				return s.writeResponse(req.ID, nil, err)
+			}
+			defer releaseThreadLifecycleWriteLease(target, lease)
+		}
+		dirs, err := s.threadArtifactStateDirs(target)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, err)
+		}
+		stateDirs[target] = dirs
+		active, err := s.threadHasDurableActiveAgentsWithState(binding, target, dirs...)
+		if err != nil {
+			return s.writeResponse(req.ID, nil, fmt.Errorf("inspect durable agents for thread %q: %w", target, err))
+		}
+		if active {
 			return s.writeResponse(req.ID, nil, errors.New("cannot delete a thread with active agents"))
 		}
 	}
-	mutationLease, err := s.tryAcquireThreadMutationLease(binding, id)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	defer releaseThreadMutationLease(id, mutationLease)
-	sideThreadLease, err := s.acquireSideThreadExecutionLease(binding, id)
-	if errors.Is(err, errSideThreadExecutionBusy) {
-		return s.writeResponse(req.ID, nil, errors.New("cannot delete a thread while its side thread is running"))
-	}
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	defer releaseSideThreadExecutionLease(id, sideThreadLease)
-
-	stateDirs, err := s.threadArtifactStateDirs(id)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
-	active, err := s.threadHasDurableActiveAgentsWithState(binding, id, stateDirs...)
-	if err != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("inspect durable agents for thread %q: %w", id, err))
-	}
-	if active {
-		return s.writeResponse(req.ID, nil, errors.New("cannot delete a thread with active agents"))
-	}
-
 	services, err := binding.Services()
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-
-	// Execution ownership excludes model rewrites and child spawns. The
-	// independent short lifecycle lease then waits for any in-flight group or
-	// participant append-and-route write. Session deletion atomically removes
-	// pending envelopes sourced from this thread before this lease is released.
-	lifecycleLease, err := s.acquireThreadLifecycleWriteLease(id)
-	if err != nil {
+	if _, err := s.requireRequestAccess(req, MethodThreadDelete, nil); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
-	admissionCtx, err := s.requireRequestAccess(req, MethodThreadDelete, nil)
-	if err != nil {
-		releaseThreadLifecycleWriteLease(id, lifecycleLease)
-		return s.writeResponse(req.ID, nil, err)
+	var deleted []session.Session
+	if len(children) > 0 {
+		deleted, err = binding.Sessions.DeleteWithSideChats(id, children, params.OnlyIfArchived)
+	} else {
+		var row session.Session
+		row, err = s.deleteThreadSession(binding, id, params.OnlyIfArchived)
+		row.ID = id
+		deleted = []session.Session{row}
 	}
-	// Stage side-chat history before deleting the main session.
-	// The staged record remains readable and can be atomically restored if the
-	// main transaction fails, avoiding either partial data loss or an orphaned
-	// side conversation across process crashes.
-	sideDelete, err := sidethread.NewStore(admissionCtx, binding.Documents).BeginDelete(id)
-	if err != nil {
-		releaseThreadLifecycleWriteLease(id, lifecycleLease)
-		return s.writeResponse(req.ID, nil, fmt.Errorf("delete side thread for %q (stage): %w", id, err))
-	}
-	deleted, err := s.deleteThreadSession(binding, id, params.OnlyIfArchived)
 	if err != nil && !errors.Is(err, session.ErrSessionNotFound) {
 		var uncertain *persistence.CommitError
 		if errors.As(err, &uncertain) || errors.Is(err, session.ErrOutcomeUnknown) {
-			// The main row may already be gone. Keep the readable deletion
-			// stage until an explicit retry can finish either storage outcome.
-			releaseThreadLifecycleWriteLease(id, lifecycleLease)
 			return s.writeResponse(req.ID, nil, fmt.Errorf("session deletion outcome is unknown for %q; retry thread/delete: %w", id, err))
 		}
-		rollbackErr := sideDelete.Rollback()
-		releaseThreadLifecycleWriteLease(id, lifecycleLease)
-		return s.writeResponse(req.ID, nil, errors.Join(err, rollbackErr))
-	}
-	releaseThreadLifecycleWriteLease(id, lifecycleLease)
-	cleanupErr := sideDelete.Commit()
-	if cleanupErr != nil {
-		// Staged history remains readable until this commit succeeds. Continue
-		// independent cleanup, then report every incomplete deletion together.
-		cleanupErr = fmt.Errorf("side history cleanup: %w", cleanupErr)
+		return s.writeResponse(req.ID, nil, err)
 	}
 
+	var cleanupErr error
+	for _, row := range deleted {
+		cleanupErr = errors.Join(cleanupErr, s.cleanupDeletedThread(binding, services.Artifacts, row, stateDirs[row.ID]))
+		_ = s.writeNotification(NotificationThreadDeleted, ThreadDeleteResult{ThreadID: row.ID})
+	}
+	if cleanupErr != nil {
+		return s.writeResponse(req.ID, nil, fmt.Errorf("session deleted; cleanup for %q is incomplete, retry thread/delete: %w", id, cleanupErr))
+	}
+	return s.writeResponse(req.ID, ThreadDeleteResult{ThreadID: id}, nil)
+}
+
+func (s *Server) cleanupDeletedThread(binding *runtime.State, artifacts *runtime.ArtifactClient, deleted session.Session, stateDirs []string) error {
+	id := deleted.ID
+	var cleanupErr error
 	// Empty authoritative images are deletion tombstones: an explicit retry or
 	// a stale legacy artifact directory must never reimport deleted child data.
 	childStateErr := persistence.Update(context.Background(), binding.Documents, func(tx *persistence.Tx) error {
@@ -179,7 +184,7 @@ func (s *Server) handleThreadDelete(req Request) error {
 
 	// The document commit is irreversible. Surface an incomplete selected
 	// artifact cleanup and allow an explicit retry even when the row is gone.
-	_, artifactErr := services.Artifacts.DeleteThread(context.Background(), id)
+	_, artifactErr := artifacts.DeleteThread(context.Background(), id)
 	if artifactErr != nil {
 		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("artifact cleanup: %w", artifactErr))
 	}
@@ -214,10 +219,7 @@ func (s *Server) handleThreadDelete(req Request) error {
 		_ = os.Remove(artifactDir)
 	}
 
-	if cleanupErr != nil {
-		return s.writeResponse(req.ID, nil, fmt.Errorf("session deleted; cleanup for %q is incomplete, retry thread/delete: %w", id, cleanupErr))
-	}
-	return s.writeResponse(req.ID, ThreadDeleteResult{ThreadID: id}, nil)
+	return cleanupErr
 }
 
 func (s *Server) deleteThreadSession(binding *runtime.State, threadID string, onlyIfArchived bool) (session.Session, error) {

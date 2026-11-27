@@ -465,7 +465,7 @@ app.whenReady().then(async () => {
     const request = await requestFor(live); await resolve(request);
     await noGhost("unrelated main conversation result stays out of the side composer");
     await screenshot("side-conversation-no-suggestion");
-    await evaluate(() => document.querySelector('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close').click());
+    await evaluate(() => document.querySelector('[data-wuu-tab-kind="side-chat"] .workspace-tool-tab-close').click());
     await until(() => !document.querySelector(".side-thread-panel")); await focus();
   });
   await check("thread navigation keeps prediction running and shows it on return", async () => {

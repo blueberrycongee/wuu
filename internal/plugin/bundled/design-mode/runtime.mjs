@@ -627,6 +627,8 @@ var sessionDomainArity = {
   "PutSessionLaunch": [1, 1],
   "ReadControl": [1, 2],
   "ReadHistoryPage": [3, 1],
+  "PromoteSideChat": [1, 1],
+  "DeleteWithSideChats": [3, 1],
   "ReadActiveHistoryQuery": [1, 1],
   "ReadHistoryQuery": [1, 1],
   "ReadPluginGenerationSnapshot": [1, 2],

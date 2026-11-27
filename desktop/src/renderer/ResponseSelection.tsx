@@ -394,7 +394,7 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
       onCommentChange={setComment} onQuote={() => setCommenting(true)}
       onCommentCancel={() => { returnToToggleRef.current = true; setCommenting(false); setComment(""); }}
       onCommentSubmit={addSelection} commentToggleRef={commentToggleRef} commentInputRef={commentRef}
-      extraActions={!sideConversationAvailable || ref.current?.closest('[data-wuu-component="side-thread"]') ? undefined
+      extraActions={!sideConversationAvailable || ref.current?.closest('[data-wuu-component="side-chat"]') ? undefined
         : <button type="button" onPointerDown={event => event.preventDefault()} onClick={askSide}>{t("responseSelection.askSide")}</button>} />, document.body) : null}
   </article>;
 }

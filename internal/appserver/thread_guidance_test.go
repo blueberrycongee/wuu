@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	"github.com/blueberrycongee/wuu/internal/config"
-	"github.com/blueberrycongee/wuu/internal/loopdriver"
 	"github.com/blueberrycongee/wuu/internal/providers"
 	wuuRuntime "github.com/blueberrycongee/wuu/internal/runtime"
 )
@@ -204,15 +203,6 @@ func TestWorktreeProtocolGuidanceUsesSelectedCheckout(t *testing.T) {
 		global, err := thread.Toolkit.Execute(context.Background(), providers.ToolCall{Name: "load_skill", Arguments: `{"name":"global-policy"}`})
 		if err != nil || !strings.Contains(global, "GLOBAL_SKILL_MARKER") {
 			t.Errorf("global skill lost: %s %v", global, err)
-		}
-		side, err := rt.NewSideThreadRunner("side-"+tc.name, tc.cwd, wuuRuntime.ThreadModelSelection{}, "Test side policy")
-		if err != nil {
-			t.Fatal(err)
-		}
-		sideContext := loopdriver.WithExecutionContext(context.Background(), loopdriver.ExecutionContext{SessionID: "side-" + tc.name, ExecutionID: "side-guidance"})
-		loaded, err := side.Tools.Execute(sideContext, providers.ToolCall{ID: "load-checkout-skill", Name: "load_skill", Arguments: `{"name":"release-check"}`})
-		if err != nil || !strings.Contains(loaded, skill) {
-			t.Errorf("side thread has wrong skill: %s %v", loaded, err)
 		}
 
 		for _, selection := range []wuuRuntime.ThreadModelSelection{{}, {Provider: "audit", Model: "gpt-other"}} {

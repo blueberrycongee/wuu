@@ -398,6 +398,13 @@ app.whenReady().then(async () => {
     });
     await until(() => Boolean(document.querySelector('.slash-command-item[data-command-name="side"]')));
     await evaluate(() => document.querySelector('.slash-command-item[data-command-name="side"]').click());
+    await until(() => Boolean(document.querySelector('.side-thread-panel textarea')));
+    await evaluate(() => {
+      const input = document.querySelector('.side-thread-panel textarea');
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(input, 'Inspect the preview tool result.');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await evaluate(() => document.querySelector('.side-thread-panel .composer-send-button').click());
     await until(() => Boolean(document.querySelector('.side-thread-panel [data-peer-addon="turn"]')));
     await evaluate(() => {
       const toggle = document.querySelector('.side-thread-panel .turn-process-toggle');
@@ -414,8 +421,8 @@ app.whenReady().then(async () => {
       target: node.dataset.peerAddon, owner: node.dataset.owner, address: JSON.parse(node.dataset.address),
       nativeTurn: node.closest('[data-turn-id]')?.dataset.turnId,
     }))), [
-      { target: 'tool-activity', owner: 'wuu.default-preview', address: ['addon-side-thread', 'side-turn-addon-side-answer', 'addon-side-tool'], nativeTurn: 'side-turn-addon-side-answer' },
-      { target: 'turn', owner: 'wuu.default-preview', address: ['addon-side-thread', 'side-turn-addon-side-answer', null], nativeTurn: 'side-turn-addon-side-answer' },
+      { target: 'tool-activity', owner: 'wuu.default-preview', address: ['addon-side-thread', 'addon-side-turn', 'addon-side-tool'], nativeTurn: 'addon-side-turn' },
+      { target: 'turn', owner: 'wuu.default-preview', address: ['addon-side-thread', 'addon-side-turn', null], nativeTurn: 'addon-side-turn' },
     ]);
     await evaluate(() => document.querySelector('.side-thread-panel [data-conversation-metrics-tool] button').click());
     await until(() => document.querySelector('.side-thread-panel [data-conversation-metrics-tool] pre')?.textContent === 'Reported preview result');

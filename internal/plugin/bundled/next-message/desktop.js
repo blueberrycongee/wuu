@@ -8,7 +8,7 @@ export async function activate(api) {
   const observations = new Map();
   let workspaces = [];
   let disposed = false;
-  const keyFor = (root, thread, side) => JSON.stringify([root, thread, side ?? null]);
+  const keyFor = (root, thread) => JSON.stringify([root, thread]);
   function invalidate(key) {
     const previous = turns.get(key);
     previous?.controller?.abort();
@@ -39,16 +39,13 @@ export async function activate(api) {
           return null;
         }
         const history = await api.readVisibleHistory({
-          kind: current.sideThreadId ? "side" : "main", threadId: current.threadId,
-          sideThreadId: current.sideThreadId, workspaceRoot: current.root, workspaceId: current.workspaceId,
-          ...(current.sideThreadId ? {} : { beforeTurnId: current.turnId }),
+          kind: "main", threadId: current.threadId, beforeTurnId: current.turnId,
+          workspaceRoot: current.root, workspaceId: current.workspaceId,
         });
         if (disposed || controller.signal.aborted || turns.get(key) !== current) return null;
-        const turnsForModel = current.sideThreadId
-          ? history.turns : [...history.turns, { id: current.turnId, ...text }];
-        if (!turnsForModel.length || turnsForModel.at(-1)?.id !== current.turnId) return null;
+        const turnsForModel = [...history.turns, { id: current.turnId, ...text }];
         const result = await api.invokeRuntime("next-message.predict", {
-          threadId: current.sideThreadId ?? current.threadId, turnId: current.turnId, turns: turnsForModel,
+          threadId: current.threadId, turnId: current.turnId, turns: turnsForModel,
         }, { workspaceId: current.workspaceId, workspaceRoot: current.root, signal: controller.signal });
         if (disposed || controller.signal.aborted || turns.get(key) !== current) return null;
         return validSuggestion(result);
@@ -81,30 +78,6 @@ export async function activate(api) {
     }
     if (event.kind !== "notification") return;
     const { method, params } = event.message ?? {};
-    if (method === "sideThread/event") {
-      const sideId = params?.side_thread_id;
-      const mainId = params?.main_thread_id;
-      if (typeof sideId !== "string" || typeof mainId !== "string") return;
-      const key = keyFor(root, mainId, sideId);
-      if (params.type === "reset") { invalidate(key); provider.refresh(); return; }
-      if (params.type === "status" && params.summary?.status === "running"
-        && Number.isSafeInteger(params.summary.revision)) {
-        invalidate(key);
-        turns.set(key, { root, threadId: mainId, sideThreadId: sideId,
-          revision: params.summary.revision, state: "running" });
-        while (turns.size > 128) invalidate(turns.keys().next().value);
-      } else if (params.type === "message" && params.message?.role === "assistant") {
-        const current = turns.get(key);
-        if (!current || current.state !== "running" || typeof params.message.id !== "string"
-          || !Number.isSafeInteger(params.revision) || params.revision < current.revision) return;
-        current.turnId = params.message.id;
-        if (params.message.status === "completed" && typeof params.message.text === "string"
-          && params.message.text.trim()) predict(key, current);
-        else current.state = "spent";
-        refreshObserved(key);
-      }
-      return;
-    }
     // A new conversation can resume its snapshot after its first live turn
     // starts. Keep only that exact in-progress turn; restored history cannot
     // arm a suggestion without a live start event.
@@ -116,7 +89,6 @@ export async function activate(api) {
       let changed = false;
       for (const [key, current] of turns) {
         if (current.root !== root || current.threadId !== snapshot.id) continue;
-        if (current.sideThreadId) continue;
         const source = snapshot.turns.find((turn) => turn?.id === current.turnId);
         const latest = snapshot.turns.at(-1);
         const matches = source && latest?.id === current.turnId
@@ -164,14 +136,14 @@ export async function activate(api) {
       if (event.type !== "dispatched" && event.type !== "dismissed") return;
       let identity;
       try { identity = JSON.parse(event.suggestionId); } catch { return; }
-      if (!Array.isArray(identity) || identity.length !== 4) return;
-      const [root, threadId, sideThreadId, turnId] = identity;
-      const current = turns.get(keyFor(root, threadId, sideThreadId));
+      if (!Array.isArray(identity) || identity.length !== 3) return;
+      const [root, threadId, turnId] = identity;
+      const current = turns.get(keyFor(root, threadId));
       if (current?.turnId === turnId && current.state === "ready") current.state = "spent";
     },
     async provideCompletion(context, signal) {
-      if (context.workspaceRoot && context.threadId && (context.kind === "main" || context.sideThreadId)) {
-        const observationKey = keyFor(context.workspaceRoot, context.threadId, context.sideThreadId);
+      if (context.workspaceRoot && context.threadId) {
+        const observationKey = keyFor(context.workspaceRoot, context.threadId);
         const observation = { composerId: context.composerId, revision: context.revision, workspaceId: context.workspaceId };
         observations.set(observationKey, observation);
         while (observations.size > 128) observations.delete(observations.keys().next().value);
@@ -179,16 +151,16 @@ export async function activate(api) {
           if (observations.get(observationKey) === observation) observations.delete(observationKey);
         }, { once: true });
       }
-      if (disposed || signal.aborted || (context.kind === "side" && !context.sideThreadId)
+      if (disposed || signal.aborted
         || context.running || context.draftText !== "" || !context.threadId || !context.workspaceRoot
         || context.attachmentCount !== 0 || context.queuedCount !== 0 || context.pendingCount !== 0) return null;
-      const key = keyFor(context.workspaceRoot, context.threadId, context.sideThreadId);
+      const key = keyFor(context.workspaceRoot, context.threadId);
       const current = turns.get(key);
-      if (!current || (context.kind === "main" && current.workspaceId !== context.workspaceId)) return null;
+      if (!current || current.workspaceId !== context.workspaceId) return null;
       const suggestion = current.state === "pending" ? await current.promise
         : current.state === "ready" ? current.suggestion : null;
       if (disposed || signal.aborted || turns.get(key) !== current || !suggestion) return null;
-      return { id: JSON.stringify([context.workspaceRoot, context.threadId, context.sideThreadId, current.turnId]), text: suggestion };
+      return { id: JSON.stringify([context.workspaceRoot, context.threadId, current.turnId]), text: suggestion };
     },
   });
   api.registerCleanup(() => {

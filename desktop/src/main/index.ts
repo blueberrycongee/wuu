@@ -173,14 +173,10 @@ import type {
   WorkspaceFileSaveParams,
   CodexPetFeed,
   CodexPetSubmitResult,
-  SideThreadOpenResult,
-  SideThreadHistoryResult,
-  SideThreadSendParams,
-  SideThreadSendResult,
 } from "../shared/protocol";
 import { AppServerClientPool, configurePackagedCUA, type AppServerShutdownOptions } from "./appServerClients";
 import { ChatGPTLoginCoordinator } from "./chatgptLogin";
-import { visibleMainTurns, visibleSideTurns } from "./pluginVisibleHistory";
+import { visibleMainTurns } from "./pluginVisibleHistory";
 import { RendererServerEventBatcher } from "./rendererServerEventBatcher";
 import { ObservationCoordinator, observationActivityFromServerEvent } from "./cuaActivityWindows";
 import type { ActivityPreviewAppearance } from "../shared/activityPreview";
@@ -227,7 +223,6 @@ import { ProjectManager, wuuHomePath } from "./projects";
 import { discoverRecentWorkspaces } from "./recentWorkspaces";
 import { mainTranslate, resolveMainLocale, setMainLocale } from "./i18n";
 import { installDesktopUpdates } from "./desktopUpdateMenu";
-import { sideThreadEventFromServerEvent } from "./sideThreadEvents";
 import {
   registerRenderableFileProtocol,
   renderableFileSchemes,
@@ -902,10 +897,7 @@ function emitServerEvent(event: ServerEvent): void {
   const browserActivity = observationActivityFromServerEvent(event);
   if (browserActivity && event.kind === "notification") browserHostCoordinator.updateActivity(browserActivity, event.message.method);
   observationCoordinator.handleServerEvent(event);
-  const sideThreadEvent = sideThreadEventFromServerEvent(event);
-  if (sideThreadEvent) {
-    broadcastToAll("wuu:side-thread-event", sideThreadEvent);
-  }
+
   rendererServerEventBatcher.enqueue(event);
 }
 
@@ -2507,25 +2499,12 @@ app.whenReady().then(async () => {
     const context = runtimeContextForPluginWorkspace(event, request.workspaceId, request.workspaceRoot);
     if (resolve(context.cwd) !== resolve(request.workspaceRoot)
       || (!request.workspaceId && context.kind !== "no_project")) throw new Error("Conversation workspace changed");
-    if (request.kind === "main") {
-      if (!request.beforeTurnId?.trim() || request.sideThreadId) throw new Error("Main conversation turn is required");
-      const history = await appServerClientPool.requestInContext<{ thread_id: string; turns: Turn[] }>(
-        context, "thread/history/read", { thread_id: request.threadId, cursor: `conversation:turn:${request.beforeTurnId}` },
-      );
-      if (history.thread_id !== request.threadId) throw new Error("Conversation identity changed");
-      return { turns: visibleMainTurns(history.turns) };
-    }
-    if (request.kind === "side") {
-      if (!request.sideThreadId?.trim() || request.beforeTurnId) throw new Error("Side conversation identity is required");
-      const history = await appServerClientPool.requestInContext<SideThreadHistoryResult>(
-        context, "sideThread/getHistory", { main_thread_id: request.threadId },
-      );
-      if (history.summary.main_thread_id !== request.threadId || history.summary.side_thread_id !== request.sideThreadId) {
-        throw new Error("Side conversation identity changed");
-      }
-      return { turns: visibleSideTurns(history, request.sideThreadId) };
-    }
-    throw new Error("Unknown conversation kind");
+    if (request.kind !== "main" || !request.beforeTurnId?.trim()) throw new Error("Conversation turn is required");
+    const history = await appServerClientPool.requestInContext<{ thread_id: string; turns: Turn[] }>(
+      context, "thread/history/read", { thread_id: request.threadId, cursor: `conversation:turn:${request.beforeTurnId}` },
+    );
+    if (history.thread_id !== request.threadId) throw new Error("Conversation identity changed");
+    return { turns: visibleMainTurns(history.turns) };
   });
   ipcMain.handle(
     "wuu:config-provider-remove",
@@ -2672,23 +2651,6 @@ app.whenReady().then(async () => {
   ipcMain.handle("wuu:activity-stop", (event, threadId: string, activityId: string, executionId?: string) =>
     appServerRequest<ActivityActionResult>(event, "activity/stop", { thread_id: threadId, activity_id: activityId, execution_id: executionId }),
   );
-  ipcMain.handle("wuu:side-thread-open", (event, mainThreadId: string) =>
-    appServerRequest<SideThreadOpenResult>(event, "sideThread/open", { main_thread_id: mainThreadId }),
-  );
-  ipcMain.handle("wuu:side-thread-history", (event, mainThreadId: string) =>
-    appServerRequest<SideThreadHistoryResult>(event, "sideThread/getHistory", { main_thread_id: mainThreadId }),
-  );
-  ipcMain.handle(
-    "wuu:side-thread-send",
-    (event, params: SideThreadSendParams) =>
-      appServerRequest<SideThreadSendResult>(event, "sideThread/sendMessage", params),
-  );
-  ipcMain.handle("wuu:side-thread-reset", (event, mainThreadId: string) =>
-    appServerRequest<{ ok: boolean }>(event, "sideThread/reset", { main_thread_id: mainThreadId }),
-  );
-  ipcMain.handle("wuu:side-thread-interrupt", (event, mainThreadId: string) =>
-    appServerRequest<{ ok: boolean }>(event, "sideThread/interrupt", { main_thread_id: mainThreadId }),
-  );
   ipcMain.handle(
     "wuu:thread-start",
     (event, params?: ThreadStartParams, targetContext?: RuntimeContext) =>
@@ -2722,6 +2684,7 @@ app.whenReady().then(async () => {
       itemId?: string,
       mode?: "local" | "worktree",
       target?: ThreadForkTarget,
+      options?: { placement: "side"; anchor: "latest_completed" },
     ) =>
       appServerRequest<ThreadForkResult>(event, "thread/fork", {
         thread_id: threadId,
@@ -2729,7 +2692,11 @@ app.whenReady().then(async () => {
         item_id: itemId ?? "",
         ...(target ? { target } : {}),
         ...(mode ? { mode } : {}),
+        ...(options ? { placement: options.placement, anchor: options.anchor } : {}),
       }),
+  );
+  ipcMain.handle("wuu:thread-promote", (event, threadId: string) =>
+    appServerRequest(event, "thread/promote", { thread_id: threadId }),
   );
   ipcMain.handle(
     "wuu:thread-edit-message",
@@ -2946,11 +2913,12 @@ app.whenReady().then(async () => {
       return { ok: true, fontSize: next };
     },
   );
-  ipcMain.handle("wuu:thread-list", (event, cwd?: string) =>
+  ipcMain.handle("wuu:thread-list", (event, cwd?: string, sideChats?: { parentThreadId: string }) =>
     appServerRequest<{ threads: Thread[] }>(
       event,
       "thread/list",
-      { summary_only: true, ...(typeof cwd === "string" && cwd.length > 0 ? { cwd } : {}) },
+      { summary_only: true, ...(typeof cwd === "string" && cwd.length > 0 ? { cwd } : {}),
+        ...(sideChats ? { parent_thread_id: sideChats.parentThreadId, placement: "side" } : {}) },
     ),
   );
   ipcMain.handle("wuu:thread-list-archived", (event) =>

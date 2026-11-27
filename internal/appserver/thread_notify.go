@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"github.com/blueberrycongee/wuu/internal/runtime"
+	"github.com/blueberrycongee/wuu/internal/session"
 )
 
 func (s *Server) notifyThreadStarted(binding *runtime.State, thread Thread) error {
@@ -21,6 +22,10 @@ func (s *Server) threadWithPersistedMetadata(binding *runtime.State, thread Thre
 			thread.TitleRevision = metadata.TitleRevision
 			thread.Preview = firstNonEmpty(metadata.Title, thread.Preview, metadata.Summary)
 		}
+		if thread.Placement == session.PlacementSide || metadata.Placement == session.PlacementSide {
+			thread.Placement, thread.ParentID = metadata.Placement, sideChatParent(metadata)
+		}
+		thread.InheritedThroughSeq = metadata.InheritedThroughSeq
 		thread.Pinned = metadata.PinnedAt != nil
 		thread.FolderID = metadata.FolderID
 		thread.WorkspaceID = metadata.WorkspaceID

@@ -7,7 +7,7 @@ import (
 
 // Lock-order contract for per-thread scheduling:
 //
-//	s.mu → th.streamMu → th.mu → {queue.mu, completions.mu, sideMu}
+//	s.mu → th.streamMu → th.mu → {queue.mu, completions.mu}
 //
 // Server.runMu is acquired together with schedulersMu for the activeRunID
 // field and never nests inside a cell mutex. schedulersMu guards only the
@@ -64,9 +64,6 @@ type threadScheduler struct {
 	// guarded by Server.runMu together with s.runs so registering and
 	// detaching a run remains a single critical section.
 	activeRunID string
-	// sideMu guards the thread's single in-flight side-conversation turn.
-	sideMu   sync.Mutex
-	sideTurn *sideThreadTurn
 	// heldMu serializes the read-modify-write compounds against this
 	// thread's durable held-input rows (appendHeldUserTurns, findHeldUserTurn,
 	// updateHeldUserTurn). It is independent of queue.mu; the two are never

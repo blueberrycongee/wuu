@@ -267,7 +267,6 @@ await scenario("only exact empty ordinary inputs qualify", async (f) => {
   for (const patch of [
     { draftText: " " },
     { draftText: "x" },
-    { kind: "side" },
     { running: true },
     { attachmentCount: 1 },
     { queuedCount: 1 },
@@ -294,18 +293,24 @@ await scenario("no-project live conversation uses its own root without a project
   assert.equal(f.calls[0].options.workspaceId, undefined);
   assert.equal(f.historyRequests[0].workspaceRoot, "/scratch");
 });
-await scenario("side conversation uses only its own completed message history", async (f) => {
-  f.setHistory(async () => ({ turns: [{ id: "reply", userText: "Side question", assistantText: "Side answer", imageCount: 0, fileCount: 0 }] }));
-  const emit = (params) => f.emit({ kind: "notification", workdir: "/a", message: { method: "sideThread/event", params: {
-    main_thread_id: "same", side_thread_id: "side-one", ...params,
-  } } });
-  emit({ type: "status", summary: { status: "running", revision: 1 } });
-  emit({ type: "message", revision: 2, message: { id: "reply", role: "assistant", text: "Side answer", status: "completed" } });
-  const got = await f.provide({ kind: "side", sideThreadId: "side-one" });
+await scenario("attached chats use the ordinary thread address for visible history", async (f) => {
+  f.setHistory(async () => ({ turns: [] }));
+  const turnId = "reply";
+  for (const method of ["turn/started", "turn/completed"]) {
+    f.emit({ kind: "notification", workdir: "/a", message: { method, params: {
+      thread_id: "side-one",
+      turn: { id: turnId, kind: "user", status: "completed", items_view: "full", items: [
+        { type: "user_message", text: "Side question" },
+        { type: "agent_message", terminal: true, text: "Side answer" },
+      ] },
+    } } });
+  }
+  const got = await f.provide({ threadId: "side-one" });
   assert.ok(got);
   assert.equal(f.calls[0].input.threadId, "side-one");
-  assert.equal(f.historyRequests[0].kind, "side");
-  assert.deepEqual(await f.provide({ kind: "side", sideThreadId: "side-one", revision: 2 }), got);
+  assert.equal(f.historyRequests[0].kind, "main");
+  assert.equal(f.historyRequests[0].beforeTurnId, turnId);
+  assert.equal(await f.provide(), null);
 });
 await scenario("attachment source sends category counts but never media bytes", async (f) => {
   f.start();

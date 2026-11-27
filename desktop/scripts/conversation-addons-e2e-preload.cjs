@@ -17,8 +17,7 @@ module.exports = api => {
   const thread = { id: "resize-thread", title: "Conversation addon acceptance", preview: "Conversation addon acceptance",
     cwd, model_provider: "e2e", model: "mock-resize", status: "idle", created_at: now, updated_at: now,
     turns: [turn("single", 1), turn("multiple", 2)] };
-  const sideSummary = { side_thread_id: "addon-side-thread", main_thread_id: thread.id,
-    status: "idle", revision: 1, created_at: now, updated_at: now };
+  const sideThread = { ...thread, id: "addon-side-thread", placement: "side", parent_id: thread.id, turns: [] };
   let enabled = [], epoch = 0, baseInventory = [];
   const listeners = new Set();
   const messageActionRequests = [];
@@ -42,17 +41,23 @@ module.exports = api => {
       if (!["user:conversation-addon-slot", "user:conversation-addon-command"].includes(request.id)) return api.cancelPluginRuntime(request);
     },
     initialize: async () => { const initial = await api.initialize(); baseInventory = initial.extension_inventory; return { ...initial, extension_inventory: [...baseInventory, ...inventory()] }; },
-    startThread: async () => ({ thread }), resumeThread: async () => ({ thread }),
+    startThread: async () => ({ thread }), resumeThread: async id => ({ thread: id === sideThread.id ? sideThread : thread }),
     listThreads: async () => ({ threads: [thread] }), listAllThreads: async () => ({ threads: [thread] }),
-    openSideThread: async () => ({ summary: sideSummary }),
-    getSideThreadHistory: async () => ({ summary: sideSummary, messages: [{
-      id: "addon-side-answer", side_thread_id: sideSummary.side_thread_id, role: "assistant", status: "completed", created_at: now,
-      text: "The preview owns this independent conversation.", items: [
+    forkThread: async (id, _turn, _item, _mode, _target, options) => {
+      if (id !== thread.id || options?.placement !== "side") throw new Error("Unexpected fork in addon fixture");
+      return { thread: sideThread };
+    },
+    startTurn: async (id, text, ...options) => {
+      if (id !== sideThread.id) return api.startTurn(id, text, ...options);
+      const result = { ...turn("addon-side-turn", 0), items: [
+        { id: "addon-side-user", type: "user_message", text, status: "completed", source_id: options[6] },
         { id: "addon-side-tool", type: "tool_call", name: "exec", display: { capability: "command.bash" },
           arguments: '{"command":"echo preview-result"}', result: "Reported preview result", status: "completed" },
         { id: "addon-side-message", type: "agent_message", terminal: true, text: "The preview owns this independent conversation.", status: "completed" },
-      ],
-    }] }),
+      ] };
+      sideThread.turns = [result];
+      return { turn: result };
+    },
     loadPluginDesktopModule: async request => !request.id.startsWith("user:conversation-addon-") ? api.loadPluginDesktopModule(request)
       : { ...request, digest: "0".repeat(64), url: `wuu-plugin://${request.id.slice("user:conversation-addon-".length)}/desktop.js` },
     onServerEvent: listener => { listeners.add(listener); const off = api.onServerEvent?.(listener); return () => { listeners.delete(listener); off?.(); }; },

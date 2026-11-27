@@ -77,3 +77,63 @@
   width: min(100%, calc(var(--session-composer-width) + 2 * var(--session-composer-inline-outset)));
   transform: none;
 }
+
+.side-chat-inherited-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  align-self: start;
+  width: fit-content;
+  margin-block: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  text-align: start;
+}
+
+.side-chat-inherited-toggle:hover {
+  background: var(--ink-overlay-4);
+  color: var(--ink);
+}
+
+.side-chat-picker-heading {
+  margin: var(--space-5) var(--workspace-row-pad-x) var(--space-2);
+  color: var(--ink-soft);
+  font-size: var(--font-ui);
+  font-weight: var(--weight-regular);
+}
+
+.side-chat-picker-row {
+  display: flex;
+  align-items: center;
+}
+
+.side-chat-picker-row .workspace-tool-menu-item {
+  flex: 1;
+  min-width: 0;
+  padding-block: 0;
+}
+
+.side-chat-picker-copy {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.side-chat-picker-actions {
+  display: flex;
+  align-items: center;
+}
+
+@media (hover: hover) {
+  .side-chat-picker-actions {
+    opacity: 0;
+  }
+
+  .side-chat-picker-row:hover .side-chat-picker-actions,
+  .side-chat-picker-row:focus-within .side-chat-picker-actions {
+    opacity: 1;
+  }
+}

@@ -147,7 +147,7 @@ func (s *Server) threadSearchSources(binding *runtime.State) ([]threadSearchSour
 	defer cancelDescriptors()
 	sourcesByID := make(map[string]threadSearchSource, len(sessions))
 	for _, sess := range sessions {
-		if sess.Visibility == pluginhost.SessionVisibilityPlugin {
+		if sess.Placement == session.PlacementSide || sess.Visibility == pluginhost.SessionVisibilityPlugin {
 			continue
 		}
 		entry := entryForSession(sess)
@@ -165,7 +165,7 @@ func (s *Server) threadSearchSources(binding *runtime.State) ([]threadSearchSour
 		visibility := th.Visibility
 		entry := threadListEntry{thread: thread, pinnedAt: th.PinnedAt}
 		th.mu.Unlock()
-		if visibility == pluginhost.SessionVisibilityPlugin {
+		if thread.Placement == session.PlacementSide || visibility == pluginhost.SessionVisibilityPlugin {
 			delete(sourcesByID, thread.ID)
 			continue
 		}

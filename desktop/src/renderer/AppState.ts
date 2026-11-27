@@ -101,6 +101,7 @@ function cloneComposerDraft(draft: ComposerDraftState): ComposerDraftState {
 type SessionTab =
   | {
       id: string;
+      sideParentThreadId?: string;
       kind: "draft";
       context: RuntimeContext;
       title: string;
@@ -112,6 +113,7 @@ type SessionTab =
     }
   | {
       id: string;
+      sideParentThreadId?: string;
       kind: "thread";
       context: RuntimeContext;
       threadID: string;
@@ -123,6 +125,7 @@ type SessionTab =
     }
   | {
       id: string;
+      sideParentThreadId?: string;
       kind: "skills";
       context: RuntimeContext;
       title: string;
@@ -735,6 +738,7 @@ function reduceNotification(
         state.allowThreadAutoActivation &&
         !state.thread &&
         !knownThread &&
+        thread.placement !== "side" &&
         !thread.read_only;
       const activateThread =
         state.thread?.id === thread.id || autoActivateNewThread;
@@ -1658,7 +1662,7 @@ function summarizeThreadsForSidebar(
   // bucket must see it, including ordinary project sections whose cached thread
   // snapshots do not receive the active renderer's turn lifecycle updates.
   return sortThreadSummaries(
-    threads.map((thread) => summarizeThreadForSidebar(thread, runningThreadIDs)),
+    threads.filter(thread => thread.placement !== "side").map((thread) => summarizeThreadForSidebar(thread, runningThreadIDs)),
   );
 }
 
@@ -2160,6 +2164,7 @@ function createThreadSessionTab(
     kind: "thread",
     context,
     threadID: thread.id,
+    ...(thread.placement === "side" && { sideParentThreadId: thread.parent_id }),
     title: threadDisplayTitle(thread),
     ...cloneComposerDraft(draft),
   };

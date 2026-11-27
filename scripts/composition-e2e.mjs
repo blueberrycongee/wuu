@@ -22,7 +22,9 @@ const home = join(scratch, "state"), workspace = join(scratch, "workspace");
 await mkdir(home); await mkdir(workspace);
 const env = { PATH: process.env.PATH, HOME: scratch, WUU_HOME: home, WUU_NODE_EXECUTABLE: process.execPath };
 const transcript = [], requests = [], events = new EventEmitter();
-const result = { status: "failed", scratch, checks: [], limitations: ["Synthetic model; Go app-server RPC and real tools. Rendered desktop acceptance is separate."] };
+const sourceCommit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).stdout.trim();
+const binarySHA256 = createHash("sha256").update(await readFile(binary)).digest("hex");
+const result = { status: "failed", scratch, sourceCommit, binarySHA256, checks: [], limitations: ["Synthetic model; Go app-server RPC and real tools. Rendered desktop acceptance is separate."] };
 let child, stderr = "", sequence = 0, plugin, graphGeneration;
 let releaseHeld, releaseProduct, releaseBackground, releaseRetired, releaseSide;
 const held = new Promise(resolve => { releaseHeld = resolve; });
@@ -216,7 +218,11 @@ try {
   const { turn: productTurn } = await rpc("turn/start", { thread_id: thread.id, prompt: "scope-case:product-held Read marker.txt." });
   await waitFor("request", requests, request => request.tag === "product-held", "product composition admission");
   await client("bind", { session: thread.id, id: productSecond.id, expected: productFirst.id });
-  const side = await rpc("sideThread/sendMessage", { main_thread_id: thread.id, prompt: "scope-case:side-parent Read marker.txt using the attached conversation's admitted composition." });
+  const { thread: side } = await rpc("thread/fork", { thread_id: thread.id, placement: "side", anchor: "latest_completed" });
+  assert.equal(side.parent_id, thread.id);
+  assert(side.inherited_through_seq > 0);
+  assert(!side.turns.some(turn => turn.items.some(item => item.text?.includes("scope-case:product-held"))));
+  const { turn: sideTurn } = await rpc("turn/start", { thread_id: side.id, prompt: "scope-case:side-parent Read marker.txt using the attached conversation's admitted composition." });
   await waitFor("request", requests, request => request.tag === "side-parent", "side composition admission");
   const productDrain = await client("dispose", { id: productFirst.id });
   assert.equal(productDrain.draining, true);
@@ -242,25 +248,30 @@ try {
   assert.equal(nextDone.params.turn.status, "completed", JSON.stringify(nextDone));
   await stat(productFirst.root);
   releaseSide();
-  const sideDone = await waitFor("message", transcript, message => message.method === "sideThread/event"
-    && message.params?.side_thread_id === side.summary.side_thread_id && message.params?.type === "status"
-    && ["completed", "failed", "interrupted"].includes(message.params?.summary?.status), "composed side conversation");
-  assert.equal(sideDone.params.summary.status, "completed", JSON.stringify(sideDone));
+  const sideDone = await waitFor("message", transcript, message => message.method === "turn/completed"
+    && message.params?.thread_id === side.id && message.params?.turn?.id === sideTurn.id, "composed side conversation");
+  assert.equal(sideDone.params.turn.status, "completed", JSON.stringify(sideDone));
   const sideCalls = requests.filter(request => request.tag === "side-parent");
   assert.equal(sideCalls.length, 2, "side policy must stop after two repeated observations");
   assert(sideCalls.every(request => JSON.stringify(request.body.messages).includes("this task does not support polling")), "side conversation lost its selected request transform");
-  const sideHistory = await rpc("sideThread/getHistory", { main_thread_id: thread.id });
-  assert(sideHistory.messages.at(-1).text.includes("Stopped because two consecutive identical tool calls"), "side policy did not produce the terminal result");
+  const sideHistory = await rpc("thread/resume", { session_id: side.id });
+  assert(sideHistory.thread.turns.at(-1).items.some(item => item.text?.includes("Stopped because two consecutive identical tool calls")), "side policy did not produce the terminal result");
   assert(sideCalls.every(request => request.body.model === "model-second"), "side conversation escaped the parent's admitted composition after rebind");
   assert(JSON.stringify(sideCalls).includes("PARENT-MARKER"), "side conversation lost the parent's workspace");
   result.checks.push("side conversation retains the active parent's admitted composition through rebind, dispose and parent completion",
     "selected request transform and stopping policy apply together to side conversation tool execution");
   const idleEvents = transcript.length;
-  const idleSide = await rpc("sideThread/sendMessage", { main_thread_id: thread.id, prompt: "scope-case:side-idle Read marker.txt using the current composition." });
-  const idleDone = await waitFor("message", transcript.slice(idleEvents), message => message.method === "sideThread/event"
-    && message.params?.side_thread_id === idleSide.summary.side_thread_id && message.params?.type === "status"
-    && ["completed", "failed", "interrupted"].includes(message.params?.summary?.status), "idle composed side conversation");
-  assert.equal(idleDone.params.summary.status, "completed", JSON.stringify(idleDone));
+  const { thread: idleSide } = await rpc("thread/fork", { thread_id: thread.id, placement: "side", anchor: "latest_completed" });
+  const { turn: idleSideTurn } = await rpc("turn/start", { thread_id: idleSide.id, prompt: "scope-case:side-idle Read marker.txt using the current composition." });
+  const idleDone = await waitFor("message", transcript.slice(idleEvents), message => message.method === "turn/completed"
+    && message.params?.thread_id === idleSide.id && message.params?.turn?.id === idleSideTurn.id, "idle composed side conversation");
+  assert.equal(idleDone.params.turn.status, "completed", JSON.stringify(idleDone));
+  const sideList = await rpc("thread/list", { parent_thread_id: thread.id, placement: "side", summary_only: true });
+  assert.deepEqual(sideList.threads.map(item => item.id), [idleSide.id, side.id]);
+  assert(!(await rpc("thread/listAll", { summary_only: true })).threads.some(item => item.id === idleSide.id));
+  assert.equal((await rpc("thread/promote", { thread_id: idleSide.id })).thread.placement, undefined);
+  assert((await rpc("thread/listAll", { summary_only: true })).threads.some(item => item.id === idleSide.id));
+  result.checks.push("attached chats list under their parent; promoting one adds it to the main list");
   for (const [tag, model] of [["product-held", "model-second"], ["untouched", "model-first"], ["product-next", "model-first"], ["side-idle", "model-first"]]) {
     const calls = requests.filter(request => request.tag === tag);
     assert(calls.length >= 2, `missing actual read_file round trip for ${tag}`);
@@ -271,7 +282,8 @@ try {
   const denied = await rpcRaw("turn/start", { thread_id: thread.id, prompt: "scope-case:disposed must not run" });
   assert(denied.error, "disposed product selection silently fell back");
   assert(!requests.some(request => request.tag === "disposed"));
-  const deniedSide = await rpcRaw("sideThread/sendMessage", { main_thread_id: thread.id, prompt: "scope-case:side-disposed must not run" });
+  const { thread: unavailableSide } = await rpc("thread/fork", { thread_id: thread.id, placement: "side", anchor: "latest_completed" });
+  const deniedSide = await rpcRaw("turn/start", { thread_id: unavailableSide.id, prompt: "scope-case:side-disposed must not run" });
   assert(deniedSide.error, "side conversation revived a disposed selection");
   assert(!requests.some(request => request.tag === "side-disposed"));
   result.checks.push("idle side conversation reads the new selection; disposed selection fails before inference");

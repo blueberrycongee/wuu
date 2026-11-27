@@ -29,7 +29,7 @@ export function createPreviewApplication(initial?: ApplicationSnapshotV1): Appli
     }] },
     composer: { contractVersion: 1, threadId: 'research-1', draftText: '', running: false, availableSubmissionModes: ['send'], model: { id: 'preview', label: 'Preview fixture' }, permission: { id: 'standard', label: 'Standard' } },
     activities: [],
-    sideConversation: { commands: [], turns: [], contextChatPending: [] },
+    sideConversation: { contextChatPending: [] },
     search: { query: "", composing: false, loading: false, results: [] },
     conversationActions: { questions: [], pendingQuestionIds: [], compactingThreadIds: [], handoffThreadIds: [] },
     submission: { operations: [], pendingCreations: [], failedDraftTabIds: [], stopRequests: [] },

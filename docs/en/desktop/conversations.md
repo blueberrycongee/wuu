@@ -6,7 +6,7 @@ A conversation keeps messages, tool activity, and results together. Continue the
 
 Select a workspace, then start a conversation. Click the title in the conversation title bar to rename it. The name is saved immediately for an existing conversation, and a new conversation keeps it when the first message creates the session. The sidebar menu still provides rename, pin, and archive. An archived conversation is hidden from the normal list and can be restored through **Settings → Archive**.
 
-Delete is permanent: it removes saved history and cleans up associated artifacts and any worktree still bound to the conversation. Preserve outputs and changes you need before deleting. Wuu rejects deletion while the conversation, its side chat, or its child agents are active.
+Deleting a conversation permanently removes its saved history and attached side chats, and cleans up associated artifacts and worktrees. Side chats moved to the main conversation list have their own lifecycle. Wuu blocks deletion while the conversation, an attached side chat, or a child agent is active.
 
 After the first send, the workspace sidebar immediately shows the pending conversation. You can switch away and return while it is being created. Stop cancels this wait and retains your input; a late creation response does not send the cancelled message or keep an unused empty conversation. Starting another conversation uses a separate draft.
 
@@ -122,7 +122,7 @@ A fork copies history through the selected message. It does **not** restore file
 
 ## Ask a side question
 
-Use `/side` for questions about progress, output, or alternatives without adding those messages to the main conversation. You can also select text in an assistant reply, even while it is streaming and choose **Ask in side chat**. The side composer shows the same selected-text tag; sending a question includes the passage as source context. Availability depends on the engine. For a separate task you want to develop over time, start another conversation or fork instead.
+Open a side chat with `/side` or **Ask in side chat** on an assistant reply, including a reply that is still streaming. A selection appears as a quote in the side chat composer. The first send inherits the main conversation through its last completed reply. Use the right panel’s **+** menu to reopen saved side chats or move one to the main list. See [Workspace tools](workspace-tools.md#side-chat).
 
 ## Use saved sessions from the CLI
 

@@ -226,6 +226,13 @@ async function run() {
   });
   await waitFor(win, () => !!document.querySelector('.slash-command-item[data-command-name="side"]'));
   await evaluate(win, () => document.querySelector('.slash-command-item[data-command-name="side"]').click());
+  await waitFor(win, () => !!document.querySelector(".side-thread-panel textarea"));
+  await evaluate(win, () => {
+    const textarea = document.querySelector(".side-thread-panel textarea");
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value").set.call(textarea, "Check the side chat reading width.");
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await evaluate(win, () => document.querySelector(".side-thread-panel .composer-send-button").click());
   await waitFor(win, () => !!document.querySelector(".side-thread-panel__conversation .turn"));
   const sideThread = await settledGeometry(win, 1380, ".side-thread-panel");
   assert.ok(sideThread.scrollbarWidth > 0, "Side-thread history must reserve a classic scrollbar");
@@ -233,7 +240,7 @@ async function run() {
   await win.webContents.removeInsertedCSS(classicScrollbars);
   await evaluate(win, () => window.dispatchEvent(new Event("focus")));
   checkGeometry(await settledGeometry(win, 1380, ".side-thread-panel"));
-  await evaluate(win, () => document.querySelector('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close').click());
+  await evaluate(win, () => document.querySelector('[data-wuu-tab-kind="side-chat"] .workspace-tool-tab-close').click());
   await waitFor(win, () => !document.querySelector(".side-thread-panel"));
 
   win.setContentSize(720, 820);

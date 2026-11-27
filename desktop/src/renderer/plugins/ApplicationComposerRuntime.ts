@@ -3,7 +3,7 @@ import type { ApplicationSettingsViewV1 } from "../../../../packages/plugin-sdk/
 import type { SetStateAction } from "react";
 import type { ApplicationComposerRuntimeActionMapV1 as Actions, ApplicationComposerRuntimeChoiceV1, ApplicationComposerRuntimeOwnerV1, ApplicationComposerRuntimeSelectionV1, ApplicationComposerRuntimeViewV1 } from "../../../../packages/plugin-sdk/src/ui-composer-runtime";
 import type { EngineListResult, InitializeResult, RuntimeContext, Thread, ThreadStartParams } from "../../shared/protocol";
-import { activeThreadIDForState, isThreadRunning, sameRuntimeContext, type AppState } from "../AppState";
+import { activeThreadForState, activeThreadIDForState, isThreadRunning, sameRuntimeContext, type AppState } from "../AppState";
 import type { CodexModelLoadState } from "../ComposerTypes";
 import { createRuntimeSettingsActions } from "../RuntimeSettingsActions";
 import { rememberedEngineRuntime, resolveDraftEngineMemory, writeDraftEngineMemory } from "../DraftEngineMemory";
@@ -132,12 +132,14 @@ export class ApplicationComposerRuntime {
     const rows: ApplicationComposerRuntimeOwnerV1[] = [];
     for (const tab of state.sessionTabs) {
       const owner = this.owners.get(tab.id); if (!owner) continue;
-      const thread = this.thread(state, tab); const selection = this.selection(owner, tab, thread);
+      const thread = this.thread(state, tab);
+      const parent = tab.kind === "draft" && tab.sideParentThreadId ? activeThreadForState(state) : undefined;
+      const selection = this.selection(owner, tab, thread ?? parent);
       const models = owner.inventory?.engines.find(engine => engine.id === selection.engine)?.models;
       const defaultModel = models?.find(model => model.is_default);
       const model = selection.model ? models?.find(model => model.id === selection.model) : defaultModel;
       const nativeDefaults = { model: defaultModel?.id ?? "", effort: model?.default_effort ?? "", speed: model?.default_speed ?? "", modelOptions: Object.fromEntries((model?.options ?? []).map(option => [option.id, option.default_value])) };
-      const worktree = { available: tab.kind === "draft" && Boolean(owner.git?.is_repo), enabled: Boolean(owner.worktree && owner.git?.is_repo), startBranch: owner.worktree?.startBranch ?? "", branches: owner.git?.branches ?? [] };
+      const worktree = { available: tab.kind === "draft" && !tab.sideParentThreadId && Boolean(owner.git?.is_repo), enabled: Boolean(owner.worktree && owner.git?.is_repo), startBranch: owner.worktree?.startBranch ?? "", branches: owner.git?.branches ?? [] };
       const sourceProviders = owner.configuration?.providers ?? emptyProviders;
       let providers = this.providerViews.get(sourceProviders);
       if (!providers) { providers = immutable(sourceProviders); this.providerViews.set(sourceProviders, providers); }
@@ -147,15 +149,15 @@ export class ApplicationComposerRuntime {
         owner.providerModelsView = immutable(owner.codex.models.map(model => ({ id: model.slug, label: model.display_name || model.slug, efforts: model.supported_reasoning ?? [], defaultEffort: model.default_reasoning_level ?? "", supportedInAPI: model.supported_in_api })));
       }
       const providerModels = owner.providerModelsView!;
-      const engineSelectionPending = tab.kind === "draft" && !owner.inventory && !owner.explicitEngineAfterDiscoveryFailure && typeof window.wuu.listEngines === "function";
+      const engineSelectionPending = tab.kind === "draft" && !tab.sideParentThreadId && !owner.inventory && !owner.explicitEngineAfterDiscoveryFailure && typeof window.wuu.listEngines === "function";
       const selectedEngine = owner.inventory?.engines.find(engine => engine.id === selection.engine);
-      const available = Boolean(owner.configuration && (thread || tab.kind === "draft" && (!owner.inventory || selectedEngine?.enabled && selectedEngine.binary_ok)));
+      const available = Boolean(owner.configuration && (thread || parent || tab.kind === "draft" && (!owner.inventory || selectedEngine?.enabled && selectedEngine.binary_ok)));
       const busy = Boolean(owner.mutations || thread && isThreadRunning(thread) || this.host.isOwnerPending?.(tab.id) || this.host.isNavigationPending());
       const key = JSON.stringify([selection, nativeDefaults, worktree, available, engineSelectionPending, busy, thread?.read_only, owner.engineLoading, owner.engineError, owner.codex.loading, owner.codex.error, owner.selectionError]);
       if (owner.snapshotKey !== key || owner.snapshot?.providers !== providers || owner.snapshot?.engines !== engines || owner.snapshot?.providerModels !== providerModels) {
         owner.snapshotKey = key;
         owner.snapshot = Object.freeze({ ownerTabId: tab.id, threadId: thread?.id, cwd: owner.cwd, available, readOnly: Boolean(thread?.read_only), busy,
-          engineLocked: tab.kind === "thread", engineSelectionPending, permissionLocked: false,
+          engineLocked: tab.kind === "thread" || Boolean(parent), engineSelectionPending, permissionLocked: Boolean(parent),
           selection: immutable(selection), nativeDefaults: immutable(nativeDefaults), worktree: immutable(worktree), engines, providers, providerModels,
           engineModelsLoading: owner.engineLoading, engineModelsError: owner.engineError, providerModelsLoading: owner.codex.loading, providerModelsError: owner.codex.error, selectionError: owner.selectionError });
       }
@@ -209,14 +211,14 @@ export class ApplicationComposerRuntime {
     if (this.disposed) throw new Error("Composer runtime is disposed");
     signal?.throwIfAborted(); const state = this.sync();
     const owner = this.owners.get(ownerTabId); const tab = state.sessionTabs.find(tab => tab.id === ownerTabId);
-    if (!owner || !tab || state.activeSessionTabID !== ownerTabId || !this.sameContext(state, tab.context) || this.host.isNavigationPending()) throw new PluginLifecycleCancellationError(new DOMException("Composer runtime owner is no longer active", "AbortError"));
+    if (!owner || !tab || (state.activeSessionTabID !== ownerTabId && (!tab.sideParentThreadId || tab.sideParentThreadId !== activeThreadForState(state)?.id)) || !this.sameContext(state, tab.context) || this.host.isNavigationPending()) throw new PluginLifecycleCancellationError(new DOMException("Composer runtime owner is no longer active", "AbortError"));
     return { owner, tab, thread: this.thread(state, tab), generation: state.runtimeConnectionGeneration, signal };
   }
   private current(source: Source): boolean {
     const state = this.host.getState();
     return !this.disposed && !source.signal?.aborted && this.owners.get(source.owner.id) === source.owner
       && state.sessionTabs.some(tab => tab.id === source.owner.id && JSON.stringify([tab.context, this.thread(state, tab)?.cwd || tab.context.cwd]) === source.owner.key)
-      && state.activeSessionTabID === source.owner.id && this.sameContext(state, source.owner.context)
+      && (state.activeSessionTabID === source.owner.id || Boolean(source.tab.sideParentThreadId && source.tab.sideParentThreadId === activeThreadForState(state)?.id)) && this.sameContext(state, source.owner.context)
       && state.runtimeConnectionGeneration === source.generation && !this.host.isNavigationPending();
   }
   private runtime(source: Source, onWrite: () => void = () => {}, catalog?: { request: number; force?: boolean }) {

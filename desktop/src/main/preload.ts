@@ -20,8 +20,6 @@ import {
   type RunningThreadSnapshot,
   type RuntimeContext,
   type ServerEvent,
-  type SideThreadEventEnvelope,
-  type SideThreadSendParams,
   type ThreadStartParams,
   type ThreadForkTarget,
   type ThemePreference,
@@ -427,7 +425,9 @@ const api: WuuDesktopApi = {
     itemId?: string,
     mode?: "local" | "worktree",
     target?: ThreadForkTarget,
-  ) => ipcRenderer.invoke("wuu:thread-fork", threadId, turnId, itemId, mode, target),
+    options?: { placement: "side"; anchor: "latest_completed" },
+  ) => ipcRenderer.invoke("wuu:thread-fork", threadId, turnId, itemId, mode, target, options),
+  promoteThread: (threadId: string) => ipcRenderer.invoke("wuu:thread-promote", threadId),
   editThreadMessage: (threadId: string, turnId: string, itemId: string) =>
     ipcRenderer.invoke("wuu:thread-edit-message", threadId, turnId, itemId),
   getThreadContextComposition: (threadId: string) =>
@@ -496,7 +496,7 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:message-flow-font-size-get"),
   setMessageFlowFontSize: (fontSize: MessageFlowFontSize) =>
     ipcRenderer.invoke("wuu:message-flow-font-size-set", fontSize),
-  listThreads: (cwd?: string) => ipcRenderer.invoke("wuu:thread-list", cwd),
+  listThreads: (cwd?: string, sideChats?: { parentThreadId: string }) => ipcRenderer.invoke("wuu:thread-list", cwd, sideChats),
   listAllThreads: () => ipcRenderer.invoke("wuu:thread-list-all"),
   listRestartRecovery: () => ipcRenderer.invoke("wuu:thread-recovery-list"),
   dismissRestartRecovery: (threadIDs: string[]) => ipcRenderer.invoke("wuu:thread-recovery-dismiss", threadIDs),
@@ -680,27 +680,6 @@ const api: WuuDesktopApi = {
     ipcRenderer.invoke("wuu:pop-out-session", params),
   popOutClosed: (params) =>
     ipcRenderer.invoke("wuu:pop-out-closed", params),
-  // Requests are keyed by the owning main thread. The main process derives
-  // wuu:side-thread-event from app-server sideThread/event notifications.
-  openSideThread: (mainThreadId: string) =>
-    ipcRenderer.invoke("wuu:side-thread-open", mainThreadId),
-  getSideThreadHistory: (mainThreadId: string) =>
-    ipcRenderer.invoke("wuu:side-thread-history", mainThreadId),
-  sendSideThreadMessage: (params: SideThreadSendParams) =>
-    ipcRenderer.invoke("wuu:side-thread-send", params),
-  interruptSideThread: (mainThreadId: string) =>
-    ipcRenderer.invoke("wuu:side-thread-interrupt", mainThreadId),
-  resetSideThread: (mainThreadId: string) =>
-    ipcRenderer.invoke("wuu:side-thread-reset", mainThreadId),
-  onSideThreadEvent: (handler: (envelope: SideThreadEventEnvelope) => void) => {
-    const listener = (
-      _event: Electron.IpcRendererEvent,
-      payload: Parameters<typeof handler>[0],
-    ) => handler(payload);
-    ipcRenderer.on("wuu:side-thread-event", listener);
-    return () =>
-      ipcRenderer.removeListener("wuu:side-thread-event", listener);
-  },
   // Sync bootstrap for popped-out windows. This returns window-owned
   // identity only; thread data loads through the normal async IPC path.
   // SendSync must be paired with an ipcMain.on handler that sets

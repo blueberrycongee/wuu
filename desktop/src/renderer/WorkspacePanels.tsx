@@ -37,6 +37,7 @@ import {
   isWindowResizing,
 } from "./WindowResizeState";
 import {
+  ArrowUpRight,
   ChevronDown,
   ChevronUp,
   FileDiff,
@@ -56,6 +57,7 @@ import {
   Plus,
   ShieldCheck,
   Terminal,
+  Trash2,
   X,
 } from "./WuuIcons";
 import type { RuntimeContext, Thread } from "../shared/protocol";
@@ -93,8 +95,9 @@ import { ImagePreviewProvider } from "./ImagePreview";
 import { ArtifactsProvider } from "./ArtifactsContext";
 import { BrowserControlsProvider } from "./BrowserControlsContext";
 import { TerminalControlsProvider } from "./TerminalControlsContext";
-import { ApplicationSideThreadPanel, type SideThreadPanelHandle } from "./SideThreadPanel";
-import { isTouchWebShell } from "./ComposerFocus";
+import { SideChatPanel } from "./SideChatPanel";
+import { ThreadContextMenu } from "./ThreadContextMenu";
+import { threadSessionTabID } from "./AppState";
 import { FileSelectionProvider } from "./FileSelectionContext";
 import { WorkspaceBrowserOpenContext, type WorkspaceBrowserOpenModifiers } from "./WorkspaceBrowserOpen";
 import { showErrorToast } from "./Toast";
@@ -265,8 +268,19 @@ function WorkspacePanelContent({
   const panelRef = useRef<HTMLElement>(null);
   const snapshot = useSyncExternalStore(application.subscribe, application.getSnapshot);
   const preview = snapshot.previewWorkspace;
+  const conversationActive = Boolean(conversationTabVisible && preview.conversationOpen !== false && preview.conversationSelected);
+  const sideCatalogParent = open && !conversationActive && !preview.tabs.some(tab => tab.id === preview.activeTabId && tab.kind !== "new")
+    ? snapshot.sideConversation.parentThreadId : undefined;
+  const hasBoundSideTabs = preview.tabs.some(tab => tab.kind === "side-chat" && tab.threadID);
+  const sideThreads = hasBoundSideTabs || sideCatalogParent ? snapshot.conversationWorkspace.threads : undefined;
+  const sideThreadByID = useMemo(() => new Map(sideThreads?.filter(thread => thread.placement === "side").map(thread => [thread.id, thread as Thread])), [sideThreads]);
   // Detach public immutable display data before using the existing mutable leaf renderers.
-  const tabs = useMemo(() => structuredClone(preview.tabs) as WorkspaceViewTab[], [preview.tabs]);
+  const previewTabs = useMemo(() => structuredClone(preview.tabs) as WorkspaceViewTab[], [preview.tabs]);
+  const tabs = useMemo(() => hasBoundSideTabs ? previewTabs.map(tab => {
+    if (tab.kind !== "side-chat" || !tab.threadID) return tab;
+    const thread = sideThreadByID.get(tab.threadID);
+    return { ...tab, title: thread?.title || thread?.preview || undefined };
+  }) : previewTabs, [previewTabs, hasBoundSideTabs, sideThreadByID]);
   const publicThread = snapshot.conversationWorkspace.threads.find(thread => thread.id === preview.threadId);
   const terminalThread = publicThread as Thread | undefined;
   const { activeContext, workspaceContext, fileRefreshKey, browserActivity, browserDockTarget } = preview;
@@ -296,16 +310,6 @@ function WorkspacePanelContent({
     closable: preview.conversationOpen === true,
     onSelect: () => { void application.invoke("preview.show-conversation", {}).catch(showErrorToast); },
   } : undefined;
-  const sideThreadRunning = snapshot.sideConversation.entry?.streaming ?? false;
-  const sideThreadActive = open && !preview.conversationSelected && tabs.find(tab => tab.id === activeTabID)?.kind === "side-thread";
-  const sideThreadPanelRef = useRef<SideThreadPanelHandle>(null);
-  const sideRevealRequest = snapshot.navigationWorkspace.regionVisibilityRequest?.region === "auxiliary"
-    ? snapshot.navigationWorkspace.regionVisibilityRequest.id : undefined;
-  useEffect(() => {
-    if (!sideThreadActive || isTouchWebShell()) return;
-    const frame = window.requestAnimationFrame(() => sideThreadPanelRef.current?.focusComposer());
-    return () => window.cancelAnimationFrame(frame);
-  }, [sideThreadActive, snapshot.sideConversation.parentThreadId, sideRevealRequest]);
   const focusedComposer = documentComposer ? <WorkspaceDocumentTurnDock
     turns={terminalThread?.turns ?? []} cwd={workspaceContext?.cwd} onOpenFile={onOpenFile}
     onOpenConversation={() => {
@@ -315,14 +319,30 @@ function WorkspacePanelContent({
     }}>
     <slots.Slot name="wuu.default-preview/application.composer" context={{ variant: "document", pane }} />
   </WorkspaceDocumentTurnDock> : null;
-  const sideThreadContent = <ApplicationSideThreadPanel snapshot={snapshot.sideConversation}
-    ref={sideThreadPanelRef} active={sideThreadActive}
-    title={t("sideThread.title")} cwd={workspaceContext?.cwd} onOpenFile={onOpenFile}
-    composer={snapshot.sideConversation.parentThreadId ? <slots.Slot name="wuu.default-preview/application.composer" context={{ side: { parentThreadId: snapshot.sideConversation.parentThreadId } }} /> : null} />;
-  const conversationActive = Boolean(conversationTab?.active);
   const selectedTabID = conversationActive ? WORKSPACE_CONVERSATION_TAB_ID : activeTabID;
   const visibleTabs = tabs;
   const activeTab = activeTabID ? visibleTabs.find((tab) => tab.id === activeTabID) : undefined;
+  const showingPicker = !activeTab || activeTab.kind === "new";
+  const activeSideTab = activeTab?.kind === "side-chat" ? activeTab : undefined;
+  const sideOwner = activeSideTab?.threadID ? threadSessionTabID(activeSideTab.threadID) : activeSideTab?.id;
+  const needsSideLoad = Boolean(activeSideTab?.threadID && sideOwner && (!snapshot.drafts.sideChats?.[sideOwner] || !sideThreadByID.has(activeSideTab.threadID)));
+  const [sideLoadFailed, setSideLoadFailed] = useState<string>();
+  function loadSideTab(tab: NonNullable<typeof activeSideTab>): void {
+    setSideLoadFailed(undefined);
+    void application.invoke("side.open", { parentThreadId: tab.parentThreadID, threadId: tab.threadID })
+      .catch(error => { setSideLoadFailed(tab.id); showErrorToast(error); });
+  }
+  useEffect(() => {
+    if (open && !conversationActive && needsSideLoad && activeSideTab && sideLoadFailed !== activeSideTab.id) loadSideTab(activeSideTab);
+  }, [open, conversationActive, needsSideLoad, activeSideTab?.id, sideLoadFailed]);
+  const [sideMenu, setSideMenu] = useState<{ x: number; y: number; threadId: string; tabId: string }>();
+  const removeSideChat = async (threadId: string, promote: boolean) => {
+    if (!promote && !await confirmAction({
+      title: t("sideThread.deleteTitle"), message: t("sideThread.deleteHint"), confirmLabel: t("common.delete"), tone: "danger",
+    })) return false;
+    await application.invoke(promote ? "side.promote" : "side.delete", { threadId });
+    return true;
+  };
   const terminalTabOpen = tabs.some((tab) => tab.kind === "terminal");
   // Latch after the terminal has been shown so a later tool tab does not
   // tear the pty down. Closing the terminal tab releases it.
@@ -333,7 +353,6 @@ function WorkspacePanelContent({
     setTerminalMounted(false);
   }
   const fileTabs = tabs.filter((tab): tab is WorkspaceFileViewTab => tab.kind === "file");
-  const showingPicker = !activeTab || activeTab.kind === "new";
   const [dirtyFileTabIDs, setDirtyFileTabIDs] = useState<Set<string>>(() => new Set());
   const enterReady = useStripEnterReady();
   const tabEntries = useTabExitRetention(visibleTabs, (tab) => tab.id);
@@ -727,7 +746,7 @@ function WorkspacePanelContent({
   const headerTabs = visibleTabs.map((tab) => {
     const busy = (tab.kind === "terminal" && terminalThread?.status === "in_progress") ||
       (tab.kind === "browser" && browserActivity?.state === "active") ||
-      (tab.kind === "side-thread" && sideThreadRunning);
+      (tab.kind === "side-chat" && Boolean(tab.threadID && sideThreadByID.get(tab.threadID)?.status === "in_progress"));
     return {
       id: tab.id,
       title: workspaceViewTabLabel(tab),
@@ -904,7 +923,11 @@ function WorkspacePanelContent({
                     tab={tab}
                     active={active}
                     dirty={tab.kind === "file" && dirtyFileTabIDs.has(tab.id)}
-                    busy={tab.kind === "side-thread" && sideThreadRunning}
+                    busy={tab.kind === "side-chat" && Boolean(tab.threadID && sideThreadByID.get(tab.threadID)?.status === "in_progress")}
+                    onContextMenu={tab.kind === "side-chat" && tab.threadID ? (event) => {
+                      event.preventDefault();
+                      setSideMenu({ x: event.clientX, y: event.clientY, threadId: tab.threadID!, tabId: tab.id });
+                    } : undefined}
                     open={open}
                     reorderable={visibleTabs.length > 1}
                     onSelect={() => onSelectTab(tab.id)}
@@ -1128,16 +1151,25 @@ function WorkspacePanelContent({
                 />
               </div>
             ) : null}
-            {tabs.some((tab) => tab.kind === "side-thread") ? (
-              <div
-                className="workspace-side-thread-content"
-                hidden={activeTab?.kind !== "side-thread"}
-                inert={!open || conversationActive || activeTab?.kind !== "side-thread"}
-              >
-                {sideThreadContent}
-              </div>
-            ) : null}
-            {activeTab?.kind === "files" || activeTab?.kind === "file" || activeTab?.kind === "browser" || activeTab?.kind === "terminal" || activeTab?.kind === "side-thread" ? null : (
+            {tabs.flatMap(tab => {
+              if (tab.kind !== "side-chat") return [];
+              const rendered = tab.id === activeSideTab?.id;
+              const ownerTabId = tab.threadID ? threadSessionTabID(tab.threadID) : tab.id;
+              return [<div key={tab.id} className="workspace-side-thread-content" hidden={!rendered}
+                inert={!open || conversationActive || !rendered}>
+                {sideLoadFailed === tab.id && needsSideLoad ? <button type="button" onClick={() => loadSideTab(tab)}>{t("settings.errorRetry")}</button>
+                  : <SideChatPanel active={open && !conversationActive && rendered}
+                      thread={tab.threadID ? sideThreadByID.get(tab.threadID) : undefined} loading={rendered && needsSideLoad} onOpenFile={onOpenFile}
+                      composer={<slots.Slot name="wuu.default-preview/application.composer" context={{ ownerTabId, sideChat: true, visible: rendered && open && !conversationActive }} />} />}
+              </div>];
+            })}
+            {sideMenu && <ThreadContextMenu x={sideMenu.x} y={sideMenu.y} onClose={() => setSideMenu(undefined)} items={[
+              { label: t("sideThread.promote"), onSelect: () => { void removeSideChat(sideMenu.threadId, true).catch(showErrorToast); } },
+              { label: t("workspace.closeTab", { label: t("sideThread.title") }), onSelect: () => onCloseTab(sideMenu.tabId) },
+              { label: t("common.delete"), danger: true, disabled: sideThreadByID.get(sideMenu.threadId)?.status === "in_progress",
+                onSelect: () => { void removeSideChat(sideMenu.threadId, false).catch(showErrorToast); } },
+            ]} />}
+            {activeTab?.kind === "files" || activeTab?.kind === "file" || activeTab?.kind === "browser" || activeTab?.kind === "terminal" || activeTab?.kind === "side-chat" ? null : (
               <div
                 className="workspace-panel-content-swap"
                 key={activeTab?.id ?? "picker"}
@@ -1146,6 +1178,10 @@ function WorkspacePanelContent({
                   <WorkspaceToolPicker
                     slots={slots}
                     onSelectTool={onOpenTool}
+                    sideChats={sideCatalogParent ? <SideChatPicker
+                      key={sideCatalogParent} application={application}
+                      parentThreadId={sideCatalogParent} revision={snapshot.sideConversation.catalogRevision} tabs={tabs}
+                      liveChats={sideThreadByID} remove={removeSideChat} /> : undefined}
                   />
                 ) : activeTab.kind === "diff" ? (
                   <TurnFileDiffPanel
@@ -1282,6 +1318,7 @@ function SortableWorkspaceViewTab({
   reorderable,
   onSelect,
   onClose,
+  onContextMenu,
 }: {
   tab: WorkspaceViewTab;
   active: boolean;
@@ -1291,6 +1328,7 @@ function SortableWorkspaceViewTab({
   reorderable: boolean;
   onSelect: () => void;
   onClose: () => void;
+  onContextMenu?: React.MouseEventHandler;
 }): JSX.Element {
   const { t } = useI18n();
   const { attributes, listeners, setActivatorNodeRef, setNodeRef, transform, transition, isDragging } = useSortable({
@@ -1308,6 +1346,7 @@ function SortableWorkspaceViewTab({
   return (
     <div
       ref={setNodeRef}
+      onContextMenu={onContextMenu}
       className={`workspace-tool-tab${active ? " active" : ""}${dirty ? " dirty" : ""}${reorderable ? " can-reorder" : ""}${
         isDragging ? " dragging" : ""
       }`}
@@ -1320,7 +1359,7 @@ function SortableWorkspaceViewTab({
     >
       {/* Keep the full resource path available when its title is truncated;
        * a hint that only repeats the visible label adds hover noise. */}
-      <Tooltip content={tooltip} disabled={tooltip === label}>
+      <Tooltip content={tooltip} disabled={tooltip === label && tab.kind !== "side-chat"}>
         <button
           ref={setActivatorNodeRef}
           className="workspace-tool-tab-main"
@@ -1394,8 +1433,10 @@ function WorkspaceViewTabPreview({
 function WorkspaceToolPicker({
   slots,
   onSelectTool,
+  sideChats,
 }: {
   slots: UICompositionV1;
+  sideChats?: JSX.Element;
   onSelectTool: (view: WorkspacePanelView) => void;
 }): JSX.Element {
   const { t } = useI18n();
@@ -1444,8 +1485,71 @@ function WorkspaceToolPicker({
         </div>
         <slots.Slot name="wuu.default-preview/workspace.tools" />
       </section>
+      {sideChats}
     </div>
   );
+}
+
+function SideChatPicker({ application, parentThreadId, revision, tabs, liveChats, remove }: {
+  application: ApplicationServiceV1;
+  parentThreadId: string;
+  revision?: number;
+  tabs: WorkspaceViewTab[];
+  liveChats: ReadonlyMap<string, Thread>;
+  remove(threadId: string, promote: boolean): Promise<boolean>;
+}): JSX.Element {
+  const { t } = useI18n();
+  const [saved, setSaved] = useState<readonly Thread[]>([]);
+  const [failed, setFailed] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    const request = new AbortController();
+    setFailed(false);
+    void application.invoke("side.list", { parentThreadId }, { signal: request.signal }).then(result => {
+      if (!request.signal.aborted) setSaved(result.threads as readonly Thread[]);
+    }, () => { if (!request.signal.aborted) setFailed(true); });
+    return () => request.abort();
+  }, [application, parentThreadId, revision, attempt]);
+
+  const open = (threadId?: string) => { void application.invoke("side.open", { parentThreadId, threadId }).catch(showErrorToast); };
+  return <section className="workspace-tool-menu-section">
+    <button className="workspace-tool-menu-item" data-wuu-component="workspace-tool" data-wuu-tool="side-chat" type="button" onClick={() => open()}>
+      <span className="workspace-tool-menu-icon" aria-hidden="true"><MessageCircle className="icon" /></span>
+      <span className="workspace-tool-menu-copy"><strong>{t("sideThread.new")}</strong></span>
+    </button>
+    {failed && <button className="workspace-tool-menu-item" type="button" onClick={() => setAttempt(value => value + 1)}>{t("settings.errorRetry")}</button>}
+    {saved.length > 0 && <>
+      <h3 className="side-chat-picker-heading">{t("sideThread.history")}</h3>
+      {saved.map(row => {
+        const live = liveChats.get(row.id);
+        const running = (live?.status ?? row.status) === "in_progress";
+        const opened = tabs.some(tab => tab.kind === "side-chat" && tab.threadID === row.id);
+        return <div key={row.id} className="side-chat-picker-row">
+          <button className="workspace-tool-menu-item" type="button" onClick={() => open(row.id)} aria-busy={running || undefined}>
+            <span className="workspace-tool-menu-icon" aria-hidden="true">{running ? <LoaderCircle className="icon control-busy-icon" /> : <MessageCircle className="icon" />}</span>
+            <span className="workspace-tool-menu-copy side-chat-picker-copy">
+              <strong>{live?.title || row.title || live?.preview || row.preview || t("sideThread.title")}</strong>
+              {opened && <span>{t("sideThread.opened")}</span>}
+            </span>
+          </button>
+          <div className="side-chat-picker-actions">
+            <Tooltip content={t("sideThread.promote")}>
+              <button className="icon-button" type="button" aria-label={t("sideThread.promote")}
+                onClick={() => { void remove(row.id, true).then(changed => { if (changed) setSaved(rows => rows.filter(item => item.id !== row.id)); }).catch(showErrorToast); }}>
+                <ArrowUpRight className="icon" aria-hidden="true" />
+              </button>
+            </Tooltip>
+            <Tooltip content={t("common.delete")}>
+              <button className="icon-button" type="button" disabled={running} aria-label={t("common.delete")}
+                onClick={() => { void remove(row.id, false).then(changed => { if (changed) setSaved(rows => rows.filter(item => item.id !== row.id)); }).catch(showErrorToast); }}>
+                <Trash2 className="icon" aria-hidden="true" />
+              </button>
+            </Tooltip>
+          </div>
+        </div>;
+      })}
+    </>}
+  </section>;
 }
 
 export function WorkspaceToolIcon({ view, className }: { view: WorkspacePanelView; className?: string }): JSX.Element {
@@ -1467,7 +1571,7 @@ function workspaceToolFor(view: WorkspacePanelView): (typeof WORKSPACE_TOOL_ITEM
 
 function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
   if (tab.kind === "new") return translateCurrent("workspace.newPage");
-  if (tab.kind === "side-thread") return translateCurrent("sideThread.title");
+  if (tab.kind === "side-chat") return tab.title || translateCurrent("sideThread.title");
   return tab.kind === "diff" || tab.kind === "file" || tab.kind === "plugin" || tab.kind === "artifact"
     ? tab.title
     : translateCurrent(workspaceToolFor(tab.kind).titleKey);
@@ -1475,7 +1579,7 @@ function workspaceViewTabLabel(tab: WorkspaceViewTab): string {
 
 function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
   if (tab.kind === "new") return translateCurrent("workspace.newPage");
-  if (tab.kind === "side-thread") return translateCurrent("sideThread.title");
+  if (tab.kind === "side-chat") return tab.title || translateCurrent("sideThread.title");
   if (tab.kind === "plugin" || tab.kind === "artifact") return tab.title;
   return tab.kind === "diff" || tab.kind === "file"
     ? tab.path
@@ -1485,7 +1589,7 @@ function workspaceViewTabTooltip(tab: WorkspaceViewTab): string {
 function WorkspaceViewTabIcon({ tab, className }: { tab: WorkspaceViewTab; className?: string }): JSX.Element {
   const loadIcon = useContext(PreviewIconLoader);
   if (tab.kind === "new") return <LayoutGrid className={className} />;
-  if (tab.kind === "side-thread") return <MessageCircle className={className} />;
+  if (tab.kind === "side-chat") return <MessageCircle className={className} />;
   if (tab.kind === "diff") {
     return <FileDiff className={className} />;
   }

@@ -64,10 +64,6 @@ module.exports = (api) => {
       threads.find(item => item.id === threadId)?.turns.push(turn);
       return { turn };
     },
-    openSideThread: async () => ({ summary: { side_thread_id: "next-message-side", main_thread_id: "next-message-thread", status: "idle", revision: 1, created_at: new Date().toISOString(), updated_at: new Date().toISOString() } }),
-    getSideThreadHistory: async () => ({ summary: { side_thread_id: "next-message-side", main_thread_id: "next-message-thread", status: "idle", revision: 1 },
-      messages: [{ id: "synthetic-side-answer", side_thread_id: "next-message-side", role: "assistant", text: "Synthetic side conversation", status: "completed", created_at: new Date().toISOString() }] }),
-    getPluginConflictPreferences: async () => ({}),
     requestPluginRuntime: async (params) => ({ ok: true, value: await ipcRenderer.invoke("test:next-message-runtime", params) }),
     readPluginVisibleHistory: async (request) => ({ turns: request.kind === "main"
       ? threads.find(item => item.id === request.threadId && item.cwd === request.workspaceRoot)?.turns

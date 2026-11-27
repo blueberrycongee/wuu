@@ -378,7 +378,7 @@ app.whenReady().then(async () => {
       await win.loadFile(path.join(desktop, "out-dev/onboarding/renderer/dev/onboarding/index.html"), { query: { lang: "en" } });
       await waitFor(() => Boolean(document.querySelector(".onboarding-stage-welcome")));
       await click(".onboarding-actions .settings-button-primary");
-      await waitFor(() => document.querySelectorAll(".onboarding-plugin").length === 10);
+      await waitFor(() => Boolean(document.querySelector(".onboarding-plugin [role='switch']")));
       await evaluate(async () => {
         await document.fonts.ready;
         await Promise.all(document.querySelector(".onboarding-heading").getAnimations().map(animation => animation.finished));
@@ -474,7 +474,7 @@ app.whenReady().then(async () => {
       const preset = async (index) => {
         await evaluate(() => { document.querySelector('.onboarding-body').scrollTop = 0; });
         await click(`.onboarding-presets button:nth-child(${index})`);
-        await checkOutfit(`preset-${index}`, index === 1 ? [] : index === 2 ? ["side", "automation", "automation-client"] : pluginIDs);
+        await checkOutfit(`preset-${index}`, index === 1 ? [] : index === 2 ? ["automation", "automation-client"] : pluginIDs);
       };
       const pluginIDs = await evaluate(() => [...document.querySelectorAll('.onboarding-plugin')].map(node => node.dataset.plugin));
       win.setContentSize(920, 720);

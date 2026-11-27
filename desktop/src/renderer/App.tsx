@@ -1,3 +1,4 @@
+import type { SideConversationSelectionV1 } from "../../../packages/plugin-sdk/src/ui-side-conversation";
 import type { ApplicationSettingsLayoutV1 } from "../../../packages/plugin-sdk/src/application-settings";
 import type { ApplicationServiceV1, ApplicationSnapshotV1, UICompositionV1, UIFocusTargetV1 } from "../../../packages/plugin-sdk/src/ui";
 import { RestartRecovery } from "./RestartRecoveryNotice";
@@ -24,7 +25,6 @@ import { type PageContextSnapshot } from "../shared/pageContext";
 import type {
 ResponseSelection,
 RuntimeContext,
-SideThreadSelection,
 Thread
 } from "../shared/protocol";
 import { WEB_WORKSPACE_RIBBON_ID, WEB_WORKSPACE_TAB_LIMIT } from "../shared/webWorkspace";
@@ -658,15 +658,8 @@ export function App({ application, slots, shellPluginId }: {
   }, [activeThreadID, activeThreadCwd]);
   const environmentContext = workspacePanelContext(activeContext, activeThread);
   const sideSnapshot = useSyncExternalStore(application.subscribe, () => application.getSnapshot().sideConversation);
-  const sideCommandID = sideSnapshot.commandId;
-  const sideConversationAvailable = sideSnapshot.commands.length > 0;
-  const sideThread = useMemo(() => ({
-    entry: sideSnapshot.entry,
-    open: () => { if (sideSnapshot.parentThreadId) void application.invoke("side.open", { parentThreadId: sideSnapshot.parentThreadId }).catch(showErrorToast); },
-    close: () => { if (sideSnapshot.parentThreadId) void application.invoke("side.close", { parentThreadId: sideSnapshot.parentThreadId }).catch(showErrorToast); },
-    setDraftSelection: (selection?: SideThreadSelection) => { if (sideSnapshot.parentThreadId) void application.invoke("side.set-selection", { parentThreadId: sideSnapshot.parentThreadId, selection }).catch(showErrorToast); },
-  }), [application, sideSnapshot]);
-  const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideThreadSelection } | null>(null);
+  const sideConversationAvailable = Boolean(sideSnapshot.parentThreadId);
+  const pendingSideSelectionRef = useRef<{ threadID: string; selection: SideConversationSelectionV1 } | null>(null);
   useEffect(() => {
     const syncVisibleCUAThread = () => {
       try { application.desktop.setActiveCUAThread?.(activeThreadID); }
@@ -1290,17 +1283,6 @@ export function App({ application, slots, shellPluginId }: {
   // not on any thread anywhere running. A worktree-fork thread running in its
   // own cwd, or a thread in another project, no longer blocks them.
   const environmentGitBusy = environmentSnapshot.actionBusy || viewContextSwitchPending;
-  useEffect(() => {
-    if (!configuration?.extension_inventory || sideConversationAvailable) return;
-    pendingSideSelectionRef.current = null;
-    if (sideThread.entry?.open) sideThread.close();
-    if (workspaceViewTabs.some((tab) => tab.id === "side-thread")) closeWorkspaceViewTab("side-thread");
-  }, [sideConversationAvailable, activeThreadID, workspaceViewTabs, configuration?.extension_inventory]);
-  const sideThreadPanelVisible = Boolean(sideConversationAvailable && activeThreadID && rightPanelOpen &&
-    !workspaceConversationActive && workspaceActiveViewTabID === "side-thread");
-  useEffect(() => {
-    if (sideThreadPanelVisible && !sideThread.entry?.open) sideThread.open();
-  }, [sideThreadPanelVisible, sideThread.entry?.open, sideThread.open]);
   // The environment panel floats inside the conversation pane, so it can
   // coexist with the docked workspace right panel. Only the globalized
   // (full-window sheet) right panel blocks it, because that mode makes the
@@ -1410,16 +1392,9 @@ export function App({ application, slots, shellPluginId }: {
     void application.invoke("navigation.mark-viewed", { threadIds: [activeThreadID] }).catch(showErrorToast);
   }, [application, conversationVisible, activeThreadID, viewedTurnId, viewedThreadStatus]);
 
-  function openSideThreadPanel(prompt?: string, commandID = sideCommandID): void {
-    const parentThreadId = application.getSnapshot().sideConversation.parentThreadId;
-    if (!parentThreadId) return;
-    void application.invoke("side.open", { parentThreadId, commandId: commandID, prompt }).catch(showErrorToast);
-  }
-
-  function openSideThreadWithSelection(selection: SideThreadSelection): void {
-    if (!activeThreadID || !sideConversationAvailable) return;
-    openSideThreadPanel();
-    sideThread.setDraftSelection(selection);
+  function openSideThreadWithSelection(selection: SideConversationSelectionV1): void {
+    if (!activeThreadID) return;
+    void application.invoke("side.open", { parentThreadId: activeThreadID, selection }).catch(showErrorToast);
   }
 
   // Blocking questions stay in the conversation stream. Offers float above the composer.
@@ -1561,7 +1536,7 @@ export function App({ application, slots, shellPluginId }: {
     const ask = (event: Event) => {
       const selection = (event as CustomEvent<ResponseSelection>).detail;
       if (!sideConversationAvailable || !selection?.source?.thread_id) return;
-      const reference: SideThreadSelection = { type: "response", response: selection };
+      const reference: SideConversationSelectionV1 = { type: "response", response: selection };
       if (selection.source.thread_id === activeThreadID) {
         openSideThreadWithSelection(reference);
       } else {
@@ -1571,7 +1546,7 @@ export function App({ application, slots, shellPluginId }: {
     };
     window.addEventListener("wuu:ask-side-selection", ask);
     return () => window.removeEventListener("wuu:ask-side-selection", ask);
-  }, [activeThreadID, activateThread, sideThread.open, sideThread.setDraftSelection, sideConversationAvailable]);
+  }, [activeThreadID, activateThread, sideConversationAvailable]);
 
   useEffect(() => {
     const pending = pendingSideSelectionRef.current;

@@ -5,6 +5,8 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
+const { createHash } = require("node:crypto");
+const { execFileSync } = require("node:child_process");
 const path = require("node:path");
 const { app, BrowserWindow } = require("electron");
 const { selectVariants } = require("./file-selection-variants.cjs");
@@ -40,6 +42,9 @@ app.whenReady().then(run).then(() => app.quit()).catch(async error => {
 async function run() {
   console.log(`File selection E2E artifacts: ${output}`);
   assert.ok(fs.existsSync(renderer), "Renderer missing. Run npm run test:e2e:file-selection from desktop.");
+  report.sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: desktopRoot, encoding: "utf8" }).trim();
+  report.rendererEntrySHA256 = createHash("sha256").update(fs.readFileSync(renderer)).digest("hex");
+  report.electronSHA256 = createHash("sha256").update(fs.readFileSync(process.execPath)).digest("hex");
   // Pairwise visual coverage, with every action repeated on all three formats.
   const variants = selectVariants(process.env.WUU_FILE_SELECTION_SHARD);
   for (const variant of variants) {
@@ -136,7 +141,7 @@ async function run() {
       }
       await click(".composer-file-selection-card-popover .composer-response-selection-remove");
       await waitFor(() => !document.querySelector(".side-thread-panel .composer-file-selection-card .composer-document-card-main"), "side selection removed");
-      await click('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close');
+      await click('[data-wuu-tab-kind="side-chat"] .workspace-tool-tab-close');
       await waitFor(() => Boolean(document.querySelector('.workspace-file-resource.active .file-selection-surface')) &&
         Boolean(document.querySelector('.workspace-document-composer [data-main-conversation-composer]')),
         "closing side chat returns to its source document");
@@ -292,6 +297,8 @@ async function run() {
       console.log(`PASS ${label}`);
     }
     await verifyTextAttachments(variant);
+    if (variant.name === "light-default-wide") await verifySideChatTabs(variant);
+
     phase = `${variant.name}: wrapped middle-of-file selection`;
     await openFile("selection-wrapped.ts");
     await click(".workspace-file-resource.active .monaco-editor .view-line");
@@ -419,6 +426,69 @@ async function verifyMixedSentSelections(variant) {
   await press("Escape");
   report.cases.push({ variant, kind: "mixed-pdf-text-history", parts,
     checks: ["separate-pdf-and-text-groups", "exact-source-metadata", "exact-quotes", "separate-comments"] });
+}
+
+async function verifySideChatTabs(variant) {
+  phase = `${variant.name}: attached conversations`;
+  await openFiles();
+  const picker = '[data-wuu-component="workspace-tool-picker"]';
+  const side = '.workspace-side-thread-content:not([hidden]) .side-thread-panel';
+  const tab = '[data-wuu-tab-kind="side-chat"]';
+  const openPicker = async () => {
+    await clickButton(".workspace-right-panel", "New page");
+    await waitFor(selector => Boolean(document.querySelector(selector)), "workspace tool picker", picker);
+  };
+  const ask = async (question) => {
+    await openPicker();
+    await clickButton(picker, "New side chat");
+    await waitFor(selector => document.activeElement === document.querySelector(`${selector} textarea`), "new side input focus", side);
+    await fill(`${side} textarea`, question);
+    await press("Enter");
+    await waitFor(selector => document.querySelector(selector)?.innerText.includes("Side question answered."), "side turn completion", side);
+  };
+  const first = "Review the second step in the proposed implementation and explain the alternative.";
+  const second = "Compare the two possible defaults for the workspace panel.";
+  await ask(first);
+  await waitFor(selector => Boolean(document.querySelector(`${selector} .side-chat-inherited-toggle`)), "inherited context control", side);
+  assert.equal(await evaluate(selector => document.querySelector(selector).innerText.includes("Prior parent answer"), side), false);
+  await click(`${side} .side-chat-inherited-toggle`);
+  await waitFor(selector => document.querySelector(selector)?.innerText.includes("Prior parent answer"), "inherited context expanded", side);
+  await screenshot("side-chat-inherited-context");
+  await ask(second);
+  assert.equal(await evaluate(selector => document.querySelectorAll(selector).length, tab), 2);
+  await evaluate(() => {
+    const expand = [...document.querySelectorAll("button")].find(button => /expand to full panel/i.test(button.getAttribute("aria-label") || ""));
+    expand?.click();
+  });
+  await waitFor(() => document.querySelector(".app-shell")?.classList.contains("right-panel-globalized"), "expanded workspace tabs");
+  await screenshot("side-chat-multiple-tabs");
+  await press("Escape");
+  await click(`${tab}[data-wuu-active="true"] .workspace-tool-tab-close`);
+  assert.equal((await snapshot()).sideChats.length, 2, "Closing a tab keeps both conversations");
+  await openPicker();
+  await waitFor(title => [...document.querySelectorAll(".side-chat-picker-row strong")].some(row => row.textContent === title), "saved side conversation", second);
+  await screenshot("side-chat-saved-list");
+  await clickButton(`${picker} .side-chat-picker-row`, second);
+  await waitFor(selector => document.querySelector(selector)?.innerText.includes("Side question answered."), "saved conversation reopened", side);
+  await openPicker();
+  await waitFor(title => [...document.querySelectorAll(".side-chat-picker-row strong")].some(row => row.textContent === title), "saved side conversation", second);
+  await evaluate(title => {
+    const row = [...document.querySelectorAll(".side-chat-picker-row")].find(item => item.querySelector("strong").textContent === title);
+    const action = [...row.querySelectorAll("button")].find(button => button.getAttribute("aria-label") === "Move to main conversations");
+    action.focus();
+    action.click();
+  }, second);
+  const promotedRow = ".sidebar-session-row:has(.thread-row-fork-icon) .thread-row-main";
+  await waitFor(selector => Boolean(document.querySelector(selector)), "promoted side conversation in navigation", promotedRow);
+  await click(promotedRow);
+  await waitFor(question => {
+    const history = document.querySelector(".conversation-pane .scroll-region");
+    return history?.innerText.includes(question) && history.innerText.includes("Prior parent answer");
+  }, "promoted conversation shows both its own and inherited history", second);
+  await click(".sidebar-session-row:not(:has(.thread-row-fork-icon)) .thread-row-main");
+  assert.equal((await snapshot()).sideChats.filter(row => row.placement === "side").length, 1);
+  report.sideChatChecks = { variant, checks: ["independent-side-tabs", "collapsed-inherited-context", "close-and-reopen", "promote-to-main"] };
+  writeReport();
 }
 
 async function verifyTextAttachments(variant) {

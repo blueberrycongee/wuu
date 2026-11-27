@@ -76,12 +76,6 @@ const workspace = "/tmp/wuu-artifact-tab-test";
 
 function initialized(): InitializeResult {
   return {
-    extension_inventory: [{
-      id: "plugin:bundled:side", kind: "plugin", name: "Side", state: "active", enabled: true,
-      approval_state: "official", runtime_state: "active",
-      provenance: { kind: "plugin", source: "bundled", scope: "bundled", plugin_id: "side", official: true },
-      contributions: { commands: [{ id: "side", title: "Side chat", kind: "side_conversation", template: "Side policy" }] },
-    }],
     protocol_version: "wuu-app-server/v0.1",
     provider: "fake",
     model: "fake-model",
@@ -555,14 +549,6 @@ describe("workspace file tabs", () => {
 
   it.each([2000, 1280, 600])("reveals a side selection from the focused workspace at width %i without losing the main draft", async (width) => {
     setInnerWidth(width);
-    Object.assign(window.wuu, {
-      openSideThread: vi.fn().mockResolvedValue({ summary: null }),
-      getSideThreadHistory: vi.fn().mockResolvedValue(null),
-      sendSideThreadMessage: vi.fn(),
-      interruptSideThread: vi.fn().mockResolvedValue({ ok: true }),
-      resetSideThread: vi.fn().mockResolvedValue({ ok: true }),
-      onSideThreadEvent: vi.fn(() => () => {}),
-    });
     await openSelectionDocument();
     if (width >= 1280) {
       await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="展开为全面板"]')!.click());
@@ -580,9 +566,8 @@ describe("workspace file tabs", () => {
     expect(document.activeElement).toBe(side.querySelector("textarea"));
     expect(container.querySelector('[data-main-conversation-composer="document"]')).toBeNull();
     expect(window.wuu.startTurn).not.toHaveBeenCalled();
-    expect(window.wuu.sendSideThreadMessage).not.toHaveBeenCalled();
     expect(container.querySelector(".workspace-right-panel")?.getAttribute("aria-hidden")).toBe("false");
-    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-tab-kind="side-thread"] .workspace-tool-tab-close')!.click());
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-tab-kind="side-chat"] .workspace-tool-tab-close')!.click());
     await flushAsync();
     expect(container.querySelector(".workspace-file-resource.active .workspace-file-preview")?.textContent).toContain("Artifact");
     expect(container.querySelector<HTMLTextAreaElement>('[data-main-conversation-composer="document"] textarea')!.value).toBe("Keep the main question");

@@ -1,3 +1,5 @@
+import { buildFileSelectionPart } from "../FileSelectionParts";
+import { rememberCollapsedPromptParts } from "../ComposerCollapsedPrompt";
 import { retainTerminalCleanup } from "../RendererTerminalCleanup";
 import { showErrorToast } from "../Toast";
 import { isPluginLifecycleCancellation, PluginLifecycleCancellationError } from "../../shared/PluginLifecycle";
@@ -39,7 +41,7 @@ import type { DesktopAutoArchiveDays, DesktopPreferences, InitializeResult, PopO
 import { autoArchiveCandidates } from "../AutoArchive";
 import { MESSAGE_FLOW_FONT_SIZE_RANGE } from "../../shared/protocol";
 import { isThreadUnread, workspaceNameForContext, workspacePanelContext, createThreadSessionTab, mergeSidebarThread, activeSessionTab, summarizeThreadsForSidebar, threadForTab, activeThreadForState, activeThreadIDForState, resolveThreadRuntimeContext, sameRuntimeContext, reconcileResumedThreadTurns, handleStreamingNotification, initialState, isThreadRunning, reduceServerEvent,
-  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, threadBelongsToWorkspace, upsertThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
+  serverEventTargetsActiveContext, isCoalescedBackgroundThreadEvent, threadBelongsToWorkspace, upsertThread, requireThread, upsertTurn, updateTurnItem, updateThreadByID, withLoadedRuntimeSessionTab, captureComposerDrafts, persistComposerDrafts, cloneSessionTabDraft, composerDraftHasContent, emptyComposerDraft, threadSessionTabID, createDraftSessionTab, ensureSessionTab, sessionTabLabel, type ComposerDraftState, type SessionTab, type AppState } from "../AppState";
 import { loadPopOutRuntime, loadRuntime, loadRuntimeConfiguration, selectRuntimeContext, loadRuntimeRestore, applyRuntimeRestore, type LoadedRuntimeState } from "../RuntimeLoadState";
 import { readComposerDraftRecovery, sameRecoveryContext } from "../ComposerDraftRecovery";
 import { readThreadReadState } from "../ThreadReadState";
@@ -282,10 +284,7 @@ export class ApplicationController implements HostApplicationService {
   readonly conversationText: ApplicationConversationTextV1 = Object.freeze({
     getSnapshot: (target: ApplicationConversationTextTargetV1) => {
       const thread = this.knownThread(target.threadId);
-      const side = this.snapshot.sideConversation;
-      const sideThreadId = side.entry?.summary?.side_thread_id ?? (side.parentThreadId ? `side:${side.parentThreadId}` : undefined);
-      const turns = thread?.turns ?? (sideThreadId === target.threadId ? side.turns : undefined);
-      const item = turns?.find(turn => turn.id === target.turnId)?.items.find(item => item.id === target.itemId);
+      const item = thread?.turns.find(turn => turn.id === target.turnId)?.items.find(item => item.id === target.itemId);
       if (!item) return undefined;
       const key = streamTextKey(target.turnId, target.itemId, target.field);
       return streamTextStore.has(key) ? streamTextStore.get(key) : item[target.field];
@@ -421,6 +420,8 @@ export class ApplicationController implements HostApplicationService {
         await this.applicationConversationActions.invoke("question.cancel", { requestId });
       },
       getRuntime: ownerTabId => this.getSubmissionRuntime(ownerTabId),
+      bindSideChat: (tabId, threadId) => this.applicationPreview.bindSideChat(tabId, threadId),
+      recoverSideChat: (id, parentThreadID) => this.applicationPreview.openSideChat({ kind: "side-chat", id, parentThreadID }, false),
     });
   }
   private getSubmissionRuntime(ownerTabId: string) {
@@ -443,19 +444,70 @@ export class ApplicationController implements HostApplicationService {
   private sideConversationOwner?: ApplicationSideConversation;
   private get applicationSideConversation(): ApplicationSideConversation {
     return this.sideConversationOwner ??= new ApplicationSideConversation({
-      getState: () => this.state, updateState: this.updateState, subscribeState: this.subscribeState, changed: () => this.publish(),
+      getState: () => this.state, updateState: this.updateState, changed: () => this.publish(),
       isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
-      activateThread: (threadId, signal) => this.invoke("thread.activate", { threadId }, { signal }),
-      openPanel: () => {
-        void this.applicationPreview.invoke("preview.open-side-thread", {});
-        void this.applicationNavigation.invoke("navigation.reveal-region", { region: "auxiliary" });
-      },
-      closePanel: () => { void this.applicationPreview.invoke("preview.close-tabs", { tabIds: this.applicationPreview.getSnapshot().tabs.filter(tab => tab.kind === "side-thread").map(tab => tab.id) }); },
+      open: (input, signal) => this.openSideChat(input, signal),
+      remove: (threadId, promote) => this.removeSideChat(threadId, promote),
       getContextChatRuntime: () => this.getSubmissionRuntime(this.state.activeSessionTabID),
       submitBackground: (message, thread, context) => this.applicationSubmission.submitBackground(message, thread, context),
       cacheThread: thread => this.sidebarCache.updateCachedSidebarThread(thread),
     });
   }
+  private async openSideChat(input: ApplicationSideConversationActionMapV1["side.open"]["input"], signal?: AbortSignal): Promise<{ tabId: string }> {
+    const { parentThreadId, threadId, selection, prompt } = input;
+    const parent = activeThreadForState(this.state);
+    const context = this.state.activeContext;
+    if (!context || context.kind === "user" || parent?.id !== parentThreadId || parent.archived || parent.read_only ||
+      parent.parent_id || parent.ephemeral || this.pendingNavigation && !this.pendingNavigation.contentReady) {
+      throw new Error(translateCurrent("sideThread.unavailable"));
+    }
+    if (selection?.type === "response" && selection.response.source.thread_id !== parentThreadId) {
+      throw new Error("Selected response belongs to another conversation");
+    }
+    const existing = this.applicationPreview.getSnapshot(parentThreadId).tabs.find(tab => tab.kind === "side-chat" && tab.threadID === threadId && threadId);
+    const tabId = existing?.id ?? (threadId ? `side:${threadId}` : `draft:side:${crypto.randomUUID()}`);
+    let ownerTabId = tabId;
+    if (threadId) {
+      ownerTabId = threadSessionTabID(threadId);
+      if (!this.state.sessionTabs.some(tab => tab.id === ownerTabId) || !threadForTab(this.state, threadId)) {
+        const thread = requireThread(await window.wuu.resumeThread(threadId), "thread/resume did not return a thread");
+        signal?.throwIfAborted();
+        if (activeThreadForState(this.state)?.id !== parentThreadId || thread.placement !== "side" || thread.parent_id !== parentThreadId) {
+          throw new Error(translateCurrent("sideThread.unavailable"));
+        }
+        this.updateState(state => ({ ...state, sessionTabs: ensureSessionTab(state.sessionTabs, createThreadSessionTab(thread, context)),
+          threads: upsertThread(state.threads, thread) }));
+      }
+    } else {
+      const draft = emptyComposerDraft();
+      draft.prompt = prompt ?? "";
+      if (selection?.type === "response") draft.selections = [structuredClone(selection.response)];
+      if (selection?.type === "file") {
+        const part = buildFileSelectionPart(structuredClone(selection.file), "quote");
+        draft.prompt = part.text + draft.prompt;
+        rememberCollapsedPromptParts(tabId, draft.prompt, [part, { type: "text", text: prompt ?? "" }]);
+      }
+      const tab = { ...createDraftSessionTab(tabId, context, draft), sideParentThreadId: parentThreadId };
+      this.updateState(state => ({ ...state, sessionTabs: [...state.sessionTabs, tab] }));
+    }
+    this.applicationPreview.openSideChat({ id: tabId, kind: "side-chat", parentThreadID: parentThreadId, threadID: threadId });
+    await this.applicationNavigation.invoke("navigation.reveal-region", { region: "auxiliary" }, signal);
+    if (prompt?.trim() && !threadId) {
+      const result = this.applicationSubmission.submit({ ownerTabId });
+      if (!result.accepted) throw new Error(translateCurrent("composer.sendFailedDraftRetained"));
+    }
+    return { tabId };
+  }
+
+  private async removeSideChat(threadId: string, promote: boolean): Promise<void> {
+    const metadata = promote ? (await window.wuu.promoteThread(threadId)).thread : (await window.wuu.deleteThread(threadId), undefined);
+    this.applicationPreview.removeSideChat(threadId);
+    this.updateState(state => ({ ...state,
+      threads: metadata ? upsertThread(state.threads, metadata) : state.threads.filter(thread => thread.id !== threadId),
+    }));
+    if (metadata) this.sidebarCache.updateCachedSidebarThread(metadata);
+  }
+
   private fileSelectionOwner?: ApplicationFileSelection;
   get fileSelection(): ApplicationFileSelection {
     return this.fileSelectionOwner ??= new ApplicationFileSelection({
@@ -465,7 +517,7 @@ export class ApplicationController implements HostApplicationService {
       submission: { submitIndependent: (ownerTabId, message) => this.applicationSubmission.submitIndependent(ownerTabId, message),
         getSnapshot: () => this.applicationSubmission.getSnapshot() },
       preview: this.applicationPreview, previewContent: this.previewContent,
-      side: { available: () => Boolean(this.applicationSideConversation.getSnapshot().commandId),
+      side: { available: () => Boolean(this.applicationSideConversation.getSnapshot().parentThreadId),
         open: async (parentThreadId, source) => { await this.applicationSideConversation.invoke("side.open", { parentThreadId, selection: { type: "file", file: source } }); return true; } },
     });
   }
@@ -506,7 +558,8 @@ export class ApplicationController implements HostApplicationService {
       getPendingDraftTabIds: () => this.submissionOwner?.getPendingDraftTabIds() ?? [],
     });
     this.applicationPreview = new ApplicationPreview({ artifacts: () => this.artifacts, getThreads: () => [this.state.thread, this.state.secondaryThread, ...this.state.threads]
-      .filter((thread): thread is Thread => Boolean(thread)), changed: () => this.publish() });
+      .filter((thread): thread is Thread => Boolean(thread)), changed: () => this.publish(),
+      closeSideChat: tab => this.updateState(state => ({ ...state, sessionTabs: state.sessionTabs.filter(owner => owner.id !== (tab.threadID ? threadSessionTabID(tab.threadID) : tab.id)) })) });
     this.applicationSettings = new ApplicationSettings({ getState: () => this.state, updateState: this.updateState,
       changed: () => this.publish(), isNavigationPending: () => Boolean(this.pendingNavigation && !this.pendingNavigation.contentReady),
       deleteArchivedThread: id => this.mutationActions().deleteArchivedThread(id),
@@ -650,7 +703,7 @@ export class ApplicationController implements HostApplicationService {
       const notify = window.wuu?.showSystemNotification?.bind(window.wuu);
       this.eventEffects = new ApplicationEventEffects({ getState: () => this.state, getEnvironment: () => this.environment,
         notify, reportError: error => console.error("Application event notification failed", error) });
-      this.subscriptions = [subscribeWorkspaceBrowserNavigation(() => this.publish()), subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(), this.applicationSideConversation.start(),
+      this.subscriptions = [subscribeWorkspaceBrowserNavigation(() => this.publish()), subscribeServerEvents(event => this.receive(event)), this.applicationNavigation.start(), this.applicationConversationActions.start(), this.applicationSearch.start(),
         observeAppearance(() => this.publish()), observeAppliedTheme(() => this.publish())];
       if (this.browser.available) {
         this.subscriptions.push(this.browser.onInvalidate(({ workdir }) => {
@@ -772,7 +825,7 @@ export class ApplicationController implements HostApplicationService {
           loaded = { ...await loadRuntimeConfiguration(workspace), thread: undefined,
             secondaryThread: undefined, activePane: "primary", allowThreadAutoActivation: false, running: false };
         } else {
-          const active = this.state.sessionTabs.find(tab => tab.id === activeTabId
+          const active = this.state.sessionTabs.find(tab => !tab.sideParentThreadId && tab.id === activeTabId
             && workspace.active_context && sameRecoveryContext(tab.context, workspace.active_context));
           loaded = await loadRuntime(workspace, { resumeLatestThread: active?.kind === "thread", resumeThreadID: active?.kind === "thread" ? active.threadID : undefined });
         }
@@ -825,6 +878,20 @@ export class ApplicationController implements HostApplicationService {
     this.eventEffects?.receive(event);
     const activities = reduceActivitySessionEvent(this.activitySessions, event);
     if (activities !== this.activitySessions) { this.activitySessions = activities; this.publish(); }
+    if (event.kind === "notification" && event.message.method === "thread/deleted") {
+      const id = (event.message.params as { thread_id?: string } | undefined)?.thread_id;
+      if (id) {
+        this.applicationPreview.removeSideChat(id);
+        this.updateState(state => ({ ...state, threads: state.threads.filter(thread => thread.id !== id || thread.placement !== "side") }));
+        this.applicationSideConversation.invalidateCatalog();
+      }
+    } else if (event.kind === "notification" && event.message.method === "thread/started") {
+      const thread = (event.message.params as { thread?: Thread } | undefined)?.thread;
+      if (thread && !thread.placement && thread.forked_from_id) {
+        if (this.knownThread(thread.id)?.placement === "side") this.applicationPreview.removeSideChat(thread.id);
+        this.applicationSideConversation.invalidateCatalog();
+      }
+    }
     this.sidebarCache.syncSidebarServerEvent(event);
     this.pendingComposer.syncPendingComposerMessagesFromServerEvent(event);
     this.submissionOwner?.receive(event);
@@ -1112,8 +1179,10 @@ export class ApplicationController implements HostApplicationService {
 
   private pendingComposerMessage(input: { ownerTabId: string; messageId: string; kind?: "queue" | "guide" }) {
     const tab = this.state.sessionTabs.find(tab => tab.id === input.ownerTabId);
-    if (input.ownerTabId !== this.state.activeSessionTabID || !tab || tab.kind === "skills"
-      || tab.kind === "thread" && tab.threadID !== activeThreadIDForState(this.state) || this.pendingNavigation) throw new Error("Pending message owner changed");
+    const activeThreadId = activeThreadIDForState(this.state);
+    const side = tab?.sideParentThreadId === activeThreadId && Boolean(activeThreadId);
+    if (!tab || tab.kind === "skills" || !side && (input.ownerTabId !== this.state.activeSessionTabID
+      || tab.kind === "thread" && tab.threadID !== activeThreadId) || this.pendingNavigation) throw new Error("Pending message owner changed");
     const pending = this.pendingComposer.pendingComposerMessagesByThread[tab.kind === "thread" ? tab.threadID : tab.id];
     const messages = input.kind === "queue" ? pending?.queued : input.kind === "guide" ? pending?.guides : [...(pending?.queued ?? []), ...(pending?.guides ?? [])];
     const message = messages?.find(message => message.id === input.messageId);
@@ -1264,7 +1333,7 @@ export class ApplicationController implements HostApplicationService {
   private async perform(action: keyof ApplicationActionMapV1, input: ApplicationActionMapV1[keyof ApplicationActionMapV1]["input"], signal?: AbortSignal): Promise<unknown> {
     if (action === "preview.open-url") return this.browser.openURL(input as ApplicationActionMapV1["preview.open-url"]["input"], { signal });
     if (isApplicationSideConversationAction(action)) return this.applicationSideConversation.invoke(action,
-      input as ApplicationSideConversationActionMapV1[keyof ApplicationSideConversationActionMapV1]["input"]);
+      input as ApplicationSideConversationActionMapV1[keyof ApplicationSideConversationActionMapV1]["input"], signal);
     if (isApplicationSearchAction(action)) return this.applicationSearch.invoke(action,
       input as ApplicationSearchActionMapV1[keyof ApplicationSearchActionMapV1]["input"]);
     if (isApplicationConversationAction(action)) return this.applicationConversationActions.invoke(action,
@@ -1587,6 +1656,13 @@ export class ApplicationController implements HostApplicationService {
         const { attachmentId } = input as ApplicationActionMapV1["composer.resolve-attachment"]["input"];
         return this.draftResources.resolve(attachmentId, action === "composer.retry-attachment");
       }
+      case "composer.update-side-draft": {
+        const { ownerTabId, draft } = input as ApplicationActionMapV1["composer.update-side-draft"]["input"];
+        const owner = this.state.sessionTabs.find(tab => tab.id === ownerTabId);
+        if (!owner?.sideParentThreadId || owner.sideParentThreadId !== activeThreadIDForState(this.state)) throw new Error("Draft owner changed");
+        this.setComposerDraft(ownerTabId, this.draftResources.read(draft));
+        return;
+      }
       case "composer.checkpoint": {
         const checkpoint = input as ApplicationActionMapV1["composer.checkpoint"]["input"];
         if (checkpoint.activeTabId !== this.state.activeSessionTabID) throw new Error("Draft owner changed");
@@ -1745,7 +1821,7 @@ export class ApplicationController implements HostApplicationService {
         return this.applicationSubmission.submitContent(content.source, { text: content.text, context: content.context }, signal);
       }
       case "composer.cancel-submission": return { cancelled: this.applicationSubmission.cancel((input as ApplicationActionMapV1["composer.cancel-submission"]["input"]).operationID) };
-      case "composer.stop": return this.applicationSubmission.stop(this.state.activeSessionTabID);
+      case "composer.stop": return this.applicationSubmission.stop((input as ApplicationActionMapV1["composer.stop"]["input"]).ownerTabId ?? this.state.activeSessionTabID);
       case "composer.configure": {
         const { modelId, runtimeId, permissionId } = input as ApplicationActionMapV1["composer.configure"]["input"];
         const thread = activeThreadForState(this.state);
@@ -1821,6 +1897,12 @@ export class ApplicationController implements HostApplicationService {
     const primaryDraft = this.composerDraftForPane("primary");
     const secondaryDraft = this.composerDraftForPane("secondary");
     const attachmentIds = new Set([...primaryDraft.images, ...primaryDraft.files, ...secondaryDraft.images, ...secondaryDraft.files].map(item => item.id));
+    const sideDrafts = Object.freeze(Object.fromEntries(state.sessionTabs.flatMap(tab => {
+      if (!tab.sideParentThreadId || tab.kind === "skills") return [];
+      const draft = cloneSessionTabDraft(tab);
+      [...draft.images, ...draft.files].forEach(item => attachmentIds.add(item.id));
+      return [[tab.id, Object.freeze({ ...this.draftResources.project(draft), ownerTabId: tab.id, revision: this.draftRevisions.get(tab.id) ?? 0 })]];
+    })));
     const conversationActions = this.applicationConversationActions.getSnapshot();
     if (conversationActions.editing) [...conversationActions.editing.draft.imageIds, ...conversationActions.editing.draft.fileIds].forEach(id => attachmentIds.add(id));
     const projectPending = (message: QueuedComposerMessage) => {
@@ -1843,7 +1925,7 @@ export class ApplicationController implements HostApplicationService {
       workspaces: Object.freeze({ workspaces: Object.freeze(state.projects.map(project => Object.freeze({ id: project.id, name: project.name, root: project.path, available: !project.missing }))), activeWorkspaceId: state.activeProjectId, activeRoot: state.activeContext?.cwd }),
       navigation: Object.freeze({ contractVersion: 1, section: state.nativeSection ?? "conversations", catalogSection: state.catalogSection ?? "plugins", catalogPluginId: state.catalogPluginID ?? "", activeNodeId: thread?.id, nodes: Object.freeze([
         ...state.projects.map(project => Object.freeze({ id: project.id, kind: "project" as const, label: project.name, active: state.activeProjectId === project.id })),
-        ...state.threads.filter(thread => !thread.archived && !thread.ephemeral).map(item => Object.freeze({ id: item.id, kind: "thread" as const, label: item.title || item.preview || item.id, active: item.id === thread?.id, pinned: item.pinned, running: isThreadRunning(item) })),
+        ...state.threads.filter(thread => !thread.archived && !thread.ephemeral && thread.placement !== "side").map(item => Object.freeze({ id: item.id, kind: "thread" as const, label: item.title || item.preview || item.id, active: item.id === thread?.id, pinned: item.pinned, running: isThreadRunning(item) })),
       ]) }),
       navigationWorkspace: Object.freeze({ ...this.applicationNavigation.getSnapshot(),
         pendingConversations: Object.freeze(this.applicationNavigation.getSnapshot().pendingConversations.map(pending => {
@@ -1883,13 +1965,13 @@ export class ApplicationController implements HostApplicationService {
       drafts: Object.freeze({ recoveryNotices: Object.freeze(state.sessionTabs.flatMap(tab => {
         if (this.recoveredDrafts.tabs.some(recovered => recovered.id === tab.id) && tab.id.startsWith("draft:recovery:")) return [Object.freeze({ ownerTabId: tab.id, reason: "interrupted" as const })];
         return [];
-      })), activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread),
+      })), activeTabId: state.activeSessionTabID, activePane: state.activePane, split: Boolean(state.secondaryThread), sideChats: sideDrafts,
         primary: Object.freeze({ ...this.draftResources.project(primaryDraft), ownerTabId: primaryDraft.ownerTabId, revision: this.draftRevisions.get(primaryDraft.ownerTabId ?? "") ?? 0 }), secondary: Object.freeze({ ...this.draftResources.project(secondaryDraft), ownerTabId: secondaryDraft.ownerTabId, revision: this.draftRevisions.get(secondaryDraft.ownerTabId ?? "") ?? 0 }),
         attachments: Object.freeze([...attachmentIds].map(id => this.draftResources.describe(id))) }),
       settings: Object.freeze({ ...this.applicationSettings.getSnapshot(), contractVersion: 1, open: this.settings.open, activePageId: this.settings.pageId,
         plugins: Object.freeze((initialized?.extension_inventory ?? []).filter(item => item.kind === "plugin").map(item => Object.freeze({ id: item.id, name: item.name, enabled: item.enabled !== false, status: item.runtime_state ?? item.state }))),
         providers: Object.freeze((initialized?.providers ?? []).map(provider => Object.freeze({ id: provider.name, label: provider.name, configured: provider.api_key_configured === true }))) }),
-      preview: this.preview, previewWorkspace: Object.freeze({ ...this.applicationPreview.getSnapshot(),
+      preview: this.preview, previewWorkspace: Object.freeze({ ...this.applicationPreview.getSnapshot(thread?.id ?? null),
         ownerTabId: this.composerDraftForPane(state.activePane).ownerTabId ?? state.activeSessionTabID,
         activeContext: state.activeContext && state.activeContext.kind !== "user" ? Object.freeze({ ...state.activeContext }) : undefined,
         workspaceContext: workspacePanelContext(state.activeContext, thread) && Object.freeze({ ...workspacePanelContext(state.activeContext, thread)! }),

@@ -63,9 +63,17 @@ export function workspaceArtifactViewTab(input: ArtifactPreviewRequest): Workspa
   return { ...input, kind: "artifact", id: `artifact:${JSON.stringify(identity)}`, title: artifact.name };
 }
 
+export type WorkspaceSideChatViewTab = {
+  kind: "side-chat";
+  id: string;
+  parentThreadID: string;
+  threadID?: string;
+  title?: string;
+};
+
 export type WorkspaceViewTab =
   | { kind: "new"; id: string }
-  | { kind: "side-thread"; id: "side-thread" }
+  | WorkspaceSideChatViewTab
   | WorkspaceToolViewTab
   | WorkspaceDiffViewTab
   | WorkspaceFileViewTab

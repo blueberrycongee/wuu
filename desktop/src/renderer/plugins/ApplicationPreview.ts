@@ -6,13 +6,13 @@ import { collectTurnArtifacts } from "../ArtifactOutputs";
 import type { TurnFileDiffSelection } from "../TurnFileDiffTypes";
 import { closeViewTab, closeViewTabsWhere, focusViewTab, openViewTab, reorderViewTabs,
   workspaceArtifactViewTab, workspaceDiffViewTab, workspaceFileViewTab, workspacePluginViewTab,
-  workspaceToolViewTab, WORKSPACE_CONVERSATION_TAB_ID, type WorkspaceViewTabsState } from "../WorkspaceViewTabs";
+  workspaceToolViewTab, WORKSPACE_CONVERSATION_TAB_ID, type WorkspaceViewTabsState, type WorkspaceSideChatViewTab } from "../WorkspaceViewTabs";
 
 type PreviewTabs = Pick<ApplicationPreviewWorkspaceV1, "tabs" | "activeTabId" | "activeFileTabId" | "conversationOpen" | "conversationSelected">;
 
 const actions = new Set<keyof ApplicationPreviewActionMapV1>([
   "preview.open-file", "preview.open-diff", "preview.open-artifact", "preview.open-tool", "preview.open-plugin",
-  "preview.open-side-thread", "preview.new-tab", "preview.focus-tab", "preview.close-tab", "preview.close-tabs", "preview.reorder-tab",
+  "preview.new-tab", "preview.focus-tab", "preview.close-tab", "preview.close-tabs", "preview.reorder-tab",
   "preview.open-conversation", "preview.close-conversation", "preview.show-conversation",
 ]);
 export function isApplicationPreviewAction(action: string): action is keyof ApplicationPreviewActionMapV1 {
@@ -24,11 +24,41 @@ export class ApplicationPreview {
   private state: WorkspaceViewTabsState = readWorkspacePreviewRecovery();
   private conversationOpen = true;
   private snapshot: PreviewTabs;
-  constructor(private readonly host: { artifacts?: () => import("../../../../packages/plugin-sdk/src/ui-artifacts").ApplicationArtifactsV1; getThreads: () => readonly Thread[]; changed: () => void }) {
+  private parentThreadID?: string;
+  constructor(private readonly host: { artifacts?: () => import("../../../../packages/plugin-sdk/src/ui-artifacts").ApplicationArtifactsV1; getThreads: () => readonly Thread[]; changed: () => void; closeSideChat?: (tab: WorkspaceSideChatViewTab) => void }) {
     this.snapshot = this.project(this.state, true);
   }
 
-  getSnapshot(): PreviewTabs { return this.snapshot; }
+  getSnapshot(parentThreadID: string | null | undefined = this.parentThreadID): PreviewTabs {
+    const parent = parentThreadID ?? undefined;
+    if (parent !== this.parentThreadID) {
+      const sideTabsChanged = this.state.tabs.some(tab => tab.kind === "side-chat"
+        && (tab.parentThreadID === this.parentThreadID || tab.parentThreadID === parent));
+      this.parentThreadID = parent;
+      if (!sideTabsChanged) return this.snapshot;
+      const previousTab = this.state.tabs.find(tab => tab.id === this.state.activeTabID);
+      if (previousTab?.kind === "side-chat") {
+        const remaining = this.state.activationHistory.findLast(id => this.state.tabs.some(tab => tab.id === id && (tab.kind !== "side-chat" || tab.parentThreadID === parent)));
+        this.state = focusViewTab(this.state, remaining);
+      }
+      this.snapshot = this.project(this.state, this.conversationOpen);
+    }
+    return this.snapshot;
+  }
+
+  openSideChat(tab: WorkspaceSideChatViewTab, activate = true): void {
+    this.update(openViewTab(this.state, tab, { activate, replaceActiveNewTab: activate }));
+  }
+
+  bindSideChat(tabID: string, threadID: string): void {
+    const existing = this.state.tabs.find(tab => tab.id === tabID);
+    if (existing?.kind !== "side-chat") return;
+    this.update({ ...this.state, tabs: this.state.tabs.map(tab => tab === existing ? { ...existing, threadID } : tab) });
+  }
+
+  removeSideChat(threadID: string): void {
+    this.closeTabs(this.state.tabs.flatMap(tab => tab.kind === "side-chat" && (tab.threadID === threadID || tab.parentThreadID === threadID) ? [tab.id] : []));
+  }
 
   private update(state: WorkspaceViewTabsState, conversationOpen = this.conversationOpen): void {
     if (state === this.state && conversationOpen === this.conversationOpen) return;
@@ -40,14 +70,15 @@ export class ApplicationPreview {
   }
 
   private project(state: WorkspaceViewTabsState, conversationOpen: boolean): PreviewTabs {
+    const tabs = state.tabs.filter(tab => tab.kind !== "side-chat" || tab.parentThreadID === this.parentThreadID);
     const conversationSelected = state.activeTabID === WORKSPACE_CONVERSATION_TAB_ID;
     // Keep the last resource available to the dock while the expanded strip
     // uses the same selection history for conversations and resources.
     const activeTabId = conversationSelected
-      ? state.activationHistory.findLast(id => state.tabs.some(tab => tab.id === id))
-      : state.activeTabID;
+      ? state.activationHistory.findLast(id => tabs.some(tab => tab.id === id))
+      : tabs.some(tab => tab.id === state.activeTabID) ? state.activeTabID : undefined;
     // Inputs are data-only; no origin WeakRef or render callbacks enter this owner.
-    const snapshot: PreviewTabs = structuredClone({ tabs: state.tabs,
+    const snapshot: PreviewTabs = structuredClone({ tabs,
       activeTabId, activeFileTabId: state.activeFileTabID, conversationOpen, conversationSelected });
     const freeze = (value: unknown): void => {
       if (!value || typeof value !== "object") return;
@@ -59,7 +90,9 @@ export class ApplicationPreview {
   }
 
   private closeTabs(tabIds: readonly string[]): void {
-    for (const tab of this.state.tabs) if (tab.kind === "file" && tabIds.includes(tab.id)) clearWorkspacePreviewScroll(tab.id);
+    if (!tabIds.length) return;
+    const closed = this.state.tabs.filter(tab => tabIds.includes(tab.id));
+    for (const tab of closed) if (tab.kind === "file") clearWorkspacePreviewScroll(tab.id);
     const state = closeViewTabsWhere(this.state, tab => tabIds.includes(tab.id));
     if (state.activeTabID !== undefined) {
       this.update(state);
@@ -68,6 +101,7 @@ export class ApplicationPreview {
     } else {
       this.update(focusViewTab(state, WORKSPACE_CONVERSATION_TAB_ID), true);
     }
+    for (const tab of closed) if (tab.kind === "side-chat") this.host.closeSideChat?.(tab);
   }
 
   async invoke<Action extends keyof ApplicationPreviewActionMapV1>(action: Action,
@@ -119,7 +153,6 @@ export class ApplicationPreview {
         this.update(openViewTab(this.state, workspacePluginViewTab({ id: value.entryId, pluginId: value.pluginId,
           generation: value.generation, view: value.viewTypeId, title: value.title, icon: value.icon && { ...value.icon } }), { replaceActiveNewTab: true })); break;
       }
-      case "preview.open-side-thread": this.update(openViewTab(this.state, { kind: "side-thread", id: "side-thread" }, { replaceActiveNewTab: true })); break;
       case "preview.new-tab": {
         const tabId = `new:${crypto.randomUUID()}`;
         this.update(openViewTab(this.state, { kind: "new", id: tabId })); result = { tabId }; break;

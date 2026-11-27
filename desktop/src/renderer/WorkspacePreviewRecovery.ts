@@ -1,8 +1,9 @@
 import type { RuntimeContext } from "../shared/protocol";
 import type { WorkspaceFileSelection } from "./LinkTargets";
-import { initialWorkspaceViewTabsState, workspaceFileViewTab, type WorkspaceFileViewTab, type WorkspaceViewTabsState } from "./WorkspaceViewTabs";
+import { initialWorkspaceViewTabsState, workspaceFileViewTab, type WorkspaceViewTab, type WorkspaceViewTabsState } from "./WorkspaceViewTabs";
 
 const TABS_KEY = "wuu.desktop.previewFiles.v1";
+const SIDE_TABS_KEY = "wuu.desktop.sideChatTabs.v1";
 const SCROLL_PREFIX = "wuu.desktop.previewScroll.v1:";
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -31,12 +32,23 @@ function selectionFrom(value: unknown): WorkspaceFileSelection | undefined {
 }
 
 export function readWorkspacePreviewRecovery(): WorkspaceViewTabsState {
+  const sideTabs: WorkspaceViewTab[] = [];
+  try {
+    const value: unknown = JSON.parse(window.localStorage.getItem(SIDE_TABS_KEY) ?? "[]");
+    if (Array.isArray(value)) for (const item of value) {
+      const row = record(item);
+      if (row?.kind === "side-chat" && typeof row.id === "string" && typeof row.parentThreadID === "string" && typeof row.threadID === "string") {
+        sideTabs.push({ kind: "side-chat", id: row.id, parentThreadID: row.parentThreadID, threadID: row.threadID });
+      }
+    }
+  } catch { /* Storage is optional. */ }
+  const initial = { ...initialWorkspaceViewTabsState, tabs: sideTabs, activationHistory: sideTabs.map(tab => tab.id) };
   try {
     const raw = window.sessionStorage.getItem(TABS_KEY);
-    if (!raw || raw.length > 512 * 1024) return initialWorkspaceViewTabsState;
+    if (!raw || raw.length > 512 * 1024) return initial;
     const saved = record(JSON.parse(raw));
-    if (saved?.version !== 1 || !Array.isArray(saved.files) || saved.files.length > 100) return initialWorkspaceViewTabsState;
-    const tabs: WorkspaceFileViewTab[] = [];
+    if (saved?.version !== 1 || !Array.isArray(saved.files) || saved.files.length > 100) return initial;
+    const tabs: WorkspaceViewTab[] = [...sideTabs];
     for (const value of saved.files) {
       const item = record(value);
       const context = contextFrom(item?.context);
@@ -47,16 +59,17 @@ export function readWorkspacePreviewRecovery(): WorkspaceViewTabsState {
       if (!tabs.some(existing => existing.id === tab.id)) tabs.push({ ...tab, ...(selection ? { selection } : {}), ...(anchor ? { anchor } : {}) });
     }
     const active = typeof saved.activeFileTabId === "string" && tabs.some(tab => tab.id === saved.activeFileTabId)
-      ? saved.activeFileTabId : tabs.at(-1)?.id;
+      ? saved.activeFileTabId : tabs.findLast(tab => tab.kind === "file")?.id;
     return { tabs, activeTabID: active, activeFileTabID: active, activationHistory: tabs.filter(tab => tab.id !== active).map(tab => tab.id) };
   } catch {
-    return initialWorkspaceViewTabsState;
+    return initial;
   }
 }
 
 export function writeWorkspacePreviewRecovery(state: WorkspaceViewTabsState): void {
   try {
-    const files = state.tabs.filter((tab): tab is WorkspaceFileViewTab => tab.kind === "file").slice(0, 100);
+    window.localStorage.setItem(SIDE_TABS_KEY, JSON.stringify(state.tabs.filter(tab => tab.kind === "side-chat" && tab.threadID)));
+    const files = state.tabs.filter(tab => tab.kind === "file").slice(0, 100);
     if (!files.length) { window.sessionStorage.removeItem(TABS_KEY); return; }
     window.sessionStorage.setItem(TABS_KEY, JSON.stringify({ version: 1, files, activeFileTabId: state.activeFileTabID }));
   } catch { /* Preview recovery is optional when session storage is unavailable. */ }

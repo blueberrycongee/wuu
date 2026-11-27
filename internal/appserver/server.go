@@ -34,7 +34,6 @@ import (
 	"github.com/blueberrycongee/wuu/internal/providers/xaisub"
 	"github.com/blueberrycongee/wuu/internal/runtime"
 	"github.com/blueberrycongee/wuu/internal/session"
-	"github.com/blueberrycongee/wuu/internal/sidethread"
 	"github.com/blueberrycongee/wuu/internal/siwc"
 	"github.com/blueberrycongee/wuu/internal/subagent"
 	"github.com/blueberrycongee/wuu/internal/tools"
@@ -84,10 +83,13 @@ type threadState struct {
 	Visibility string
 	// Instructions are create-time session instructions appended to every
 	// refreshed runtime system prompt.
-	Instructions string
-	ParentID     string
-	AgentPath    string
-	History      []providers.ChatMessage
+	Instructions        string
+	ParentID            string
+	SideParentID        string
+	InheritedThroughSeq int
+	SeedID              string
+	AgentPath           string
+	History             []providers.ChatMessage
 	// historyHeadSeq is the physical append-only session_messages head that
 	// History was reconstructed through. It must not be derived from the
 	// logical messages: a checkpoint may retain no records or only old seqs.
@@ -503,18 +505,18 @@ func New(rt *runtime.Session, out io.Writer, options ...ServerOption) *Server {
 		return s
 	}
 	defer binding.Close()
-	if strings.TrimSpace(rt.SessionDir) != "" {
-		if err := sidethread.NewStore(context.Background(), binding.Documents).ImportLegacy(filepath.Join(rt.SessionDir, "sidethreads"), bootOwner); err != nil {
-			s.startupErr = fmt.Errorf("import legacy side threads: %w", err)
-			return s
-		}
-	}
 	if err := s.initializeRestartRecovery(binding, bootOwner); err != nil {
 		s.startupErr = err
 		return s
 	}
 	if bootOwner {
-		if err := s.recoverSideThreadsOnBoot(binding); err != nil {
+		if strings.TrimSpace(rt.SessionDir) != "" {
+			if err := importLegacySideChatFiles(binding, filepath.Join(rt.SessionDir, "sidethreads")); err != nil {
+				s.startupErr = err
+				return s
+			}
+		}
+		if err := migrateLegacySideChats(binding); err != nil {
 			s.startupErr = err
 			return s
 		}
@@ -914,7 +916,6 @@ func (s *Server) Close() {
 			s.userQuestionStop = nil
 			s.userQuestionDone = nil
 		}
-		s.cancelSideThreads()
 		// Synchronize with startBackground so no new owned goroutine can be
 		// added after the shutdown waiter begins.
 		s.backgroundMu.Lock()
@@ -1508,16 +1509,6 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleThreadContextComposition(req)
 	case MethodInstructionsList:
 		return s.handleInstructionsList(req)
-	case MethodSideThreadOpen:
-		return s.handleSideThreadOpen(req)
-	case MethodSideThreadGetHistory:
-		return s.handleSideThreadGetHistory(req)
-	case MethodSideThreadSend:
-		return s.handleSideThreadSendMessage(req)
-	case MethodSideThreadInterrupt:
-		return s.handleSideThreadInterrupt(req)
-	case MethodSideThreadReset:
-		return s.handleSideThreadReset(req)
 	case MethodThreadList, MethodThreadListAll, MethodThreadListArchived:
 		binding, err := s.rt.RetainState()
 		if err != nil {
@@ -1589,6 +1580,8 @@ func (s *Server) dispatchAuthorizedRequest(ctx context.Context, req Request) err
 		return s.handleThreadCompactStart(ctx, req)
 	case MethodThreadRename:
 		return s.handleThreadRename(req)
+	case MethodThreadPromote:
+		return s.handleThreadPromote(req)
 	case MethodThreadDelete:
 		return s.handleThreadDelete(req)
 	case MethodWorkspaceGitStatus, MethodWorkspaceGitChanges, MethodWorkspaceGitDiff:

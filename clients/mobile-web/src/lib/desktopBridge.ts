@@ -844,7 +844,8 @@ export class RemoteDesktopBridge {
         if (requestId === initializationRequest) for (const listener of initializationListeners) listener({ phase: "completed", requestId, initialized });
         return initialized;
       },
-      listThreads: (cwd?: string) => this.call("thread/list", { cwd: cwd || this.workdir(), summary_only: true }),
+      listThreads: (cwd, sideChats) => this.call("thread/list", { cwd: cwd || this.workdir(), summary_only: true,
+        ...(sideChats ? { parent_thread_id: sideChats.parentThreadId, placement: "side" } : {}) }),
       listAllThreads: () => this.call("thread/listAll", { summary_only: true }),
       listArchivedThreads: () => this.call("thread/listArchived", { summary_only: true }),
       loadEarlierThreadHistory: async (threadID: string, cursor: string) => {
@@ -1083,8 +1084,9 @@ export class RemoteDesktopBridge {
         provider, fallback_provider: options?.fallbackProvider, fallback_model: options?.fallbackModel,
       }),
       finishMCPAuth: (name, state, code) => this.call("mcp/auth/finish", { name, state, code }),
-      forkThread: (thread_id, turn_id, item_id, mode, target) =>
-        this.call("thread/fork", { thread_id, turn_id, item_id, mode, target }),
+      promoteThread: thread_id => this.call("thread/promote", { thread_id }),
+      forkThread: (thread_id, turn_id, item_id, mode, target, options) =>
+        this.call("thread/fork", { thread_id, turn_id, item_id, mode, target, ...options }),
       editThreadMessage: (thread_id, turn_id, item_id) =>
         this.call("thread/edit-message", { thread_id, turn_id, item_id }),
       renameSessionFolder: (id, name) => this.call("sessionFolder/update", { id, name }),

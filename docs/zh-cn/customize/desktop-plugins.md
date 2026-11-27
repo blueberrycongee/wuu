@@ -232,11 +232,11 @@ View 是注册的组件，可以放在 `navigation`、`primary`、`auxiliary`、
 
 在 `activate(api)` 中调用 `registerComposerInlineCompletionProvider({ id, order, provideCompletion })` 注册 provider。回调接收只读的 `ComposerInlineCompletionContext` 和 `AbortSignal`，同步或通过 promise 返回 `{ text: "字面文本后缀" }` 或 `null`。没有建议时返回 `null`。宿主将已接受的文本追加到草稿；回调不替换整份草稿，也不接管 textarea。
 
-版本 1 的 context 包含 `kind`、`composerId`、`revision`、可选的 `threadId` 和 `sideThreadId`、`draftText`、`selectionStart`、`selectionEnd` 和 `running`。主输入框和分栏输入框的 `kind` 为 `main`，侧输入框为 `side`，尚无 `sideThreadId` 的新侧草稿也明确标为 `side`。选区偏移使用 JavaScript UTF-16 索引。`composerId` 是不透明标识，作用域为已挂载输入框及其会话/工作区上下文；revision 不是全局会话版本。侧会话输入框的 `threadId` 表示所属主会话，`sideThreadId` 表示已创建的侧会话。
+版本 1 的 context 包含 `kind`、`composerId`、`revision`、可选的 `threadId`、`draftText`、`selectionStart`、`selectionEnd` 和 `running`。侧聊和分栏输入框统一使用 `kind: "main"`。保存对话后，`threadId` 标识当前输入框所属的对话。选区偏移采用 JavaScript UTF-16 索引。输入框的标识和版本号作用于已挂载的输入框及其对话和工作区上下文。
 
 `running` 表示输入框的展示状态。最终回答就绪后，主输入框和分栏输入框可能已显示空闲，而运行时仍在收尾。值为 false 不代表该轮已成功结束。仅在成功完成后提供建议的策略应观察回合生命周期事件，并明确激活或重载后的行为。
 
-需要最近的可见对话时，调用 `api.readVisibleHistory({ kind, threadId, sideThreadId, workspaceRoot, workspaceId, beforeTurnId })`。主会话以 `beforeTurnId` 为排他边界，最多返回此前 20 个完整可见轮次；侧会话按自身的 `sideThreadId` 读取，最多返回 20 次完整对话。结果只有显示的用户文字、最终回复和图片／文件数量，不含媒体字节、名称、路径、工具输出或推理。预测前仍需核对实时成功完成的源轮次；恢复历史不能触发请求。另一个 `host.session.history.read` 运行时服务返回可能含已撤回或隐藏消息的物理审计记录，不应当作可见对话文本。
+调用 `api.readVisibleHistory({ kind: "main", threadId, workspaceRoot, workspaceId, beforeTurnId })`，最多返回指定轮次之前的 20 个完整可见轮次。结果包含显示的用户文字、最终回复及图片和文件数量。预测前需核对实时成功完成的源轮次。`host.session.history.read` 是运行时审计接口，返回的物理记录可能包含已撤回或隐藏的消息。
 
 Provider 按 `order` 升序调用，再依次按插件 ID、注册 ID 排序，逐个尝试。第一个非空结果生效；无结果或 provider 出错时继续尝试下一项。宿主渲染建议文本，并在接受前核对请求是否仍然有效。上下文获取、提示词、防抖和请求预算由插件负责。该 API 不会安装补全 provider 或自动调用模型的策略。
 

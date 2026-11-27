@@ -359,9 +359,11 @@ describe("selected public composer continuity", () => {
   it("selects, replaces, and disables the side composer through the preview service slot", async () => {
     const notice = vi.spyOn(Notices, "showErrorToast");
     const fixture = setup();
+    const ownerTabId = "side-draft";
     await fixture.update(view => ({ ...view,
-      tabs: { ...view.tabs, items: view.tabs.items.map(tab => ({ ...tab, kind: "thread", threadId: "parent" })) },
-      sideConversation: { ...view.sideConversation, parentThreadId: "parent", entry: { open: true, summary: null, messages: [], draft: "side question", streaming: false } },
+      tabs: { ...view.tabs, items: [...view.tabs.items, { ...view.tabs.items[0], id: ownerTabId }] },
+      drafts: { ...view.drafts, sideChats: { [ownerTabId]: { ...view.drafts.primary, ownerTabId, text: "side question" } } },
+      composerRuntime: { owners: [...view.composerRuntime.owners, { ...view.composerRuntime.owners[0], ownerTabId }] },
     }));
     const publicPresentation = fixture.application.composerPresentation;
     const host = new PluginHost({ react: React, application: { ...fixture.application,
@@ -370,7 +372,7 @@ describe("selected public composer continuity", () => {
     } as unknown as HostApplicationService });
     await host.activateGeneration({ pluginId: "wuu.default-preview", generation: "one", register: api => {
       api.registerUISlot({ id: "application.composer", cardinality: "one", service: "ui.composer" });
-      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="wuu.default-preview/application.composer" context={{ side: { parentThreadId: "parent" } }} /> });
+      api.registerApplicationShell({ id: "shell", render: ({ slots }) => <slots.Slot name="wuu.default-preview/application.composer" context={{ sideChat: true, ownerTabId }} /> });
     } });
     await host.activateGeneration({ pluginId: "composer", manifestId: "wuu.default-composer", generation: "one", register: activateComposer });
     await host.activateGeneration({ pluginId: "side-extension", generation: "one", register: api => {
@@ -383,13 +385,13 @@ describe("selected public composer continuity", () => {
     expect(container.querySelector("textarea")?.value).toBe("side question");
     expect(container.querySelector("[data-side-context]")?.textContent).toBe("false");
     await act(async () => container.querySelector<HTMLButtonElement>('[data-wuu-component="composer-send"]')!.click());
-    expect(fixture.calls).toContainEqual({ action: "side.send", input: { parentThreadId: "parent", text: "side question" } });
+    expect(fixture.calls).toContainEqual({ action: "composer.submit", input: expect.objectContaining({ ownerTabId, text: "side question" }) });
     await act(async () => { await host.activateGeneration({ pluginId: "alternative", generation: "one", register: api => {
-      api.registerUIContribution({ id: "ui.composer", target: "wuu.default-preview/application.composer", render: ({ context }) => <button data-side-replacement>{(context.side as { parentThreadId: string }).parentThreadId}</button> });
+      api.registerUIContribution({ id: "ui.composer", target: "wuu.default-preview/application.composer", render: ({ context }) => <button data-side-replacement>{String(context.ownerTabId)}</button> });
     } }); });
     await show("alternative");
     expect(container.querySelector("textarea")).toBeNull();
-    expect(container.querySelector("[data-side-replacement]")?.textContent).toBe("parent");
+    expect(container.querySelector("[data-side-replacement]")?.textContent).toBe(ownerTabId);
     await act(async () => host.unload("alternative"));
     expect(container.querySelector("textarea")).toBeNull();
     expect(container.querySelector("[role=alert]")).toBeNull();
