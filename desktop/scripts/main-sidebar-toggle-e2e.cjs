@@ -88,21 +88,24 @@ app.whenReady().then(async () => {
       const pane = document.querySelector('.sidebar-content') ?? rail;
       const dividerEl = document.querySelector('.sidebar-resizer');
       for (let i = 0; i < 20; i++) {
+        const grid = shell.getAnimations().find(item => item.transitionProperty === 'grid-template-columns');
         const slides = [...rail.getAnimations(), ...pane.getAnimations()]
           .filter(item => item.transitionProperty === 'transform');
         // A hidden window never advances animations, so transitions from
         // earlier gestures linger at currentTime 0. The real slide is the
         // newest one; finish the stragglers so they can't stack on top.
         slides.sort((a, b) => (b.startTime ?? 0) - (a.startTime ?? 0));
-        const slide = slides[0];
+        const slide = grid ?? slides[0];
         const edge = dividerEl.getAnimations().find(item => item.animationName === 'sidebar-edge-slide-in');
-        if (slide && edge) {
+        if (slide && (grid || edge)) {
           const slideInfo = slides.map(a => ({ onRail: a.effect.target === rail, t: a.currentTime, s: a.startTime, end: a.effect.getComputedTiming().endTime }));
           for (const stale of slides.slice(1)) stale.finish();
           slide.pause();
           slide.currentTime = slide.effect.getComputedTiming().endTime * 0.25;
-          edge.pause();
-          edge.currentTime = edge.effect.getComputedTiming().endTime * 0.25;
+          if (!grid) {
+            edge.pause();
+            edge.currentTime = edge.effect.getComputedTiming().endTime * 0.25;
+          }
           const slideOnRail = slide.effect.target === rail;
           const divider = document.querySelector('.sidebar-resizer');
           const rect = divider.getBoundingClientRect();
@@ -110,7 +113,8 @@ app.whenReady().then(async () => {
           const y = Math.min(rect.bottom - 20, Math.max(rect.top + 80, 180));
           const hit = document.elementFromPoint(x, y);
           const inputHit = document.elementFromPoint(Math.round(x), Math.round(y));
-          return { x, y, targetWidth: parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-open-width')), sidebar: pane.getBoundingClientRect().toJSON(),
+          const visibleRail = grid ? rail : pane;
+          return { x, y, targetWidth: parseFloat(getComputedStyle(shell).getPropertyValue('--sidebar-open-width')), sidebar: visibleRail.getBoundingClientRect().toJSON(),
             divider: rect.toJSON(), hitsDivider: hit === divider || divider.contains(hit),
             hit: hit ? { tag: hit.tagName, className: hit.className, rect: hit.getBoundingClientRect().toJSON() } : null,
             hitStack: document.elementsFromPoint(x, y).slice(0, 6).map(element => ({
@@ -123,7 +127,7 @@ app.whenReady().then(async () => {
         }
         await new Promise(requestAnimationFrame);
       }
-      throw new Error('No actual opening transform transition found');
+      throw new Error('No actual sidebar opening transition found');
     })()`);
     // Preserve geometry and the actual hit target even if a pre-input check fails.
     fs.writeFileSync(path.join(output, "interrupt-resize-hit-" + gesture + ".json"), JSON.stringify(before, null, 2));

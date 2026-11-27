@@ -322,7 +322,7 @@
   max-width: max(100%, min(
     100% + 2 * var(--conversation-table-outset),
     100cqi - 2 * (var(--session-outer-padding-inline) +
-      var(--workspace-tool-rail-inset, var(--environment-panel-edge-gap)) + var(--space-6))
+      max(var(--workspace-tool-rail-inset), var(--environment-panel-edge-gap)) + var(--space-6))
   ));
 }
 

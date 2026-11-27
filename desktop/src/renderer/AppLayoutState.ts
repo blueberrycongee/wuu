@@ -18,11 +18,11 @@ import { motionDurationMs } from "./motion";
 // Shell motion windows, read when each motion starts so the timers follow
 // the stylesheet, theme overrides, and reduced motion as they change.
 export const sidebarMotionMs = (): number =>
-  motionDurationMs("--sidebar-motion-duration", 180);
+  motionDurationMs("--sidebar-motion-duration", 280);
 export const sidebarDrawerExitMs = (): number =>
   motionDurationMs("--sidebar-drawer-exit-duration", 220);
 export const rightPanelMotionMs = (): number =>
-  motionDurationMs("--workspace-panel-motion-duration", 180);
+  motionDurationMs("--workspace-panel-motion-duration", 280);
 export { RIBBON_COMPACT_WIDTH as SIDEBAR_RIBBON_WIDTH } from "../shared/navigationRibbon";
 export const SIDEBAR_DEFAULT_WIDTH = 264;
 // Keep enough horizontal room for one-line navigation labels and useful
@@ -763,11 +763,8 @@ export function useAppLayoutState({
     };
   }, [panelResizing]);
 
-  // Opening and closing structural panels changes the conversation viewport
-  // on every CSS frame just like a live resize. Mark only the geometry phase
-  // (without the window-resizing CSS that would cancel the transition) so
-  // scroll followers and ResizeObserver consumers defer their layout reads
-  // until the panel settles.
+  // Keep scroll followers and ResizeObserver consumers deferred while the
+  // panels settle, without applying CSS that suppresses transitions.
   const panelAnimating = sidebarAnimating || rightPanelAnimating;
   useEffect(() => {
     if (!panelAnimating) {
@@ -818,14 +815,17 @@ export function useAppLayoutState({
       "--sidebar-resizer-grab-x",
       `${clamp(event.clientX - bounds.left - bounds.width / 2, -3, 3)}px`
     );
-    const sidebar = resizer.parentElement?.querySelector<HTMLElement>(":scope > .sidebar, :scope > .settings-sidebar");
-    // The rail slides as a promoted transform layer, so its box width stays at
-    // the open width mid-flight; the painted edge is the content layer's right
-    // edge (in the ribbon layout the content is the layer that moves).
+    const root = resizer.parentElement;
+    const sidebar = root?.querySelector<HTMLElement>(":scope > .sidebar, :scope > .settings-sidebar");
     const paintedEdge = sidebar?.querySelector(".sidebar-content")?.getBoundingClientRect().right
       ?? sidebar?.getBoundingClientRect().right;
-    const measuredWidth = sidebarAnimating && paintedEdge !== undefined
-      ? paintedEdge - additionalNavigationWidth : undefined;
+    // Read the moving grid track in the docked layout, or the painted edge
+    // when the sidebar slides over a grid that is already at its destination.
+    const liveTrack = root?.hasAttribute("data-docked-panel-layout") &&
+      !document.documentElement.classList.contains(WINDOW_RESIZING_CLASS)
+      ? Number.parseFloat(getComputedStyle(root).gridTemplateColumns) : paintedEdge;
+    const measuredWidth = sidebarAnimating && liveTrack !== undefined
+      ? liveTrack - additionalNavigationWidth : undefined;
     const interrupted = measuredWidth !== undefined && measuredWidth > 0 && !sidebarCollapsed;
     const startWidth = interrupted ? measuredWidth : sidebarCollapsed ? 0 : sidebarWidth;
     if (interrupted) {

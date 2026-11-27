@@ -1709,6 +1709,10 @@ export function App({ application, slots, shellPluginId }: {
           data-user-space-view={userSpaceViewActive && !settingsOpen ? "" : undefined}
           data-settings-open={settingsOpen ? "" : undefined}
           data-web-workspace-open={showingWebPage && !settingsOpen ? "" : undefined}
+          data-docked-panel-layout={nativeRibbonPresent && !poppedOutMode && !settingsOpen &&
+            !showingWebPage && !userSpaceViewActive && !rightPanelGlobalized &&
+            !resizingSidebar && !resizingRightPanel && workspaceSheetPhase === "docked" &&
+            sidebarDrawerPhase !== "docking" ? "" : undefined}
           data-wuu-sidebar-mode={sidebarDrawerVisible ? "drawer" : sidebarDrawerMode ? "collapsed" : "docked"}
         >
           <BrowserPiPHostReporter />

@@ -231,7 +231,7 @@
     0px,
     calc((100cqi - 2 * var(--scrollbar-width) - 2 * var(--session-outer-padding-inline) -
       var(--session-composer-width)) / 2),
-    calc(var(--workspace-tool-rail-inset, 0px) + var(--conversation-environment-inset))
+    calc(var(--workspace-tool-rail-inset) + var(--conversation-environment-inset))
   );
   --dock-composer-height: 0px;
   grid-column: 2;
@@ -248,7 +248,9 @@
   border-radius: var(--conversation-pane-corners);
   /* Restore exposed corners immediately; the dock backing shares these
      radii so its composited layer does not depend on the ancestor's clip. */
-  transition: grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing);
+  transition:
+    grid-template-columns var(--environment-panel-motion-duration) var(--environment-panel-motion-easing),
+    --workspace-tool-rail-inset var(--workspace-tool-rail-inset-duration, 0ms) var(--docked-sidebar-motion-ease);
 }
 
 .app-shell.right-panel-open:not(.workspace-conversation-active) .conversation-pane {
@@ -1214,7 +1216,7 @@
   /* Keep the centered status row clear of the rail and environment panel. */
   --conversation-status-inset: max(
     var(--session-outer-padding-inline),
-    calc(var(--workspace-tool-rail-inset, 0px) + var(--conversation-environment-inset))
+    calc(var(--workspace-tool-rail-inset) + var(--conversation-environment-inset))
   );
   --jump-to-latest-max-width: min(
     var(--session-composer-width),

@@ -136,6 +136,12 @@
   background: var(--selection-surface);
 }
 
+@property --workspace-tool-rail-inset {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 .app-shell:has(.workspace-tool-rail):not(.right-panel-open) .conversation-pane {
   --workspace-tool-rail-inset: var(--workspace-tool-rail-reserve);
 }
@@ -150,7 +156,7 @@
  * the rail on the right and follows the composer's leading edge when capped. */
 .conversation-pane .scroll-region-content {
   padding-left: var(--conversation-rail-start);
-  padding-right: var(--workspace-tool-rail-inset, 0px);
+  padding-right: var(--workspace-tool-rail-inset);
 }
 
 /* Each split has its own composer and axis. A matching gutter outside both
@@ -160,7 +166,7 @@
 }
 
 .conversation-pane > .environment-side-stack {
-  margin-right: var(--workspace-tool-rail-inset, 0px);
+  margin-right: var(--workspace-tool-rail-inset);
 }
 
 .app-shell:has(.workspace-tool-rail) .workspace-panel-body {
