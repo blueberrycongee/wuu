@@ -866,11 +866,18 @@ html[data-focus-modality="keyboard"] .composer-editor > :is(textarea, .composer-
   user-select: none;
 }
 
+/* Rows stay top-aligned so actions follow the first line of a wrapped
+ * message; the index and first text line center on the 28px action buttons. */
+.composer-queue-index,
+.composer-queue-preview {
+  padding-block: calc((28px - 1lh) / 2);
+}
+
 .composer-queue-preview {
   min-width: 0;
   background: transparent;
   border: 0;
-  padding: 0;
+  padding-inline: 0;
   color: inherit;
   font: inherit;
   text-align: left;
