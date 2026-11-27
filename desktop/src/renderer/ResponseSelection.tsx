@@ -1,13 +1,25 @@
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ComponentPropsWithoutRef, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
+import type { ApplicationServiceV1 } from "../../../packages/plugin-sdk/src/ui";
 import type { ResponseSelection } from "../shared/protocol";
 import { SelectionActionMenu } from "./SelectionActionMenu";
 import { selectionActionMenuMetrics, selectionActionMenuPosition } from "./SelectionActionMenuPosition";
 import { showToast } from "./Toast";
 import { translateCurrent, useI18n } from "./i18n";
+import { syncConversationRenderWindow } from "./ConversationRenderWindow";
+import { requestConversationTurnReveal } from "./TurnViewHelpers";
 import "./ResponseSelection.css";
 
 export const SideConversationAvailableContext = createContext(false);
+type SelectionHistory = {
+  application: Pick<ApplicationServiceV1, "getSnapshot" | "invoke">;
+  pauseFollowing: (threadId: string) => void;
+};
+export const ResponseSelectionHistoryContext = createContext<SelectionHistory | undefined>(undefined);
+
+const SOURCE_HIGHLIGHT_DURATION_MS = 1600;
+const SOURCE_LAYOUT_ATTEMPTS = 10;
+const SOURCE_HISTORY_PAGES = 12;
 
 let sourceHighlight: { root: HTMLElement; clear: () => void } | undefined;
 
@@ -63,69 +75,109 @@ function validatedRange(root: HTMLElement, selection: ResponseSelection): Range 
   }
 }
 
-/** Only mounted, visible, exact source matches can be navigated to. */
-export function navigateToResponseSelection(selection: ResponseSelection): boolean {
-  sourceHighlight?.clear();
-  for (const article of document.querySelectorAll<HTMLElement>("[data-response-item-id]")) {
-    if (article.dataset.responseItemId !== selection.source.item_id
-      || article.dataset.responseTurnId !== selection.source.turn_id
-      || article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId !== selection.source.thread_id
-      || !visible(article)) continue;
-    const root = article.querySelector<HTMLElement>(".agent-text");
-    const range = root && validatedRange(root, selection);
-    if (!root || !range) continue;
-    const highlights = (globalThis.CSS as typeof CSS & { highlights?: Map<string, unknown> } | undefined)?.highlights;
-    const HighlightClass = (globalThis as typeof globalThis & { Highlight?: new (range: Range) => unknown }).Highlight;
-    if (highlights && HighlightClass) {
-      highlights.set("wuu-response-source", new HighlightClass(range));
-    } else {
-      window.getSelection()?.removeAllRanges();
-      window.getSelection()?.addRange(range);
-    }
-    const observer = new MutationObserver((records) => {
-      // Scrolling and composer reflow update ancestor styles without invalidating
-      // the source. Only content, visibility, or source identity changes clear it.
-      if (records.some(record => record.type !== "attributes") || !visible(article)
-        || article.dataset.responseItemId !== selection.source.item_id
-        || article.dataset.responseTurnId !== selection.source.turn_id
-        || article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId !== selection.source.thread_id) {
-        sourceHighlight?.clear();
-      }
-    });
-    observer.observe(root, { childList: true, characterData: true, subtree: true });
-    for (let node: HTMLElement | null = article; node; node = node.parentElement) {
-      observer.observe(node, { attributes: true, attributeFilter: ["hidden", "inert", "aria-hidden", "style", "class", "data-thread-id", "data-response-item-id", "data-response-turn-id"] });
-    }
-    sourceHighlight = { root, clear: () => {
-      observer.disconnect();
-      highlights?.delete("wuu-response-source");
-      if (!highlights && window.getSelection()?.rangeCount === 1 && window.getSelection()?.getRangeAt(0) === range) window.getSelection()?.removeAllRanges();
-      sourceHighlight = undefined;
-    } };
-    const start = range.startContainer.parentElement!;
-    let scroller: HTMLElement | null = start;
-    while (scroller && (!/(auto|scroll)/.test(getComputedStyle(scroller).overflowY) || scroller.scrollHeight <= scroller.clientHeight)) scroller = scroller.parentElement;
-    if (scroller) {
-      const beginning = range.cloneRange();
-      beginning.collapse(true);
-      scroller.scrollBy({ top: beginning.getBoundingClientRect().top - scroller.getBoundingClientRect().top - scroller.clientHeight / 2, behavior: "instant" });
-    } else {
-      start.scrollIntoView({ block: "center", behavior: "instant" });
-    }
-    return true;
-  }
-  showToast({ message: translateCurrent("responseSelection.unavailable") });
-  return false;
+function findResponseSource(selection: ResponseSelection): HTMLElement | undefined {
+  const { item_id, turn_id, thread_id } = selection.source;
+  return Array.from(document.querySelectorAll<HTMLElement>("[data-response-item-id]")).find(article =>
+    article.dataset.responseItemId === item_id && article.dataset.responseTurnId === turn_id &&
+    article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId === thread_id &&
+    !article.closest(".turn-process-fold.collapsed") && visible(article));
 }
 
-export function ResponseSelectionReference({ selection }: { selection: ResponseSelection }): JSX.Element {
-  const { t } = useI18n();
-  return <button type="button" className="response-selection-reference response-selection-source"
-    aria-label={[t("responseSelection.source"), selection.text, selection.comment].filter(Boolean).join("\n")}
-    onClick={() => navigateToResponseSelection(selection)}>
-    <span className="response-selection-reference-quote">{selection.text}</span>
-    {selection.comment ? <span className="response-selection-reference-comment">{selection.comment}</span> : null}
-  </button>;
+function showResponseSource(article: HTMLElement, selection: ResponseSelection, history?: SelectionHistory): boolean {
+  const root = article.querySelector<HTMLElement>(".agent-text");
+  const range = root && validatedRange(root, selection);
+  if (!root || !range) return false;
+
+  history?.pauseFollowing(selection.source.thread_id);
+  sourceHighlight?.clear();
+  const highlights = globalThis.CSS?.highlights;
+  const useCustomHighlight = Boolean(highlights && globalThis.Highlight);
+  if (useCustomHighlight) {
+    highlights!.set("wuu-response-source", new Highlight(range));
+  } else {
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+  }
+  const observer = new MutationObserver((records) => {
+    if (records.some(record => record.type !== "attributes") || !visible(article)
+      || article.dataset.responseItemId !== selection.source.item_id
+      || article.dataset.responseTurnId !== selection.source.turn_id
+      || article.closest<HTMLElement>("[data-thread-id]")?.dataset.threadId !== selection.source.thread_id) clear();
+  });
+  function clear(): void {
+    window.clearTimeout(timeout);
+    observer.disconnect();
+    if (useCustomHighlight) highlights!.delete("wuu-response-source");
+    else if (window.getSelection()?.rangeCount === 1 && window.getSelection()?.getRangeAt(0) === range) window.getSelection()?.removeAllRanges();
+    sourceHighlight = undefined;
+  }
+  const timeout = window.setTimeout(clear, SOURCE_HIGHLIGHT_DURATION_MS);
+  observer.observe(root, { childList: true, characterData: true, subtree: true });
+  for (let node: HTMLElement | null = article; node; node = node.parentElement) {
+    observer.observe(node, { attributes: true, attributeFilter: ["hidden", "inert", "aria-hidden", "style", "class", "data-thread-id", "data-response-item-id", "data-response-turn-id"] });
+  }
+  sourceHighlight = { root, clear };
+
+  const turn = article.closest<HTMLElement>(".turn");
+  const priorVisibility = turn?.style.contentVisibility ?? "";
+  if (turn) turn.style.contentVisibility = "visible";
+  const beginning = range.cloneRange();
+  beginning.collapse(true);
+  const viewport = article.closest<HTMLElement>(".conversation-split-body, .scroll-region");
+  for (let node = range.startContainer.parentElement; node; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    const bounds = node.getBoundingClientRect();
+    const start = beginning.getBoundingClientRect();
+    const top = /(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight
+      ? start.top - bounds.top - node.clientHeight / 2 : 0;
+    const left = /(auto|scroll)/.test(style.overflowX) && node.scrollWidth > node.clientWidth
+      && (start.left < bounds.left || start.right > bounds.right) ? start.left - bounds.left - 16 : 0;
+    if (top || left) node.scrollBy({ top, left, behavior: "instant" });
+    if (node === viewport) break;
+  }
+  if (viewport) syncConversationRenderWindow(viewport);
+  else range.startContainer.parentElement?.scrollIntoView({ block: "center", behavior: "instant" });
+  if (turn) turn.style.contentVisibility = priorVisibility;
+  article.focus({ preventScroll: true });
+  return true;
+}
+
+export async function navigateToResponseSelection(
+  selection: ResponseSelection,
+  history: SelectionHistory | undefined,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (signal.aborted) return false;
+  const { thread_id: threadId, turn_id: turnID, item_id: itemID } = selection.source;
+  let article = findResponseSource(selection);
+  const application = history?.application;
+  if (!article) {
+    try {
+      const cursors = new Set<string>();
+      for (let page = 0; application && page < SOURCE_HISTORY_PAGES && !signal.aborted; page++) {
+        const { conversationWorkspace: workspace } = application.getSnapshot();
+        if (workspace.primaryThreadId !== threadId && workspace.secondaryThreadId !== threadId) break;
+        const thread = workspace.threads.find(thread => thread.id === threadId);
+        const cursor = thread?.history_cursor;
+        if (thread?.turns.some(turn => turn.id === turnID) || !cursor || cursors.has(cursor)) break;
+        cursors.add(cursor);
+        await application.invoke("conversation.load-earlier", { threadId, cursor }, { signal });
+      }
+      if (signal.aborted) return false;
+      // The reveal event expands local turn windows and folded response fragments.
+      requestConversationTurnReveal(turnID, itemID);
+      for (let attempt = 0; attempt < SOURCE_LAYOUT_ATTEMPTS && !signal.aborted; attempt++) {
+        await new Promise(resolve => window.setTimeout(resolve, 32));
+        if ((article = findResponseSource(selection))) break;
+      }
+    } catch {
+      if (signal.aborted) return false;
+    }
+  }
+  if (signal.aborted) return false;
+  if (article && showResponseSource(article, selection, history)) return true;
+  showToast({ message: translateCurrent("responseSelection.unavailable") });
+  return false;
 }
 
 export function AssistantResponseArticle({ turnID, itemID, children, ...props }: ComponentPropsWithoutRef<"article"> & {
@@ -333,13 +385,13 @@ export function AssistantResponseArticle({ turnID, itemID, children, ...props }:
     }
     setCaptured(undefined);
   }
-  return <article {...props} ref={ref} data-response-item-id={itemID} data-response-turn-id={turnID}>
+  return <article tabIndex={-1} {...props} ref={ref} data-response-item-id={itemID} data-response-turn-id={turnID}>
     {children}
     {captured ? createPortal(<SelectionActionMenu key={commenting ? "comment" : "actions"} ref={toolbarRef}
       className="response-selection-toolbar" style={position} label={t("responseSelection.actions")}
-      addLabel={t("responseSelection.add")} commentLabel={t("responseSelection.comment")}
-      commentPlaceholder={t("responseSelection.commentPlaceholder")} commenting={commenting} comment={comment}
-      onCommentChange={setComment} onAdd={addSelection} onCommentStart={() => setCommenting(true)}
+      quoteLabel={t("responseSelection.quote")} submitLabel={t("responseSelection.add")}
+      commentPlaceholder={t("responseSelection.optionalComment")} commenting={commenting} comment={comment}
+      onCommentChange={setComment} onQuote={() => setCommenting(true)}
       onCommentCancel={() => { returnToToggleRef.current = true; setCommenting(false); setComment(""); }}
       onCommentSubmit={addSelection} commentToggleRef={commentToggleRef} commentInputRef={commentRef}
       extraActions={!sideConversationAvailable || ref.current?.closest('[data-wuu-component="side-thread"]') ? undefined

@@ -1,6 +1,5 @@
 import { useId, type Ref } from "react";
 import { isComposerTextComposing } from "./ComposerSlashCommands";
-import { ArrowUp } from "./WuuIcons";
 import "./PdfSelectionCommentComposer.css";
 
 type PdfSelectionCommentComposerProps = {
@@ -44,9 +43,9 @@ export function PdfSelectionCommentComposer({
         event.stopPropagation();
         if (!event.repeat && canSubmit) onCommentSubmit();
       }} />
-    <button type="button" className="pdf-selection-comment__submit" aria-label={submitLabel}
+    <button type="button" className="pdf-selection-comment__submit"
       disabled={!canSubmit} onPointerDown={event => event.preventDefault()} onClick={onCommentSubmit}>
-      <ArrowUp className="icon" aria-hidden="true" />
+      {submitLabel}
     </button>
   </div>;
 }

@@ -347,7 +347,8 @@ export function useCollapsedComposerPrompt({
     const index = activeBlocks.findIndex((block) => block.part?.type === "file_selection" && block.part.id === id);
     const block = activeBlocks[index];
     if (block?.part?.type !== "file_selection") return;
-    const part = buildFileSelectionPart(block.part.source, block.part.intent, comment, id);
+    const intent = block.part.intent === "edit" ? "edit" : comment ? "comment" : "quote";
+    const part = buildFileSelectionPart(block.part.source, intent, comment, id);
     applyBlocks(activeBlocks.map((current, blockIndex) => blockIndex === index
       ? { ...block, text: part.text, part }
       : current), visiblePrompt, false);

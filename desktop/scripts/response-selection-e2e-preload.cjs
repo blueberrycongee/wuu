@@ -40,7 +40,7 @@ contextBridge.exposeInMainWorld("wuu", withDefaultShell({
   listProjects: async () => projectList(), selectProject: async () => projectList(),
   updateGeneralSettings: async value => ({ general_settings: settings = { ...settings, ...value } }),
   getBuildInfo: async () => ({ desktop: { version: "selection-e2e", date: now } }),
-  listThreads: async () => ({ threads }), listArchivedThreads: async () => ({ threads: [] }),
+  listThreads: async () => ({ threads }), listAllThreads: async () => ({ threads }), listArchivedThreads: async () => ({ threads: [] }),
   startThread: async () => ({ thread: threads[0] }),
   resumeThread: async id => ({ thread: threads.find(value => value.id === id) || threads[0] }),
   listEngines: async () => ({ engines: [] }),

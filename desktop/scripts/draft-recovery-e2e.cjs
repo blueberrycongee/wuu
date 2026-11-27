@@ -220,7 +220,9 @@ app.whenReady().then(async () => {
       throw new Error("Fixture quote missing");
     });
     await until(() => Boolean(document.querySelector(".file-selection-action-menu")));
-    await evaluate(() => [...document.querySelectorAll(".file-selection-action-menu button")].find(button => /Add to conversation|添加到对话/.test(button.textContent)).click());
+    await evaluate(() => document.querySelector(".file-selection-action-menu .selection-action-comment-toggle").click());
+    await until(() => Boolean(document.querySelector(".file-selection-action-menu .selection-action-comment-submit")));
+    await evaluate(() => document.querySelector(".file-selection-action-menu .selection-action-comment-submit").click());
     await until(() => Boolean(document.querySelector(".composer-file-selection-card")));
     await settle();
     report.referenceRecoverySnapshot = await stored();

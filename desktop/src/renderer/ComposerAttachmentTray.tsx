@@ -9,7 +9,7 @@ import {
 } from "./ComposerCollapsedPrompt";
 import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import { isComposerImagePending, type ComposerAttachmentPreparation, type ComposerFile, type ComposerImage } from "./ComposerMessages";
-import { ComposerResponseSelectionCard } from "./ComposerResponseSelectionCard";
+import { ResponseSelectionList } from "./ResponseSelectionList";
 import type { FileSelectionPart } from "./FileSelectionCards";
 import { ComposerFileSelectionCard } from "./ComposerFileSelectionCard";
 import { useOptionalImagePreview } from "./ImagePreview";
@@ -22,7 +22,7 @@ import type { ResponseSelection } from "../shared/protocol";
 type TrayCard =
   | { key: string; kind: "image"; image: ComposerImage; number: number }
   | { key: string; kind: "file"; file: ComposerFile; number: number }
-  | { key: string; kind: "quote"; selection: ResponseSelection }
+  | { key: string; kind: "quote"; selections: ResponseSelection[] }
   | { key: string; kind: "text"; block: CollapsedComposerPromptBlock; index: number }
   | { key: string; kind: "file-selection"; part: FileSelectionPart }
   | { key: string; kind: "inline-selection"; content: ReactNode };
@@ -42,7 +42,7 @@ function trayCards(
   return [
     ...images.map((image, index) => ({ key: `image:${image.id}`, kind: "image" as const, image, number: index + 1 })),
     ...files.map((file, index) => ({ key: `file:${file.id}`, kind: "file" as const, file, number: index + 1 })),
-    ...selections.map((selection) => ({ key: `quote:${selection.id}`, kind: "quote" as const, selection })),
+    ...(selections.length ? [{ key: "response-quotes", kind: "quote" as const, selections }] : []),
     ...pastedTexts.flatMap((block, index) => block.part?.type === "file_selection" ? []
       : [{ key: `text:${block.id}`, kind: "text" as const, block, index }]),
     ...(inlineSelection ? [{ key: "inline-selection", kind: "inline-selection" as const, content: inlineSelection }] : []),
@@ -363,15 +363,18 @@ export function ComposerAttachmentTray({
                 />
               )
             ) : card.kind === "quote" ? (
-              <ComposerResponseSelectionCard
-                selection={card.selection}
+              <ResponseSelectionList
+                selections={card.selections}
                 onChange={onChangeSelection}
-                onRemove={onRemoveSelection ? () => dismiss(card.key, () => onRemoveSelection(card.selection.id)) : undefined}
+                onRemove={onRemoveSelection ? id => {
+                  if (card.selections.length === 1) dismiss(card.key, () => onRemoveSelection(id));
+                  else onRemoveSelection(id);
+                } : undefined}
               />
             ) : card.kind === "inline-selection" ? card.content : card.kind === "file-selection" ? (
               <ComposerFileSelectionCard source={card.part.source} comment={card.part.comment}
                 onRemove={onRemoveFileSelection ? () => dismiss(card.key, () => onRemoveFileSelection(card.part.id)) : undefined}
-                onChangeComment={onEditFileSelection && card.part.intent !== "quote" ? comment => onEditFileSelection(card.part, comment) : undefined}
+                onChangeComment={onEditFileSelection ? comment => onEditFileSelection(card.part, comment) : undefined}
                 onOpenFile={onOpenSelectedFile} />
             ) : (
               <CollapsedComposerPromptCard

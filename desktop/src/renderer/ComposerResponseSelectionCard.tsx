@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import type { ResponseSelection } from "../shared/protocol";
 import { ComposerDocumentCard } from "./ComposerDocumentCard";
 import { FloatingMenuPortal } from "./ComposerFloatingMenu";
 import { useI18n } from "./i18n";
-import { navigateToResponseSelection } from "./ResponseSelection";
 import { CornerUpLeft, Quote } from "./WuuIcons";
 import "./ComposerResponseSelectionCard.css";
 
@@ -11,7 +9,7 @@ function singleLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
-/** The established quote attachment, shared by response and file excerpts. */
+/** A quote attachment for a text file excerpt. */
 export function ComposerQuoteCard({ text, comment = "", meta, className, notice, showComment = true, onChangeComment, onRemove, onOpenSource }: {
   text: string;
   comment?: string;
@@ -73,14 +71,4 @@ export function ComposerQuoteCard({ text, comment = "", meta, className, notice,
       </div>
     </FloatingMenuPortal> : null}
   </>;
-}
-
-export function ComposerResponseSelectionCard({ selection, onChange, onRemove }: {
-  selection: ResponseSelection;
-  onChange?: (selection: ResponseSelection) => void;
-  onRemove?: () => void;
-}): JSX.Element {
-  return <ComposerQuoteCard text={selection.text} comment={selection.comment}
-    onChangeComment={onChange ? comment => onChange({ ...selection, comment }) : undefined}
-    onRemove={onRemove} onOpenSource={() => navigateToResponseSelection(selection)} />;
 }

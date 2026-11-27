@@ -4,7 +4,7 @@ import { RestartRecovery } from "./RestartRecoveryNotice";
 import { AccountScreen } from "./AccountScreen";
 import { isTouchWebShell } from "./ComposerFocus";
 import { FileSelectionProvider } from "./FileSelectionContext";
-import { SideConversationAvailableContext } from "./ResponseSelection";
+import { ResponseSelectionHistoryContext, SideConversationAvailableContext } from "./ResponseSelection";
 import { SettingsControlsProvider } from "./SettingsControlsContext";
 import { ArtifactInteractionProvider } from "./ArtifactInteractionContext";
 /// <reference path="../shared/jsx-compat.d.ts" />
@@ -1067,6 +1067,7 @@ export function App({ application, slots, shellPluginId }: {
     handleConversationScroll,
     jumpToLatest: jumpConversationToLatest,
     jumpToConversationMessage,
+    disableConversationAutoFollow,
     captureConversationScrollIntent,
     settleConversationLayout,
     requestSubmittedQueryScroll,
@@ -1084,6 +1085,12 @@ export function App({ application, slots, shellPluginId }: {
     nativeScrollBounce: application.desktop.platform === "darwin" && application.desktop.hostKind !== "web",
     running: isThreadRunning(activeThread),
   });
+  const responseSelectionHistory = useMemo(() => ({
+    application,
+    pauseFollowing: (threadId: string) => {
+      if (threadId === activeThreadID) disableConversationAutoFollow();
+    },
+  }), [application, activeThreadID, disableConversationAutoFollow]);
   const initialSubmissionIds = useRef(new Set(submissionView.operations.map(operation => operation.operationID)));
   const placedSubmissions = useRef(new Map<string, string>());
   useLayoutEffect(() => {
@@ -1692,6 +1699,7 @@ export function App({ application, slots, shellPluginId }: {
       model={activeThread?.model ?? mascotRuntime.model ?? configuration?.model}
     >
       <SideConversationAvailableContext.Provider value={sideConversationAvailable}>
+      <ResponseSelectionHistoryContext.Provider value={responseSelectionHistory}>
       <FileSelectionProvider application={application} source={{ ownerTabId: application.getSnapshot().drafts.split
         ? application.getSnapshot().drafts[conversationWorkspace.activePane].ownerTabId ?? tabs.activeTabId
         : application.getSnapshot().drafts.activeTabId }}>
@@ -1993,6 +2001,7 @@ export function App({ application, slots, shellPluginId }: {
     </WorkspaceBrowserOpenContext.Provider>
     </ImagePreviewProvider>
     </FileSelectionProvider>
+    </ResponseSelectionHistoryContext.Provider>
     </SideConversationAvailableContext.Provider>
     </WuuMascotRuntimeProvider>
   );

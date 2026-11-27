@@ -314,12 +314,17 @@ async function dragFirstPage() {
   return result.text;
 }
 async function quoteSelection() {
-  await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
   await focusWindow();
-  const point = await evaluate(() => { const r = document.querySelector('.pdf-selection-action-menu button').getBoundingClientRect(); return { x: Math.round((r.left + r.right) / 2), y: Math.round((r.top + r.bottom) / 2) }; });
-  main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
-  main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
-  main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
+  for (const selector of ['.pdf-selection-menu__comment-toggle', '.pdf-selection-comment__submit']) {
+    await waitFor(selector => document.querySelector(selector), selector);
+    const point = await evaluate(selector => {
+      const rect = document.querySelector(selector).getBoundingClientRect();
+      return { x: Math.round((rect.left + rect.right) / 2), y: Math.round((rect.top + rect.bottom) / 2) };
+    }, selector);
+    main.webContents.sendInputEvent({ type: 'mouseMove', ...point });
+    main.webContents.sendInputEvent({ type: 'mouseDown', button: 'left', clickCount: 1, ...point });
+    main.webContents.sendInputEvent({ type: 'mouseUp', button: 'left', clickCount: 1, ...point });
+  }
   await waitFor(() => document.querySelector('.composer-file-selection-card'));
 }
 async function snapshot() { return evaluate(async id => (await window.wuu.resumeThread(id)).thread, threadID); }
@@ -441,7 +446,7 @@ async function run() {
     main.setSize(variant.width, 1000);
     await evaluate(({ theme, size }) => { document.documentElement.dataset.theme = theme; document.documentElement.style.setProperty('--conversation-message-font-size', `${size}px`); document.documentElement.style.setProperty('--appearance-scale', String(size / 14)); }, variant);
     await selectPages(); await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
-    await evaluate(() => [...document.querySelectorAll('.pdf-selection-action-menu button')].find(button => button.textContent === 'Comment').click());
+    await click('.pdf-selection-menu__comment-toggle');
     await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
     await main.webContents.insertText('Keep the saved version intact.');
     await capture(`02-comment-${variant.theme}-${variant.size}`);
@@ -471,7 +476,7 @@ async function run() {
   await evaluate(() => document.querySelector('[data-workspace-pdf-preview]').shadowRoot.querySelector('.page[data-page-number="1"]').scrollIntoView());
   const multiQuote = await selectPages(1, 2);
   await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
-  await evaluate(() => [...document.querySelectorAll('.pdf-selection-action-menu button')].find(button => button.textContent === 'Comment').click());
+  await click('.pdf-selection-menu__comment-toggle');
   await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
   await main.webContents.insertText('Compare both selected pages.');
   const turnsBeforeComment = (await snapshot()).turns.length;
@@ -589,7 +594,7 @@ async function run() {
   // Keep a comment open while navigating away, so neither selection nor authored
   // draft can be attached to the next load's source metadata.
   await selectPages(); await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
-  await evaluate(() => [...document.querySelectorAll('.pdf-selection-action-menu button')].find(button => button.textContent === 'Comment').click());
+  await click('.pdf-selection-menu__comment-toggle');
   await waitFor(() => document.activeElement?.matches('.pdf-selection-action-menu textarea'));
   await main.webContents.insertText('Discard this selection comment on navigation.');
   const refreshedQuote = 'Updated PDF: a different revision.';
@@ -740,7 +745,9 @@ async function run() {
   checks.push('switching conversation owner dismisses an unfinished PDF comment and preserves both separate drafts without sending');
   assert.equal(await selectPages(), refreshedQuote);
   await waitFor(() => document.querySelector('.pdf-selection-action-menu'));
-  await click('.pdf-selection-action-menu button');
+  await click('.pdf-selection-menu__comment-toggle');
+  await waitFor(() => document.querySelector('.pdf-selection-comment__submit'));
+  await click('.pdf-selection-comment__submit');
   await waitFor(() => !document.querySelector('.pdf-selection-action-menu'));
   assert.equal((await snapshot()).turns.length, splitTurnsBefore, 'Covered split selection must stay unsent.');
   await click('[data-wuu-component="right-sidebar-toggle"]');
