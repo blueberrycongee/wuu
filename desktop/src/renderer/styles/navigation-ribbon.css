@@ -226,10 +226,8 @@
   bottom: var(--conversation-pane-inset);
 }
 
-/* Ribbon layout dock<->collapse: like every other shell the grid commits in
- * one frame, but the moving layer here is the secondary pane, which slides
- * under the static ribbon on the compositor. The collapsed content parks at
- * -100% (it is visibility:hidden anyway) so expanding gets a start value. */
+/* Outside the native conversation layout the secondary pane slides behind
+ * the static ribbon. Its hidden resting transform arms the next toggle. */
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon) {
   --sidebar-collapsed-edge: var(--sidebar-ribbon-width);
 }
@@ -258,7 +256,7 @@
   visibility: visible;
   opacity: 1;
   pointer-events: none;
-  transition: transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
+  transition: transform var(--sidebar-motion-duration) var(--docked-sidebar-motion-ease);
   will-change: transform;
 }
 
@@ -270,6 +268,62 @@
 .app-shell.navigation-ribbon-layout:has(.sidebar-ribbon).sidebar-animating:not(.sidebar-collapsed)
   .sidebar :is(.sidebar-content, .plugin-workbench-view-navigation) {
   transform: translate3d(0, 0, 0);
+}
+
+/* During a docked toggle the grid moves the conversation edge with the rail.
+ * Keep the rail's contents at reading width and clip them at the moving edge.
+ * Native web surfaces and live window resize use the composited path above. */
+:root:not(.window-resizing) .app-shell[data-docked-panel-layout].sidebar-animating {
+  transition: grid-template-columns var(--sidebar-motion-duration) var(--docked-sidebar-motion-ease);
+}
+
+:root:not(.window-resizing) .app-shell[data-docked-panel-layout].right-panel-animating:not(.sidebar-animating) {
+  transition: grid-template-columns var(--workspace-panel-motion-duration) var(--docked-sidebar-motion-ease);
+}
+
+/* The panel replaces the floating tool rail. Release or restore its reading
+ * gutter over the same interval as the conversation edge moves. */
+:root:not(.window-resizing) .app-shell[data-docked-panel-layout].right-panel-animating .conversation-pane {
+  --workspace-tool-rail-inset-duration: var(--workspace-panel-motion-duration);
+}
+
+:root:not(.window-resizing) .app-shell.navigation-ribbon-layout[data-docked-panel-layout].sidebar-animating:has(.sidebar-ribbon) .sidebar {
+  width: auto;
+  min-width: 0;
+  overflow: clip;
+}
+
+:root:not(.window-resizing) .app-shell[data-docked-panel-layout]:has(.sidebar-ribbon)
+  .sidebar :is(.sidebar-content, .plugin-workbench-view-navigation) {
+  transform: none;
+}
+
+:root:not(.window-resizing) .app-shell[data-docked-panel-layout].sidebar-animating:has(.sidebar-ribbon)
+  .sidebar :is(.sidebar-content, .plugin-workbench-view-navigation) {
+  transition: opacity var(--sidebar-motion-duration) var(--docked-sidebar-motion-ease);
+}
+
+:root:not(.window-resizing) .app-shell[data-docked-panel-layout].sidebar-collapsed:has(.sidebar-ribbon):not(.sidebar-drawer-open, .sidebar-drawer-closing)
+  .sidebar :is(.sidebar-content, .plugin-workbench-view-navigation) {
+  opacity: 0;
+}
+
+:root:not(.window-resizing) .app-shell[data-docked-panel-layout].sidebar-animating > .sidebar-resizer {
+  left: auto;
+  right: -5px;
+  animation: none;
+}
+
+:root:not(.window-resizing) .app-shell[data-docked-panel-layout] .workspace-right-panel:not([data-sheet]) {
+  position: relative;
+  inset: auto;
+  transform: none;
+}
+
+:root:not(.window-resizing) .app-shell[data-docked-panel-layout] > .workspace-right-panel-resizer {
+  grid-column: 3 / 4;
+  left: -5px;
+  right: auto;
 }
 
 .section-sidebar-toggle {

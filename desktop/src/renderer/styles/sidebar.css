@@ -67,40 +67,43 @@
   z-index: 140;
   width: var(--sidebar-open-width, 296px);
   min-width: var(--sidebar-open-width, 296px);
+  transition: transform var(--sidebar-motion-duration) var(--docked-sidebar-motion-ease);
   will-change: transform;
 }
 
 :is(.app-shell, .settings-shell).sidebar-animating.sidebar-collapsed :is(.sidebar, .settings-sidebar) {
   transform: translate3d(-100%, 0, 0);
-  transition: transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
 }
 
 :is(.app-shell, .settings-shell).sidebar-animating:not(.sidebar-collapsed) :is(.sidebar, .settings-sidebar) {
   transform: translate3d(0, 0, 0);
-  transition: transform var(--sidebar-motion-duration) var(--sidebar-motion-ease);
 }
 
 /* Docked right-panel open/close: like the sidebar, the grid commits in one
  * frame and the panel slides as a promoted overlay on the compositor instead
  * of relaying out the shell every frame. Sheet states are excluded: they
  * carry their own fixed positioning and parked transform endpoints. */
-.app-shell.right-panel-animating .workspace-right-panel:not([data-sheet]) {
+/* Park the closed panel on the same overlay origin so opening has a real
+ * offscreen transform to interpolate from when the grid track appears. */
+.app-shell:is(.right-panel-animating, :not(.right-panel-open)) .workspace-right-panel:not([data-sheet]) {
   position: absolute;
   inset: 0 var(--conversation-pane-inset) 0 auto;
-  z-index: 140;
   width: var(--workspace-right-panel-width, 360px);
   min-width: var(--workspace-right-panel-width, 360px);
+}
+
+.app-shell.right-panel-animating .workspace-right-panel:not([data-sheet]) {
+  z-index: 140;
+  transition: transform var(--workspace-panel-motion-duration) var(--docked-sidebar-motion-ease);
   will-change: transform;
 }
 
 .app-shell.right-panel-animating.right-panel-open .workspace-right-panel:not([data-sheet]) {
   transform: translate3d(0, 0, 0);
-  transition: transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
 }
 
-.app-shell.right-panel-animating:not(.right-panel-open) .workspace-right-panel:not([data-sheet]) {
+.app-shell:not(.right-panel-open) .workspace-right-panel:not([data-sheet]) {
   transform: translate3d(100%, 0, 0);
-  transition: transform var(--workspace-panel-motion-duration) var(--workspace-panel-motion-ease);
 }
 
 /* The resizer pins to the docked edge, which no longer moves during the
@@ -299,15 +302,14 @@
   display: none;
 }
 
-.app-shell.sidebar-collapsed.right-panel-open:not(.right-panel-globalized) .workspace-panel-tabbar {
-  /* Expand only when the right panel's left edge enters the traffic-light zone. */
-  padding-left: clamp(
-    10px,
+.app-shell.right-panel-open:not(.right-panel-globalized) .workspace-right-panel > .workspace-panel-tabbar {
+  /* Clear the traffic lights according to the panel's own window position. */
+  padding-left: max(
+    var(--workspace-row-inset),
     calc(
       var(--window-controls-inset-left) -
         (100vw - var(--conversation-pane-inset) - var(--workspace-right-panel-width, 360px))
-    ),
-    max(10px, var(--window-controls-inset-left))
+    )
   );
 }
 
@@ -698,11 +700,11 @@
 }
 
 :is(.app-shell, .settings-shell).sidebar-animating:not(.sidebar-collapsed) > .sidebar-resizer {
-  animation: sidebar-edge-slide-in var(--sidebar-motion-duration) var(--sidebar-motion-ease) both;
+  animation: sidebar-edge-slide-in var(--sidebar-motion-duration) var(--docked-sidebar-motion-ease) both;
 }
 
 :is(.app-shell, .settings-shell).sidebar-animating.sidebar-collapsed > .sidebar-resizer {
-  animation: sidebar-edge-slide-out var(--sidebar-motion-duration) var(--sidebar-motion-ease) both;
+  animation: sidebar-edge-slide-out var(--sidebar-motion-duration) var(--docked-sidebar-motion-ease) both;
 }
 
 @keyframes sidebar-edge-slide-in {
