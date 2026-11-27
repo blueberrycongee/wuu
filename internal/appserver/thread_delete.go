@@ -44,9 +44,6 @@ func (s *Server) handleThreadDelete(req Request) error {
 	if id == "" {
 		return s.writeResponse(req.ID, nil, errors.New("thread_id is required"))
 	}
-	if _, err := s.requireRequestAccess(req, MethodThreadDelete, nil); err != nil {
-		return s.writeResponse(req.ID, nil, err)
-	}
 	lifecycle, err := s.acquireThreadLifecycleWriteLease(id)
 	if err != nil {
 		return s.writeResponse(req.ID, nil, err)
@@ -102,6 +99,9 @@ func (s *Server) handleThreadDelete(req Request) error {
 	}
 	services, err := binding.Services()
 	if err != nil {
+		return s.writeResponse(req.ID, nil, err)
+	}
+	if _, err := s.requireRequestAccess(req, MethodThreadDelete, nil); err != nil {
 		return s.writeResponse(req.ID, nil, err)
 	}
 	var deleted []session.Session
